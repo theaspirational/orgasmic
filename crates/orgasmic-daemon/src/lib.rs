@@ -161,6 +161,31 @@ fn bind_delay_for_tests() -> Option<std::time::Duration> {
         .map(std::time::Duration::from_millis)
 }
 
+/// Bind the daemon listener, tolerating a briefly-held port during a
+/// runtime-swap restart. When `orgasmic update` stops the old daemon and starts
+/// the new one, the predecessor drains gracefully and its listener (or lingering
+/// connections) can keep the port occupied for a moment after it stops answering
+/// health probes. Retry `AddrInUse` for a few seconds instead of exiting, so the
+/// stop→start handoff does not race the OS releasing the port.
+async fn bind_listener_with_retry(addr: SocketAddr) -> std::io::Result<TcpListener> {
+    const RETRY_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+    const RETRY_STEP: std::time::Duration = std::time::Duration::from_millis(200);
+    let deadline = std::time::Instant::now() + RETRY_BUDGET;
+    loop {
+        match TcpListener::bind(addr).await {
+            Ok(listener) => return Ok(listener),
+            Err(err)
+                if err.kind() == std::io::ErrorKind::AddrInUse
+                    && std::time::Instant::now() < deadline =>
+            {
+                info!(%addr, "port busy during startup (predecessor still releasing it); retrying bind");
+                tokio::time::sleep(RETRY_STEP).await;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 fn hostname() -> Option<String> {
     std::process::Command::new("hostname")
         .output()
@@ -284,7 +309,7 @@ impl Daemon {
         if let Some(delay) = bind_delay_for_tests() {
             tokio::time::sleep(delay).await;
         }
-        let listener = TcpListener::bind(addr)
+        let listener = bind_listener_with_retry(addr)
             .await
             .with_context(|| format!("bind {addr}"))?;
         let local_addr = listener.local_addr().context("local_addr")?;

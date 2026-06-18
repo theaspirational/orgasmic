@@ -20,7 +20,9 @@ use crate::daemon_runtime;
 use crate::daemon_service::{self, ServiceStart};
 use crate::home::Home;
 
-const START_TIMEOUT: Duration = Duration::from_secs(10);
+// Generous enough to cover the daemon's startup bind-retry (up to ~8s while a
+// draining predecessor releases the port during a runtime-swap restart).
+const START_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Deserialize)]
