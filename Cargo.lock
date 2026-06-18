@@ -1131,7 +1131,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "orgasmic-cli"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1153,7 +1153,7 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-daemon"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1203,7 +1203,7 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-drivers"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
