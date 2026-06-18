@@ -64,10 +64,20 @@ fn main() {
 }
 
 fn run_npm_build(repo_root: &std::path::Path) {
-    let result = Command::new("npm")
-        .args(["--prefix", "ui", "run", "build"])
-        .current_dir(repo_root)
-        .status();
+    // On Windows `npm` is a `.cmd` shim that `CreateProcess` won't resolve from a
+    // bare `npm`, so launch it through `cmd /C` (PATHEXT finds the shim). Other
+    // platforms run npm directly.
+    let result = if cfg!(windows) {
+        Command::new("cmd")
+            .args(["/C", "npm", "--prefix", "ui", "run", "build"])
+            .current_dir(repo_root)
+            .status()
+    } else {
+        Command::new("npm")
+            .args(["--prefix", "ui", "run", "build"])
+            .current_dir(repo_root)
+            .status()
+    };
 
     match result {
         Err(e) => panic!(
