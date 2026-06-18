@@ -63,6 +63,12 @@ symlinks aren't supported — into whatever skills directory this agent
 discovers, e.g. `~/.claude/skills/orgasmic`.
 ```
 
+To pick up new releases later, run:
+
+```text
+/orgasmic update
+```
+
 ### 2. Adopt a repository
 
 Open your coding agent in the repository you want orgasmic to manage:
@@ -79,12 +85,6 @@ Then ask the agent:
 
 That creates `.orgasmic/` in that repository, then asks whether to start the
 bootstrap pass now or leave it for `/orgasmic resume`.
-
-To pick up new releases later, run:
-
-```text
-/orgasmic update
-```
 
 The regular install can coexist with a cloned repo on the same machine. The
 clone is just source code; the installed runtime lives under `~/.orgasmic`.
