@@ -46,10 +46,22 @@ curl -fsSL https://raw.githubusercontent.com/theaspirational/orgasmic/main/scrip
 ```
 
 The installer creates `~/.orgasmic`, unpacks orgasmic runtime under
-`~/.orgasmic/runtimes/`, links orgasmic CLI tool at `~/.orgasmic/bin/orgasmic`, links the shipped
-`/orgasmic` skill into `~/.agents/skills/orgasmic` (you can ask your agent to symlink it to its own skills directory). The default
+`~/.orgasmic/runtimes/`, links orgasmic CLI tool at `~/.orgasmic/bin/orgasmic`, and links the shipped
+`/orgasmic` skill into `~/.agents/skills/orgasmic`. The default
 channel is `stable`; pass
 `--channel nightly` to track nightly builds.
+
+Agents that read the shared `~/.agents/skills/` path discover `/orgasmic`
+automatically. If yours keeps skills somewhere else (Claude, Codex, Hermes, …), paste this to your agent and let it wire the skill into that
+harness:
+
+```text
+Make the orgasmic skill available to you as the `/orgasmic` command. It is
+installed at `~/.agents/skills/orgasmic` — a folder containing `SKILL.md`.
+Symlink it (preferred, so future updates flow automatically) — or copy it if
+symlinks aren't supported — into whatever skills directory this agent
+discovers, e.g. `~/.claude/skills/orgasmic`.
+```
 
 ### 2. Adopt a repository
 
