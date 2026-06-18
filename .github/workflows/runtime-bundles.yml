@@ -13,15 +13,27 @@ on:
         description: 'Release tag to publish runtime assets to (nightly, stable, or a throwaway test tag).'
         required: true
         default: nightly
+        type: string
       version:
         description: 'Version string (e.g. 0.0.1). Empty => derived 0.99.<run> (use a real semver for stable).'
         required: false
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag to publish runtime assets to.'
+        required: true
+        type: string
+      version:
+        description: 'Version string; empty => derived 0.99.<run>.'
+        required: false
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: runtime-bundles-${{ github.event.inputs.tag }}
+  group: runtime-bundles-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
@@ -33,7 +45,7 @@ jobs:
     steps:
       - id: v
         env:
-          INPUT_VERSION: ${{ github.event.inputs.version }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
           v="${INPUT_VERSION:-}"
@@ -125,7 +137,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      TAG: ${{ github.event.inputs.tag }}
+      TAG: ${{ inputs.tag }}
       VERSION: ${{ needs.version.outputs.version }}
     steps:
       - name: Checkout

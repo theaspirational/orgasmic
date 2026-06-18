@@ -1,0 +1,23 @@
+name: Nightly Runtime bundles
+
+# Manually publishes the multi-platform CLI/daemon runtime bundles to the
+# nightly release tag. Thin wrapper around the reusable runtime-bundles.yml
+# matrix (macOS arm64/x86_64, Linux x86_64/arm64, Windows x86_64).
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-runtime
+  cancel-in-progress: false
+
+jobs:
+  bundles:
+    uses: ./.github/workflows/runtime-bundles.yml
+    permissions:
+      contents: write
+    with:
+      tag: nightly
