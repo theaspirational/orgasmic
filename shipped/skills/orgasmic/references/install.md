@@ -96,9 +96,9 @@ bash scripts/install.sh --version nightly
 bash scripts/install.sh --bundle /path/to/orgasmic-runtime_0.1.0_darwin_aarch64.tar.gz
 ```
 
-The pre-v0 default channel is `nightly` because the automated macOS workflow
-publishes that release. Use `--channel stable` when a stable runtime manifest is
-published.
+The default channel is `stable`, published by the tag-triggered release workflow
+(`.github/workflows/release-macos.yml`). Use `--channel nightly` to track the
+moving nightly builds from `.github/workflows/nightly-macos.yml`.
 
 After install, verify:
 

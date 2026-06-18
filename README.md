@@ -28,7 +28,10 @@ branched, and committed.
 models; assign each to the work it is best suited
 for: orchestration, implementation, review, planning, architecture. Prompt Studio lets you inspect and edit the exact initial prompt each
 specialized worker receives.
-- **Disciplined spec-to-code framework** — goals keep long-running sessions aligned, while structured handoffs preserve continuity across implementation, review, recovery, and parallel execution. Partly inspired by Matt Pocock's "grilling-with-docs" approach and domain-driven design principles. Builds a graph by linking ADRs and architecture nodes to the code they produce, letting agents trace any piece of code back to the original decisions that motivated it.
+- **Disciplined spec-to-code framework** — inspired by Matt Pocock's "grilling-with-docs" approach and domain-driven software design principles, a typed pipeline from intent to code: griller agent stress-tests assumptions into `decisions.org` and `glossary.org`, architector authors the architecture graph (source paths,
+typed edges, per-node test gates), planner agent turns accepted design into bounded
+tasks, and implementer agents change code inside declared read/write scope and
+acceptance criteria. The manager dispatches these agents with prompts compiled from specs and closes every landing with an adversarial reviewer.
 - **UI, browser, app, remote, and mobile access** — Install orgasmic once, then
 adopt each repository explicitly with `/orgasmic init`. Try the desktop app,
 connect to a remote daemon, or use Android app for mobile access.
@@ -36,26 +39,17 @@ connect to a remote daemon, or use Android app for mobile access.
 ## Install
 
 ### 1. Install orgasmic once
-
-If the `/orgasmic` skill is already available in your coding agent, use the
-agent-guided path:
-
-```text
-/orgasmic install
-```
-
-Or install directly from a terminal:
+In a terminal:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/theaspirational/orgasmic/main/scripts/install.sh | bash
 ```
 
 The installer creates `~/.orgasmic`, unpacks orgasmic runtime under
-`~/.orgasmic/runtimes/`, links `~/.orgasmic/bin/orgasmic`, links the shipped
-`/orgasmic` skill into `~/.agents/skills/orgasmic`, and verifies
-`doctor`/`status`. It does not initialize any project repository. The pre-v0
-default channel is `nightly`; pass
-`--channel stable` when promoting a stable release.
+`~/.orgasmic/runtimes/`, links orgasmic CLI tool at `~/.orgasmic/bin/orgasmic`, links the shipped
+`/orgasmic` skill into `~/.agents/skills/orgasmic` (you can ask your agent to symlink it to its own skills directory). The default
+channel is `stable`; pass
+`--channel nightly` to track nightly builds.
 
 ### 2. Adopt a repository
 
