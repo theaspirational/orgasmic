@@ -49,6 +49,8 @@ derive_target_key() {
         x86_64-apple-darwin) echo "darwin-x86_64" ;;
         x86_64-unknown-linux-gnu|x86_64-unknown-linux-musl) echo "linux-x86_64" ;;
         aarch64-unknown-linux-gnu|aarch64-unknown-linux-musl) echo "linux-aarch64" ;;
+        x86_64-pc-windows-msvc|x86_64-pc-windows-gnu) echo "windows-x86_64" ;;
+        aarch64-pc-windows-msvc) echo "windows-aarch64" ;;
         *) echo "$triple" | sed 's/-unknown//g' ;;
     esac
 }
@@ -71,16 +73,20 @@ fi
 echo "→ building orgasmic CLI for $TARGET_TRIPLE ($PROFILE)"
 cargo build --profile "$PROFILE" --package orgasmic-cli --target "$TARGET_TRIPLE"
 
-BIN="$BUILD_DIR/$TARGET_TRIPLE/$CARGO_PROFILE_DIR/orgasmic"
-if [[ ! -x "$BIN" ]]; then
-    echo "error: built binary missing or not executable: $BIN" >&2
+# Windows binaries carry a .exe suffix; the bundle keeps it so the Windows
+# installer finds bin/orgasmic.exe. POSIX targets stay bin/orgasmic.
+EXE=""
+case "$TARGET_TRIPLE" in *-pc-windows-*) EXE=".exe" ;; esac
+BIN="$BUILD_DIR/$TARGET_TRIPLE/$CARGO_PROFILE_DIR/orgasmic$EXE"
+if [[ ! -f "$BIN" ]]; then
+    echo "error: built binary missing: $BIN" >&2
     exit 1
 fi
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-runtime.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/bin" "$STAGE/docs"
-cp "$BIN" "$STAGE/bin/orgasmic"
+cp "$BIN" "$STAGE/bin/orgasmic$EXE"
 cp -R "$ROOT/shipped" "$STAGE/shipped"
 cp "$ROOT/README.md" "$STAGE/docs/README.md"
 cp "$ROOT/CONTRIBUTING.md" "$STAGE/docs/CONTRIBUTING.md"

@@ -81,16 +81,6 @@ jobs:
       - name: Build macOS bundle
         run: npm --prefix ui run tauri:bundle:mac
 
-      - name: Build runtime bundle
-        env:
-          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          bash scripts/package-runtime.sh \
-            --version "${NIGHTLY_VERSION}" \
-            --target aarch64-apple-darwin \
-            --target-key darwin-aarch64 \
-            --out-dir dist/nightly
-
       - name: Stage macOS release assets
         env:
           NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
@@ -110,13 +100,6 @@ jobs:
           cp "${dmg_path}" dist/nightly/orgasmic_nightly_aarch64.dmg
           cp "${update_path}" dist/nightly/orgasmic.app.tar.gz
           cp "${signature_path}" dist/nightly/orgasmic.app.tar.gz.sig
-          runtime_asset="orgasmic-runtime_${NIGHTLY_VERSION}_darwin_aarch64.tar.gz"
-          runtime_path="dist/nightly/${runtime_asset}"
-          runtime_sha_path="${runtime_path}.sha256"
-          if [ ! -f "${runtime_path}" ] || [ ! -f "${runtime_sha_path}" ]; then
-            echo "::error::Expected runtime bundle was not produced"
-            exit 1
-          fi
 
           SIGNATURE_PATH="dist/nightly/orgasmic.app.tar.gz.sig" \
           MANIFEST_PATH="dist/nightly/latest.json" \
@@ -137,27 +120,6 @@ jobs:
           };
 
           fs.writeFileSync(process.env.MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
-          NODE
-
-          RUNTIME_MANIFEST_PATH="dist/nightly/runtime-latest.json" \
-          RUNTIME_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${NIGHTLY_TAG}/${runtime_asset}" \
-          RUNTIME_SHA256="$(cat "${runtime_sha_path}")" \
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const manifest = {
-            version: process.env.NIGHTLY_VERSION,
-            channel: 'nightly',
-            pub_date: new Date().toISOString(),
-            runtimes: {
-              'darwin-aarch64': {
-                url: process.env.RUNTIME_URL,
-                sha256: process.env.RUNTIME_SHA256.trim(),
-              },
-            },
-          };
-
-          fs.writeFileSync(process.env.RUNTIME_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
           NODE
 
       - name: Publish macOS nightly release assets
@@ -195,10 +157,7 @@ jobs:
             orgasmic_nightly_aarch64.dmg \
             orgasmic.app.tar.gz \
             orgasmic.app.tar.gz.sig \
-            latest.json \
-            runtime-latest.json \
-            "orgasmic-runtime_${NIGHTLY_VERSION}_darwin_aarch64.tar.gz" \
-            "orgasmic-runtime_${NIGHTLY_VERSION}_darwin_aarch64.tar.gz.sha256"
+            latest.json
           do
             gh release delete-asset "${NIGHTLY_TAG}" "${asset}" --yes >/dev/null 2>&1 || true
           done

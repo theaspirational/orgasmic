@@ -1,0 +1,199 @@
+name: Runtime bundles
+
+# Builds the orgasmic CLI/daemon runtime bundle on every supported OS using
+# native runners (no cross-compilation), smoke-tests each binary on its own
+# platform, and publishes one multi-target runtime-latest.json plus every
+# orgasmic-runtime_*.tar.gz to a release tag. This workflow is the SOLE owner of
+# the runtime assets; the desktop (Tauri) workflows own only the app + latest.json.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to publish runtime assets to (nightly, stable, or a throwaway test tag).'
+        required: true
+        default: nightly
+      version:
+        description: 'Version string (e.g. 0.0.1). Empty => derived 0.99.<run> (use a real semver for stable).'
+        required: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: runtime-bundles-${{ github.event.inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          set -euo pipefail
+          v="${INPUT_VERSION:-}"
+          if [ -z "$v" ]; then
+            v="0.99.$(( GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT ))"
+          fi
+          if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+].*)?$'; then
+            echo "::error::version '$v' is not a valid semver"; exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "resolved version: $v"
+
+  build:
+    name: ${{ matrix.key }}
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: macos-14,         target: aarch64-apple-darwin,      key: darwin-aarch64 }
+          - { runner: macos-13,         target: x86_64-apple-darwin,       key: darwin-x86_64 }
+          - { runner: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  key: linux-x86_64 }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, key: linux-aarch64 }
+          - { runner: windows-latest,   target: x86_64-pc-windows-msvc,    key: windows-x86_64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Build runtime bundle
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          bash scripts/package-runtime.sh \
+            --version "$VERSION" \
+            --target "${{ matrix.target }}" \
+            --target-key "${{ matrix.key }}" \
+            --out-dir dist/runtime
+
+      - name: Smoke test (native run)
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset_key="$(printf '%s' '${{ matrix.key }}' | tr '-' '_')"
+          tarball="$(ls dist/runtime/orgasmic-runtime_*_"${asset_key}".tar.gz)"
+          echo "smoke-testing $tarball"
+          stage="$(mktemp -d)"
+          tar -xzf "$tarball" -C "$stage"
+          bin="$stage/bin/orgasmic"
+          [ -f "$bin" ] || bin="$stage/bin/orgasmic.exe"
+          "$bin" --version
+          test -f "$stage/runtime-manifest.json"
+          test -f "$stage/shipped/skills/orgasmic/SKILL.md"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-${{ matrix.key }}
+          path: dist/runtime/*
+          if-no-files-found: error
+
+  publish:
+    name: Assemble manifest and publish
+    needs: [version, build]
+    if: ${{ always() && needs.version.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.event.inputs.tag }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: incoming
+          pattern: runtime-*
+          merge-multiple: true
+
+      - name: Assemble runtime-latest.json
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          shopt -s nullglob
+          found=(incoming/orgasmic-runtime_*.tar.gz)
+          if [ ${#found[@]} -eq 0 ]; then
+            echo "::error::no runtime bundles were produced by any matrix leg"; exit 1
+          fi
+          cp incoming/orgasmic-runtime_*.tar.gz incoming/orgasmic-runtime_*.tar.gz.sha256 dist/
+          REPO="$GITHUB_REPOSITORY" TAG="$TAG" VERSION="$VERSION" node <<'NODE'
+          const fs = require('node:fs');
+          const dir = 'dist';
+          const files = fs.readdirSync(dir).filter((f) => f.endsWith('.tar.gz'));
+          const keyFromName = (f) => {
+            const m = f.match(/^orgasmic-runtime_.+?_(.+)\.tar\.gz$/);
+            return m ? m[1].replace(/_/g, '-') : null;
+          };
+          const runtimes = {};
+          for (const f of files.sort()) {
+            const key = keyFromName(f);
+            if (!key) continue;
+            const sha = fs.readFileSync(`${dir}/${f}.sha256`, 'utf8').trim().split(/\s+/)[0];
+            runtimes[key] = {
+              url: `https://github.com/${process.env.REPO}/releases/download/${process.env.TAG}/${f}`,
+              sha256: sha,
+            };
+          }
+          const channel = process.env.TAG === 'stable' ? 'stable' : 'nightly';
+          const manifest = {
+            version: process.env.VERSION,
+            channel,
+            pub_date: new Date().toISOString(),
+            runtimes,
+          };
+          fs.writeFileSync(`${dir}/runtime-latest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
+          console.log(`published targets: ${Object.keys(runtimes).join(', ')}`);
+          NODE
+          echo "=== runtime-latest.json ==="
+          cat dist/runtime-latest.json
+
+      - name: Ensure release exists
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            flags=(--title "orgasmic $TAG" --notes "Runtime bundles $VERSION (${GITHUB_SHA})" --target "$GITHUB_SHA")
+            if [ "$TAG" = "stable" ]; then flags+=(--latest); else flags+=(--prerelease); fi
+            gh release create "$TAG" "${flags[@]}"
+          fi
+
+      - name: Replace runtime assets on release
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r a; do
+            case "$a" in
+              runtime-latest.json|orgasmic-runtime_*.tar.gz|orgasmic-runtime_*.tar.gz.sha256)
+                gh release delete-asset "$TAG" "$a" --yes ;;
+            esac
+          done
+          gh release upload "$TAG" \
+            dist/runtime-latest.json \
+            dist/orgasmic-runtime_*.tar.gz \
+            dist/orgasmic-runtime_*.tar.gz.sha256 \
+            --clobber
