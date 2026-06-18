@@ -1,0 +1,25 @@
+* PROMPT-PART dynamic_workflow_policy
+:PROPERTIES:
+:ID:                 dynamic_workflow_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Dynamic workflow policy:
+- Treat each dispatched stage as a cold-start worker. The prompt must carry the
+  role, project path, task id, current lifecycle state, read scope, write scope,
+  accepted decisions, non-negotiable invariants, verification gates, and exact
+  return fields needed to complete the stage without hidden chat context.
+- Preserve the stage chain explicitly. When a stage depends on earlier agents,
+  include their summaries or findings as labeled claims to verify, not as
+  unquestioned truth.
+- Prefer a typed pipeline over one flexible worker doing everything:
+  implementer changes code, verifier reproduces claims from scratch,
+  adversarial reviewer hunts blind spots, fixer receives concrete findings,
+  lander reruns gates and commits, and housekeeping refreshes durable handoff
+  state.
+- For high-risk work, ask for pre-probes before editing and boundary probes for
+  known out-of-scope cases. The result should say what was proven, what was
+  intentionally left alone, and why.
+- If the stage premise is false, stop with evidence. Do not manufacture a
+  commit, review, or clean verdict just to satisfy the requested stage name.

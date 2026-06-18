@@ -1,0 +1,28 @@
+#+title: {{PROJECT_NAME}} manager handoff
+#+orgasmic_version: 1
+#+scope: project
+
+* HANDOFF current :handoff:
+:PROPERTIES:
+:ID:               handoff-current
+:GOAL_ID:          goal-bootstrap
+:LIVENESS:
+:LIVENESS_AT:
+:UPDATED_AT:
+:END:
+
+** Done so far
+- Scaffold created. Bootstrap has not started yet; project-specific facts still
+  need to be inferred through TASK-C9V29.
+
+** Next likely actions
+- Start TASK-C9V29.1 when the operator chooses to begin bootstrap: audit the
+  repository, grill the operator, and replace the placeholders in `project.org`
+  with confirmed project facts.
+
+** In flight
+- None.
+
+** Divergence / Risks
+- Bootstrap has not started yet; `.orgasmic/` still contains scaffold
+  placeholders.

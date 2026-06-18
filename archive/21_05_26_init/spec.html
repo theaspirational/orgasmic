@@ -1,0 +1,2498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orgasmic — initial design spec</title>
+<style>
+:root {
+  color-scheme: light dark;
+  --bg: #ffffff;
+  --fg: #1a1a1a;
+  --muted: #6a737d;
+  --border: #e1e4e8;
+  --code-bg: #f6f8fa;
+  --code-fg: #24292e;
+  --link: #0366d6;
+  --accent: #0366d6;
+  --toc-bg: #fafbfc;
+  --highlight: #fff5b1;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1117;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+    --border: #30363d;
+    --code-bg: #161b22;
+    --code-fg: #c9d1d9;
+    --link: #58a6ff;
+    --accent: #58a6ff;
+    --toc-bg: #0d1117;
+    --highlight: #3a3000;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  max-width: 1320px;
+  margin: 0 auto;
+}
+.toc-pane {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 32px 18px 32px 24px;
+  border-right: 1px solid var(--border);
+  font-size: 12.5px;
+  background: var(--toc-bg);
+}
+.toc-pane h2 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 14px;
+  border: none;
+  padding: 0;
+  font-weight: 600;
+}
+.toc-pane nav ul { list-style: none; padding-left: 0; margin: 0; }
+.toc-pane nav ul ul { padding-left: 14px; margin: 2px 0; border-left: 1px solid var(--border); padding-left: 12px; }
+.toc-pane nav li { margin: 3px 0; }
+.toc-pane nav a {
+  color: var(--fg);
+  text-decoration: none;
+  display: block;
+  padding: 2px 0;
+  line-height: 1.4;
+}
+.toc-pane nav a:hover { color: var(--link); }
+.content {
+  padding: 48px 64px 160px;
+  max-width: 880px;
+  min-width: 0;
+}
+.doc-header {
+  border-bottom: 2px solid var(--border);
+  padding-bottom: 24px;
+  margin-bottom: 32px;
+}
+.doc-title { margin: 0 0 8px; border: none; padding: 0; font-size: 2em; }
+.doc-meta { color: var(--muted); font-size: 13px; margin: 0; }
+h1, h2, h3, h4, h5, h6 {
+  margin-top: 1.8em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+  font-weight: 600;
+  scroll-margin-top: 16px;
+}
+h1 { font-size: 1.8em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 2em; }
+h1.title { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; margin-top: 0; }
+h2 { font-size: 1.4em; border-bottom: 1px solid var(--border); padding-bottom: 0.2em; }
+h3 { font-size: 1.15em; }
+h4 { font-size: 1em; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+h5 { font-size: 0.95em; }
+h6 { font-size: 0.9em; color: var(--muted); }
+p { margin: 0 0 1em; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, pre, kbd, samp {
+  font-family: ui-monospace, "SF Mono", "Menlo", "Consolas", "Liberation Mono", monospace;
+  font-size: 0.88em;
+}
+code {
+  background: var(--code-bg);
+  color: var(--code-fg);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 0.85em;
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 18px;
+  overflow-x: auto;
+  line-height: 1.5;
+  margin: 1em 0;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.92em;
+  color: var(--code-fg);
+}
+table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.9em;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+table thead { background: var(--code-bg); }
+th, td {
+  border: 1px solid var(--border);
+  padding: 7px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+th { font-weight: 600; }
+ul, ol { padding-left: 1.6em; margin: 0 0 1em; }
+li { margin: 4px 0; }
+li > p { margin: 0 0 0.4em; }
+blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 1em 0;
+  padding: 0.2em 1em;
+  color: var(--muted);
+}
+hr { border: none; border-top: 1px solid var(--border); margin: 2.5em 0; }
+em { font-style: italic; }
+strong { font-weight: 600; }
+.section-num { color: var(--muted); margin-right: 0.5em; font-weight: 500; }
+section { margin-bottom: 0.5em; }
+:target { background: var(--highlight); transition: background 0.5s; padding: 2px 6px; border-radius: 4px; }
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; }
+  .toc-pane {
+    position: static;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 20px 24px;
+  }
+  .content { padding: 28px 24px 80px; }
+}
+@media print {
+  .toc-pane { display: none; }
+  .layout { display: block; }
+  .content { max-width: none; padding: 0; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="toc-pane">
+    <h2>Contents</h2>
+    <ul>
+<li><a href="#deprecation-notice" id="toc-deprecation-notice"><span
+class="toc-section-number">1</span> Deprecation notice</a></li>
+<li><a href="#mission" id="toc-mission"><span
+class="toc-section-number">2</span> Mission</a></li>
+<li><a href="#install-and-data-model"
+id="toc-install-and-data-model"><span
+class="toc-section-number">3</span> Install and data model</a>
+<ul>
+<li><a href="#two-layer-layout" id="toc-two-layer-layout"><span
+class="toc-section-number">3.1</span> Two-layer layout</a></li>
+<li><a href="#loader-rule-universal"
+id="toc-loader-rule-universal"><span
+class="toc-section-number">3.2</span> Loader rule (universal)</a></li>
+<li><a href="#install-one-liner" id="toc-install-one-liner"><span
+class="toc-section-number">3.3</span> Install one-liner</a></li>
+<li><a href="#update" id="toc-update"><span
+class="toc-section-number">3.4</span> Update</a></li>
+<li><a href="#contributing" id="toc-contributing"><span
+class="toc-section-number">3.5</span> Contributing</a></li>
+<li><a href="#three-tier-shippedoptionalhub-split"
+id="toc-three-tier-shippedoptionalhub-split"><span
+class="toc-section-number">3.6</span> Three-tier shipped/optional/hub
+split</a></li>
+</ul></li>
+<li><a href="#file-substrate" id="toc-file-substrate"><span
+class="toc-section-number">4</span> File substrate</a>
+<ul>
+<li><a href="#write-surface" id="toc-write-surface"><span
+class="toc-section-number">4.1</span> Write surface</a></li>
+<li><a href="#concurrency" id="toc-concurrency"><span
+class="toc-section-number">4.2</span> Concurrency</a></li>
+<li><a href="#parse-failures" id="toc-parse-failures"><span
+class="toc-section-number">4.3</span> Parse failures</a></li>
+</ul></li>
+<li><a href="#file-formats" id="toc-file-formats"><span
+class="toc-section-number">5</span> File formats</a>
+<ul>
+<li><a href="#tx-files-.org-property-drawer-only"
+id="toc-tx-files-.org-property-drawer-only"><span
+class="toc-section-number">5.1</span> Tx files (.org,
+property-drawer-only)</a></li>
+<li><a href="#session-files-jsonl" id="toc-session-files-jsonl"><span
+class="toc-section-number">5.2</span> Session files (JSONL)</a></li>
+<li><a href="#no-edn-anywhere" id="toc-no-edn-anywhere"><span
+class="toc-section-number">5.3</span> No EDN anywhere</a></li>
+</ul></li>
+<li><a href="#domain-model" id="toc-domain-model"><span
+class="toc-section-number">6</span> Domain model</a>
+<ul>
+<li><a href="#skills-q6" id="toc-skills-q6"><span
+class="toc-section-number">6.1</span> Skills (Q6)</a></li>
+<li><a href="#agent-templates-q7" id="toc-agent-templates-q7"><span
+class="toc-section-number">6.2</span> Agent templates (Q7)</a></li>
+<li><a href="#prompt-templates-q8" id="toc-prompt-templates-q8"><span
+class="toc-section-number">6.3</span> Prompt templates (Q8)</a></li>
+<li><a href="#skill-injection-q8.5" id="toc-skill-injection-q8.5"><span
+class="toc-section-number">6.4</span> Skill injection (Q8.5)</a></li>
+<li><a href="#final-prompt-bundle" id="toc-final-prompt-bundle"><span
+class="toc-section-number">6.5</span> Final prompt bundle</a></li>
+<li><a href="#project-task-files-q9"
+id="toc-project-task-files-q9"><span
+class="toc-section-number">6.6</span> Project task files (Q9)</a></li>
+<li><a href="#board-q10" id="toc-board-q10"><span
+class="toc-section-number">6.7</span> Board (Q10)</a></li>
+</ul></li>
+<li><a href="#runtime" id="toc-runtime"><span
+class="toc-section-number">7</span> Runtime</a>
+<ul>
+<li><a href="#driver-layer-q11a" id="toc-driver-layer-q11a"><span
+class="toc-section-number">7.1</span> Driver layer (Q11a)</a></li>
+<li><a href="#supervisor-q11b" id="toc-supervisor-q11b"><span
+class="toc-section-number">7.2</span> Supervisor (Q11b)</a></li>
+<li><a href="#event-capture-q11c" id="toc-event-capture-q11c"><span
+class="toc-section-number">7.3</span> Event capture (Q11c)</a></li>
+<li><a href="#babysitter-pipeline-q11d-q7-4"
+id="toc-babysitter-pipeline-q11d-q7-4"><span
+class="toc-section-number">7.4</span> Babysitter pipeline (Q11d,
+Q7-4)</a></li>
+<li><a href="#spawn-paths-q11e" id="toc-spawn-paths-q11e"><span
+class="toc-section-number">7.5</span> Spawn paths (Q11e)</a></li>
+<li><a href="#daemon-restart-and-boot-reconciliation"
+id="toc-daemon-restart-and-boot-reconciliation"><span
+class="toc-section-number">7.6</span> Daemon restart and boot
+reconciliation</a></li>
+</ul></li>
+<li><a href="#manager-q12-revised" id="toc-manager-q12-revised"><span
+class="toc-section-number">8</span> Manager (Q12, revised)</a>
+<ul>
+<li><a href="#trigger-model-12a" id="toc-trigger-model-12a"><span
+class="toc-section-number">8.1</span> Trigger model (12a)</a></li>
+<li><a href="#session-model-12b" id="toc-session-model-12b"><span
+class="toc-section-number">8.2</span> Session model (12b)</a></li>
+<li><a href="#permissions-12c" id="toc-permissions-12c"><span
+class="toc-section-number">8.3</span> Permissions (12c)</a></li>
+<li><a href="#tool-surface-12d" id="toc-tool-surface-12d"><span
+class="toc-section-number">8.4</span> Tool surface (12d)</a></li>
+<li><a href="#oversight-12e" id="toc-oversight-12e"><span
+class="toc-section-number">8.5</span> Oversight (12e)</a></li>
+<li><a href="#manager-answers-worker-questions-12f"
+id="toc-manager-answers-worker-questions-12f"><span
+class="toc-section-number">8.6</span> Manager answers worker questions
+(12f)</a></li>
+</ul></li>
+<li><a href="#surfaces" id="toc-surfaces"><span
+class="toc-section-number">9</span> Surfaces</a>
+<ul>
+<li><a href="#daemon-q13a" id="toc-daemon-q13a"><span
+class="toc-section-number">9.1</span> Daemon (Q13a)</a></li>
+<li><a href="#cli-surface-q13b" id="toc-cli-surface-q13b"><span
+class="toc-section-number">9.2</span> CLI surface (Q13b)</a></li>
+<li><a href="#materialized-index-q13c"
+id="toc-materialized-index-q13c"><span
+class="toc-section-number">9.3</span> Materialized index (Q13c)</a></li>
+<li><a href="#ws-streams-q13d" id="toc-ws-streams-q13d"><span
+class="toc-section-number">9.4</span> WS streams (Q13d)</a></li>
+<li><a href="#ui-q14" id="toc-ui-q14"><span
+class="toc-section-number">9.5</span> UI (Q14)</a></li>
+</ul></li>
+<li><a href="#collaboration-model-q16"
+id="toc-collaboration-model-q16"><span
+class="toc-section-number">10</span> Collaboration model (Q16)</a></li>
+<li><a href="#defaults-q17-accepted-as-recommended"
+id="toc-defaults-q17-accepted-as-recommended"><span
+class="toc-section-number">11</span> Defaults (Q17 — accepted as
+recommended)</a></li>
+<li><a
+href="#v0.0.1-scope-q15-revised-full-vision-minus-v0.0.7-and-v0.0.8"
+id="toc-v0.0.1-scope-q15-revised-full-vision-minus-v0.0.7-and-v0.0.8"><span
+class="toc-section-number">12</span> v0.0.1 scope (Q15, revised — full
+vision minus v0.0.7 and v0.0.8)</a>
+<ul>
+<li><a href="#ships" id="toc-ships"><span
+class="toc-section-number">12.1</span> Ships</a></li>
+<li><a href="#deferred-in-spec-post-v0.0.1"
+id="toc-deferred-in-spec-post-v0.0.1"><span
+class="toc-section-number">12.2</span> Deferred (in spec,
+post-v0.0.1)</a></li>
+<li><a href="#realistic-estimate" id="toc-realistic-estimate"><span
+class="toc-section-number">12.3</span> Realistic estimate</a></li>
+</ul></li>
+<li><a href="#design-graph-layer-post-v0.0.1-v0.0.5v0.0.6"
+id="toc-design-graph-layer-post-v0.0.1-v0.0.5v0.0.6"><span
+class="toc-section-number">13</span> Design-graph layer (post-v0.0.1,
+v0.0.5–v0.0.6)</a>
+<ul>
+<li><a href="#two-scopes-global-and-per-project"
+id="toc-two-scopes-global-and-per-project"><span
+class="toc-section-number">13.1</span> Two scopes: global and
+per-project</a></li>
+<li><a href="#four-layer-graph-glossary"
+id="toc-four-layer-graph-glossary"><span
+class="toc-section-number">13.2</span> Four-layer graph +
+glossary</a></li>
+<li><a href="#file-formats-1" id="toc-file-formats-1"><span
+class="toc-section-number">13.3</span> File formats</a></li>
+<li><a href="#hashing" id="toc-hashing"><span
+class="toc-section-number">13.4</span> Hashing</a></li>
+<li><a href="#stale-propagation" id="toc-stale-propagation"><span
+class="toc-section-number">13.5</span> Stale propagation</a></li>
+<li><a href="#advisory-code-markers"
+id="toc-advisory-code-markers"><span
+class="toc-section-number">13.6</span> Advisory code markers</a></li>
+<li><a href="#adrs-as-generated-artifacts"
+id="toc-adrs-as-generated-artifacts"><span
+class="toc-section-number">13.7</span> ADRs as generated
+artifacts</a></li>
+<li><a href="#snapshots" id="toc-snapshots"><span
+class="toc-section-number">13.8</span> Snapshots</a></li>
+<li><a href="#pipeline-griller-architector-planner-implementer"
+id="toc-pipeline-griller-architector-planner-implementer"><span
+class="toc-section-number">13.9</span> Pipeline: griller → architector →
+planner → implementer</a>
+<ul>
+<li><a href="#griller-decisions-only"
+id="toc-griller-decisions-only"><span
+class="toc-section-number">13.9.1</span> griller (decisions
+only)</a></li>
+<li><a href="#architector-architecture-adr-triage"
+id="toc-architector-architecture-adr-triage"><span
+class="toc-section-number">13.9.2</span> architector (architecture + ADR
+triage)</a></li>
+<li><a href="#planner-tasks-existing-v0.0.1-kind-new-responsibility"
+id="toc-planner-tasks-existing-v0.0.1-kind-new-responsibility"><span
+class="toc-section-number">13.9.3</span> planner (tasks; existing v0.0.1
+kind, new responsibility)</a></li>
+<li><a href="#implementer-code-existing-v0.0.1-kind-unchanged"
+id="toc-implementer-code-existing-v0.0.1-kind-unchanged"><span
+class="toc-section-number">13.9.4</span> implementer (code; existing
+v0.0.1 kind, unchanged)</a></li>
+<li><a href="#glossarist-glossary-maintenance"
+id="toc-glossarist-glossary-maintenance"><span
+class="toc-section-number">13.9.5</span> glossarist (glossary
+maintenance)</a></li>
+</ul></li>
+<li><a href="#grilling-session-lifecycle"
+id="toc-grilling-session-lifecycle"><span
+class="toc-section-number">13.10</span> Grilling-session
+lifecycle</a></li>
+<li><a href="#reconciliation-session-lifecycle"
+id="toc-reconciliation-session-lifecycle"><span
+class="toc-section-number">13.11</span> Reconciliation-session
+lifecycle</a></li>
+<li><a href="#daemon-rpcs-additions"
+id="toc-daemon-rpcs-additions"><span
+class="toc-section-number">13.12</span> Daemon RPCs (additions)</a></li>
+<li><a href="#ui-additions" id="toc-ui-additions"><span
+class="toc-section-number">13.13</span> UI additions</a></li>
+<li><a href="#critical-invariants-extends-defaults"
+id="toc-critical-invariants-extends-defaults"><span
+class="toc-section-number">13.14</span> Critical invariants (extends
+<code class="verbatim">* Defaults</code>)</a></li>
+</ul></li>
+<li><a href="#lineage-references" id="toc-lineage-references"><span
+class="toc-section-number">14</span> Lineage &amp; references</a></li>
+<li><a href="#open-questions-for-v0.0.1-implementation"
+id="toc-open-questions-for-v0.0.1-implementation"><span
+class="toc-section-number">15</span> Open questions for v0.0.1
+implementation</a></li>
+</ul>
+  </aside>
+  <main class="content">
+    <header class="doc-header">
+      <h1 class="doc-title">orgasmic — initial design spec</h1>
+      <p class="doc-meta">
+        theaspirational &middot; 2026-05-21
+      </p>
+    </header>
+<section id="deprecation-notice" class="level1" data-number="1">
+<h1 data-number="1"><span class="header-section-number">1</span>
+Deprecation notice</h1>
+<p>This file is historical provenance for the initial design session. It
+is no longer the active source of truth for implementation work.</p>
+<p>Current project state lives in:</p>
+<ul>
+<li><code class="verbatim">.orgasmic/project.org</code></li>
+<li><code class="verbatim">.orgasmic/sprint.org</code></li>
+<li><code class="verbatim">.orgasmic/decisions.org</code></li>
+<li><code class="verbatim">.orgasmic/architecture.org</code></li>
+<li><code class="verbatim">.orgasmic/glossary.org</code></li>
+<li><code class="verbatim">docs/adr/*.org</code></li>
+</ul>
+<p>When this archive conflicts with current code or current <code
+class="verbatim">.orgasmic/</code> graph state, prefer the current code
+and graph, then update the graph/tasks/ADRs.</p>
+</section>
+<section id="mission" class="level1" data-number="2">
+<h1 data-number="2"><span class="header-section-number">2</span>
+Mission</h1>
+<p>orgasmic is a repo-cloned, file-native, agent-aware coordination app
+for any developer running AI agents on their projects.</p>
+<p>It is inspired by HAR (typed worker drivers, materialized views,
+structured event log) and org-mode (plain-text, Git-native, append-only
+project memory).</p>
+<p>The "sweet spot" between the two: HAR's worker execution + manager
+pattern + materialized index, applied over .org files as the canonical
+substrate, with each developer running their own instance and
+multi-human coordination happening via plain Git on each project's
+`.orgasmic/` directory.</p>
+</section>
+<section id="install-and-data-model" class="level1" data-number="3">
+<h1 data-number="3"><span class="header-section-number">3</span> Install
+and data model</h1>
+<section id="two-layer-layout" class="level2" data-number="3.1">
+<h2 data-number="3.1"><span class="header-section-number">3.1</span>
+Two-layer layout</h2>
+<p>Modeled on hermes-agent. The cloned source lives <em>inside</em> a
+home directory, not <em>as</em> it — so updates never collide with user
+data.</p>
+<pre class="text"><code>$ORGASMIC_HOME = $HOME/.orgasmic       (overridable via env var)
+
+$ORGASMIC_HOME/
+  orgasmic/          ← git clone of this repo. Never edit for personal use.
+    crates/
+      orgasmic-core/
+      orgasmic-daemon/
+      orgasmic-cli/
+      orgasmic-drivers/
+    ui/
+    shipped/
+      agent-templates/*.org
+      prompts/&lt;kind&gt;/&lt;state&gt;.org
+      skills/native/&lt;id&gt;/SKILL.md
+      schema/{tx,state-machine,slots,agent-template,prompt-template}.org
+      manager/persona.org
+      conventions/code-markers.org    ← advisory in-code marker format (v0.0.5)
+      project-scaffold/{project,sprint,backlog,archive}.org
+    scripts/install.sh
+    target/release/orgasmic       ← built binary
+
+  user/             ← user overrides + user-authored content. Gitignore-free
+                      because it&#39;s not in the repo.
+    agent-templates/*.org        ← overrides + user-authored
+    prompts/&lt;kind&gt;/&lt;state&gt;.org   ← overrides
+    skills/*.org                 ← skill metadata sidecars
+    skills/native/&lt;id&gt;/SKILL.md  ← user-authored native skills
+    manager/persona.org          ← if user overrides
+    board.org                    ← projects board (pointer list)
+    auth.org                     ← API tokens (gitignored at any commit)
+    glossary.org                 ← global vocabulary (v0.0.5)
+    decisions.org                ← global decision graph (v0.0.5)
+    architecture.org             ← global architecture nodes (v0.0.5)
+    context-map.org              ← multi-context map for global scope (v0.0.6)
+    docs/adr/*.org               ← daemon-generated global ADRs (v0.0.6)
+
+  state/
+    tx/YYYY-MM.org               ← instance-scoped audit log (NOT committed)
+    snapshots/&lt;uuidv7&gt;/          ← global-scope graph snapshots (v0.0.5)
+  sessions/&lt;run-id&gt;.jsonl        ← per-run transcripts
+  secrets/                       ← model provider API keys, plaintext files
+  logs/orgasmic.log               ← daemon process log (rotates at 100MB)
+  bin/orgasmic                    ← symlink to orgasmic/target/release/orgasmic
+  config.yaml                    ← top-level user config
+</code></pre>
+</section>
+<section id="loader-rule-universal" class="level2" data-number="3.2">
+<h2 data-number="3.2"><span class="header-section-number">3.2</span>
+Loader rule (universal)</h2>
+<p>For every shipped-overridable file: read <code
+class="verbatim">user/&lt;relative-path&gt;</code> first; if absent,
+fall back to <code
+class="verbatim">orgasmic/shipped/&lt;relative-path&gt;</code>. Users
+never edit inside <code class="verbatim">orgasmic/</code>; if they want
+to customize, they copy to <code class="verbatim">user/</code> and edit
+there.</p>
+</section>
+<section id="install-one-liner" class="level2" data-number="3.3">
+<h2 data-number="3.3"><span class="header-section-number">3.3</span>
+Install one-liner</h2>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-fsSL</span> https://raw.githubusercontent.com/<span class="op">&lt;</span>owner<span class="op">&gt;</span>/orgasmic/main/scripts/install.sh <span class="kw">|</span> <span class="fu">bash</span></span></code></pre></div>
+<p>Installer clones the repo into <code
+class="verbatim">$ORGASMIC_HOME/orgasmic/</code>, runs <code
+class="verbatim">cargo build --release</code>, symlinks the binary into
+<code class="verbatim">$ORGASMIC_HOME/bin/</code>, and scaffolds the home
+dirs. Implementation in <code class="verbatim">scripts/install.sh</code>
+mirrors hermes-agent's shape (SSH-first clone, HTTPS fallback,
+auto-stash + restore on update, <code class="verbatim">--branch</code>,
+<code class="verbatim">--dir</code>, <code
+class="verbatim">--no-build</code> flags).</p>
+</section>
+<section id="update" class="level2" data-number="3.4">
+<h2 data-number="3.4"><span class="header-section-number">3.4</span>
+Update</h2>
+<p><code class="verbatim">orgasmic update</code> does <code
+class="verbatim">git fetch &amp;&amp; git checkout BRANCH &amp;&amp; git pull --ff-only</code>
+inside <code class="verbatim">orgasmic/</code>, then <code
+class="verbatim">cargo build --release</code>, then refreshes the
+symlink. Auto-stashes any local edits inside <code
+class="verbatim">orgasmic/</code> (which shouldn't exist if the override
+rule is followed) and prompts to restore.</p>
+</section>
+<section id="contributing" class="level2" data-number="3.5">
+<h2 data-number="3.5"><span class="header-section-number">3.5</span>
+Contributing</h2>
+<p>Standard fork + PR per <code class="verbatim">CONTRIBUTING.md</code>.
+Priorities: bug fixes &gt; cross-platform &gt; security &gt; performance
+&gt; shipped content &gt; docs.</p>
+</section>
+<section id="three-tier-shippedoptionalhub-split" class="level2"
+data-number="3.6">
+<h2 data-number="3.6"><span class="header-section-number">3.6</span>
+Three-tier shipped/optional/hub split</h2>
+<p>Applies to skills, agent templates, AND prompt templates:</p>
+<ul>
+<li><strong>Bundled</strong>: ships in <code
+class="verbatim">orgasmic/shipped/</code>, always available.</li>
+<li><strong>Optional</strong>: ships in <code
+class="verbatim">orgasmic/optional/</code>, opt-in via <code
+class="verbatim">orgasmic {skills,agent-templates,prompts} install &lt;id&gt;</code>.</li>
+<li><strong>Hub</strong>: community-published, installable by URL.</li>
+</ul>
+</section>
+</section>
+<section id="file-substrate" class="level1" data-number="4">
+<h1 data-number="4"><span class="header-section-number">4</span> File
+substrate</h1>
+<section id="write-surface" class="level2" data-number="4.1">
+<h2 data-number="4.1"><span class="header-section-number">4.1</span>
+Write surface</h2>
+<p>Hybrid by file role.</p>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Edit model</th>
+<th>Writers</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>user/agent-templates/*.org</td>
+<td>direct rewrite</td>
+<td>human, manager (via RPC + flock)</td>
+</tr>
+<tr>
+<td>user/prompts/&lt;kind&gt;/&lt;state&gt;.org</td>
+<td>direct rewrite</td>
+<td>human, manager</td>
+</tr>
+<tr>
+<td>user/skills/*.org</td>
+<td>direct rewrite</td>
+<td>human, manager, discoverer</td>
+</tr>
+<tr>
+<td>user/manager/persona.org</td>
+<td>direct rewrite</td>
+<td>human only</td>
+</tr>
+<tr>
+<td>user/board.org</td>
+<td>direct rewrite</td>
+<td>human, manager</td>
+</tr>
+<tr>
+<td>user/{glossary,decisions,architecture}.org</td>
+<td>RPC-only</td>
+<td>daemon (griller/architector/glossarist)</td>
+</tr>
+<tr>
+<td>user/context-map.org</td>
+<td>direct rewrite</td>
+<td>human</td>
+</tr>
+<tr>
+<td>user/docs/adr/*.org</td>
+<td>regenerated</td>
+<td>daemon (hand-edits rejected)</td>
+</tr>
+<tr>
+<td>&lt;project&gt;/.orgasmic/*.org</td>
+<td>direct rewrite</td>
+<td>human, manager, worker (own task)</td>
+</tr>
+<tr>
+<td>&lt;project&gt;/.orgasmic/{glossary,decisions,architecture}.org</td>
+<td>RPC-only</td>
+<td>daemon (griller/architector/glossarist)</td>
+</tr>
+<tr>
+<td>&lt;project&gt;/.orgasmic/context-map.org</td>
+<td>direct rewrite</td>
+<td>human</td>
+</tr>
+<tr>
+<td>&lt;project&gt;/docs/adr/*.org</td>
+<td>regenerated</td>
+<td>daemon (hand-edits rejected)</td>
+</tr>
+<tr>
+<td>state/tx/YYYY-MM.org</td>
+<td>append-only</td>
+<td>daemon (single writer)</td>
+</tr>
+<tr>
+<td>state/snapshots/&lt;id&gt;/*.org</td>
+<td>copy-on-snapshot</td>
+<td>daemon (atomic rename)</td>
+</tr>
+<tr>
+<td>&lt;project&gt;/.orgasmic/tx/YYYY-MM.org</td>
+<td>append-only</td>
+<td>daemon (single writer)</td>
+</tr>
+<tr>
+<td>&lt;project&gt;/.orgasmic/snapshots/&lt;id&gt;/*.org</td>
+<td>copy-on-snapshot</td>
+<td>daemon (atomic rename)</td>
+</tr>
+<tr>
+<td>sessions/&lt;run-id&gt;.jsonl</td>
+<td>append-only</td>
+<td>per-run writer (daemon-mediated)</td>
+</tr>
+</tbody>
+</table>
+<p>Workers may write directly to <code
+class="verbatim">** Evidence</code> and <code
+class="verbatim">** Worklog</code> inside <em>their own</em> claimed
+task heading, and may flip their own <code
+class="verbatim">:STATE:</code> via the <code
+class="verbatim">transition_state(new, reason)</code> tool. Everything
+else goes through daemon RPC.</p>
+</section>
+<section id="concurrency" class="level2" data-number="4.2">
+<h2 data-number="4.2"><span class="header-section-number">4.2</span>
+Concurrency</h2>
+<p>Direct-edit files use advisory <code class="verbatim">flock</code>.
+Manager retries with timeout (default 30s); on timeout, posts a
+user-visible notification rather than overriding. Workers only contend
+on their own claimed task.</p>
+</section>
+<section id="parse-failures" class="level2" data-number="4.3">
+<h2 data-number="4.3"><span class="header-section-number">4.3</span>
+Parse failures</h2>
+<p>Daemon keeps last-good in-memory index. UI shows red badge with file
++ line number. Daemon does not crash on parse errors of working files.
+Tx files are the exception: daemon refuses to start if it detects
+post-hoc modification of historical tx (verified via manifest hash).</p>
+</section>
+</section>
+<section id="file-formats" class="level1" data-number="5">
+<h1 data-number="5"><span class="header-section-number">5</span> File
+formats</h1>
+<section id="tx-files-.org-property-drawer-only" class="level2"
+data-number="5.1">
+<h2 data-number="5.1"><span class="header-section-number">5.1</span> Tx
+files (.org, property-drawer-only)</h2>
+<p>Each tx is a heading + property drawer. <em>No EDN blocks</em>. No
+body content.</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* TX 2026-05-21 14:32 run.start abc-123</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="in">:TX_ID:       tx-20260521-001</span></span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a><span class="in">:TIME:        [2026-05-21 Thu 14:32:07]</span></span>
+<span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="in">:TYPE:        run.start</span></span>
+<span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="in">:ACTOR:       theaspirational</span></span>
+<span id="cb3-7"><a href="#cb3-7" aria-hidden="true" tabindex="-1"></a><span class="in">:MACHINE:     macbook-pro</span></span>
+<span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="in">:RUN:         abc-123</span></span>
+<span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="in">:TASK:        TASK-024</span></span>
+<span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a><span class="in">:WORKER:      worker-backend-03</span></span>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="in">:AGENT_TEMPLATE: implementer-claude</span></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="in">:PROMPT_HASH: sha256:f3a2…</span></span>
+<span id="cb3-13"><a href="#cb3-13" aria-hidden="true" tabindex="-1"></a><span class="in">:SESSION:     sessions/abc-123.jsonl</span></span>
+<span id="cb3-14"><a href="#cb3-14" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span></code></pre></div>
+<p>Rules:</p>
+<ul>
+<li>Header line = timestamp + type + entity (so grep is the operational
+debug tool).</li>
+<li>Properties typed by name; schema in <code
+class="verbatim">shipped/schema/tx.org</code>.</li>
+<li>Pointers, not content (<code class="verbatim">:SESSION:</code>,
+<code class="verbatim">:PAYLOAD:</code>, <code
+class="verbatim">:DIFF:</code> → external refs).</li>
+<li>Append-only via O<sub>APPEND</sub>.</li>
+<li>Daemon is the sole writer.</li>
+<li>If a tx would need &gt;12 properties or nested structure, refactor
+into a working-file rewrite — not a tx.</li>
+</ul>
+<p>Two locations:</p>
+<ul>
+<li><code class="verbatim">$ORGASMIC_HOME/state/tx/YYYY-MM.org</code>:
+instance-scoped daemon audit log. <em>Not committed.</em> Per
+Q16-2.</li>
+<li><code
+class="verbatim">&lt;project&gt;/.orgasmic/tx/YYYY-MM.org</code>:
+project-scoped tx. <em>Committed</em> — teammates see the history after
+<code class="verbatim">git pull</code>.</li>
+</ul>
+</section>
+<section id="session-files-jsonl" class="level2" data-number="5.2">
+<h2 data-number="5.2"><span class="header-section-number">5.2</span>
+Session files (JSONL)</h2>
+<p>One file per run: <code
+class="verbatim">sessions/&lt;run-id&gt;.jsonl</code>. Line 0 =
+envelope; subsequent lines are events.</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;schema&quot;</span><span class="fu">:</span><span class="st">&quot;orgasmic.session.v1&quot;</span><span class="fu">,</span><span class="dt">&quot;run&quot;</span><span class="fu">:</span><span class="st">&quot;abc-123&quot;</span><span class="fu">,</span><span class="dt">&quot;task&quot;</span><span class="fu">:</span><span class="st">&quot;TASK-024&quot;</span><span class="fu">,</span><span class="dt">&quot;worker&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;agent_template&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;started_at&quot;</span><span class="fu">:</span><span class="st">&quot;2026-05-21T14:32:07Z&quot;</span><span class="fu">}</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;t&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;prompt.system&quot;</span><span class="fu">,</span><span class="dt">&quot;content&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">}</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;t&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;prompt.user&quot;</span><span class="fu">,</span><span class="dt">&quot;content&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">}</span></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;t&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;tool.call&quot;</span><span class="fu">,</span><span class="dt">&quot;tool&quot;</span><span class="fu">:</span><span class="st">&quot;Read&quot;</span><span class="fu">,</span><span class="dt">&quot;args&quot;</span><span class="fu">:{</span><span class="dt">&quot;path&quot;</span><span class="fu">:</span><span class="st">&quot;src/foo.rs&quot;</span><span class="fu">}}</span></span>
+<span id="cb4-5"><a href="#cb4-5" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;t&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;tool.result&quot;</span><span class="fu">,</span><span class="dt">&quot;tool&quot;</span><span class="fu">:</span><span class="st">&quot;Read&quot;</span><span class="fu">,</span><span class="dt">&quot;ok&quot;</span><span class="fu">:</span><span class="kw">true</span><span class="fu">,</span><span class="dt">&quot;bytes&quot;</span><span class="fu">:</span><span class="dv">1432</span><span class="fu">}</span></span>
+<span id="cb4-6"><a href="#cb4-6" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;t&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;text.delta&quot;</span><span class="fu">,</span><span class="dt">&quot;content&quot;</span><span class="fu">:</span><span class="st">&quot;Looking at…&quot;</span><span class="fu">}</span></span>
+<span id="cb4-7"><a href="#cb4-7" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;t&quot;</span><span class="fu">:</span><span class="st">&quot;...&quot;</span><span class="fu">,</span><span class="dt">&quot;kind&quot;</span><span class="fu">:</span><span class="st">&quot;finish&quot;</span><span class="fu">,</span><span class="dt">&quot;reason&quot;</span><span class="fu">:</span><span class="st">&quot;end_turn&quot;</span><span class="fu">}</span></span></code></pre></div>
+<p>Rules:</p>
+<ul>
+<li>Every event has <code class="verbatim">t</code> + <code
+class="verbatim">kind</code>; the rest is kind-specific.</li>
+<li>Format mirrors the worker's native transcript shape where possible
+(Claude Code session.jsonl, codex events, Anthropic Messages,
+etc.).</li>
+<li>Append-only via O<sub>APPEND</sub>.</li>
+<li><em>No automatic compression in v0.0.1.</em> Inspection stays one
+<code class="verbatim">tail</code> + <code class="verbatim">jq</code>
+away. Compression sweep can come later when disk becomes a problem.</li>
+</ul>
+</section>
+<section id="no-edn-anywhere" class="level2" data-number="5.3">
+<h2 data-number="5.3"><span class="header-section-number">5.3</span> No
+EDN anywhere</h2>
+<p>The migration spec for HAR
+(../har/docs/future/tx-log-to-org-hybrid-migration-spec.org) leaned on
+EDN payloads. orgasmic does not. If structured nested data is ever
+required, it gets introduced explicitly with a schema versioning bump —
+not as a casual escape hatch.</p>
+</section>
+</section>
+<section id="domain-model" class="level1" data-number="6">
+<h1 data-number="6"><span class="header-section-number">6</span> Domain
+model</h1>
+<section id="skills-q6" class="level2" data-number="6.1">
+<h2 data-number="6.1"><span class="header-section-number">6.1</span>
+Skills (Q6)</h2>
+<p>Orgasmic owns metadata, not skill content.</p>
+<pre class="text"><code>user/skills/discovered.org   ← auto-maintained index of all known skills
+user/skills/&lt;skill-id&gt;.org   ← per-skill metadata sidecar
+</code></pre>
+<p>A sidecar:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* SKILL git-workflows</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb6-3"><a href="#cb6-3" aria-hidden="true" tabindex="-1"></a><span class="in">:ID:                git-workflows</span></span>
+<span id="cb6-4"><a href="#cb6-4" aria-hidden="true" tabindex="-1"></a><span class="in">:SOURCE:            ~/.claude/skills/git-workflows         ← absolute path</span></span>
+<span id="cb6-5"><a href="#cb6-5" aria-hidden="true" tabindex="-1"></a><span class="in">:KIND:              external                              ← external | native</span></span>
+<span id="cb6-6"><a href="#cb6-6" aria-hidden="true" tabindex="-1"></a><span class="in">:HOST:              claude-code                           ← claude-code | codex | hermes | agentskills | native</span></span>
+<span id="cb6-7"><a href="#cb6-7" aria-hidden="true" tabindex="-1"></a><span class="in">:VERSION:           2.1.0</span></span>
+<span id="cb6-8"><a href="#cb6-8" aria-hidden="true" tabindex="-1"></a><span class="in">:DESCRIPTION:       (extracted from SKILL.md frontmatter)</span></span>
+<span id="cb6-9"><a href="#cb6-9" aria-hidden="true" tabindex="-1"></a><span class="in">:TRIGGERS:          git push, rebase, hook failure</span></span>
+<span id="cb6-10"><a href="#cb6-10" aria-hidden="true" tabindex="-1"></a><span class="in">:FAVORITE:          true</span></span>
+<span id="cb6-11"><a href="#cb6-11" aria-hidden="true" tabindex="-1"></a><span class="in">:CATEGORY:          dev-workflow</span></span>
+<span id="cb6-12"><a href="#cb6-12" aria-hidden="true" tabindex="-1"></a><span class="in">:TAGS:              git, branching, rebase</span></span>
+<span id="cb6-13"><a href="#cb6-13" aria-hidden="true" tabindex="-1"></a><span class="in">:LINKED_TEMPLATES:  backend-implementer-v2, qa-reviewer-v1</span></span>
+<span id="cb6-14"><a href="#cb6-14" aria-hidden="true" tabindex="-1"></a><span class="in">:DISCOVERED_AT:     [2026-05-20 Wed 11:00]</span></span>
+<span id="cb6-15"><a href="#cb6-15" aria-hidden="true" tabindex="-1"></a><span class="in">:LAST_USED:         [2026-05-21 Thu 14:32]</span></span>
+<span id="cb6-16"><a href="#cb6-16" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb6-17"><a href="#cb6-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-18"><a href="#cb6-18" aria-hidden="true" tabindex="-1"></a><span class="fu">** Notes</span></span>
+<span id="cb6-19"><a href="#cb6-19" aria-hidden="true" tabindex="-1"></a><span class="ot">[user-editable</span>]</span>
+<span id="cb6-20"><a href="#cb6-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb6-21"><a href="#cb6-21" aria-hidden="true" tabindex="-1"></a><span class="fu">** Manual overrides</span></span>
+<span id="cb6-22"><a href="#cb6-22" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb6-23"><a href="#cb6-23" aria-hidden="true" tabindex="-1"></a><span class="in">:OVERRIDE_DESCRIPTION: Use only on branches that already passed CI.</span></span>
+<span id="cb6-24"><a href="#cb6-24" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span></code></pre></div>
+<p>Discovery (<code class="verbatim">orgasmic skills discover</code>)
+scans configured host roots (<code
+class="verbatim">~/.claude/skills/</code>, <code
+class="verbatim">~/.codex/skills/</code>, <code
+class="verbatim">~/.hermes/skills/</code>, agentskills.io cache, <code
+class="verbatim">user/skills/native/</code>) and writes/updates
+sidecars. Discovery is opt-in / on-demand at v0.0.1.</p>
+</section>
+<section id="agent-templates-q7" class="level2" data-number="6.2">
+<h2 data-number="6.2"><span class="header-section-number">6.2</span>
+Agent templates (Q7)</h2>
+<p>Singular file per template; persona + linked skills + driver/model
+defaults + operational metadata.</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* AGENT-TEMPLATE backend-implementer-v2</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a><span class="in">:ID:                          backend-implementer-v2</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="in">:KIND:                        implementer</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="in">:DEFAULT_DRIVER:              claude-acp</span></span>
+<span id="cb7-6"><a href="#cb7-6" aria-hidden="true" tabindex="-1"></a><span class="in">:DEFAULT_PROVIDER:            anthropic</span></span>
+<span id="cb7-7"><a href="#cb7-7" aria-hidden="true" tabindex="-1"></a><span class="in">:DEFAULT_MODEL:               claude-sonnet-4-6</span></span>
+<span id="cb7-8"><a href="#cb7-8" aria-hidden="true" tabindex="-1"></a><span class="in">:DEFAULT_EFFORT:              high</span></span>
+<span id="cb7-9"><a href="#cb7-9" aria-hidden="true" tabindex="-1"></a><span class="in">:LINKED_SKILLS:               git-workflows, rust-error-handling, sqlite-migrations</span></span>
+<span id="cb7-10"><a href="#cb7-10" aria-hidden="true" tabindex="-1"></a><span class="in">:APPLICABLE_STATES:           claimed, analyzing, implementing, fixing</span></span>
+<span id="cb7-11"><a href="#cb7-11" aria-hidden="true" tabindex="-1"></a><span class="in">:MAX_ITERATIONS:              20</span></span>
+<span id="cb7-12"><a href="#cb7-12" aria-hidden="true" tabindex="-1"></a><span class="in">:CONTEXT_BUDGET:              150000</span></span>
+<span id="cb7-13"><a href="#cb7-13" aria-hidden="true" tabindex="-1"></a><span class="in">:BABYSITTER_AGENT_TEMPLATE:   babysitter-stall-detector</span></span>
+<span id="cb7-14"><a href="#cb7-14" aria-hidden="true" tabindex="-1"></a><span class="in">:VERSION:                     2</span></span>
+<span id="cb7-15"><a href="#cb7-15" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb7-16"><a href="#cb7-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-17"><a href="#cb7-17" aria-hidden="true" tabindex="-1"></a><span class="fu">** Persona</span></span>
+<span id="cb7-18"><a href="#cb7-18" aria-hidden="true" tabindex="-1"></a><span class="ot">[short prose; injected as system content</span>]</span>
+<span id="cb7-19"><a href="#cb7-19" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-20"><a href="#cb7-20" aria-hidden="true" tabindex="-1"></a><span class="fu">** Operating Rules</span></span>
+<span id="cb7-21"><a href="#cb7-21" aria-hidden="true" tabindex="-1"></a><span class="ot">[bullet list; injected as additional system content</span>]</span>
+<span id="cb7-22"><a href="#cb7-22" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-23"><a href="#cb7-23" aria-hidden="true" tabindex="-1"></a><span class="fu">** Notes</span></span>
+<span id="cb7-24"><a href="#cb7-24" aria-hidden="true" tabindex="-1"></a><span class="ot">[free-form, user-editable; NOT injected</span>]</span></code></pre></div>
+<p><code class="verbatim">:KIND:</code> taxonomy (fixed in schema, <code
+class="verbatim">custom</code> as escape hatch): implementer | reviewer
+| planner | analyzer | babysitter | griller | architector | glossarist |
+custom | manager.</p>
+<p>The <code class="verbatim">griller</code>, <code
+class="verbatim">architector</code>, and <code
+class="verbatim">glossarist</code> kinds belong to the post-v0.0.1
+design-graph layer; see <code
+class="verbatim">* Design-graph layer</code> for their state machines
+and tool sets. <code class="verbatim">planner</code> and <code
+class="verbatim">implementer</code> (already in v0.0.1) gain new
+responsibilities in that layer: planner owns task proposal from settled
+architecture; implementer continues to own code edits. There is no <code
+class="verbatim">reconciler</code> kind — reconciliation is the manager
+re-running this same pipeline against the stale subgraph.</p>
+<p>Babysitters are first-class agent templates with <code
+class="verbatim">:KIND: babysitter</code>, <em>not</em> a separate
+concept. Same machinery, different persona and state taxonomy.</p>
+<p>If a linked skill is missing at compile time → compile error in
+dry-run, spawn blocked in production with a UI-visible "missing skill X
+for template Y."</p>
+</section>
+<section id="prompt-templates-q8" class="level2" data-number="6.3">
+<h2 data-number="6.3"><span class="header-section-number">6.3</span>
+Prompt templates (Q8)</h2>
+<p>One file per (kind, state) tuple.</p>
+<pre class="text"><code>shipped/prompts/&lt;kind&gt;/&lt;state&gt;.org
+user/prompts/&lt;kind&gt;/&lt;state&gt;.org    ← overrides
+</code></pre>
+<p>Each file:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* PROMPT implementer/implementing</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a><span class="in">:KIND:    implementer</span></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="in">:STATE:   implementing</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="in">:VERSION: 2</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="fu">** Spawn-time injection</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a><span class="ot">[used when a run starts in this state; rare</span>]</span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="fu">** Continuation injection</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a><span class="ot">[used when a run transitions /into/ this state mid-run; common</span>]</span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a><span class="fu">** Notes</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a><span class="ot">[user-editable, not injected</span>]</span></code></pre></div>
+<p>Slot syntax: <code class="verbatim">/strict/</code> variable
+substitution, <code class="verbatim">/no/</code> conditionals/loops.
+Registry in <code class="verbatim">shipped/schema/slots.org</code>. See
+that file for the v0.0.1 slot set. Dry-run validates and reports unknown
+/ unfilled slots.</p>
+</section>
+<section id="skill-injection-q8.5" class="level2" data-number="6.4">
+<h2 data-number="6.4"><span class="header-section-number">6.4</span>
+Skill injection (Q8.5)</h2>
+<p><code class="verbatim">={{skills.all}}=</code> renders a
+<em>manifest</em>, not the bodies:</p>
+<pre class="text"><code>You have access to these skills. Use your Read tool to load any that match
+your current situation:
+
+- git-workflows
+  Description: …
+  Triggers: …
+  Path: /Users/.../skills/git-workflows/SKILL.md
+…
+</code></pre>
+<p>Three variants:</p>
+<ul>
+<li><code class="verbatim">={{skills.all}}=</code> — manifest
+(default).</li>
+<li><code class="verbatim">={{skills.&lt;id&gt;}}=</code> — full body
+inline (rare, explicit).</li>
+<li><code class="verbatim">={{skill_path.&lt;id&gt;}}=</code> — just the
+path string.</li>
+</ul>
+<p>Token savings + source-of-truth fidelity + lazy-load matches Claude
+Code's actual skill loading model.</p>
+</section>
+<section id="final-prompt-bundle" class="level2" data-number="6.5">
+<h2 data-number="6.5"><span class="header-section-number">6.5</span>
+Final prompt bundle</h2>
+<p>At spawn:</p>
+<ol>
+<li><strong>System</strong> = template's <code
+class="verbatim">** Persona</code> + <code
+class="verbatim">** Operating Rules</code>.</li>
+<li><strong>Skill manifest</strong> = result of <code
+class="verbatim">={{skills.all}}=</code> injection.</li>
+<li><strong>User turn #1</strong> = <code
+class="verbatim">prompts/&lt;kind&gt;/&lt;state&gt;.org</code> <code
+class="verbatim">** Spawn-time injection</code> with slots filled.</li>
+<li>Hand to driver.</li>
+</ol>
+<p>At state transition mid-run:</p>
+<ol>
+<li>Driver session continues (same conversation).</li>
+<li>Daemon injects user turn = <code
+class="verbatim">prompts/&lt;kind&gt;/&lt;new_state&gt;.org</code> <code
+class="verbatim">** Continuation   injection</code> with slots
+filled.</li>
+<li>Supervisor advances run state; writes <code
+class="verbatim">run.transitioned</code> tx.</li>
+</ol>
+<p>State transition is initiated by a worker-callable tool <code
+class="verbatim">transition_state(new_state: str, reason: str)</code>.
+Supervisor validates against the per-kind state machine. Invalid
+transitions return an error result to the worker.</p>
+</section>
+<section id="project-task-files-q9" class="level2" data-number="6.6">
+<h2 data-number="6.6"><span class="header-section-number">6.6</span>
+Project task files (Q9)</h2>
+<p>Per-project state lives <em>inside</em> the project repo at <code
+class="verbatim">&lt;project&gt;/.orgasmic/</code>.</p>
+<pre class="text"><code>&lt;project&gt;/.orgasmic/
+  project.org              ← identity + project-global settings
+  sprint.org               ← active tasks
+  backlog.org              ← unready / future tasks
+  archive.org              ← terminal-state tasks (machine-managed)
+  tx/YYYY-MM.org           ← project-scoped tx (committed)
+  glossary.org             ← project glossary (overrides + extends global, v0.0.5)
+  decisions.org            ← project decision graph (v0.0.5)
+  architecture.org         ← project architecture nodes (v0.0.5)
+  context-map.org          ← per-project bounded-context map (v0.0.6)
+  snapshots/&lt;uuidv7&gt;/      ← graph snapshots (uncommitted, v0.0.5)
+  risks.org                ← risk register (optional, v0.0.7)
+&lt;project&gt;/docs/adr/*.org   ← daemon-generated ADRs (committed, v0.0.6)
+</code></pre>
+<p>A task heading:</p>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* CLAIMED TASK-024 Add retry handling :backend:reliability:</span></span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a><span class="in">:ID:                TASK-024</span></span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a><span class="in">:KIND:              implementer</span></span>
+<span id="cb12-5"><a href="#cb12-5" aria-hidden="true" tabindex="-1"></a><span class="in">:STATE:             claimed</span></span>
+<span id="cb12-6"><a href="#cb12-6" aria-hidden="true" tabindex="-1"></a><span class="in">:PRIORITY:          P1</span></span>
+<span id="cb12-7"><a href="#cb12-7" aria-hidden="true" tabindex="-1"></a><span class="in">:OWNER:             worker-backend-03</span></span>
+<span id="cb12-8"><a href="#cb12-8" aria-hidden="true" tabindex="-1"></a><span class="in">:AGENT_TEMPLATE:    backend-implementer-v2</span></span>
+<span id="cb12-9"><a href="#cb12-9" aria-hidden="true" tabindex="-1"></a><span class="in">:WRITE_SCOPE:       src/payment_client.py tests/test_payment_client.py</span></span>
+<span id="cb12-10"><a href="#cb12-10" aria-hidden="true" tabindex="-1"></a><span class="in">:READ_SCOPE:        src/** tests/**</span></span>
+<span id="cb12-11"><a href="#cb12-11" aria-hidden="true" tabindex="-1"></a><span class="in">:DEPENDS_ON:</span></span>
+<span id="cb12-12"><a href="#cb12-12" aria-hidden="true" tabindex="-1"></a><span class="in">:BLOCKED_BY:</span></span>
+<span id="cb12-13"><a href="#cb12-13" aria-hidden="true" tabindex="-1"></a><span class="in">:TEST_CMD:          pytest tests/test_payment_client.py</span></span>
+<span id="cb12-14"><a href="#cb12-14" aria-hidden="true" tabindex="-1"></a><span class="in">:LAST_RUN:          run-abc-123</span></span>
+<span id="cb12-15"><a href="#cb12-15" aria-hidden="true" tabindex="-1"></a><span class="in">:LAST_TX:           tx-20260521-001</span></span>
+<span id="cb12-16"><a href="#cb12-16" aria-hidden="true" tabindex="-1"></a><span class="in">:LAST_UPDATED:      [2026-05-21 Thu 14:32]</span></span>
+<span id="cb12-17"><a href="#cb12-17" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb12-18"><a href="#cb12-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb12-19"><a href="#cb12-19" aria-hidden="true" tabindex="-1"></a><span class="fu">** Description</span></span>
+<span id="cb12-20"><a href="#cb12-20" aria-hidden="true" tabindex="-1"></a><span class="fu">** Acceptance Criteria</span></span>
+<span id="cb12-21"><a href="#cb12-21" aria-hidden="true" tabindex="-1"></a><span class="ss">- </span><span class="va">[ ]</span> …</span>
+<span id="cb12-22"><a href="#cb12-22" aria-hidden="true" tabindex="-1"></a><span class="fu">** Evidence</span></span>
+<span id="cb12-23"><a href="#cb12-23" aria-hidden="true" tabindex="-1"></a><span class="ot">[appended by worker</span>]</span>
+<span id="cb12-24"><a href="#cb12-24" aria-hidden="true" tabindex="-1"></a><span class="fu">** Worklog</span></span>
+<span id="cb12-25"><a href="#cb12-25" aria-hidden="true" tabindex="-1"></a><span class="ot">[appended by worker</span>]</span></code></pre></div>
+<ul>
+<li>TODO keyword = state.</li>
+<li>Sub-tasks use heading depth (<code class="verbatim">***</code>,
+<code class="verbatim">****</code>); inherit parent properties.</li>
+<li>Workers write only to their own claimed task's <code
+class="verbatim">** Evidence</code> and <code
+class="verbatim">** Worklog</code>, plus state via <code
+class="verbatim">transition_state</code>.</li>
+<li><code class="verbatim">archive.org</code> machine-managed; daemon
+moves terminal-state tasks here on configurable schedule (default:
+immediate).</li>
+<li>Parse failures don't crash anything; in-memory index keeps
+last-good.</li>
+</ul>
+</section>
+<section id="board-q10" class="level2" data-number="6.7">
+<h2 data-number="6.7"><span class="header-section-number">6.7</span>
+Board (Q10)</h2>
+<p><code class="verbatim">user/board.org</code> is a properties-only
+pointer list. <em>No prose.</em> ~10 lines per project.</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* BOARD orgasmic projects</span></span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a><span class="in">:VERSION: 1</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a><span class="fu">* PROJECT payments-service</span></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a><span class="in">:ID:               proj-payments-service</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a><span class="in">:LOCAL_PATH:       /Users/.../payments-service</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a><span class="in">:REPO_URL:         git@github.com:example/payments-service.git</span></span>
+<span id="cb13-11"><a href="#cb13-11" aria-hidden="true" tabindex="-1"></a><span class="in">:DEFAULT_BRANCH:   main</span></span>
+<span id="cb13-12"><a href="#cb13-12" aria-hidden="true" tabindex="-1"></a><span class="in">:ADDED:            [2026-05-20 Wed 09:00]</span></span>
+<span id="cb13-13"><a href="#cb13-13" aria-hidden="true" tabindex="-1"></a><span class="in">:LAST_SEEN:        [2026-05-21 Thu 14:32]</span></span>
+<span id="cb13-14"><a href="#cb13-14" aria-hidden="true" tabindex="-1"></a><span class="in">:STATUS:           active        ← active | paused | unreachable | archived</span></span>
+<span id="cb13-15"><a href="#cb13-15" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span></code></pre></div>
+<ul>
+<li><code class="verbatim">orgasmic project init</code> scaffolds <code
+class="verbatim">&lt;project&gt;/.orgasmic/</code> from <code
+class="verbatim">shipped/project-scaffold/</code> and appends entry to
+<code class="verbatim">board.org</code>.</li>
+<li><code class="verbatim">orgasmic project add &lt;path&gt;</code> adds
+an existing <code class="verbatim">.orgasmic/</code> project to the
+board.</li>
+<li>Cross-project aggregation is <em>derived</em> from the materialized
+index, not stored on the board.</li>
+<li>v0.0.1: projects must live on the daemon's machine. Multi-machine =
+future.</li>
+<li>No auto-scan; adding is always explicit.</li>
+</ul>
+</section>
+</section>
+<section id="runtime" class="level1" data-number="7">
+<h1 data-number="7"><span class="header-section-number">7</span>
+Runtime</h1>
+<section id="driver-layer-q11a" class="level2" data-number="7.1">
+<h2 data-number="7.1"><span class="header-section-number">7.1</span>
+Driver layer (Q11a)</h2>
+<p>Lifted from HAR's <code class="verbatim">src/drivers/</code>. Four
+drivers in v0.0.1: <code class="verbatim">claude_acp</code>, <code
+class="verbatim">codex_appserver</code>, <code
+class="verbatim">hermes</code>, <code
+class="verbatim">tmux_tui</code>.</p>
+<p>Adaptations vs HAR:</p>
+<ul>
+<li><code class="verbatim">DriverEvent</code> callbacks map to JSONL
+session lines via the daemon's per-run writer.</li>
+<li>Driver registers <code
+class="verbatim">transition_state(new_state, reason)</code> as a worker
+tool.</li>
+<li>Babysitter-kind drivers register <code
+class="verbatim">poke_implementer</code>, <code
+class="verbatim">restart_implementer</code>, <code
+class="verbatim">escalate_to_human</code>, <code
+class="verbatim">record_finding</code> instead.</li>
+</ul>
+<p>Driver restart capability is explicit:</p>
+<ul>
+<li><code class="verbatim">tmux_tui</code> runtimes are reattachable
+when the tmux session still exists.</li>
+<li><code class="verbatim">codex_appserver</code> and <code
+class="verbatim">hermes</code> are reattachable only if their driver
+reports a stable provider-side session handle.</li>
+<li><code class="verbatim">claude_acp</code> is treated as
+non-reattachable unless ACP exposes a durable resume handle. On daemon
+restart, such runs become <code class="verbatim">interrupted</code> and
+are continued by a fresh run, not silently resumed.</li>
+</ul>
+</section>
+<section id="supervisor-q11b" class="level2" data-number="7.2">
+<h2 data-number="7.2"><span class="header-section-number">7.2</span>
+Supervisor (Q11b)</h2>
+<p>Lifted from HAR. Adaptations:</p>
+<ul>
+<li>State machine is <em>per-kind</em>, defined in <code
+class="verbatim">shipped/schema/state-machine.org</code>.</li>
+<li>Uniqueness invariant: at most one active run per <code
+class="verbatim">(task_id, kind)</code> tuple (replaces HAR's per-<code
+class="verbatim">(source_task_id, stage_id)</code>).</li>
+<li>Lease, timeout, release-with-reason model unchanged.</li>
+<li>Every live runtime is owned by <code
+class="verbatim">(run_id, runtime_id, boot_id)</code>. Cleanup, timeout,
+and release paths must update only the runtime instance they own; stale
+shutdown from a previous daemon boot must not clobber a replacement
+runtime.</li>
+</ul>
+</section>
+<section id="event-capture-q11c" class="level2" data-number="7.3">
+<h2 data-number="7.3"><span class="header-section-number">7.3</span>
+Event capture (Q11c)</h2>
+<p>Driver emits <code class="verbatim">DriverEvent</code> on a channel.
+Per-run writer goroutine consumes the channel and <code
+class="verbatim">O_APPEND=s JSONL lines to =sessions/&lt;run-id&gt;.jsonl</code>.
+Writer is the single owner of that file's FD. Controlled daemon restart
+asks active writers to flush before exit; boot reconciliation treats an
+unterminated session file as evidence for <code
+class="verbatim">interrupted</code>, not <code
+class="verbatim">failed</code>.</p>
+</section>
+<section id="babysitter-pipeline-q11d-q7-4" class="level2"
+data-number="7.4">
+<h2 data-number="7.4"><span class="header-section-number">7.4</span>
+Babysitter pipeline (Q11d, Q7-4)</h2>
+<ul>
+<li>Babysitter runs as a <em>separate process</em> with its own driver +
+session at <code
+class="verbatim">sessions/&lt;run-id&gt;.babysitter.jsonl</code>. Shares
+<code class="verbatim">run-id</code> with implementer.</li>
+<li>Daemon <em>summarizes</em> the implementer's session stream into
+chunks and posts them as user-turn messages to the babysitter on a
+cadence: every N implementer events (default 50) <em>or</em> T seconds
+(default 60s), whichever first.</li>
+<li>Babysitter tools:
+<ul>
+<li><code class="verbatim">poke_implementer(message)</code> → daemon
+injects <code class="verbatim">message</code> as a user turn in the
+implementer's session.</li>
+<li><code class="verbatim">restart_implementer(reason)</code> → daemon
+releases the implementer's lease and respawns a fresh one with the same
+task.</li>
+<li><code class="verbatim">escalate_to_human(reason)</code> → daemon
+raises a question that surfaces in the UI.</li>
+<li><code class="verbatim">record_finding(text)</code> → daemon appends
+to the implementer's <code class="verbatim">** Evidence</code> section
+as a "babysitter note."</li>
+</ul></li>
+<li>Babysitters <em>cannot</em> edit code, cannot call orgasmic CLI
+commands, cannot modify state outside their tool set.</li>
+</ul>
+</section>
+<section id="spawn-paths-q11e" class="level2" data-number="7.5">
+<h2 data-number="7.5"><span class="header-section-number">7.5</span>
+Spawn paths (Q11e)</h2>
+<p>All workers spawn through one RPC: <code
+class="verbatim">acquire_task(task_id, agent_template_id, overrides)</code>.
+Sources:</p>
+<ul>
+<li>CLI: <code
+class="verbatim">orgasmic run --task X --template Y [overrides]</code></li>
+<li>UI: "Run" button → RPC</li>
+<li>Manager: <code class="verbatim">orgasmic run</code> via Bash inside
+its tmux session.</li>
+<li>Auto: per-project policy in <code
+class="verbatim">project.org</code> (<code
+class="verbatim">:AUTO_ACQUIRE:</code> property); daemon's filewatcher
+detects new tasks in matching states and self-RPCs. (v0.0.8.)</li>
+</ul>
+<p>All paths produce the same <code class="verbatim">run.start</code> tx
+and the same session file.</p>
+<p>Continuation after interruption produces <code
+class="verbatim">run.continue</code> tx with <code
+class="verbatim">:PREVIOUS_RUN:</code> pointing to the interrupted run.
+The continuation prompt includes the task heading, the previous session
+JSONL path, current worktree diff summary, and original acceptance
+criteria.</p>
+</section>
+<section id="daemon-restart-and-boot-reconciliation" class="level2"
+data-number="7.6">
+<h2 data-number="7.6"><span class="header-section-number">7.6</span>
+Daemon restart and boot reconciliation</h2>
+<p>Restart recovery is <em>boot reconciliation</em>, not snapshot
+restore. The daemon does not roll back graph files on startup and does
+not auto-resume hidden provider conversations.</p>
+<p>Controlled self-hosted restart/update:</p>
+<ol>
+<li>Daemon writes <code class="verbatim">daemon.restart_requested</code>
+tx, pauses new run acquisition, and takes a graph snapshot for manual
+rollback.</li>
+<li>Active session writers flush. Reattachable drivers record their
+runtime handles; non-reattachable drivers record their last durable
+session line.</li>
+<li>A tiny launcher or service manager starts the rebuilt binary.</li>
+<li>New daemon initializes core services, rebuilds the materialized
+index from tx/org files, then runs boot reconciliation before accepting
+new run acquisition.</li>
+<li>Boot reconciliation scans run records, session files, and provider
+handles:
+<ul>
+<li>live reattachable runtime -&gt; <code
+class="verbatim">run.reattached</code></li>
+<li>non-reattachable or missing runtime with non-terminal task -&gt;
+<code class="verbatim">interrupted</code></li>
+<li>terminal task/run pair already recorded -&gt; no-op</li>
+<li>ambiguous state -&gt; surface a UI question; no destructive
+action</li>
+</ul></li>
+<li>Manager receives a <code class="verbatim">daemon.recovered</code>
+tick containing the new <code class="verbatim">boot_id</code>,
+reattached runs, interrupted runs, dirty-file summary, and pending
+questions. The manager decides whether to start continuation runs.</li>
+</ol>
+<p>Uncontrolled crash follows the same boot reconciliation path, except
+there is no <code class="verbatim">daemon.restart_requested</code> tx
+and no guarantee that active writers flushed. The UI should show a soft
+reconnecting state while the daemon is unavailable; after reconnect it
+shows the recovered run classifications.</p>
+<p>CLI/HTTP mutations that may be retried across restart carry a stable
+<code class="verbatim">request_id</code>. If a retry finds that the old
+daemon already committed the tx, the new daemon returns the committed
+result instead of duplicating the write.</p>
+</section>
+</section>
+<section id="manager-q12-revised" class="level1" data-number="8">
+<h1 data-number="8"><span class="header-section-number">8</span> Manager
+(Q12, revised)</h1>
+<p>The manager is <em>just another agent template</em> with <code
+class="verbatim">:KIND: manager</code>, runs via the <code
+class="verbatim">tmux-tui</code> driver (Claude Code or similar TUI
+agent inside tmux).</p>
+<section id="trigger-model-12a" class="level2" data-number="8.1">
+<h2 data-number="8.1"><span class="header-section-number">8.1</span>
+Trigger model (12a)</h2>
+<p>Event-triggered, with <em>optional</em> cadence. Never always-on.
+Triggers funnel through one RPC <code
+class="verbatim">manager.tick(reason, context)</code>.</p>
+<p>Triggers:</p>
+<ul>
+<li>File change in a watched <code class="verbatim">.orgasmic/</code> dir
+(new task, state change).</li>
+<li>Worker raises a question.</li>
+<li>Worker stalled (babysitter escalation).</li>
+<li>Worker run completes (success or failure).</li>
+<li>Daemon recovers from restart and reports interrupted or reattached
+runs.</li>
+<li>UI button: "Ask the manager."</li>
+<li>Optional cadence (cron-like, default off).</li>
+</ul>
+</section>
+<section id="session-model-12b" class="level2" data-number="8.2">
+<h2 data-number="8.2"><span class="header-section-number">8.2</span>
+Session model (12b)</h2>
+<p>Each tick spawns a <em>fresh</em> tmux-tui session with persona +
+relevant skills (manifest+path injection) + current context all injected
+at the top of the initial payload.</p>
+<p>Rationale: tmux-tui drives an external TUI CLI agent whose
+conversation state lives inside <em>its own</em> memory, not in
+orgasmic's session log. We cannot reliably resume a tmux-tui session by
+replaying orgasmic-side events into it.</p>
+<p>Continuity across ticks comes from the manager re-reading orgasmic
+state at the start of each tick (the persona instructs it to do so).</p>
+</section>
+<section id="permissions-12c" class="level2" data-number="8.3">
+<h2 data-number="8.3"><span class="header-section-number">8.3</span>
+Permissions (12c)</h2>
+<p><em>No permission tiers, no tool whitelist.</em> The tmux-tui agent
+has access to every MCP and skill the host system has configured.</p>
+<p>Discipline lives in the prompt:</p>
+<ul>
+<li>The persona tells the manager what to do.</li>
+<li>A <code class="verbatim">manager-tool-discipline</code> skill says
+"don't use MCPs or skills outside what this prompt references."</li>
+</ul>
+<p>No sandbox is built into orgasmic at v0.0.1.</p>
+</section>
+<section id="tool-surface-12d" class="level2" data-number="8.4">
+<h2 data-number="8.4"><span class="header-section-number">8.4</span>
+Tool surface (12d)</h2>
+<p>The manager has whatever the host system has, including the <code
+class="verbatim">orgasmic</code> CLI on its PATH. It drives orgasmic
+through CLI commands. No orgasmic-specific tools beyond the CLI.</p>
+</section>
+<section id="oversight-12e" class="level2" data-number="8.5">
+<h2 data-number="8.5"><span class="header-section-number">8.5</span>
+Oversight (12e)</h2>
+<ul>
+<li>The manager is <em>instructed</em> (via persona/skills) to write
+<code class="verbatim">manager.action</code> tx in listed situations.
+orgasmic does not hook the manager's actions.</li>
+<li><em>No approval queue v0.0.1.</em> Yolo by default. If the manager
+needs input, it asks in the conversation (regular CLI chat) and
+waits.</li>
+<li>Dedicated Manager view in UI: tmux attach to live session + recent
+<code class="verbatim">manager.action</code> tx tail + pending questions
+raised <em>to</em> the manager.</li>
+</ul>
+</section>
+<section id="manager-answers-worker-questions-12f" class="level2"
+data-number="8.6">
+<h2 data-number="8.6"><span class="header-section-number">8.6</span>
+Manager answers worker questions (12f)</h2>
+<p>From day one. When a worker raises a question (<code
+class="verbatim">** Question</code> section on its claimed task), the
+manager — at any tier-equivalent — is triggered with the question
+context and can call <code
+class="verbatim">orgasmic question answer &lt;id&gt; "&lt;answer&gt;"</code>
+from its Bash. Every such action is a <code
+class="verbatim">manager.action</code> tx + a UI notification "manager
+answered Q12 on your behalf — review."</p>
+</section>
+</section>
+<section id="surfaces" class="level1" data-number="9">
+<h1 data-number="9"><span class="header-section-number">9</span>
+Surfaces</h1>
+<section id="daemon-q13a" class="level2" data-number="9.1">
+<h2 data-number="9.1"><span class="header-section-number">9.1</span>
+Daemon (Q13a)</h2>
+<p>REST + WS over HTTP. Localhost-default; LAN bind opt-in via config
+(so mobile on the same Wi-Fi can connect). Bearer-token auth in <code
+class="verbatim">Authorization</code> header. <code
+class="verbatim">orgasmic://add-profile?...</code> link for shell
+pairing. mDNS announcement on LAN for discovery.</p>
+<p>No MCP server in v0.0.1. The manager uses orgasmic CLI via Bash; CLI
+talks to the daemon via HTTP. MCP wrapper deferred.</p>
+</section>
+<section id="cli-surface-q13b" class="level2" data-number="9.2">
+<h2 data-number="9.2"><span class="header-section-number">9.2</span> CLI
+surface (Q13b)</h2>
+<p>The CLI is the complete tool surface — humans <em>and</em> the
+manager use it. Subcommand inventory mirrors HAR's <code
+class="verbatim">src/cli/</code> layout.</p>
+<pre class="text"><code>orgasmic init | doctor | update | serve | status | restart
+orgasmic project add | init | list | remove | pause | resume | archive
+orgasmic board
+orgasmic tasks --project X [--state Y]
+orgasmic task show | create
+orgasmic run --task TASK-024 --template backend-implementer-v2 [overrides]
+orgasmic run list | show | release | attach | continue
+orgasmic agent-template list | show
+orgasmic agent-template dry-run --template X --task Y --state Z
+orgasmic prompt list | show
+orgasmic prompt dry-run &lt;kind&gt;/&lt;state&gt; --task X --template Y
+orgasmic skills discover [--source claude|codex|hermes|agentskills|native|all]
+orgasmic skills list | show
+orgasmic manager tick [--reason X] | attach | pause | resume
+orgasmic tx append --type X --target Y --reason &quot;...&quot; [--prop K=V ...]
+orgasmic tx tail [--type X] [--project Y]
+orgasmic recovery status
+orgasmic auth issue | list | revoke
+orgasmic question answer &lt;question-id&gt; &quot;...&quot;
+
+# v0.0.5+ design-graph layer (see =* Design-graph layer=):
+orgasmic glossary list | show | propose | rename | extend
+orgasmic decision list | show | propose | answer | revise | validate | supersede
+orgasmic architecture list | show | propose | revise | validate
+orgasmic adr list | show | promote | demote | regenerate
+orgasmic snapshot take [--scope X] [--label L] | list | restore &lt;id&gt;
+orgasmic grill start [--scope global|&lt;project&gt;|&lt;project&gt;/&lt;context&gt;] \
+                    [--topic T] [--mode socratic|batch] \
+                    [--questions-per-round N] [--outcome-depth N] \
+                    [--auto-explore-code] [--glossary-strict] \
+                    [--auto-cascade]
+orgasmic architect run [--scope X]    # manual / used when auto-cascade off
+orgasmic plan run [--scope X]         # manual / used when auto-cascade off
+orgasmic reconcile status [--scope X] # inspect manager-orchestrated run
+</code></pre>
+<p>Every HTTP-talking subcommand uses the same bearer-token auth. <code
+class="verbatim">init</code>, <code class="verbatim">update</code>,
+<code class="verbatim">doctor</code>, <code
+class="verbatim">serve</code> are local-only.</p>
+</section>
+<section id="materialized-index-q13c" class="level2" data-number="9.3">
+<h2 data-number="9.3"><span class="header-section-number">9.3</span>
+Materialized index (Q13c)</h2>
+<p>Daemon rebuilds an in-memory projection from tx files at startup,
+kept fresh by the filewatcher. HTTP reads serve from the index, not from
+re-parsing files per request. Matches HAR's <code
+class="verbatim">/api/views/*</code> pattern.</p>
+</section>
+<section id="ws-streams-q13d" class="level2" data-number="9.4">
+<h2 data-number="9.4"><span class="header-section-number">9.4</span> WS
+streams (Q13d)</h2>
+<ul>
+<li><code class="verbatim">/api/board/stream</code> — board / project
+state changes</li>
+<li><code class="verbatim">/api/daemon/stream</code> — boot, restart,
+and recovery lifecycle events</li>
+<li><code class="verbatim">/api/runs/&lt;run-id&gt;/events</code> — live
+session JSONL tail</li>
+<li><code class="verbatim">/api/manager/stream</code> — manager session
+events + <code class="verbatim">manager.action</code> tx pushes</li>
+<li><code class="verbatim">/api/tmux/&lt;run-id&gt;/attach</code> —
+bidirectional tmux bridge (HAR has this)</li>
+</ul>
+</section>
+<section id="ui-q14" class="level2" data-number="9.5">
+<h2 data-number="9.5"><span class="header-section-number">9.5</span> UI
+(Q14)</h2>
+<p>Forked from HAR <code class="verbatim">ui/</code> directly. Transport
+seams (<code class="verbatim">transport.ts</code>, <code
+class="verbatim">useResource.ts</code>, <code
+class="verbatim">routing.ts</code>, <code
+class="verbatim">theme.ts</code>, <code
+class="verbatim">storage.ts</code>, <code
+class="verbatim">backend.ts</code>, <code
+class="verbatim">timers.ts</code>) unchanged. API base paths
+repointed.</p>
+<p>v0.0.1 screens:</p>
+<ul>
+<li>Board</li>
+<li>Project detail (tasks grouped by TODO state)</li>
+<li>Task detail</li>
+<li>Run detail (live JSONL stream + tmux attach when applicable)</li>
+<li>Manager view (tmux attach + recent actions + pending questions)</li>
+<li>Settings</li>
+</ul>
+<p><em>Plus</em> a <strong>generic .org viewer/editor</strong> with
+raw-edit toggle. Used for every .org file (agent templates, prompts,
+skills metadata, manager persona, etc.). "Better org viewer/editor
+later" is the v0.0.2+ refinement track.</p>
+<p>Editor: plain textarea + lightweight CodeMirror with simple org-mode
+syntax highlighting. Edits route through daemon RPC; flock contention
+surfaces in UI. <em>Identical capability on mobile + desktop</em> in
+v0.0.1; device-specific affordances deferred.</p>
+<p>Notifications: in-app notification page only. No push (APNs/FCM)
+v0.0.1.</p>
+</section>
+</section>
+<section id="collaboration-model-q16" class="level1" data-number="10">
+<h1 data-number="10"><span class="header-section-number">10</span>
+Collaboration model (Q16)</h1>
+<p>Single-user-per-instance. No multi-tenant code, no user identity
+inside orgasmic.</p>
+<p>Multi-human collaboration happens via plain Git:</p>
+<ul>
+<li>Each developer clones their own <code
+class="verbatim">orgasmic_home</code> on their own machine.</li>
+<li>Project state (<code
+class="verbatim">&lt;project&gt;/.orgasmic/</code>) is committed in the
+project repo.</li>
+<li>Cross-machine awareness = <code class="verbatim">git pull</code>.
+Concurrent edits = git merge conflicts on <code
+class="verbatim">.orgasmic/*.org</code> files, resolved like any
+other.</li>
+<li>Each instance's manager is its own. No "team manager."</li>
+</ul>
+<p>Tx file commit policy:</p>
+<ul>
+<li><code
+class="verbatim">&lt;project&gt;/.orgasmic/tx/YYYY-MM.org</code> →
+committed. Teammates see history.</li>
+<li><code class="verbatim">$ORGASMIC_HOME/state/tx/YYYY-MM.org</code> →
+<em>not</em> committed. Instance-scoped audit log only.</li>
+</ul>
+<p>Attribution: every tx has <code class="verbatim">:ACTOR:</code> =
+<code class="verbatim">git config user.email</code> of the operator
+(<code class="verbatim">theaspirational</code> for this developer)
++ <code class="verbatim">:MACHINE:</code> = hostname.</p>
+</section>
+<section id="defaults-q17-accepted-as-recommended" class="level1"
+data-number="11">
+<h1 data-number="11"><span class="header-section-number">11</span>
+Defaults (Q17 — accepted as recommended)</h1>
+<ul>
+<li><strong>Git integration</strong>: orgasmic is git-agnostic. No
+auto-commits.</li>
+<li><strong>Secrets</strong>: <code
+class="verbatim">$ORGASMIC_HOME/secrets/*.txt</code> plain files,
+referenced from config by path. Gitignored. No keyring v0.0.1.</li>
+<li><strong>Config</strong>: <code
+class="verbatim">$ORGASMIC_HOME/config.yaml</code> with
+bind<sub>host</sub>, bind<sub>port</sub>, lan<sub>enabled</sub>,
+default<sub>provider</sub>, default<sub>model</sub>,
+default<sub>reasoning</sub>_effort, default<sub>agent</sub>_template,
+manager.tick<sub>cadence</sub>, manager.turn<sub>limit</sub>,
+watcher.debounce<sub>ms</sub>, sessions.dir,
+tx.commit<sub>to</sub>_project (default true).</li>
+<li><strong>First-run UX</strong>: install → <code
+class="verbatim">orgasmic init</code> → <code
+class="verbatim">orgasmic serve</code> → <code
+class="verbatim">orgasmic  project init</code> in a repo → open UI.
+&lt;15 min for first-timer.</li>
+<li><strong>Capacity</strong>: no global concurrency limit; per-project
+<code class="verbatim">:MAX_CONCURRENT_RUNS:</code>;
+per-(task<sub>id</sub>, kind) uniqueness from Q11-2.</li>
+<li><strong>Worker filesystem scope</strong>: no built-in sandbox. <code
+class="verbatim">:WRITE_SCOPE:</code> / <code
+class="verbatim">:READ_SCOPE:</code> are prompt-injected <em>hints</em>,
+not enforced. Sandboxing = future (devcontainer/docker driver
+wrapper).</li>
+<li><strong>Slot templating</strong>: strict variable substitution only.
+No conditionals, no loops. Two separate prompt files if the user needs
+branching.</li>
+<li><strong>Daemon crash recovery</strong>: on restart, initialize core
+services, scan tx/org files, rebuild index, run boot reconciliation,
+classify active runs as reattached/interrupted/ambiguous, and surface
+the result in UI. No daemon auto-resume; continuation is
+manager-mediated.</li>
+<li><strong>Logging</strong>: <code
+class="verbatim">$ORGASMIC_HOME/logs/orgasmic.log</code> rotates at
+100MB.</li>
+<li><strong>Backup</strong>: no first-class tool v0.0.1. Operator backs
+up <code class="verbatim">orgasmic_home/</code> and project <code
+class="verbatim">.orgasmic/</code> dirs manually.</li>
+<li><strong>Versioning</strong>: <code class="verbatim">:VERSION:</code>
+property on each template/prompt/skill; <code
+class="verbatim">template.applied</code> tx records compiled version;
+in-flight runs keep their compiled bundle even if template version bumps
+mid-run.</li>
+<li><strong>Telemetry</strong>: <em>none</em>. Only outbound: configured
+LLM provider + <code class="verbatim">git fetch</code> during <code
+class="verbatim">orgasmic update</code>.</li>
+<li><strong>Question system v0.0.1</strong>: workers write questions as
+<code class="verbatim">** Question</code> sections in their claimed task
+heading; UI surfaces them in Task detail; daemon detects the resolved
+answer via watcher → writes <code
+class="verbatim">question.answered</code> tx. First-class "Questions"
+page deferred to v0.0.7.</li>
+</ul>
+</section>
+<section
+id="v0.0.1-scope-q15-revised-full-vision-minus-v0.0.7-and-v0.0.8"
+class="level1" data-number="12">
+<h1 data-number="12"><span class="header-section-number">12</span>
+v0.0.1 scope (Q15, revised — full vision minus v0.0.7 and v0.0.8)</h1>
+<section id="ships" class="level2" data-number="12.1">
+<h2 data-number="12.1"><span class="header-section-number">12.1</span>
+Ships</h2>
+<ul>
+<li>Install / init / doctor / update / serve / status</li>
+<li>Projects: add / init / list / remove / pause / resume / archive</li>
+<li>Tasks: create / show / edit (all body sections editable from UI +
+CLI)</li>
+<li>Runs: spawn / list / show / release / attach (tmux)</li>
+<li><em>All four drivers</em>: claude-acp, codex-appserver, hermes,
+tmux-tui</li>
+<li><em>All five agent kinds</em>: implementer, reviewer, planner,
+analyzer, babysitter (+ manager as singular special kind)</li>
+<li>Per-kind state machines + per-(kind, state) prompt templates</li>
+<li>Babysitter pairing pipeline</li>
+<li>Manager agent (Q12 design)</li>
+<li>Skill discovery from <em>all four sources</em>: Claude Code + codex
++ hermes + agentskills.io + native</li>
+<li>Skill browser UI + favorites/tags/notes editor</li>
+<li>Generic .org viewer/editor with raw-edit toggle</li>
+<li>Prompt dry-run UI panel + CLI + daemon RPC</li>
+<li>Tx files (.org property-only) at both locations</li>
+<li>Sessions (JSONL)</li>
+<li>Auth tokens + localhost+LAN bind + mDNS + add-profile link</li>
+<li>WS streams: board, per-run, manager, tmux-attach</li>
+</ul>
+</section>
+<section id="deferred-in-spec-post-v0.0.1" class="level2"
+data-number="12.2">
+<h2 data-number="12.2"><span class="header-section-number">12.2</span>
+Deferred (in spec, post-v0.0.1)</h2>
+<ul>
+<li><strong>v0.0.5</strong> — design-graph core: <code
+class="verbatim">glossary.org</code>, <code
+class="verbatim">decisions.org</code>, <code
+class="verbatim">architecture.org</code> (both global and per-project
+scopes); semantic-hash + stale propagation; snapshots; griller and
+architector agent kinds (planner and implementer, already in v0.0.1,
+gain design-graph responsibilities); manager-orchestrated
+reconciliation; advisory in-code marker convention (no daemon-managed
+pragmas); Design-graph + Snapshots UI views; pre-commit hook <code
+class="verbatim">orgasmic check adr</code>. See <code
+class="verbatim">* Design-graph layer</code>.</li>
+<li><strong>v0.0.6</strong> — grill-with-docs principles: socratic mode;
+<code class="verbatim">auto_explore_code</code> substitution; glossary
+challenges + contradiction detection; ADR triage (lives in the
+architector) + generated <code class="verbatim">docs/adr/*.org</code>;
+glossarist kind; Glossary + ADR UI views; <code
+class="verbatim">context-map.org</code> multi-bounded-context
+support.</li>
+<li><strong>v0.0.7</strong>: cross-project aggregated <em>run</em>
+views; <code class="verbatim">risks.org</code>; first-class "Questions"
+page in UI (the underlying mechanism exists in v0.0.1).</li>
+<li><strong>v0.0.8</strong>: auto-acquire policy (<code
+class="verbatim">:AUTO_ACQUIRE:</code> in <code
+class="verbatim">project.org</code>) + per-project autopilot persona
+override.</li>
+</ul>
+</section>
+<section id="realistic-estimate" class="level2" data-number="12.3">
+<h2 data-number="12.3"><span class="header-section-number">12.3</span>
+Realistic estimate</h2>
+<p>~3–4 months focused work for one engineer, possibly 6 with realistic
+interruptions. The user accepted the scope.</p>
+</section>
+</section>
+<section id="design-graph-layer-post-v0.0.1-v0.0.5v0.0.6" class="level1"
+data-number="13">
+<h1 data-number="13"><span class="header-section-number">13</span>
+Design-graph layer (post-v0.0.1, v0.0.5–v0.0.6)</h1>
+<p>The decision-anchored layer extends orgasmic's substrate from "tasks +
+runs" to a full <em>design graph</em>: glossary terms → decisions →
+architecture nodes → tasks → code (via task <code
+class="verbatim">:PRODUCES:</code> edges + advisory in-code markers),
+with stale propagation across the graph and a generated-ADR artifact
+set.</p>
+<p>Inspired by:</p>
+<ul>
+<li>the decision-anchored demo plan at <code
+class="verbatim">archive/21_05_26_init/decision-anchored-demo-plan-2.md</code>
+(the 4-layer DAG, reconciliation flip, snapshot safety valve). We
+<em>deliberately drop</em> that plan's pragma-block /
+daemon-written-into-source-code mechanic in favor of advisory in-code
+markers: the graph is authoritative; markers are grep hints. See <code
+class="verbatim">** Advisory code markers</code> below.</li>
+<li>Matt Pocock's <code class="verbatim">grill-with-docs</code> skill
+(<a
+href="https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs">https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs</a>)
+for the glossary-first interview methodology, ADR triage gate (hard to
+reverse + surprising + real trade-off), codebase-exploration
+substitution, and the principle that CONTEXT is a glossary, not a
+spec.</li>
+</ul>
+<p>This is <em>core</em> orgasmic surface — not an optional plugin — but
+it ships <em>after</em> v0.0.1 since the existing scope is already a 3–4
+month build. v0.0.5 lands the graph + griller + architector +
+manager-orchestrated reconciliation; v0.0.6 lands the glossary layer +
+glossarist + ADR triage.</p>
+<section id="two-scopes-global-and-per-project" class="level2"
+data-number="13.1">
+<h2 data-number="13.1"><span class="header-section-number">13.1</span>
+Two scopes: global and per-project</h2>
+<p>Same artifacts, two locations. The loader rule (<code
+class="verbatim">user/</code> overrides <code
+class="verbatim">orgasmic/shipped/</code>) extends to a <em>scope</em>
+rule: project-local artifacts override global ones for term lookups,
+decision references, and architecture-node naming. The daemon resolves
+with project-first, global-fallback semantics.</p>
+<pre class="text"><code>$ORGASMIC_HOME/user/
+  glossary.org           ← global vocabulary (used across projects)
+  decisions.org          ← global decisions (cross-project reasoning)
+  architecture.org       ← global architecture (project boundaries / integrations)
+  context-map.org        ← multi-context map for the global scope
+  docs/adr/*.org         ← daemon-regenerated global ADRs
+$ORGASMIC_HOME/state/
+  snapshots/&lt;uuidv7&gt;/    ← global-scope graph snapshots
+
+&lt;project&gt;/.orgasmic/
+  glossary.org           ← project glossary (overrides + extends global)
+  decisions.org          ← project decision graph
+  architecture.org       ← project architecture nodes
+  context-map.org        ← multi-bounded-context map for this project
+  snapshots/&lt;uuidv7&gt;/    ← project graph snapshots (uncommitted)
+&lt;project&gt;/docs/adr/*.org ← daemon-regenerated project ADRs (committed)
+</code></pre>
+<p>A grilling session is <em>scoped at start</em>: <code
+class="verbatim">global</code> ("what does my dev stack look like?",
+"where does HAR end and orgasmic begin?", "what's my personal release
+policy across all projects?") or a specific project (or a bounded
+context within a project). Cross-scope references are first-class:</p>
+<ul>
+<li>A project decision may <code class="verbatim">:REFERENCES:</code> a
+global decision.</li>
+<li>A project glossary term may <code class="verbatim">:EXTENDS:</code>
+or <code class="verbatim">:OVERRIDES:</code> a global term.</li>
+<li>A global architecture node may declare <code
+class="verbatim">:HOSTED_IN:</code> pointing at a board project (so
+global architecture knows which project owns which component).</li>
+</ul>
+<p>This makes orgasmic usable both as a <em>per-repo</em> design
+coordinator and as a <em>bird's-eye</em> personal-architecture tool —
+same UI, same daemon, same agent kinds.</p>
+</section>
+<section id="four-layer-graph-glossary" class="level2"
+data-number="13.2">
+<h2 data-number="13.2"><span class="header-section-number">13.2</span>
+Four-layer graph + glossary</h2>
+<p><strong>Layers:</strong></p>
+<ul>
+<li><strong>Decision</strong> — a question with options, exactly one
+<code class="verbatim">:RECOMMENDED:</code>, optional <code
+class="verbatim">:CHOSEN:</code>; status <code
+class="verbatim">pending | decided | stale | superseded</code>.</li>
+<li><strong>Architecture</strong> — a named component with interface +
+constraints.</li>
+<li><strong>Task</strong> — orgasmic's existing task heading in <code
+class="verbatim">sprint.org=/=backlog.org</code>. Linked into the graph
+via <code class="verbatim">:IMPLEMENTS:</code> on the task pointing at
+architecture or decision IDs.</li>
+<li><strong>Code</strong> — files on disk. Code "nodes" exist in the
+daemon's index only as derived entries from task <code
+class="verbatim">:PRODUCES:</code> edges; they have no <code
+class="verbatim">.org</code> heading of their own. The graph link
+between design and code is <em>the task layer</em>. Optional advisory
+in-code markers (see <code
+class="verbatim">** Advisory code markers</code> below) provide grep
+hints during reconciliation but are never authoritative.</li>
+</ul>
+<p>Glossary is <em>orthogonal</em> — terms are referenced from any layer
+via <code class="verbatim">:GLOSSARY_REFS:</code>.</p>
+<p><strong>Edges:</strong></p>
+<ul>
+<li><code class="verbatim">:DECIDES:</code> decision → architecture |
+decision (cascade)</li>
+<li><code class="verbatim">:COMPOSES:</code> architecture → architecture
+(parent/child)</li>
+<li><code class="verbatim">:IMPLEMENTS:</code> task → architecture |
+decision</li>
+<li><code class="verbatim">:PRODUCES:</code> task → code file path
+(creates a code-node index entry)</li>
+<li><code class="verbatim">:DEPENDS_ON:</code> any layer → any layer
+(advisory; code-layer must be acyclic)</li>
+<li><code class="verbatim">:GLOSSARY_REFS:</code> any → glossary term
+IDs</li>
+<li><code class="verbatim">:REFERENCES:</code> cross-scope link (project
+→ global, or sibling project)</li>
+</ul>
+</section>
+<section id="file-formats-1" class="level2" data-number="13.3">
+<h2 data-number="13.3"><span class="header-section-number">13.3</span>
+File formats</h2>
+<p>All three new files use orgasmic's property-drawer convention. Daemon
+is the single writer (RPC-only). <em>Not</em> append-only — these are
+working files with stable IDs that get revised in place.</p>
+<p>Decision heading:</p>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* dec_007 Code block highlighting library</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a><span class="in">:ID:                 dec_007</span></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="in">:STATUS:             decided</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="in">:KIND:               question</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a><span class="in">:RECOMMENDED:        opt_a</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a><span class="in">:CHOSEN:             opt_a</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a><span class="in">:SEMANTIC_HASH:      sha256:abc…</span></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="in">:DECIDES:            arch_005 task_023 task_024</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="in">:GLOSSARY_REFS:      hl-lib syntax-highlighting</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a><span class="in">:ADR_WORTHY:         t</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a><span class="in">:ADR_NUMBER:         0007</span></span>
+<span id="cb16-13"><a href="#cb16-13" aria-hidden="true" tabindex="-1"></a><span class="in">:CODE_REFS:          src/highlight/mod.rs</span></span>
+<span id="cb16-14"><a href="#cb16-14" aria-hidden="true" tabindex="-1"></a><span class="in">:CONTRADICTIONS:</span></span>
+<span id="cb16-15"><a href="#cb16-15" aria-hidden="true" tabindex="-1"></a><span class="in">:DECIDED_AT:         [2026-06-12 Fri 11:04]</span></span>
+<span id="cb16-16"><a href="#cb16-16" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb16-17"><a href="#cb16-17" aria-hidden="true" tabindex="-1"></a><span class="fu">** Why asked</span></span>
+<span id="cb16-18"><a href="#cb16-18" aria-hidden="true" tabindex="-1"></a><span class="fu">** opt_a syntect</span></span>
+<span id="cb16-19"><a href="#cb16-19" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb16-20"><a href="#cb16-20" aria-hidden="true" tabindex="-1"></a><span class="in">:LABEL:              syntect</span></span>
+<span id="cb16-21"><a href="#cb16-21" aria-hidden="true" tabindex="-1"></a><span class="in">:RECOMMENDED:        t</span></span>
+<span id="cb16-22"><a href="#cb16-22" aria-hidden="true" tabindex="-1"></a><span class="in">:COMPLEXITY:         low</span></span>
+<span id="cb16-23"><a href="#cb16-23" aria-hidden="true" tabindex="-1"></a><span class="in">:PREDICTED_OUTCOME:  Mature, large language pack; CSS uses syntect classes.</span></span>
+<span id="cb16-24"><a href="#cb16-24" aria-hidden="true" tabindex="-1"></a><span class="in">:IMPLIED_DECISIONS:</span></span>
+<span id="cb16-25"><a href="#cb16-25" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span>
+<span id="cb16-26"><a href="#cb16-26" aria-hidden="true" tabindex="-1"></a><span class="fu">** opt_b tree-sitter</span></span>
+<span id="cb16-27"><a href="#cb16-27" aria-hidden="true" tabindex="-1"></a>…</span>
+<span id="cb16-28"><a href="#cb16-28" aria-hidden="true" tabindex="-1"></a><span class="fu">** opt_c plain</span></span>
+<span id="cb16-29"><a href="#cb16-29" aria-hidden="true" tabindex="-1"></a>…</span>
+<span id="cb16-30"><a href="#cb16-30" aria-hidden="true" tabindex="-1"></a><span class="fu">** User note</span></span></code></pre></div>
+<p>Architecture heading is analogous, with <code
+class="verbatim">:INTERFACE:</code> and <code
+class="verbatim">:CONSTRAINTS:</code> properties + free-form body.</p>
+<p>Glossary term heading:</p>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode org"><code class="sourceCode orgmode"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="fu">* term:hl-lib Highlighting library</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="in">:PROPERTIES:</span></span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a><span class="in">:ID:                 hl-lib</span></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="in">:CANONICAL:          highlighting library</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="in">:AVOID:              syntax engine, lexer lib</span></span>
+<span id="cb17-6"><a href="#cb17-6" aria-hidden="true" tabindex="-1"></a><span class="in">:RELATES_TO:         renderer, code-block</span></span>
+<span id="cb17-7"><a href="#cb17-7" aria-hidden="true" tabindex="-1"></a><span class="in">:DEFINITION:         A vendored crate that turns source text into spans of</span></span>
+<span id="cb17-8"><a href="#cb17-8" aria-hidden="true" tabindex="-1"></a><span class="in">                     CSS class names for HTML rendering.</span></span>
+<span id="cb17-9"><a href="#cb17-9" aria-hidden="true" tabindex="-1"></a><span class="in">:OVERRIDES:          global:hl-lib       ← cross-scope (optional)</span></span>
+<span id="cb17-10"><a href="#cb17-10" aria-hidden="true" tabindex="-1"></a><span class="in">:DECIDED_AT:         [2026-06-12 Fri 11:00]</span></span>
+<span id="cb17-11"><a href="#cb17-11" aria-hidden="true" tabindex="-1"></a><span class="in">:END:</span></span></code></pre></div>
+<p>CONTEXT.md-style "avoid these aliases" is first-class: <code
+class="verbatim">:AVOID:</code> drives the griller's challenge behavior
+("you said <em>lexer lib</em>, the glossary says <em>highlighting
+library</em> — which is it?"). Glossary is a <em>glossary</em>, not a
+spec — daemon rejects glossary entries whose definition contains
+implementation references.</p>
+<p><code class="verbatim">context-map.org</code>: pointer list to
+per-context sub-directories when a scope is multi-bounded-context. Same
+shape as <code class="verbatim">user/board.org</code>.</p>
+</section>
+<section id="hashing" class="level2" data-number="13.4">
+<h2 data-number="13.4"><span class="header-section-number">13.4</span>
+Hashing</h2>
+<p>Every graph node (decision, architecture, task, glossary) has <code
+class="verbatim">:SEMANTIC_HASH:</code> computed by the daemon. Code is
+<em>not</em> hashed — files are not graph nodes.</p>
+<table>
+<thead>
+<tr>
+<th>Layer</th>
+<th>Semantic input</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Decision</td>
+<td>sha256(question<sub>intent</sub> ⨁ chosen<sub>option</sub>_id ⨁
+implied<sub>decisions</sub>)</td>
+</tr>
+<tr>
+<td></td>
+<td>EXCLUDES prose: why<sub>asked</sub>, user<sub>note</sub>, option
+labels.</td>
+</tr>
+<tr>
+<td>Architecture</td>
+<td>sha256(name ⨁ canonicalize(interface) ⨁
+canonicalize(constraints))</td>
+</tr>
+<tr>
+<td>Task</td>
+<td>sha256(title ⨁ canonicalize(acceptance))</td>
+</tr>
+<tr>
+<td>Glossary</td>
+<td>sha256(canonical ⨁ avoid ⨁ definition ⨁ relates<sub>to</sub>)</td>
+</tr>
+</tbody>
+</table>
+<p>A pending decision (<code class="verbatim">:CHOSEN:</code> empty)
+hashes with <code class="verbatim">chosen_option_id = ""</code>.</p>
+<p>Editing a node's <em>prose</em> (<code
+class="verbatim">:DESCRIPTION:</code>, <code
+class="verbatim">:WHY_ASKED:</code>, <code
+class="verbatim">:USER_NOTE:</code>, option labels) does not change
+<code class="verbatim">:SEMANTIC_HASH:</code> and therefore does not
+cascade-invalidate downstream nodes. This is the "wording-only edit
+doesn't break the world" rule (formerly SC-5 in the demo plan).</p>
+</section>
+<section id="stale-propagation" class="level2" data-number="13.5">
+<h2 data-number="13.5"><span class="header-section-number">13.5</span>
+Stale propagation</h2>
+<p>Daemon's in-memory index maintains forward + reverse edges. When a
+heading's content updates:</p>
+<ol>
+<li>Compute new <code class="verbatim">:SEMANTIC_HASH:</code>.</li>
+<li>If unchanged → done (semantic-input-pinning early-termination).</li>
+<li>If changed → BFS over forward edges marking touched headings <code
+class="verbatim">:STATUS: stale</code>.</li>
+<li>Emit <code class="verbatim">graph.stale_propagated</code> event on
+the WS stream.</li>
+<li>Write <code class="verbatim">node.revised</code> and <code
+class="verbatim">node.staled</code> tx entries.</li>
+</ol>
+<p>All atomic per single RPC; partial propagation never observable.
+Cross-scope edges are walked when a global node is revised.</p>
+</section>
+<section id="advisory-code-markers" class="level2" data-number="13.6">
+<h2 data-number="13.6"><span class="header-section-number">13.6</span>
+Advisory code markers</h2>
+<p>Code linkage to the design graph is <em>authoritative</em> via task
+<code class="verbatim">:PRODUCES:</code> edges (graph-side) and
+<em>advisory</em> via in-code markers (code-side). The daemon never
+writes inside source files. There is no pragma block, no hash-validation
+step, no language adapter, no pre-commit hook for code markers.</p>
+<p><strong>Marker format</strong> — single-line comment, free
+placement:</p>
+<pre class="text"><code>&lt;comment-token&gt; orgasmic:&lt;node-id&gt;[:&lt;option-id&gt;][, &lt;node-id&gt;[:&lt;option-id&gt;]]
+</code></pre>
+<p>Examples:</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode rust"><code class="sourceCode rust"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="co">// orgasmic:dec_007:opt_a</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a><span class="kw">pub</span> <span class="kw">fn</span> highlight(lang<span class="op">:</span> <span class="op">&amp;</span><span class="dt">str</span><span class="op">,</span> src<span class="op">:</span> <span class="op">&amp;</span><span class="dt">str</span>) <span class="op">-&gt;</span> <span class="dt">Vec</span><span class="op">&lt;</span>HtmlSpan<span class="op">&gt;</span> <span class="op">{</span> … <span class="op">}</span></span></code></pre></div>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="co"># orgasmic:dec_007:opt_a, dec_010:opt_b</span></span>
+<span id="cb20-2"><a href="#cb20-2" aria-hidden="true" tabindex="-1"></a><span class="kw">def</span> render_code_block(lang, src): ...</span></code></pre></div>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode sql"><code class="sourceCode sql"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co">-- orgasmic:dec_021</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="kw">CREATE</span> <span class="kw">INDEX</span> <span class="op">..</span>.</span></code></pre></div>
+<p>Any layer ID works (<code class="verbatim">dec_*</code>, <code
+class="verbatim">arch_*</code>, <code class="verbatim">task_*</code>,
+<code class="verbatim">term:*</code>). The <code
+class="verbatim">:opt_X</code> is optional. Multi-node on one line is
+allowed. Placement is the writer's judgment — top of file, above a
+function, inside a hot block.</p>
+<p><strong>Behavioral rules</strong> — codified in <code
+class="verbatim">shipped/conventions/code-markers.org</code> and
+injected into agent prompts via the slot <code
+class="verbatim">={{conventions.code_markers}}=</code>:</p>
+<ul>
+<li><em>Implementer agents</em> MAY leave a marker near code that
+materially expresses a decision they're implementing. It is a courtesy
+hint for future reconciliation, never required. Don't decorate every
+function. Don't add markers for code that's only incidentally
+related.</li>
+<li><em>Implementer agents running in reconciling state</em>, when
+searching for code affected by a changed decision:
+<ol>
+<li>Start from <code class="verbatim">:PRODUCES:</code> files on the
+claimed task — authoritative.</li>
+<li>Grep for <code class="verbatim">orgasmic:&lt;decision-id&gt;</code>
+markers — hints, neither complete nor guaranteed accurate. Files
+surfaced <em>only</em> by the grep (outside the claimed task's <code
+class="verbatim">:PRODUCES:</code> set) require an explicit user OK via
+the <code class="verbatim">** Question</code> mechanism before
+editing.</li>
+<li>Use general codebase exploration (glossary terms, architecture
+interface names, symbol search).</li>
+<li>Absence of a marker does NOT mean a file is unaffected.</li>
+</ol>
+May update or add markers as a courtesy when editing — never as an
+obligation.</li>
+<li><em>Griller agents</em> in the <code
+class="verbatim">exploring</code> state also grep for <code
+class="verbatim">orgasmic:&lt;topic-related-IDs&gt;</code> to see if
+existing code already commits to a choice the user is being asked
+about.</li>
+</ul>
+<p>The system is <em>honest about its epistemics</em>: it can answer
+"here are the files we know link to dec<sub>007</sub>" but never "here
+are all the files affected by dec<sub>007</sub>." That's a human/agent
+judgment call, not a daemon claim.</p>
+</section>
+<section id="adrs-as-generated-artifacts" class="level2"
+data-number="13.7">
+<h2 data-number="13.7"><span class="header-section-number">13.7</span>
+ADRs as generated artifacts</h2>
+<p>ADRs are <em>not</em> a separate authored file format. They are a
+generated <em>view</em> of decisions where <code
+class="verbatim">:ADR_WORTHY: t</code> <em>and</em> <code
+class="verbatim">:ADR_NUMBER:</code> is set.</p>
+<p>Output: <code
+class="verbatim">&lt;scope-root&gt;/docs/adr/&lt;NNNN&gt;-&lt;slug&gt;.org</code>.
+Daemon regenerates on every decision revision; pre-commit hook <code
+class="verbatim">orgasmic check adr</code> rejects hand-edits. Sequential
+numbering is per-scope (global has its own numbering; each project has
+its own).</p>
+<p>Triage rules — griller proposes <code
+class="verbatim">:ADR_WORTHY: t</code> only when <em>all three</em> hold
+(verbatim from <code
+class="verbatim">grill-with-docs/ADR-FORMAT.md</code>):</p>
+<ol>
+<li><strong>Hard to reverse</strong> — meaningful cost to change
+later.</li>
+<li><strong>Surprising without context</strong> — a future reader will
+ask "why on earth?"</li>
+<li><strong>Result of a real trade-off</strong> — genuine alternatives
+existed.</li>
+</ol>
+<p>User confirms or overrides in UI. Most decisions in a grilling
+session do <em>not</em> become ADRs; that's expected.</p>
+<p>ADR body (per <code
+class="verbatim">grill-with-docs/ADR-FORMAT.md</code>): one to three
+sentences. The value is recording <em>that</em> the decision was made
+and <em>why</em>. Optional sections (Status, Considered Options,
+Consequences) only when they add genuine value.</p>
+</section>
+<section id="snapshots" class="level2" data-number="13.8">
+<h2 data-number="13.8"><span class="header-section-number">13.8</span>
+Snapshots</h2>
+<p>Cheap file-level copies of the relevant <code
+class="verbatim">.org</code> files (no Rayforce here — plain copies,
+atomic via rename).</p>
+<ul>
+<li><code
+class="verbatim">$ORGASMIC_HOME/state/snapshots/&lt;uuidv7&gt;/</code>
+for global-scope graph snapshots.</li>
+<li><code
+class="verbatim">&lt;project&gt;/.orgasmic/snapshots/&lt;uuidv7&gt;/</code>
+for project-scope graph snapshots.</li>
+</ul>
+<p>UUIDv7 = sortable. Auto-snapshot triggers:</p>
+<ul>
+<li>Before any user-initiated grilling-session start.</li>
+<li>Before any reconciliation kickoff.</li>
+<li>Before any controlled self-hosted daemon restart/update.</li>
+<li>Before any manual restore (so undo-the-undo works).</li>
+</ul>
+<p>Manual snapshot via <code
+class="verbatim">orgasmic snapshot take [--scope X] [--label L]</code>.
+Restore via <code
+class="verbatim">orgasmic snapshot restore &lt;id&gt;</code>.
+<em>Snapshots restore the graph, not files.</em> File edits are git's
+domain — README documents the recovery path (<code
+class="verbatim">git restore .</code> after a graph restore, when
+needed).</p>
+</section>
+<section id="pipeline-griller-architector-planner-implementer"
+class="level2" data-number="13.9">
+<h2 data-number="13.9"><span class="header-section-number">13.9</span>
+Pipeline: griller → architector → planner → implementer</h2>
+<p>One agent per layer, each owning its file. The pipeline runs forward
+during <em>grilling</em> (new design) and runs in <em>reverse</em> on
+the stale subgraph during <em>reconciliation</em> (design change). Each
+stage produces a reviewable artifact (a settled <code
+class="verbatim">.org</code> file or set of edits) before the next stage
+begins — the user is never confronted with half-baked downstream
+structure based on premature decisions, and a mid-grilling answer change
+does not burn tokens on re-proposing architecture that hadn't been
+proposed yet.</p>
+<pre class="text"><code>griller    (decisions)
+   ↓ grilling.complete
+architector (architecture, ADR triage)
+   ↓ architecture.complete
+planner    (tasks)
+   ↓ planning.complete
+implementer (code) [N parallel, one per claimed task]
+</code></pre>
+<p>Manager auto-advances each stage when the prior stage completes if
+the grilling-session setting <code class="verbatim">auto_cascade</code>
+is true (default); otherwise it pauses at each boundary for user
+confirmation. The user can pause, edit, or restart at any boundary.</p>
+<p>During <em>reconciliation</em>, the manager scopes each agent
+invocation to the stale subset of its layer — not the whole graph. See
+<code class="verbatim">** Reconciliation-session lifecycle</code>
+below.</p>
+<section id="griller-decisions-only" class="level3"
+data-number="13.9.1">
+<h3 data-number="13.9.1"><span
+class="header-section-number">13.9.1</span> griller (decisions
+only)</h3>
+<p>Drives grilling sessions. Writes <em>only</em> to <code
+class="verbatim">decisions.org</code>. Never proposes architecture or
+tasks. ADR-worthiness is left as a hint that the architector confirms.
+State machine (<code
+class="verbatim">shipped/schema/state-machine.org</code>):</p>
+<pre class="text"><code>exploring → proposing → awaiting_answer → glossary_check
+         → contradiction_check → next | complete
+</code></pre>
+<ul>
+<li><code class="verbatim">exploring</code> — before asking, ripgrep +
+LSP search the relevant codebase (the project's, or all of them if scope
+is global) to see if the answer is already determined. If yes: write a
+"found in code" decision with <code class="verbatim">:CODE_REFS:</code>
+populated, <code class="verbatim">:STATUS: decided</code>, skip the
+user. (Verbatim from <code
+class="verbatim">grill-with-docs/SKILL.md</code>: "If a question can be
+answered by exploring the codebase, explore the codebase instead.")</li>
+<li><code class="verbatim">proposing</code> — write the next batch (size
+= <code class="verbatim">questions_per_round</code>) or single question
+(<code class="verbatim">mode: socratic</code>) via <code
+class="verbatim">/api/nodes</code>. May set <code
+class="verbatim">:ADR_WORTHY: proposed</code> as a <em>hint</em> — the
+architector confirms or overrides during its own pass.</li>
+<li><code class="verbatim">awaiting_answer</code> — poll-free;
+filewatcher signals when the user answers in UI.</li>
+<li><code class="verbatim">glossary_check</code> — undefined term
+appeared in the answer? Propose canonical + avoid + definition; write
+atomically with the decision update. Conflict against existing glossary?
+Surface verbatim: <em>"Your glossary defines X as A, but you seem to
+mean B — which is it?"</em></li>
+<li><code class="verbatim">contradiction_check</code> — answer disagrees
+with glossary or code? Populate <code
+class="verbatim">:CONTRADICTIONS:</code> and surface in the next
+turn.</li>
+<li><code class="verbatim">complete</code> — completeness predicate is
+simply: <em>every decision in scope has <code
+class="verbatim">:STATUS: decided</code> and no <code
+class="verbatim">:CONTRADICTIONS:</code> remain unresolved</em>. No
+architecture or task checks. Calls <code
+class="verbatim">POST /api/grilling/complete</code>.</li>
+</ul>
+</section>
+<section id="architector-architecture-adr-triage" class="level3"
+data-number="13.9.2">
+<h3 data-number="13.9.2"><span
+class="header-section-number">13.9.2</span> architector (architecture +
+ADR triage)</h3>
+<p>Auto-spawned by the manager on <code
+class="verbatim">grilling.complete</code> for the same scope (or on a
+stale-arch event during reconciliation). Reads all <code
+class="verbatim">decided</code> decisions, drafts architecture nodes
+<em>once</em>, presents the proposal to the user, revises on feedback,
+completes. Also owns ADR triage. Writes <em>only</em> to <code
+class="verbatim">architecture.org</code> and to the <code
+class="verbatim">:ADR_WORTHY:</code> / <code
+class="verbatim">:ADR_NUMBER:</code> properties of decision headings
+(the one cross-file write it is permitted).</p>
+<p>State machine:</p>
+<pre class="text"><code>reading → drafting → adr_triage → presenting → revising? → complete
+</code></pre>
+<ul>
+<li><code class="verbatim">reading</code> — load all <code
+class="verbatim">decided</code> decisions in scope + any existing
+architecture nodes.</li>
+<li><code class="verbatim">drafting</code> — for each decision (or
+cluster), propose architecture nodes via <code
+class="verbatim">POST /api/nodes</code>:
+<ul>
+<li>Set <code class="verbatim">:INTERFACE:</code> based on the chosen
+option's mechanical implications.</li>
+<li>Set <code class="verbatim">:CONSTRAINTS:</code> from option metadata
++ glossary-term semantics.</li>
+<li>Set <code class="verbatim">:DECIDES:</code> back-edges from each
+motivating decision.</li>
+<li>Propose <code class="verbatim">:COMPOSES:</code> parent/child
+relationships where natural.</li>
+</ul>
+Components implied by <em>multiple</em> decisions are consolidated. The
+architector sees the design holistically rather than per-decision, which
+is the whole reason it runs after grilling and not during.</li>
+<li><code class="verbatim">adr_triage</code> — apply the grill-with-docs
+three-test (hard to reverse + surprising without context + result of a
+real trade-off) to every decision in scope. Override the griller's <code
+class="verbatim">:ADR_WORTHY: proposed</code> hints with <code
+class="verbatim">t</code> or <code class="verbatim">nil</code> as
+appropriate. Assign sequential <code
+class="verbatim">:ADR_NUMBER:</code> within the scope (global has its
+own counter; each project has its own). Triggers <code
+class="verbatim">POST /api/adr/regenerate</code> so <code
+class="verbatim">docs/adr/*.org</code> reflects the current set.</li>
+<li><code class="verbatim">presenting</code> — surface the proposed
+structure via the <code class="verbatim">** Question</code> mechanism on
+a synthetic <code class="verbatim">architect-&lt;scope&gt;</code> task:
+/"I propose N architecture nodes: arch<sub>001</sub> Parser,
+arch<sub>002</sub> Renderer, … . I marked M decisions as ADR-worthy:
+dec<sub>007</sub>, dec<sub>010</sub>, … . Reply `accept`, `revise`, or
+describe changes."/</li>
+<li><code class="verbatim">revising</code> — user feedback → rework.
+Each revision pass is a fresh <code class="verbatim">drafting</code> →
+<code class="verbatim">adr_triage</code> → <code
+class="verbatim">presenting</code> cycle scoped to the user's
+objections.</li>
+<li><code class="verbatim">complete</code> — calls <code
+class="verbatim">POST /api/architecture/complete</code>.</li>
+</ul>
+<p>Token-efficient by design: runs once per scope after grilling
+completes. Mid-grilling decision answers do <em>not</em> spawn the
+architector; only <code class="verbatim">grilling.complete</code> does.
+During reconciliation, the architector is re-spawned with the <em>stale
+arch subset</em>, not the full graph.</p>
+</section>
+<section id="planner-tasks-existing-v0.0.1-kind-new-responsibility"
+class="level3" data-number="13.9.3">
+<h3 data-number="13.9.3"><span
+class="header-section-number">13.9.3</span> planner (tasks; existing
+v0.0.1 kind, new responsibility)</h3>
+<p><code class="verbatim">planner</code> already exists in the v0.0.1
+KIND taxonomy. In the design-graph layer it gains a specific job: read
+<code class="verbatim">decided</code> decisions + <code
+class="verbatim">decided</code> architecture in scope, propose tasks
+with <code class="verbatim">:IMPLEMENTS:</code> edges back into
+architecture and <code class="verbatim">:PRODUCES:</code> file paths.
+Writes to <code class="verbatim">sprint.org</code> and <code
+class="verbatim">backlog.org</code>. Auto-spawned by manager on <code
+class="verbatim">architecture.complete</code>.</p>
+<p>State machine mirrors the architector's:</p>
+<pre class="text"><code>reading → drafting → presenting → revising? → complete
+</code></pre>
+<p>Calls <code class="verbatim">POST /api/planning/complete</code> on
+completion. During reconciliation, re-spawned with the <em>stale task
+subset</em>.</p>
+</section>
+<section id="implementer-code-existing-v0.0.1-kind-unchanged"
+class="level3" data-number="13.9.4">
+<h3 data-number="13.9.4"><span
+class="header-section-number">13.9.4</span> implementer (code; existing
+v0.0.1 kind, unchanged)</h3>
+<p>Reads its claimed task, edits files, may leave advisory markers per
+<code class="verbatim">shipped/conventions/code-markers.org</code>.
+Auto-spawned by manager once tasks become <code
+class="verbatim">claimed</code> (existing v0.0.1 mechanism). <em>N</em>
+implementers may run in parallel, one per claimed task, bounded by
+project <code class="verbatim">:MAX_CONCURRENT_RUNS:</code>. No changes
+from v0.0.1 semantics.</p>
+</section>
+<section id="glossarist-glossary-maintenance" class="level3"
+data-number="13.9.5">
+<h3 data-number="13.9.5"><span
+class="header-section-number">13.9.5</span> glossarist (glossary
+maintenance)</h3>
+<p>Background glossary maintenance — <em>manager-triggered tick</em>,
+not a long-running worker. Reads all <code class="verbatim">.org</code>
+artifacts in scope, flags:</p>
+<ul>
+<li>Terms used in headings/bodies but not defined.</li>
+<li>Glossary entries with zero references.</li>
+<li>Aliases in <code class="verbatim">:AVOID:</code> lists that someone
+used as a heading.</li>
+<li>Cross-scope term drift (project canonical conflicts with
+global).</li>
+</ul>
+<p>Proposals only — never writes glossary terms autonomously. Surfaces a
+<code class="verbatim">** Question</code> on a synthetic <code
+class="verbatim">meta-glossary</code> task.</p>
+<p>(Renamed from <code class="verbatim">lexicographer</code>.
+<em>Glossarist</em> matches the narrowness of the job — tending the
+glossary, not the broader work of cataloging the language of the
+system.)</p>
+</section>
+</section>
+<section id="grilling-session-lifecycle" class="level2"
+data-number="13.10">
+<h2 data-number="13.10"><span class="header-section-number">13.10</span>
+Grilling-session lifecycle</h2>
+<ol>
+<li>User clicks <strong>Start grilling</strong> in UI (scope picker:
+global / project / bounded-context-within-project).</li>
+<li>Modal: topic, <code class="verbatim">questions_per_round</code>
+(1–5, default 3), <code class="verbatim">outcome_depth</code> (1–3,
+default 1), <code class="verbatim">mode</code> (socratic | batch), <code
+class="verbatim">auto_explore_code</code> (t | nil), <code
+class="verbatim">glossary_strict</code> (t | nil), <code
+class="verbatim">auto_cascade</code> (t | nil, default t). Socratic mode
+forces <code class="verbatim">questions_per_round=1</code>, <code
+class="verbatim">outcome_depth=1</code>. <code
+class="verbatim">auto_cascade=t</code> means: on <code
+class="verbatim">grilling.complete</code>, manager auto-spawns
+architector; on <code class="verbatim">architecture.complete</code>,
+auto-spawns planner. With <code
+class="verbatim">auto_cascade=nil</code>, manager pauses at each stage
+boundary and waits for user confirmation.</li>
+<li>UI calls <code class="verbatim">/api/snapshots</code> → daemon takes
+auto-snapshot.</li>
+<li>Manager spawns a griller worker (typically <code
+class="verbatim">claude-acp</code> driver) with the chosen scope +
+settings injected into the spawn-time prompt.</li>
+<li>Griller loops: explore → propose → user answers in UI → next.</li>
+<li>User may revise already-<code class="verbatim">decided</code>
+decisions live; if downstream architecture or tasks have already been
+proposed, the daemon marks them <code class="verbatim">stale</code> and
+the manager kicks off the reconciliation flow (<code
+class="verbatim">** Reconciliation-session lifecycle</code> below). If
+only decisions exist so far, no cascade — the architector has not yet
+run.</li>
+<li>When the griller's completeness predicate is met (every decision
+<code class="verbatim">:STATUS: decided</code>, no unresolved <code
+class="verbatim">:CONTRADICTIONS:</code>), it calls <code
+class="verbatim">POST /api/grilling/complete</code>. Per <code
+class="verbatim">auto_cascade</code>, manager either spawns the
+architector immediately or pauses for user confirmation.</li>
+</ol>
+<p><strong>Sync mechanism</strong> — orgasmic's manager loop
+<em>replaces</em> the demo plan's "clipboard-prompt + user types <code
+class="verbatim">done</code>" handoff. Filewatcher signals when the user
+answers; the griller is unblocked by the manager tick. No clipboard, no
+<code class="verbatim">done</code>-signal. (See <code
+class="verbatim">* Manager</code> for the underlying tick model.)</p>
+</section>
+<section id="reconciliation-session-lifecycle" class="level2"
+data-number="13.11">
+<h2 data-number="13.11"><span class="header-section-number">13.11</span>
+Reconciliation-session lifecycle</h2>
+<p>Reconciliation is <em>not</em> a single agent run — it's the manager
+re-running the pipeline scoped to the stale subgraph. There is no <code
+class="verbatim">reconciler</code> kind.</p>
+<ol>
+<li>User revises a <code class="verbatim">decided</code> decision in UI
+(clicks different option + confirm), <em>or</em> revises any node via
+the .org editor.</li>
+<li>UI calls <code class="verbatim">/api/snapshots</code> →
+auto-snapshot.</li>
+<li>UI calls <code class="verbatim">/api/revisions/&lt;id&gt;</code> →
+daemon flips status, recomputes <code
+class="verbatim">:SEMANTIC_HASH:</code>, propagates <code
+class="verbatim">:STATUS: stale</code> over forward edges.</li>
+<li>Manager sees the stale set on the WS stream. For each layer with
+stale nodes, in <em>topological order</em> (architecture before tasks
+before code): a. Stale architecture nodes → spawn <code
+class="verbatim">architector</code> in <em>reconciling</em> state
+(prompt template <code
+class="verbatim">architector/reconciling.org</code>). Architector reads
+stale arch + their motivating decisions, either revises each (<code
+class="verbatim">POST /api/revisions/&lt;id&gt;</code>) or validates
+unchanged (<code class="verbatim">POST /api/validate/&lt;id&gt;</code>)
+if <code class="verbatim">:INTERFACE:</code> + <code
+class="verbatim">:CONSTRAINTS:</code> survive the decision change.
+Re-runs <code class="verbatim">adr_triage</code> over the affected
+decisions. b. Stale tasks → spawn <code class="verbatim">planner</code>
+in <em>reconciling</em> state. Planner revises task bodies, <code
+class="verbatim">:PRODUCES:</code>, and <code
+class="verbatim">:ACCEPTANCE:</code> as needed; may create new tasks or
+supersede old ones. c. Stale code (via stale tasks' <code
+class="verbatim">:PRODUCES:</code> <em>plus</em> advisory-marker grep
+hits across the codebase) → spawn <em>N</em> <code
+class="verbatim">implementer</code> runs, one per affected task. Each
+implementer reads its claim, edits files, optionally updates advisory
+markers, transitions to <code class="verbatim">verifying</code>, then
+<code class="verbatim">done</code>. Implementers may also touch files
+surfaced only by advisory-marker grep, but must explicitly raise a
+question to the user before doing so (those edits are outside the task's
+<code class="verbatim">:PRODUCES:</code> set).</li>
+<li>Each layer's agent presents a plan via <code
+class="verbatim">** Question</code> before destructive edits; user must
+reply before the agent advances. Layers run <em>strictly in order</em>;
+a layer doesn't start until the prior layer reports completion (<code
+class="verbatim">architecture.complete</code>, <code
+class="verbatim">planning.complete</code>, all implementer runs
+done).</li>
+<li>When the stale set is empty, manager calls <code
+class="verbatim">POST /api/reconcile/complete</code> → daemon validates
+graph-side gates (decision pending-state, trace consistency,
+file-deletion ⇔ supersede pairing, cross-scope reference validity) and
+flips <code class="verbatim">stale → decided</code> (or returns
+violations to the manager, which surfaces them as a question to the
+user).</li>
+<li>User (or manager, per project setting <code
+class="verbatim">:AUTO_GIT_COMMIT:</code>) commits.</li>
+</ol>
+<p>The daemon <em>never</em> invokes git. Git is the operator's
+responsibility.</p>
+<p>The daemon <em>never</em> invokes git. Git is the operator's
+responsibility (same invariant as the demo plan).</p>
+</section>
+<section id="daemon-rpcs-additions" class="level2" data-number="13.12">
+<h2 data-number="13.12"><span class="header-section-number">13.12</span>
+Daemon RPCs (additions)</h2>
+<p>HTTP routes:</p>
+<pre class="text"><code>GET    /api/graph?scope=&lt;s&gt;&amp;root=&lt;id&gt;&amp;layers=…&amp;depth=N
+GET    /api/nodes/&lt;id&gt;
+POST   /api/nodes                    batch create
+POST   /api/answers                  batch answer (pending → decided)
+POST   /api/revisions/&lt;id&gt;
+POST   /api/validate/&lt;id&gt;
+POST   /api/supersede/&lt;id&gt;
+POST   /api/grilling/complete        body: {scope, node_ids[]}
+POST   /api/architecture/complete    body: {scope, node_ids[]}
+POST   /api/planning/complete        body: {scope, node_ids[]}
+POST   /api/reconcile/complete       body: {scope, node_ids[], suggest_message?}
+POST   /api/snapshots                body: {scope, label?}
+GET    /api/snapshots?scope=&lt;s&gt;
+POST   /api/restore/&lt;id&gt;             body: {confirm: true}
+POST   /api/glossary                 propose / rename / extend / override
+POST   /api/contradictions/&lt;dec&gt;     flag / resolve / acknowledge
+POST   /api/adr/&lt;dec&gt;                promote / demote
+POST   /api/adr/regenerate           body: {scope}
+</code></pre>
+<p>WS events: <code class="verbatim">graph.nodes_created</code>, <code
+class="verbatim">graph.node_updated</code>, <code
+class="verbatim">graph.stale_propagated</code>, <code
+class="verbatim">graph.snapshot_taken</code>, <code
+class="verbatim">graph.snapshot_restored</code>, <code
+class="verbatim">graph.grilling_complete</code>, <code
+class="verbatim">graph.architecture_proposed</code>, <code
+class="verbatim">graph.architecture_complete</code>, <code
+class="verbatim">graph.planning_proposed</code>, <code
+class="verbatim">graph.planning_complete</code>, <code
+class="verbatim">graph.finalized</code>, <code
+class="verbatim">glossary.term_proposed</code>, <code
+class="verbatim">glossary.term_renamed</code>, <code
+class="verbatim">adr.regenerated</code>, <code
+class="verbatim">contradiction.flagged</code>.</p>
+<p><code class="verbatim">/api/reconcile/complete</code> validation
+gates (graph-side only):</p>
+<ul>
+<li>No decision node referenced in <code
+class="verbatim">node_ids</code> is <code
+class="verbatim">pending</code>.</li>
+<li>No decision node <em>anywhere in the touched subgraph</em> is <code
+class="verbatim">pending</code>.</li>
+<li>For every superseded code-file reference: the file does not exist on
+disk. For every non-superseded code-file reference: the file
+exists.</li>
+<li>Trace consistency: every <code class="verbatim">:PRODUCES:</code>
+file path is reachable; no cross-scope <code
+class="verbatim">:REFERENCES:</code> points at a deleted/superseded
+node.</li>
+</ul>
+<p>Note: there is <em>no</em> physical-hash check on edited files. The
+reconciliation agents (architector / planner / implementer in
+reconciling state) are trusted to have done the right edits; user review
+at each agent's <code class="verbatim">presenting</code> or <code
+class="verbatim">planning</code> state is the human gate.</p>
+</section>
+<section id="ui-additions" class="level2" data-number="13.13">
+<h2 data-number="13.13"><span class="header-section-number">13.13</span>
+UI additions</h2>
+<ul>
+<li><strong>Design graph</strong> view: 4-layer DAG (React Flow), layer
+toggles, scope picker (global / project / context), node-detail panel
+reusing the generic .org viewer.</li>
+<li><strong>Glossary</strong> panel: term list with canonical / avoid /
+references / back- references; click a term to see every
+decision/arch/task/code that references it.</li>
+<li><strong>ADR</strong> view: filtered list of <code
+class="verbatim">:ADR_WORTHY: t</code> decisions; preview of the
+generated <code class="verbatim">docs/adr/</code> files; scope
+toggle.</li>
+<li><strong>Snapshots</strong> panel: timeline with labels; restore
+button per row (confirm dialog).</li>
+<li><strong>Grilling-settings</strong> modal (above).</li>
+<li><strong>Impact preview</strong> on decision revision: "N
+architecture, M tasks, K files affected" before user clicks <em>Commit
+&amp; reconcile</em>.</li>
+<li>All panels driven by the design-graph WS streams.</li>
+</ul>
+</section>
+<section id="critical-invariants-extends-defaults" class="level2"
+data-number="13.14">
+<h2 data-number="13.14"><span class="header-section-number">13.14</span>
+Critical invariants (extends <code
+class="verbatim">* Defaults</code>)</h2>
+<ol>
+<li><em>Daemon is the sole writer of glossary.org, decisions.org,
+architecture.org, and docs/adr/*.org.</em> Workers and humans go through
+RPC.</li>
+<li><em>The daemon never writes inside source files.</em> In-code
+markers are written by agents as a convention, not by the daemon as a
+guarantee.</li>
+<li><em><code class="verbatim">apply_revision</code> is atomic.</em>
+Hash + propagation + tx write all-or-nothing.</li>
+<li><em>Finalize endpoints reject:</em> pending decisions in the touched
+subgraph, trace inconsistency, file-deletion ⇔ supersede mismatches,
+cross-scope references to deleted/superseded nodes. (No code-side hash
+check.)</li>
+<li><em>Nodes are never deleted.</em> Use <code
+class="verbatim">:STATUS: superseded</code>. Append-only at the node
+level.</li>
+<li><em>A decision's semantic hash never depends on prose.</em> Editing
+prose-only doesn't cascade.</li>
+<li><em>Code is not a graph node.</em> Files are linked via task <code
+class="verbatim">:PRODUCES:</code> edges and (advisorily) by in-code
+markers. There is no code-layer hash.</li>
+<li><em>The agent never marks a pending decision decided.</em> Only the
+user clicks.</li>
+<li><em>An auto-snapshot precedes every user-initiated grilling or
+reconciliation kickoff.</em></li>
+<li><em>Cross-scope references are advisory at write-time but enforced
+at finalize-time.</em> Project decisions referencing a deleted global
+decision block reconcile-complete.</li>
+<li><em>Glossary entries contain no implementation details.</em> Daemon
+rejects glossary writes that include code paths, type signatures, or
+function names in <code class="verbatim">:DEFINITION:</code> — CONTEXT
+is a glossary, per grill-with-docs.</li>
+<li><em>Code markers are advisory, never authoritative.</em>
+Reconciliation agents must not treat the absence of a marker as proof a
+file is unaffected.</li>
+</ol>
+</section>
+</section>
+<section id="lineage-references" class="level1" data-number="14">
+<h1 data-number="14"><span class="header-section-number">14</span>
+Lineage &amp; references</h1>
+<ul>
+<li>Sister project: HAR (<code class="verbatim">../har/</code>). The
+driver crate, supervisor pattern, UI transport seams, and tmux WS bridge
+are all lifted from HAR.</li>
+<li>Inspiration: org-mode (plain-text, append-only, Git-native).</li>
+<li>Inspiration: hermes-agent (<a
+href="https://github.com/NousResearch/hermes-agent">https://github.com/NousResearch/hermes-agent</a>)
+for the two-layer install model and the three-tier skill split.</li>
+<li>Predecessor design exercise (which surfaced the design tensions that
+led to orgasmic): <code
+class="verbatim">../har/docs/future/tx-log-to-org-hybrid-migration-spec.org</code>.
+orgasmic is <em>not</em> a migration of HAR — it's a separate app that
+took the lessons from that exercise and inverted the build
+direction.</li>
+</ul>
+</section>
+<section id="open-questions-for-v0.0.1-implementation" class="level1"
+data-number="15">
+<h1 data-number="15"><span class="header-section-number">15</span> Open
+questions for v0.0.1 implementation</h1>
+<p>Items the design intentionally did <em>not</em> pin, to be decided
+during build:</p>
+<ul>
+<li>Exact wire format for the bearer-token endpoint scheme (query param
+vs header for WS — HAR's pattern probably works).</li>
+<li>Whether <code class="verbatim">orgasmic init</code> writes
+config.yaml in TOML or YAML (current default is YAML to match hermes;
+revisit if YAML parser disagreement bites).</li>
+<li>Whether to use <code class="verbatim">notify</code> or <code
+class="verbatim">notify-debouncer-full</code> for the watcher.</li>
+<li>Concrete CodeMirror org-mode highlighter — there are several; pick
+one and fork the highlights file.</li>
+<li>Concrete shape of the LAN-bind warning (should require explicit
+confirm).</li>
+<li>Whether the daemon-state directory ever moves to SQLite for indexing
+performance (post-v0.1 if .org parsing dominates the watcher CPU).</li>
+</ul>
+<p>Design-graph layer (v0.0.5–v0.0.6) — to pin during that slab:</p>
+<ul>
+<li>Cross-scope snapshot semantics: should a global-scope reconciliation
+auto-snapshot every affected project's graph too, or only the global
+one?</li>
+<li>Whether socratic mode should be the default for global grilling
+(stakes high) and batch the default for per-project (bandwidth matters),
+or whether the modal should require an explicit pick each time.</li>
+<li>Whether <code class="verbatim">:CHOSEN: multiple</code> is allowed
+(a decision picking multiple compatible options, e.g., "support both X
+and Y") or whether that's two separate decisions.</li>
+<li>How <code class="verbatim">glossarist</code> ticks should be
+triggered: filewatcher debounce vs manager-scheduled cron-style (default
+off) vs explicit CLI only.</li>
+<li>Whether <code class="verbatim">docs/adr/</code> should also be
+exported as Markdown (<code class="verbatim">.md</code>) for
+GitHub-renderer compatibility, in addition to <code
+class="verbatim">.org</code>.</li>
+<li>Whether implementer agents in reconciling state should
+<em>surface</em> files they found via marker grep but couldn't reach via
+the claimed task's <code class="verbatim">:PRODUCES:</code> as a special
+"advisory hits" list for the user to confirm in one batch — or raise a
+separate <code class="verbatim">** Question</code> per file.</li>
+<li>Whether grilling sessions can be <em>paused</em> and
+<em>resumed</em> across orgasmic daemon restarts, or whether a stalled
+session always starts fresh from the auto-snapshot.</li>
+</ul>
+</section>
+  </main>
+</div>
+</body>
+</html>

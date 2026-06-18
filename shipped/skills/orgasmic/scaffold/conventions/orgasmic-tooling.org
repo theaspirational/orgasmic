@@ -1,0 +1,14 @@
+#+title: orgasmic tooling
+#+orgasmic_version: 1
+
+* Convention: working with installed orgasmic tooling
+
+Use the CLI as the agent/human surface. Treat the daemon as the CLI backend.
+
+- Check live tooling: `command -v orgasmic >/dev/null 2>&1 && orgasmic status >/dev/null 2>&1`.
+- `/orgasmic recall`: brief; stop.
+- `/orgasmic resume`: brief; continue the next clear action.
+- `orgasmic ...`: state-write surface when the check succeeds.
+- Daemon: write authority for `tx/` and sessions.
+- `.orgasmic/*.org`: CLI-only for agents (`orgasmic --help`); no hand-edits.
+- Missing `/orgasmic` skill: read `conventions/no-skill-installed.org`.

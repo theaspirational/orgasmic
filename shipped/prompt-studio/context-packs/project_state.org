@@ -1,0 +1,14 @@
+* CONTEXT-PACK project_state
+:PROPERTIES:
+:ID:                 project_state
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/project.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Project baseline and operating constraints. Render as a compact source
+reference by default, not the full project baseline.
+
+** Notes
+Rendered from the managed project's `.orgasmic/project.org`.

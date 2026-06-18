@@ -1,0 +1,16 @@
+{
+  "identifier": "default",
+  "description": "Default permissions for the orgasmic desktop window",
+  "local": true,
+  "remote": {
+    "urls": ["http://127.0.0.1:4848/*", "http://localhost:4848/*"]
+  },
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "process:allow-restart",
+    "updater:default",
+    "shell:allow-open"
+  ]
+}

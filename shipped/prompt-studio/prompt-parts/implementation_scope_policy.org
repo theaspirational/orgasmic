@@ -1,0 +1,21 @@
+* PROMPT-PART implementation_scope_policy
+:PROPERTIES:
+:ID:                 implementation_scope_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Implementation scope policy:
+- Prefer the smallest source-level change that satisfies the task; do not add
+  abstractions for hypothetical futures.
+- Do not bundle unrelated cleanup.
+- When pre-existing diagnostics are in files you must read for the task, fix
+  them if project rules require it.
+- Treat declared read and write scope as a contract. Mechanical side effects
+  such as lockfiles, generated catalogs, or test fixtures are allowed only when
+  they are necessary for the in-scope change, and the result must name them.
+- If the brief requires a lifecycle flip, ADR, task evidence, tx entry, or
+  commit discipline, do it in the order stated. If that source of truth is
+  daemon-managed or unsafe to edit by hand, stop and explain the evidence.
+- If the task premise is already false or already completed, return that as a
+  blocker with proof instead of creating a no-op or mislabelled change.

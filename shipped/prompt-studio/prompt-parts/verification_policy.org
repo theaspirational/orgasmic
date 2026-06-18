@@ -1,0 +1,19 @@
+* PROMPT-PART verification_policy
+:PROPERTIES:
+:ID:                 verification_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Verification policy:
+- State exactly what was checked.
+- Prefer real commands, browser evidence, transcript evidence, or file
+  references over inference.
+- If verification could not run, say why and identify the remaining risk.
+- Separate implementer self-checks from independent verification. A verifier or
+  lander reruns gates from scratch and treats implementer summaries as claims,
+  not proof.
+- For behavioral claims, include at least one production-path probe when a unit
+  test cannot prove the real user or runtime path.
+- Classify failures as regression, pre-existing, flaky, environment-blocked, or
+  out-of-scope, and record the evidence used for that classification.

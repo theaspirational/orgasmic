@@ -1,0 +1,13 @@
+#+title: orgasmic config
+#+orgasmic_version: 1
+
+* CONFIG orgasmic
+:PROPERTIES:
+:ID:                  orgasmic
+:DEFAULT_BRANCH:      main
+:TEST_CMD:            cargo test
+:LINT_CMD:            cargo clippy --workspace --all-targets
+:BUILD_CMD:           cargo build
+:WRITE_SCOPE:         .orgasmic/**
+:PIPELINE:            griller planner implementer-cursor reviewer-codex-acp
+:END:

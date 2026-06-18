@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeDevCommand": {
+      "cwd": "..",
+      "script": "npm --prefix ui run dev:bootstrap -- --host 0.0.0.0 --port 5180",
+      "wait": false
+    },
+    "beforeBuildCommand": {
+      "cwd": "..",
+      "script": "npm --prefix ui run build:bootstrap",
+      "wait": true
+    }
+  },
+  "bundle": {
+    "createUpdaterArtifacts": false,
+    "externalBin": null,
+    "resources": null,
+    "android": {
+      "minSdkVersion": 24,
+      "versionCode": 1
+    }
+  }
+}

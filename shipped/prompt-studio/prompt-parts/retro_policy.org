@@ -1,0 +1,12 @@
+* PROMPT-PART retro_policy
+:PROPERTIES:
+:ID:                 retro_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Retro policy:
+- A gotcha needs repeated evidence or a single high-impact failure likely to
+  recur.
+- Each gotcha needs an exit condition.
+- Each backlog task should explain how it will make one gotcha obsolete.

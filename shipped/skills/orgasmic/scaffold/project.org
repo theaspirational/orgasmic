@@ -1,0 +1,13 @@
+#+title: {{PROJECT_NAME}}
+#+orgasmic_version: 1
+
+* PROJECT {{PROJECT_NAME}}
+:PROPERTIES:
+:ID:                  {{PROJECT_ID}}
+:END:
+
+** Mission
+[Describe the project's goal in 2–4 sentences.]
+
+** Operating Constraints
+[Project-specific constraints injected into every worker prompt.]

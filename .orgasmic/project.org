@@ -1,0 +1,39 @@
+#+title: orgasmic project
+#+orgasmic_version: 1
+
+* PROJECT orgasmic
+:PROPERTIES:
+:ID:                  orgasmic
+:END:
+
+** Mission
+orgasmic coordinates AI-agent work through repo-local plain-text state. This repository is also the seed project used to dogfood the orgasmic manager, decision graph, and later architecture pipeline.
+
+** Operating Constraints
+- Greenfield bias: treat this project as greenfield until v0.0.1 ships, regardless of current state. Do not assume backward compatibility, legacy constraints, or incremental patching unless explicitly stated. Prioritize correctness, simplicity, and architectural integrity over stability of existing patterns; prefer clean designs even when they require refactoring or replacing components. Avoid fallbacks, shims, or compatibility layers as a default strategy — admit them only when explicitly required.
+- Keep current design authority in `.orgasmic/`.
+- Record durable rationale in `.orgasmic/decisions.org`; there is no separate ADR surface, no generated-ADR/snapshot/graph-reconcile machinery, and no semantic-hash/stale-propagation consistency engine. The architecture graph survives as an authored + materialized + React-Flow-visualized graph; the glossary as a plain authored doc. (Run/boot recovery + continuation is unrelated and fully retained.)
+- Treat `archive/21_05_26_init/spec.org` as historical provenance only.
+- Preserve the app-owned Org profile; do not require Emacs or Emacs runtime behavior.
+- The daemon is the write authority for tx, sessions, and structured project-state edits.
+- Inspired by HAR (sibling repo at `../har/`) and org-mode. Reuse from HAR is encouraged: the `WorkerDriver` trait + concrete drivers, the supervisor pattern, and the UI's transport seams.
+
+** Product Baseline
+- Product: orgasmic is a per-developer local coordination app, made of a daemon, CLI, and React UI, for projects, tasks, decisions, architecture, glossary, activity, and agent runs. Success means the operator can see current project state, launch or inspect workers, edit durable =.org= sources, and verify what happened without guessing which agent or file owns the truth.
+- Register: product / tool. Design serves the product; this is working software, not a marketing or brand surface.
+- Brand personality: quiet, precise, work-focused.
+- Primary users: developer-operators, the manager agent driving the orgasmic CLI, and power users who keep several projects open at once. They work local-first inside real repositories while planning, dispatching, reviewing, and reconciling AI worker runs against =.orgasmic/= state.
+- Primary surfaces: app shell, project tab strip, Decisions, Architecture, Tasks, Glossary, Activity, Runs, Org editor, Settings, and cross-project Board.
+- North star: dense but legible; fast navigation across projects; keyboard- and mobile-capable.
+- Design principles: put the working surface first; make the source of truth visible; prefer dense, scannable operational UI over decorative explanation; keep agent actions inspectable before they run; make verification and diagnostics first-class.
+- Anti-references: no hero sections, section eyebrows, landing-page tropes, or decorative marketing composition in the app shell; avoid marketing dashboards, decorative SaaS hero layouts, oversized cards, ambiguous assistant-chat surfaces, and prompt UIs that hide the compiled result or the source of included context. (Visual-system bans — side-stripe borders, gradient text, glassmorphism — live in =** Design System= below.)
+- Accessibility & inclusion: familiar product UI patterns, keyboard-reachable controls, visible focus states, sufficient contrast, reduced-motion-safe transitions, and copy that names concrete actions. (Concrete token-level rules — contrast >=4.5:1, =motion-reduce= fallbacks — live in =** Design System= below.)
+- Voice: terse and specific; verb+object button labels; no marketing buzzwords.
+
+** Design System
+The visual system — the DESIGN.md equivalent, paired with =** Product Baseline=. Token source of truth is =ui/src/styles.css= (light =:root= / dark =.dark=); reuse existing tokens before inventing new ones. Token changes are made in =ui/src/styles.css= and mirrored here.
+- Color (light -> dark): background =0.99 0 0= -> =0.135 0 0=; foreground =0.18= -> =0.96=; card =1.0= -> =0.175=. Primary (teal) =oklch(0.55 0.13 200)= -> =oklch(0.72 0.13 200)=, with =ring= = primary. muted-foreground =0.45= -> =0.68= (secondary text; do not go lighter without checking >=4.5:1). accent (teal tint) =0.93 0.04 200= -> =0.27 0.04 200=; border =0.92= -> =0.27=. Status: ok ~h145 green, warn ~h75 amber, destructive/bad ~h22-27 red; 5-hue chart ramp (200/30/280/100/340). The sidebar carries its own =--sidebar*= token set slightly off the main surface.
+- Typography: sans = *Geist Variable* (=--sans=); mono = system stack (=--mono=: SFMono/Menlo/Monaco/Consolas). Cap at these two families; hierarchy via weight + size, not extra typefaces. Body line-height 1.45. Mono for ids/branches/code (e.g. project ids, =dec_0xx=, =arch_0xx=).
+- Shape & spacing: radius base =--radius 0.5rem= with a scale =--radius-sm..4xl= (0.6x..2.6x). Tailwind spacing scale; vary spacing for rhythm; flex for 1D, grid for 2D.
+- Primitives & motion: shadcn/ui over Radix on Tailwind v4 (=ui/src/components/ui/*=) — prefer existing primitives (Button, Dialog, Popover, ContextMenu, Sidebar, Tabs, Sheet) before adding new ones. Motion uses transform/opacity, ease-out, ~150ms, and every animation needs a =prefers-reduced-motion= fallback (=motion-reduce:=).
+- Principles & bans: one PageHeader per surface, no stacked/nested headings, list components own only toolbar + list. Body/label contrast >=4.5:1 in both themes (placeholders too). No side-stripe accent borders, no gradient text, no decorative glassmorphism, no per-section eyebrows.

@@ -1,0 +1,11 @@
+* CONTEXT-PACK glossary
+:PROPERTIES:
+:ID:                 glossary
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/glossary.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Canonical domain language and avoided terms. Render as a compact source
+reference by default, not the full glossary.

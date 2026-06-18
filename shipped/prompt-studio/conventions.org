@@ -1,0 +1,65 @@
+#+title: shipped prompt convention index
+#+orgasmic_version: 1
+
+* CONVENTIONS shipped prompt conventions
+:PROPERTIES:
+:ID:                 shipped-conventions
+:VERSION:            1
+:END:
+
+Conventions are reusable rule bodies, not default prompt context. Prompt specs
+should mention convention IDs or include the exact convention through an
+explicit slot only when the role needs the full rule text.
+
+** architecture_decomposition
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/architecture_decomposition.org
+:SLOT:               {{conventions.architecture_decomposition}}
+:END:
+
+Architecture node decomposition rules for the architector.
+
+** manager-dispatch
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/manager-dispatch.org
+:SLOT:               {{conventions.manager_dispatch}}
+:END:
+
+Manager delegation, reviewer-after-landing, pre-flight tx, and the codex
+dispatch playbook. Named by `manager`; read by path (not auto-injected).
+
+** manager-handoff
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/manager-handoff.org
+:SLOT:               {{conventions.manager_handoff}}
+:END:
+
+Manager continuous-handoff: thin goals, handoff liveness, tick-time reads,
+optional archive docs. Named by `manager`; read by path.
+
+** manager-contribution
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/manager-contribution.org
+:SLOT:               {{conventions.manager_contribution}}
+:END:
+
+Manager landing flow for orgasmic contribution work (branch + PR). Named by
+`manager`; read by path.
+
+** tx-scannable-bodies
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/tx-scannable-bodies.org
+:SLOT:               {{conventions.tx_scannable_bodies}}
+:END:
+
+Formatting `manager.action` / `manager.launch` tx bodies for the UI feed. Named
+by `manager`; read by path.
+
+** node-references
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/node-references.org
+:SLOT:               {{conventions.node_references}}
+:END:
+
+Pair node ids with a short readable handle in human-facing prose:
+TASK-YHA6V (codex thin last.txt). Applies to all agents; read by path.

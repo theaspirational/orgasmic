@@ -1,0 +1,26 @@
+* WORKER implementer-codex-rmux
+:PROPERTIES:
+:ID:                          implementer-codex-rmux
+:KIND:                        implementer
+:DRIVER:                      rmux
+:HARNESS:                     codex
+:PROVIDERS:                   openai
+:MODELS:                      gpt-5.5
+:REASONING_EFFORTS:           low medium high xhigh
+:DEFAULT_PROVIDER:            openai
+:DEFAULT_MODEL:               gpt-5.5
+:DEFAULT_EFFORT:              high
+:LINKED_SKILLS:
+:APPLICABLE_STATES:           working, done, blocked, cancelled
+:MAX_ITERATIONS:              20
+:CONTEXT_BUDGET:              150000
+:VERSION:                     1
+:END:
+
+** Notes
+The =rmux= driver is a bounded smoke proof (TASK-AJZCK), not a production
+replacement for =tmux=. It requires a separately provisioned =rmux= daemon
+binary (=RMUX_SDK_DAEMON_BINARY= or PATH). When the binary or a capability is
+missing, the driver degrades to an honest inert mode that records the exact
+reason rather than faking a working session. Operator Web Share URLs and pairing
+tokens are privileged shell access and are only ever surfaced in redacted form.

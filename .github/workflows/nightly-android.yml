@@ -1,0 +1,214 @@
+name: Nightly Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-android-apk
+  cancel-in-progress: true
+
+jobs:
+  publish-nightly-android:
+    name: Build and publish Android nightly
+    runs-on: macos-latest
+
+    env:
+      NIGHTLY_TAG: nightly
+      ANDROID_NDK_VERSION: 29.0.14206865
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;35.0.0" \
+            "ndk;${ANDROID_NDK_VERSION}"
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Prepare Android nightly version
+        id: version
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const runNumber = Number(process.env.GITHUB_RUN_NUMBER || '0');
+          const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT || '1');
+          const versionCode = runNumber * 100 + runAttempt;
+          const version = `0.99.${versionCode}`;
+
+          const tauriPath = 'src-tauri/tauri.conf.json';
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
+          tauriConfig.version = version;
+          fs.writeFileSync(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
+
+          const androidTauriPath = 'src-tauri/tauri.android.conf.json';
+          const androidTauriConfig = JSON.parse(fs.readFileSync(androidTauriPath, 'utf8'));
+          androidTauriConfig.bundle.android.versionCode = versionCode;
+          fs.writeFileSync(androidTauriPath, `${JSON.stringify(androidTauriConfig, null, 2)}\n`);
+
+          const packagePath = 'ui/package.json';
+          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+          packageJson.version = version;
+          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const cargoPath = 'src-tauri/Cargo.toml';
+          const cargoToml = fs.readFileSync(cargoPath, 'utf8').replace(
+            /^version = ".*"$/m,
+            `version = "${version}"`,
+          );
+          fs.writeFileSync(cargoPath, cargoToml);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version_code=${versionCode}\n`);
+          NODE
+
+      - name: Verify Android signing keys
+        run: |
+          for name in ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD ANDROID_KEY_BASE64; do
+            if [ -z "${!name}" ]; then
+              echo "::error::${name} secret is required for signed Android sideload APKs"
+              exit 1
+            fi
+          done
+
+      - name: Setup Android signing
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/gen/android
+          {
+            echo "keyAlias=${ANDROID_KEY_ALIAS}"
+            echo "password=${ANDROID_KEY_PASSWORD}"
+            echo "storeFile=${RUNNER_TEMP}/orgasmic-android-upload.jks"
+          } > src-tauri/gen/android/keystore.properties
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          target = Path(os.environ["RUNNER_TEMP"]) / "orgasmic-android-upload.jks"
+          target.write_bytes(base64.b64decode(os.environ["ANDROID_KEY_BASE64"]))
+          PY
+
+      - name: Build Android APK
+        run: |
+          export NDK_HOME="${ANDROID_HOME}/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_HOME="${NDK_HOME}"
+          npm --prefix ui run tauri:android:build
+
+      - name: Stage Android release assets
+        env:
+          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
+          ANDROID_VERSION_CODE: ${{ steps.version.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/nightly
+
+          apk_path="$(find src-tauri/gen/android/app/build/outputs/apk -path '*/release/*' -name '*.apk' -print -quit)"
+          if [ -z "${apk_path}" ]; then
+            echo "::error::Expected Android APK was not produced"
+            exit 1
+          fi
+
+          android_apk_name="orgasmic_${NIGHTLY_VERSION}_${ANDROID_VERSION_CODE}_android_aarch64.apk"
+          cp "${apk_path}" "dist/nightly/${android_apk_name}"
+
+          apk_sha256="$(shasum -a 256 "dist/nightly/${android_apk_name}" | awk '{print $1}')"
+
+          ANDROID_MANIFEST_PATH="dist/nightly/android-latest.json" \
+          ANDROID_APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${NIGHTLY_TAG}/${android_apk_name}" \
+          ANDROID_APK_SHA256="${apk_sha256}" \
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const manifest = {
+            channel: process.env.NIGHTLY_TAG,
+            packageName: 'com.theaspirational.orgasmic',
+            version: process.env.NIGHTLY_VERSION,
+            versionCode: Number(process.env.ANDROID_VERSION_CODE),
+            notes: `Nightly Android APK from ${process.env.GITHUB_SHA}`,
+            pubDate: new Date().toISOString(),
+            apkUrl: process.env.ANDROID_APK_URL,
+            apkSha256: process.env.ANDROID_APK_SHA256,
+          };
+
+          fs.writeFileSync(process.env.ANDROID_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+
+      - name: Publish Android nightly release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="Nightly builds from ${GITHUB_SHA}."
+
+          git tag -f "${NIGHTLY_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${NIGHTLY_TAG}" --force
+
+          if gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1; then
+            gh release edit "${NIGHTLY_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "orgasmic nightly" \
+              --notes "${notes}" \
+              --prerelease
+          else
+            gh release create "${NIGHTLY_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "orgasmic nightly" \
+              --notes "${notes}" \
+              --prerelease \
+              --latest=false || \
+            gh release edit "${NIGHTLY_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "orgasmic nightly" \
+              --notes "${notes}" \
+              --prerelease
+          fi
+
+          gh release view "${NIGHTLY_TAG}" --json assets --jq '.assets[].name' |
+            while IFS= read -r asset; do
+              case "${asset}" in
+                orgasmic_*_android_*.apk|android-latest.json)
+                  gh release delete-asset "${NIGHTLY_TAG}" "${asset}" --yes
+                  ;;
+              esac
+            done
+
+          gh release upload "${NIGHTLY_TAG}" dist/nightly/* --clobber

@@ -1,0 +1,27 @@
+#+title: Architecture decomposition — mechanism-split rules
+#+orgasmic_version: 1
+
+* CONVENTION architecture_decomposition
+:PROPERTIES:
+:NAME:       architecture_decomposition
+:NAMESPACE:  conventions
+:APPLIES_TO: architector
+:VERSION:    1
+:END:
+
+Use this convention when the architector composes or revises architecture graph
+nodes.
+
+** principle-01 a leaf has a stable contract
+** principle-02 a leaf is verb-namable in one short sentence
+** principle-03 mechanism, not feature — cross-cutting infrastructure gets first-class leaves
+** principle-04 source path budget 1–10 per leaf
+** principle-05 children per parent 2–6
+** principle-06 no mechanism-as-mechanism leaves ("all hooks", "all handlers")
+** principle-07 no cross-cutting-concern leaves (logging, error handling)
+** principle-08 tests, build scripts, fixtures excluded from =:SOURCE_PATHS:=
+** principle-09 bootstrap from existing module boundaries first
+** principle-10 target/planned nodes stay separate visually and are excluded from drift enforcement
+
+** Notes
+[user-editable, not injected]

@@ -1,0 +1,11 @@
+* CONTEXT-PACK tx_session_telemetry
+:PROPERTIES:
+:ID:                 tx_session_telemetry
+:SOURCE_KIND:        tx-log
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Recent transaction telemetry for manager and retro analysis. Render as a
+compact source reference by default; retro can explicitly inspect tx/session
+files for the relevant window.

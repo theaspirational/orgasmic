@@ -1,0 +1,208 @@
+#+title: Backlog
+#+orgasmic_version: 1
+
+* BACKLOG TASK-C9V29 Bootstrap orgasmic: populate .orgasmic/ from this repo :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29
+:STATE:            backlog
+:PRIORITY:         P1
+:WORKER:           griller
+:WRITE_SCOPE:      .orgasmic/tx/**
+:READ_SCOPE:       .orgasmic/**
+:DEPENDS_ON:
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Umbrella task that turns a freshly scaffolded `.orgasmic/` into real project
+state by auditing this repository and grilling the operator. It owns no file of
+its own; it completes when its four subtasks are DONE.
+
+Run the subtasks in order — TASK-C9V29.1 -> TASK-C9V29.2 -> TASK-C9V29.3 ->
+TASK-C9V29.4. Each one:
+1. Audits the codebase for concrete evidence (READMEs, manifests, source layout,
+   tests, config) instead of guessing.
+2. Grills the operator in small batches of high-value questions to confirm
+   intent and fill the gaps code cannot answer.
+3. Writes its target `.orgasmic/` file with real records — not placeholders — so
+   later agents have a worked example to follow.
+4. Leaves an activity record via `orgasmic tx record`.
+
+Requires a running daemon and CLI (`/orgasmic install`, then `orgasmic daemon
+start`). Bootstrap `.orgasmic/` writes use `orgasmic node body set|append`,
+`orgasmic decision create`, `orgasmic architecture create`, and `orgasmic task
+update` — see `orgasmic --help`. Replace this task with your own once bootstrap
+is complete.
+
+** Acceptance Criteria
+- [ ] TASK-C9V29.1, TASK-C9V29.2, TASK-C9V29.3, and TASK-C9V29.4 are all DONE.
+- [ ] `project.org`, `decisions.org`, and `architecture.org` hold real,
+      repo-specific records beyond the scaffolded `dec_K1DR7` bootstrap decision
+      (no `[Replace ...]` placeholders remain).
+- [ ] `.orgasmic/tx/` has at least one activity record from this bootstrap.
+
+** Worklog
+
+* BACKLOG TASK-C9V29.1 infer-project: audit + grill, then write project.org :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29.1
+:STATE:            backlog
+:PARENT_TASK:      TASK-C9V29
+:PRIORITY:         P1
+:WORKER:           griller
+:WRITE_SCOPE:      .orgasmic/project.org .orgasmic/tx/**
+:READ_SCOPE:       README* readme* docs/** Cargo.toml package.json pyproject.toml go.mod .orgasmic/project.org
+:DEPENDS_ON:
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Establish the project baseline. Audit the repo for what it is and does, then
+grill the operator on the intent the code cannot reveal.
+
+Audit: top-level READMEs and docs, build manifests and language(s), directory
+layout, entry points, test/lint/build commands, and any existing product or
+design notes.
+
+Grill: the mission in 2–4 sentences; the operating constraints every worker must
+respect; primary users and surfaces; and — only if this repo ships a user-facing
+product — the product baseline and design register. Ask in small batches; keep
+known facts, inferred assumptions, and open questions separate.
+
+Write: fill `.orgasmic/project.org`, replacing the `** Mission` and
+`** Operating Constraints` placeholders with confirmed prose. Machine config
+(test/lint/build commands, branch, worker map) stays in `config.org`, not here.
+
+** Acceptance Criteria
+- [ ] `** Mission` states the real goal in 2–4 sentences.
+- [ ] `** Operating Constraints` lists concrete, repo-specific constraints.
+- [ ] Every claim is grounded in code evidence or an explicit operator answer;
+      no invented requirements.
+- [ ] No `[Describe ...]` / `[Project-specific ...]` placeholders remain.
+
+** Worklog
+
+* BACKLOG TASK-C9V29.2 infer-decisions: surface + confirm, then write decisions.org :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29.2
+:STATE:            backlog
+:PARENT_TASK:      TASK-C9V29
+:PRIORITY:         P1
+:WORKER:           griller
+:WRITE_SCOPE:      .orgasmic/decisions.org .orgasmic/glossary.org .orgasmic/tx/**
+:READ_SCOPE:       .orgasmic/project.org README* docs/** src/** crates/** lib/**
+:DEPENDS_ON:       TASK-C9V29.1
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Recover the consequential, non-obvious decisions already embedded in this
+codebase and confirm their rationale with the operator.
+
+Audit: look for choices a newcomer would otherwise re-litigate — storage and
+file substrate, module boundaries, sync vs async seams, dependency and framework
+picks, error-handling and concurrency stance, build and release shape.
+Distinguish settled decisions from still-open questions.
+
+Grill: for each candidate, confirm Context (what forced the choice), Decision
+(what was chosen), and Consequences (what it commits the project to). Drop
+anything the operator calls incidental rather than a real decision.
+
+Write: append ADR-style records to `.orgasmic/decisions.org` after the
+scaffolded `dec_K1DR7` bootstrap decision. Use sequential `dec_NNN` ids, each
+carrying `:ID:`, `:DECIDED_AT:`, topic tags, and `** Context` / `** Decision` /
+`** Consequences`. Presence means accepted — there is no status field. Seed any
+new domain terms you rely on into `.orgasmic/glossary.org`.
+
+** Acceptance Criteria
+- [ ] At least 3 repo-specific `dec_NNN` records beyond `dec_K1DR7`, each
+      grounded in code or an operator answer (no speculative decisions).
+- [ ] Each record has Context / Decision / Consequences plus topic tags.
+- [ ] Domain terms referenced by the decisions exist in `glossary.org`.
+
+** Worklog
+
+* BACKLOG TASK-C9V29.3 infer-architecture: audit code, then write architecture.org :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29.3
+:STATE:            backlog
+:PARENT_TASK:      TASK-C9V29
+:PRIORITY:         P1
+:WORKER:           architector
+:WRITE_SCOPE:      .orgasmic/architecture.org .orgasmic/tx/**
+:READ_SCOPE:       .orgasmic/decisions.org .orgasmic/project.org .orgasmic/glossary.org src/** crates/** lib/** docs/**
+:DEPENDS_ON:       TASK-C9V29.2
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Materialize the architecture graph from the real code, linked back to the
+decisions confirmed in TASK-C9V29.2.
+
+Audit: identify subsystems and their functional leaf components. Each leaf is
+verb-namable, maps to 1–10 source paths, and describes a mechanism — not a
+feature and not a cross-cutting concern.
+
+Write: author `.orgasmic/architecture.org` as top-level subsystems with nested
+leaf nodes carrying `:SOURCE_PATHS:` and typed edges (READS / WRITES /
+EXPOSES_REST / EXPOSES_WS / SUBSCRIBES_TO / SPAWNS / CALLS, with DEPENDS_ON as
+the escape hatch). Link nodes to the `dec_NNN` records they implement. Prefer a
+faithful map of what exists over an aspirational one.
+
+** Acceptance Criteria
+- [ ] Subsystems and functional leaf components reflect the actual code layout.
+- [ ] Each leaf has `:SOURCE_PATHS:` pointing at real files and a typed edge
+      wherever one applies.
+- [ ] Nodes reference the decisions they implement.
+- [ ] No placeholder nodes remain.
+
+** Worklog
+
+* BACKLOG TASK-C9V29.4 migrate-instructions: relocate tacit knowledge into .orgasmic :bootstrap:
+:PROPERTIES:
+:ID:               TASK-C9V29.4
+:STATE:            backlog
+:PARENT_TASK:      TASK-C9V29
+:PRIORITY:         P1
+:WORKER:           griller
+:WRITE_SCOPE:      .orgasmic/project.org .orgasmic/decisions.org .orgasmic/gotchas.org .orgasmic/conventions/** .orgasmic/tmp/local_instructions.org CLAUDE.md AGENTS.md .orgasmic/tx/**
+:READ_SCOPE:       CLAUDE.md AGENTS.md .cursorrules .cursor/** .github/copilot-instructions.md CONTRIBUTING.md docs/** .orgasmic/**
+:DEPENDS_ON:       TASK-C9V29.3
+:BLOCKED_BY:
+:LAST_UPDATED:
+:END:
+
+** Description
+Move tacit knowledge out of pre-existing instruction files so every rule has
+exactly one canonical `.orgasmic/` home. If the repo has no instruction files
+beyond the scaffolded root pointers, record a no-op and close.
+
+Audit: pre-existing agent instructions (`CLAUDE.md`, `AGENTS.md`,
+`.cursorrules`, `.github/copilot-instructions.md`) and contributor docs or
+specs (`CONTRIBUTING.md`, `docs/`) for rules an agent is expected to obey.
+
+Grill: for each rule, confirm with the operator that it is still live, then
+route it to its home: working agreements -> `conventions/`; repeated traps ->
+`gotchas.org`; choices with rationale -> `decisions.org`; mission or operating
+constraints -> `project.org`; machine-specific setup ->
+`tmp/local_instructions.org` (local, ignored). Drop rules the operator calls
+dead.
+
+Write: with operator approval, shrink each migrated instruction file down to
+the `.orgasmic/entry.org` pointer plus whatever the operator keeps for human
+readers. A rule must not survive in two homes.
+
+** Acceptance Criteria
+- [ ] Every live rule from pre-existing instruction files has exactly one
+      `.orgasmic/` home — or the Worklog records a no-op because no such
+      files existed.
+- [ ] Machine-specific notes live in `tmp/local_instructions.org`, not in
+      committed files.
+- [ ] Migrated instruction files route to `.orgasmic/entry.org` and no longer
+      restate migrated rules.
+
+** Worklog

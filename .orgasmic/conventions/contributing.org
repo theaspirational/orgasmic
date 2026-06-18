@@ -1,0 +1,14 @@
+#+title: contributing
+#+orgasmic_version: 1
+
+* Convention: contributing changes
+
+How to make and record changes in this repo so the durable state stays the
+source of truth.
+
+- Follow the constraints in `project.org`.
+- Keep personal data out of durable state: `tx/`, `decisions.org`, and task evidence are committed and may be published. Use a stable handle (e.g. a GitHub username), not a personal email, in `:ACTOR:`/`:SET_BY:` fields; write paths relative to the repo or as `$ORGASMIC_HOME`/`~`, never absolute home paths; don't record machine hostnames or other environment identifiers. Machine-specific notes belong in the gitignored `tmp/local_instructions.org`.
+- Record durable rationale as a new record in `decisions.org` (don't create stray markdown docs for it).
+- If something about the project surprises you, add an entry to `gotchas.org`.
+- When you change a task's scope, keep `tasks/` current.
+- To resolve any pre-migration id: =git show id-migration | grep <old-id>=.

@@ -1,0 +1,1498 @@
+#+title: orgasmic project architecture
+#+orgasmic_version: 1
+#+scope: project
+#+project: orgasmic
+#+status: drafted
+#+source_decisions: .orgasmic/decisions.org
+#+architector_task: TASK-C9V29
+#+completed_at: [2026-05-21 Thu 19:32]
+#+v0_0_1_split_at: [2026-05-22 Fri 00:55]
+#+v0_0_1_split_task: TASK-RHDQE
+#+v0_0_1_rollup_at: [2026-05-22 Fri 13:55]
+#+v0_0_1_rollup_task: TASK-M1MZ4
+
+* IMPLEMENTED v0.0.1
+
+Architecture nodes whose interfaces and constraints have shipped code backing as of orgasmic v0.0.1. Each node carries =:V0_0_1:= classifying the shipping status:
+
+- =shipped= — every named interface and constraint is exercised by code that lands in v0.0.1 (the closing tasks are named in =:V0_0_1_EVIDENCE:=).
+- =partial= — the node's shape is in code but a named subset is deferred. Partial nodes carry an =** v0.0.1 status= body section enumerating the shipped surface, the simulated/inert/stub fallbacks, and the follow-up task that owns the gap. (No node is currently classified =partial=: the v0.0.1 gap-closure tasks landed in Rounds 1–4 and TASK-M1MZ4's second-pass rollup at =#+v0_0_1_rollup_at= promoted =arch_C87Z9/008/010/011= from =partial= → =shipped=.)
+
+The =:V0_0_1_EVIDENCE:= property lists the closing implementer/architector tasks. =:V0_0_1_GAPS:= names the gap-closure follow-up tasks for partial nodes (absent today, since no node is classified =partial=). TASK-XB874 produced the consolidated conformance audit; TASK-CHZTR..TASK-E8BTA closed the originally-shipped gaps; TASK-BX0K0..TASK-XBT65 closed the reclassified partial gaps in Rounds 1–4; TASK-M1MZ4 promoted classifications in two passes (initial reclassification at =11:20=, final partial → shipped rollup at =13:55=).
+
+The dividers (=* IMPLEMENTED v0.0.1= and =* TARGET ARCHITECTURE=) are top-level non-arch headings; the daemon's architecture parser filters by =arch_*= prefix and ignores them.
+
+** Per-node test mapping (:TESTS:)
+
+Each leaf node (=arch_NNN.M=) carries a =:TESTS:= property naming the *minimum* test commands an agent should run when it touches that node's =:SOURCE_PATHS:=. The goal is to avoid running the whole workspace suite for a change scoped to one module: run the node's =:TESTS:= (plus any node whose =:SOURCE_PATHS:= you also edited), not =cargo test --workspace=.
+
+Conventions:
+- The value is one or more shell commands, =;=-separated, runnable from the repo root.
+- Rust commands are crate-scoped: =cargo test -p <crate>= runs that crate's lib unit tests *and* its integration test binaries. The mapping is by *crate ownership* of the source paths, which is stable against test-file renames.
+- UI nodes (=ui/...= source paths) have no JS test runner in v0.0.1; their gate is =cd ui && npm run typecheck= (tsc).
+- A node whose sources span two crates lists a command per crate.
+- Run =cargo clippy -p <crate>= and the relevant =:TESTS:= before handing off; the full =cargo test --workspace= is a pre-merge / CI gate, not a per-change gate.
+- Crate → test target reference: =orgasmic-core= (lib + =tests/fixtures.rs=); =orgasmic-drivers= (lib + =tests/driver_modes.rs=, =tests/cursor_agent.rs=); =orgasmic-daemon= (lib + =tests/integration.rs=, =tests/dispatch_endpoint.rs=); =orgasmic-cli= (lib + =tests/{dispatch,cli_parity,doctor,status,init}.rs=).
+- When you add or move a node's =:SOURCE_PATHS:= across a crate boundary, update its =:TESTS:= to match.
+
+* arch_WZFAX Home, install, and content loader
+:PROPERTIES:
+:ID:                 arch_WZFAX
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_K1DR7 dec_XSV21 dec_GRDFB dec_N17XX dec_A6CXY dec_SCVKG dec_PVDP3 dec_J2YM8
+:GLOSSARY_REFS:      term_XJM14 term_CJ2R4 term_WQMJJ term_DVSS2 term_TDNG3 term_ZYE1R
+:INTERFACE:          install update init doctor loader config secrets logs sessions under ORGASMIC_HOME
+:CONSTRAINTS:        two layer home user overrides before shipped content local first no telemetry plain secrets
+:COMPOSES:
+:DEPENDS_ON:
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-V3DWJ TASK-J25GR
+:END:
+
+** Purpose
+Own the skill-first install and connection boundary: CLI-managed local daemon,
+daemon-served browser UI, thin host app launchers, remote daemon profiles,
+mobile access, contributor source fallback, user-authored overrides, runtime
+state, sessions, secrets, logs, and executable entrypoint.
+
+** Interfaces
+- The only public install front door is the =/orgasmic= skill: install the
+  skill first, then run =/orgasmic install=. The skill wizard recommends and
+  executes the selected runtime path.
+- CLI/runtime install builds or refreshes =$ORGASMIC_HOME/bin/orgasmic=,
+  embeds shipped content plus the daemon-served web UI, creates
+  =$ORGASMIC_HOME=, and manages the local daemon lifecycle with
+  =orgasmic daemon start|stop|restart|status= and auto-starting daemon-backed
+  commands.
+- Host desktop apps are clients, not private runtimes. The Apple Silicon macOS
+  app is a thin Tauri launcher that discovers the installed CLI/runtime, asks it
+  for a one-time daemon UI launch URL, and opens that UI in the native webview.
+  It may require one-time Gatekeeper approval while distributed as an
+  ad-hoc-signed tester build.
+- Remote Linux daemon setup installs the daemon on the Linux host, supervises it
+  with =systemd --user=, keeps the default bind on =127.0.0.1=, and connects
+  from macOS through an SSH tunnel or trusted private network.
+- Mobile access is client-only: Android can use the Android app when release
+  assets are available, while iOS or Android users who do not want the app use
+  the daemon-served =/app/= UI through an HTTPS tunnel with an outer auth layer.
+- Contributor-mode installer and updater create or refresh
+  =$ORGASMIC_HOME/orgasmic=, build the binary, and maintain
+  =$ORGASMIC_HOME/bin/orgasmic=.
+- Installer uses SSH-first clone, HTTPS fallback, optional =--branch=, =--dir=, and =--no-build= flags, and scaffolds the home directories.
+- =orgasmic update= fetches, checks out the selected branch, pulls fast-forward-only, builds release, refreshes the symlink, and auto-stashes/restores local source-checkout edits.
+- Loader resolves =user/<relative-path>= before shipped content, with optional and hub content installed explicitly.
+- Config, secrets, logs, sessions, and snapshots are addressed through paths under =ORGASMIC_HOME=.
+
+** Constraints
+- Default home is =~/.orgasmic= and remains overridable by =ORGASMIC_HOME=.
+- User customization must not mutate shipped files in =orgasmic/=.
+- Skill-only project scaffolding must not require Rust, Node.js, npm, a source
+  checkout, daemon, app, or manually started dev server.
+- Runtime source builds require Rust plus Node/npm because the CLI embeds the
+  daemon-served UI.
+- A host app must not spawn or bundle a private daemon that conflicts with the
+  CLI-owned daemon lifecycle.
+- The daemon manages projects on the machine where that daemon runs; a remote
+  daemon cannot manage Mac-local paths.
+- Remote daemon autostart belongs to the remote host service manager, not a
+  macOS LaunchAgent.
+- Mobile browser access must not expose a raw daemon; keep the daemon bound to
+  localhost and put HTTPS plus outer auth in front of it.
+- v0.0.1 keeps secrets as gitignored plaintext files and emits no telemetry.
+
+** Skill-first install refinement [2026-06-09 Tue]
+README installation leads with installing the =/orgasmic= skill, then running
+=/orgasmic install=. The skill wizard handles CLI/runtime, supported host app,
+remote daemon, mobile access, and contributor source setup. The scripts remain
+the mechanics layer the wizard drives; they are not independent public install
+front doors.
+
+** Dev distribution refinement [2026-05-29 Fri]
+Until the project pays for Developer ID signing and notarization, the packaged
+app story is explicitly free/dev: Apple Silicon-only, ad-hoc-signed tester DMG
+plus documented Gatekeeper approval or quarantine removal. The skill wizard
+suggests the host app only after the CLI/runtime is installed and only when a
+supported package exists. Intel Macs and unsupported hosts use the browser UI or
+contributor source path.
+
+** App/daemon refinement [2026-06-09 Tue]
+The CLI/runtime is the daemon owner. The UI is daemon-served static content
+usable from a browser, Tauri desktop shell, Android client, or tunnelled mobile
+browser. Host apps discover and reference that runtime instead of packaging an
+independent daemon.
+
+** arch_WZFAX.1 home substrate resolver
+:PROPERTIES:
+:ID:                 arch_WZFAX.1
+:SOURCE_PATHS:       crates/orgasmic-core/src/home.rs crates/orgasmic-cli/src/home.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-cli
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_QXS5W.2
+:DEPENDS_ON:
+:END:
+
+Resolves ORGASMIC_HOME paths and content roots, placing user overrides before shipped defaults for every template, prompt, convention, and skill lookup.
+
+** arch_WZFAX.2 install/update entrypoint
+:PROPERTIES:
+:ID:                 arch_WZFAX.2
+:SOURCE_PATHS:       crates/orgasmic-cli/src/update.rs crates/orgasmic-cli/src/content_lifecycle.rs
+:TESTS:              cargo test -p orgasmic-cli
+:READS:
+:WRITES:             file:board
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Installs or refreshes the contributor or remote-server source checkout, builds
+the release binary, updates the symlink, scaffolds home directories, links the
+=/orgasmic= skill into the shared skills path, and performs fast-forward-only
+update with stash/restore. The skill wizard is the simple user-facing install
+surface; the source installer remains the mechanics layer for contributor and
+server bootstrap until dedicated binary packages exist.
+
+* arch_QFQTD Project registry and task store
+:PROPERTIES:
+:ID:                 arch_QFQTD
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_G38EC dec_P24WF dec_W58VM dec_A8Z8H dec_MKC0A dec_CX17K dec_JW9TJ dec_JW11K
+:GLOSSARY_REFS:      term_FM60Y term_CEQFS term_RG690 term_YC32J
+:INTERFACE:          board project init add list tasks transition state project orgasmic files
+:CONSTRAINTS:        explicit opt in pointer board git native project state no auto scan no auto git
+:COMPOSES:
+:DEPENDS_ON:         arch_WZFAX arch_BVH7M
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-VWBDJ TASK-V3DWJ
+:END:
+
+** Purpose
+Represent the set of projects managed by one developer instance and the active work items inside each project.
+
+** Interfaces
+- =user/board.org= stores project pointers only: id, local path, repo URL, branch, status, and timestamps.
+- =orgasmic project init= scaffolds =<project>/.orgasmic/=; =orgasmic project add= registers an existing project.
+- Project work lives in =sprint.org=, =backlog.org=, and =archive.org= task headings with properties, acceptance criteria, evidence, and worklog sections.
+
+** Constraints
+- Projects are explicit opt-in; there is no repo auto-scan in v0.0.1.
+- Board aggregation is derived from the materialized index, not duplicated onto the board.
+- Orgasmic never invokes git automatically. Project =.orgasmic/= files are committed and merged by the operator.
+
+** v0.0.1-pending
+TASK-YFAER extends this node with the six-stage task lifecycle, =:PARENT_TASK:= back-edges for subtasks, path-style subtask IDs, project-level stage-to-agent defaults, and a derived owner field. Existing shipped task storage remains recorded above until the refactor lands.
+
+** arch_QFQTD.1 project registry mutator
+:PROPERTIES:
+:ID:                 arch_QFQTD.1
+:SOURCE_PATHS:       crates/orgasmic-core/src/projects.rs crates/orgasmic-cli/src/main.rs crates/orgasmic-daemon/src/api.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-cli; cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             file:board file:project
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Registers and initializes explicit project pointers in the global board, scaffolding =.orgasmic/= directories and writing board and project metadata files.
+
+** arch_QFQTD.2 task heading parser
+:PROPERTIES:
+:ID:                 arch_QFQTD.2
+:SOURCE_PATHS:       crates/orgasmic-core/src/org.rs crates/orgasmic-core/src/schema.rs crates/orgasmic-daemon/src/index.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-daemon
+:READS:              file:sprint
+:WRITES:             projection:materialized-index
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Parses task headings, property drawers, lifecycle state, owner fields, subtask back-edges, and section bodies from Org files into typed task views and projects them into the materialized index.
+
+** arch_QFQTD.3 board task file ops
+:PROPERTIES:
+:ID:                 arch_QFQTD.3
+:SOURCE_PATHS:       crates/orgasmic-cli/src/main.rs crates/orgasmic-daemon/src/writer.rs crates/orgasmic-daemon/src/api.rs
+:TESTS:              cargo test -p orgasmic-cli; cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             file:sprint
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_BVH7M.1
+:DEPENDS_ON:
+:END:
+
+Reads and rewrites board and project task files through project-scoped CLI commands and daemon RPC surfaces, delegating durable writes to the Org rewriter.
+
+* arch_BVH7M Org substrate and write authority
+:PROPERTIES:
+:ID:                 arch_BVH7M
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_QWZB2 dec_WH9PD dec_R75SW dec_A4V2N
+:GLOSSARY_REFS:      term_N5SJT term_YC32J term_KCGEH term_P94BF term_H5YHC
+:INTERFACE:          parse rewrite append tx append session write flocked RPC graph snapshots generated ADRs
+:CONSTRAINTS:        app owned org profile no EDN daemon sole writer for graph audit sessions generated artifacts parse errors keep last good
+:COMPOSES:
+:DEPENDS_ON:
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-VWBDJ TASK-TQQQR TASK-Y0350
+:END:
+
+** Purpose
+Define orgasmic's file profile and the write contract for every durable artifact.
+
+** Interfaces
+- Org parser and rewriter handle task, prompt, skill, board, graph, and generated ADR files.
+- Tx appender writes property-drawer-only Org headings with =O_APPEND= semantics.
+- Session writer owns one JSONL file descriptor per run and records native driver events as append-only lines.
+- Direct-edit files are mutated through daemon RPC with advisory =flock= where coordination is needed.
+
+** Constraints
+- There is no EDN escape hatch in tx or graph files.
+- The daemon is the sole writer for tx, sessions, graph files, snapshots, and generated ADRs.
+- Working-file parse failures keep the last-good in-memory index; modified historical tx files block daemon start.
+
+** v0.0.1-pending
+TASK-YFAER extends the tx substrate with a =comment= tx type written by the same daemon-writer path. Comments stay append-only audit events rather than inline task-body rewrites or sidecar files.
+
+** arch_BVH7M.1 org parser and rewriter
+:PROPERTIES:
+:ID:                 arch_BVH7M.1
+:SOURCE_PATHS:       crates/orgasmic-core/src/org.rs crates/orgasmic-core/src/schema.rs
+:TESTS:              cargo test -p orgasmic-core
+:READS:              file:sprint file:architecture file:decisions
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Parses and rewrites orgasmic-owned Org profiles without EDN escape hatches, providing the typed heading, section, and property-drawer model that all schema views build on.
+
+** arch_BVH7M.2 append-only audit writer
+:PROPERTIES:
+:ID:                 arch_BVH7M.2
+:SOURCE_PATHS:       crates/orgasmic-core/src/tx.rs crates/orgasmic-core/src/session.rs crates/orgasmic-daemon/src/writer.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             file:tx file:sessions
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Appends tx and session JSONL events through daemon-owned durable writer handles, reading the file before opening the append descriptor to handle macOS O_APPEND semantics.
+
+** arch_BVH7M.3 flocked direct-edit writer
+:PROPERTIES:
+:ID:                 arch_BVH7M.3
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/writer.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             file:sprint file:decisions file:architecture
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Mutates direct-edit Org files through advisory-flock-guarded daemon RPC, serializing concurrent edits to graph, decision, and sprint files.
+
+* arch_A53QX Runtime supervisor and worker drivers
+:PROPERTIES:
+:ID:                 arch_A53QX
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_ASB1A dec_N17XX dec_HY3E0 dec_RECYG dec_CX17K dec_JW9TJ
+:GLOSSARY_REFS:      term_KH8TX term_3YTBK term_KCGEH term_RG690
+:INTERFACE:          WorkerDriver acquire_task transition_state event capture lease release attach babysitter tools
+:CONSTRAINTS:        one active run per task kind per kind state machine runtime ownership session JSONL append only no sandbox v0.0.1
+:COMPOSES:
+:DEPENDS_ON:         arch_BVH7M
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-C7C8P TASK-CHZTR TASK-KJJRF TASK-AAW76
+:END:
+
+** Purpose
+Start, supervise, observe, and stop all worker and babysitter runtimes through one typed execution model.
+
+** Interfaces
+- =WorkerDriver= starts =claude_acp=, =codex_appserver=, =hermes=, and =tmux_tui= runtimes.
+- =acquire_task(task_id, agent_template_id, overrides)= is the single spawn path used by CLI, UI, manager, and future auto-acquire policy.
+- Drivers emit =DriverEvent= values into the per-run JSONL writer and expose =transition_state(new_state, reason)= as a worker tool.
+- Babysitter runs use a separate process and =sessions/<run-id>.babysitter.jsonl=, receive summarized implementer session chunks, and expose only their babysitter tool set: poke, restart, escalate, and record finding.
+- Continuation runs write =run.continue= tx with =:PREVIOUS_RUN:= and receive the task heading, prior session JSONL path, current worktree diff summary, and original acceptance criteria.
+
+** Constraints
+- At most one active run exists for a =(task_id, kind)= tuple.
+- State machines are per agent kind and live in shipped schema.
+- v0.0.1 treats =READ_SCOPE= and =WRITE_SCOPE= as prompt hints, not a filesystem sandbox.
+- Babysitters cannot edit code, invoke arbitrary orgasmic CLI commands, or mutate state outside their daemon-provided babysitter tool set.
+
+** v0.0.1-pending
+TASK-YFAER moves agent sub-states off task headings and onto run records, exposes derived active-run ownership, and lets stage transitions auto-acquire a configured agent template. The follow-on manager popover transport uses the same driver/runtime truth, including terminal fidelity for =tmux_tui= runs.
+
+** arch_A53QX.1 run lease supervisor
+:PROPERTIES:
+:ID:                 arch_A53QX.1
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/supervisor.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             file:sessions
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_A53QX.2 arch_BVH7M.2
+:DEPENDS_ON:
+:END:
+
+Acquires, leases, releases, and snapshots live worker runs keyed by task and kind, enforcing the one-active-run-per-(task,kind) invariant and guarding state changes with (run_id, runtime_id, boot_id) ownership.
+
+** arch_A53QX.2 worker driver trait
+:PROPERTIES:
+:ID:                 arch_A53QX.2
+:SOURCE_PATHS:       crates/orgasmic-drivers/src/trait.rs crates/orgasmic-drivers/src/lib.rs
+:TESTS:              cargo test -p orgasmic-drivers
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_A53QX.3 arch_A53QX.4
+:DEPENDS_ON:
+:END:
+
+Defines the typed acquire, attach, release, control, event, and babysitter surface that all concrete driver implementations must satisfy.
+
+** arch_A53QX.3 harness adapters
+:PROPERTIES:
+:ID:                 arch_A53QX.3
+:SOURCE_PATHS:       crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/src/adapters/cursor.rs crates/orgasmic-drivers/src/adapters/hermes.rs crates/orgasmic-drivers/src/adapters/mod.rs
+:TESTS:              cargo test -p orgasmic-drivers
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Translates Claude, Codex, Cursor, and Hermes harness-specific event streams into the uniform DriverEvent values consumed by the supervisor and session writer.
+
+** arch_A53QX.4 transport mode drivers
+:PROPERTIES:
+:ID:                 arch_A53QX.4
+:SOURCE_PATHS:       crates/orgasmic-drivers/src/modes/acp_stdio.rs crates/orgasmic-drivers/src/modes/acp_ws.rs crates/orgasmic-drivers/src/modes/jsonrpc.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/modes/mod.rs
+:TESTS:              cargo test -p orgasmic-drivers
+:READS:
+:WRITES:             file:sessions
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Spawns subprocess, ACP stdio/ws, JSON-RPC, and tmux transport sessions, adapting each protocol's lifecycle events to the shared driver event model.
+
+** arch_A53QX.5 babysitter auto-spawner
+:PROPERTIES:
+:ID:                 arch_A53QX.5
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-core/src/session.rs
+:TESTS:              cargo test -p orgasmic-daemon; cargo test -p orgasmic-core
+:READS:              file:sessions
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_A53QX.1
+:DEPENDS_ON:
+:END:
+
+Coalesces implementer session events and spawns restricted babysitter runs beside live workers, providing summarized context and exposing only the babysitter tool set.
+
+* arch_R3EPE Manager orchestration loop
+:PROPERTIES:
+:ID:                 arch_R3EPE
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_DK7AZ dec_MMW2R dec_TEKEB dec_CSKBD dec_DTJPD dec_C6510
+:GLOSSARY_REFS:      term_X4JGJ term_465BG term_A8GT3 term_YC32J
+:INTERFACE:          manager tick CLI actions question answering continuation decisions manager view
+:CONSTRAINTS:        event triggered fresh tmux tui session optional cadence off host tools allowed audit tx prompt discipline state reread for continuity
+:COMPOSES:
+:DEPENDS_ON:         arch_QFQTD arch_A53QX arch_C87Z9 arch_PCSQE arch_Z3Z3V arch_QXS5W
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-D6Y0Y TASK-F6D3T
+:END:
+
+** Purpose
+Coordinate the system without embedding an autonomous planner inside the daemon.
+
+** Interfaces
+- =manager.tick(reason, context)= is the trigger point for file changes, worker questions, stalled runs, run completion, recovery events, UI requests, and optional cadence.
+- Each tick launches a fresh =tmux_tui= manager with persona, skill manifest, current graph/project context, and access to the complete orgasmic CLI.
+- Manager actions that matter are recorded as =manager.action= tx entries and visible in the Manager UI.
+
+** Constraints
+- There is no approval queue, permission tier, or orgasmic-managed tool whitelist in v0.0.1.
+- Continuity comes from rereading orgasmic state at the start of each tick, not from daemon-held hidden conversation state.
+- The manager decides whether and how to continue interrupted runs after daemon recovery.
+
+** v0.0.1-pending
+The UI redesign moves all deep manager interaction into the bottom popover and removes a separate Manager nav page. Intelligent actions compose editable manager prompts in that surface; pure data actions stay direct daemon mutations.
+
+** arch_R3EPE.1 manager tick endpoint
+:PROPERTIES:
+:ID:                 arch_R3EPE.1
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/manager.rs
+:TESTS:              cargo test -p orgasmic-daemon; cargo test -p orgasmic-cli
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:             arch_A53QX.1
+:CALLS:              arch_QXS5W.2
+:DEPENDS_ON:
+:END:
+
+Accepts manager tick requests, composes event reasons and project context into a spawnable manager run, and routes the tick through the prompt bundle loader before handing off to the run lease supervisor.
+
+** arch_R3EPE.2 manager action ledger
+:PROPERTIES:
+:ID:                 arch_R3EPE.2
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-core/src/tx.rs
+:TESTS:              cargo test -p orgasmic-daemon; cargo test -p orgasmic-core
+:READS:
+:WRITES:             file:tx projection:activity-index
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Records manager-visible actions as =manager.action= tx events and maintains the activity-index projection that exposes recent manager actions to the UI.
+
+* arch_C87Z9 Daemon API, CLI, and materialized read model
+:PROPERTIES:
+:ID:                 arch_C87Z9
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_XV9AK dec_N17XX dec_YYMSK dec_CSKBD dec_HY3E0 dec_A4V2N dec_JW11K dec_R3RE4
+:GLOSSARY_REFS:      term_N5SJT term_FM60Y term_CEQFS term_Z672G
+:INTERFACE:          HTTP REST WS complete CLI watcher materialized index auth request id idempotency
+:CONSTRAINTS:        localhost default LAN opt in no MCP v0.0.1 reads from in memory index notify debounce bearer token
+:COMPOSES:
+:DEPENDS_ON:         arch_WZFAX arch_QFQTD arch_BVH7M arch_A53QX arch_Z3Z3V arch_QXS5W
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-TQQQR TASK-D6Y0Y TASK-PS3TK TASK-WG82T TASK-Y0350 TASK-E8BTA TASK-BX0K0 TASK-NX19C
+:END:
+
+** Purpose
+Provide the complete machine and human control surface while keeping reads fast and writes serialized.
+
+** Interfaces
+- Local daemon serves REST and WebSocket APIs over HTTP with bearer-token auth.
+- CLI mirrors daemon capabilities and is the complete tool surface for humans and manager agents.
+- Watcher updates an in-memory projection from tx and working Org files; HTTP reads serve from that projection.
+- Retriable CLI/HTTP mutations carry stable =request_id= values so restart retries do not duplicate committed tx.
+- CLI inventory includes init, doctor, update, serve, status, restart, project, board, tasks, task, run, agent-template, prompt, skills, manager, tx, recovery, auth, question, glossary, decision, architecture, adr, snapshot, grill, architect, plan, and reconcile commands.
+- Graph APIs include graph/nodes reads, node creation, answers, revisions, validation, supersede, stage completion, reconcile completion, snapshots, restore, glossary, contradictions, ADR promote/demote, and ADR regeneration routes.
+
+** Constraints
+- Daemon binds localhost by default; LAN bind and mDNS are opt-in.
+- No MCP server ships in v0.0.1.
+- Reads do not reparse files per request. Startup rebuilds the index from disk before serving normal traffic.
+
+** v0.0.1-pending
+TASK-YFAER extends the read model and API with subtasks, comments, task activity, release-agent, and tx-backed task transitions. The manager popover follow-up adds a =/ws/tmux/:run_id= bridge so =tmux_tui= sessions can render through xterm.js.
+
+** arch_C87Z9.1 Axum REST router
+:PROPERTIES:
+:ID:                 arch_C87Z9.1
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/auth.rs crates/orgasmic-daemon/src/config.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:
+:WRITES:
+:EXPOSES_REST:       arch_QFQTD.1 arch_BVH7M.2 arch_BVH7M.3 arch_A53QX.1 arch_R3EPE.1 arch_MPAQT.1
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Exposes authenticated REST routes for project, task, run, graph, prompt, and daemon operations, enforcing bearer-token auth and stable request_id idempotency on mutable routes.
+
+** arch_C87Z9.2 WebSocket event broadcaster
+:PROPERTIES:
+:ID:                 arch_C87Z9.2
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/events.rs crates/orgasmic-daemon/src/ws.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:         socket:events
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Broadcasts daemon event-bus topics through filtered WebSocket subscriptions, multiplexing board, run, manager, graph, and daemon events to connected clients.
+
+** arch_C87Z9.3 filesystem watcher
+:PROPERTIES:
+:ID:                 arch_C87Z9.3
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/watcher.rs crates/orgasmic-daemon/src/lib.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:              file:board file:sprint
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_C87Z9.4 socket:events
+:DEPENDS_ON:
+:END:
+
+Debounces changed board and project Org files into materialized-index refreshes, canonicalizing paths before comparison to handle macOS /private/var vs /var symlink differences.
+
+** arch_C87Z9.4 materialized read index
+:PROPERTIES:
+:ID:                 arch_C87Z9.4
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/index.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:              file:tx file:board file:sprint file:architecture file:decisions
+:WRITES:             projection:materialized-index projection:activity-index
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:DEPENDS_ON:
+:END:
+
+Rebuilds and serves the in-memory projection of board, projects, tasks, activity, graph nodes, and advisory markers, rebuilt at startup and incrementally refreshed by the watcher.
+
+** arch_C87Z9.5 CLI command surface
+:PROPERTIES:
+:ID:                 arch_C87Z9.5
+:SOURCE_PATHS:       crates/orgasmic-cli/src/main.rs crates/orgasmic-cli/src/daemon_client.rs crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/src/doctor.rs
+:TESTS:              cargo test -p orgasmic-cli
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_C87Z9.1
+:DEPENDS_ON:
+:END:
+
+Routes human and manager agent commands through the daemon HTTP client, mirroring the full REST API surface as ergonomic CLI subcommands.
+
+* arch_MK2Q2 React UI workbench
+:PROPERTIES:
+:ID:                 arch_MK2Q2
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_XV9AK dec_X6Q0S dec_CSKBD dec_CGVRW dec_HYD58 dec_H9P38 dec_DTJPD dec_JZDKT dec_C6510 dec_R3RE4 dec_P2X0Y dec_CXYVV dec_QWEQ8 dec_PA23Y dec_E394G dec_JSX48 dec_NZ9PS
+:GLOSSARY_REFS:      term_H5YHC term_P94BF term_Z672G term_X4JGJ
+:INTERFACE:          board project task run manager settings org editor design graph glossary ADR snapshots recovery panels
+:CONSTRAINTS:        HAR transport seams daemon RPC edits same mobile desktop capability in app notifications reconnect visible
+:COMPOSES:
+:DEPENDS_ON:         arch_C87Z9 arch_MPAQT arch_Z3Z3V
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-DHQ3X
+:END:
+
+** Purpose
+Expose orgasmic as an operator workbench rather than only a CLI runtime.
+
+** Interfaces
+- v0.0.1 screens cover Board, Project detail, Task detail, Run detail, Manager view, Settings, and a generic Org viewer/editor.
+- Design-graph releases add graph, glossary, ADR, snapshot, grilling, impact-preview, and recovery panels.
+- WebSocket streams drive board, run, manager, graph, daemon, and tmux-attach experiences.
+
+** Constraints
+- UI reuses HAR's transport seams: transport, resource loading, routing, theme, storage, backend, and timers.
+- Org edits go through daemon RPC and surface flock contention or parse errors in the UI.
+- Notifications are in-app only in v0.0.1; during daemon restart the UI shows reconnecting and then recovered classifications.
+
+** v0.0.1-pending
+The UI redesign replaces the initial shipped workbench shape with a project-scoped shell, bottom manager popover, notification bell, TanStack route tree, task list/kanban/detail surfaces, graph-aware decision and architecture pages, secondary reference pages, and the mobile behavior matrix. TASK-YFAER supplies the model prerequisites; follow-on UI sessions implement the surfaces.
+
+** arch_MK2Q2.1 route tree seam
+:PROPERTIES:
+:ID:                 arch_MK2Q2.1
+:SOURCE_PATHS:       ui/src/app/App.tsx ui/src/app/router.tsx ui/src/app/routes.ts
+:TESTS:              cd ui && npm run typecheck
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_MK2Q2.2
+:DEPENDS_ON:
+:END:
+
+Maps TanStack routes to board, project, task, graph, and reference surfaces, providing the path-plus-query routing model that supports deep-link sharing and back-stack restoration.
+
+** arch_MK2Q2.2 API transport seam
+:PROPERTIES:
+:ID:                 arch_MK2Q2.2
+:SOURCE_PATHS:       ui/src/lib/api.ts ui/src/lib/transport.ts ui/src/lib/backend.ts ui/src/lib/types.ts
+:TESTS:              cd ui && npm run typecheck
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_C87Z9.1
+:DEPENDS_ON:
+:END:
+
+Issues typed REST calls, constructs WebSocket URLs, selects backend profile, and handles unauthorized responses, providing the HAR-derived transport boundary between UI components and the daemon.
+
+** arch_MK2Q2.3 resource refresh hooks
+:PROPERTIES:
+:ID:                 arch_MK2Q2.3
+:SOURCE_PATHS:       ui/src/lib/useResource.ts ui/src/hooks/useEventStream.ts ui/src/hooks/useRefreshBus.ts ui/src/hooks/useActiveProject.ts
+:TESTS:              cd ui && npm run typecheck
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:      socket:events
+:SPAWNS:
+:CALLS:              arch_MK2Q2.2
+:DEPENDS_ON:
+:END:
+
+Loads route data and fans out daemon WebSocket events into refresh tokens and connection state, driving optimistic UI updates and reconnect behavior.
+
+** arch_MK2Q2.4 workbench shell
+:PROPERTIES:
+:ID:                 arch_MK2Q2.4
+:SOURCE_PATHS:       ui/src/components/AppShell.tsx ui/src/components/ConnectionBanner.tsx ui/src/components/ProjectSelector.tsx ui/src/components/notifications/NotificationBell.tsx ui/src/components/notifications/NotificationPopover.tsx
+:TESTS:              cd ui && npm run typecheck
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_MK2Q2.3
+:DEPENDS_ON:
+:END:
+
+Renders project-scoped navigation, sidebar, project selector, reconnect banner, notification bell, and layout chrome, providing the persistent shell all route surfaces share.
+
+** arch_MK2Q2.5 manager popover workbench
+:PROPERTIES:
+:ID:                 arch_MK2Q2.5
+:SOURCE_PATHS:       ui/src/components/manager/ManagerPopover.tsx ui/src/components/manager/ManagerWorkbench.tsx ui/src/components/manager/ManagerChatTranscript.tsx ui/src/components/manager/ManagerPeekBar.tsx ui/src/components/manager/ManagerTmuxPane.tsx
+:TESTS:              cd ui && npm run typecheck
+:READS:              arch_R3EPE.2
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_R3EPE.1
+:DEPENDS_ON:
+:END:
+
+Shows manager actions, editable manager compose state, transcript panes, and tmux attachment placeholders in a persistent bottom popover with peek, workbench, and focus sizes.
+
+** arch_MK2Q2.6 task page and drawer
+:PROPERTIES:
+:ID:                 arch_MK2Q2.6
+:SOURCE_PATHS:       ui/src/components/TasksPage.tsx ui/src/components/TaskDialog.tsx
+:TESTS:              cd ui && npm run typecheck
+:READS:              projection:materialized-index
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_MK2Q2.2
+:DEPENDS_ON:
+:END:
+
+Renders the sprint task board and per-task detail drawer, displaying lifecycle stages, property strips, and activity sections sourced from the materialized index.
+
+** arch_MK2Q2.7 node view family
+:PROPERTIES:
+:ID:                 arch_MK2Q2.7
+:SOURCE_PATHS:       ui/src/components/node-views/NodeGraph.tsx ui/src/components/node-views/NodeListView.tsx ui/src/components/node-views/NodeModal.tsx ui/src/components/ArchitectureView.tsx ui/src/components/DecisionsView.tsx
+:TESTS:              cd ui && npm run typecheck
+:READS:              projection:materialized-index
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_MK2Q2.2
+:DEPENDS_ON:
+:END:
+
+Provides reusable list, graph, and modal view components shared across architecture, decisions, glossary, and ADR pages. arch_MK2Q2 carries 7 leaves (one over principle-5's ceiling of 6) to preserve principle-3 (mechanism not feature) and principle-6 (no catch-all groupings) — the mechanism split was the lesser violation.
+
+* arch_MPAQT Design graph engine
+:PROPERTIES:
+:ID:                 arch_MPAQT
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_X6Q0S dec_BP4NH dec_XQ3F8 dec_PA23Y
+:GLOSSARY_REFS:      term_P94BF term_H5YHC term_J5X55 term_HQJWT term_C3A8T term_ERXMF
+:INTERFACE:          node CRUD answer revise validate supersede stale propagation snapshots ADR regeneration graph streams cross-scope edges REFERENCES EXTENDS OVERRIDES HOSTED_IN
+:CONSTRAINTS:        daemon sole writer graph files code not graph node semantic hash excludes prose advisory markers only nodes superseded not deleted
+:COMPOSES:
+:DEPENDS_ON:         arch_BVH7M
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:REVISED_AT:         [2026-05-21 Thu 21:04]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-PS3TK TASK-G512N TASK-WASWJ TASK-ZFMTD TASK-ZPNQA TASK-T6KNE TASK-YRK91
+:END:
+
+** Purpose
+Maintain the decision-anchored graph that connects glossary terms, decisions, architecture, tasks, and implementation evidence.
+
+** Interfaces
+- Graph RPCs create, answer, revise, validate, supersede, finalize, snapshot, restore, and regenerate ADR views.
+- Semantic hashes and reverse edges drive stale propagation over the touched subgraph.
+- Advisory source-code markers are indexed as hints, while task =:PRODUCES:= edges remain authoritative for design-to-code linkage.
+- Auto-snapshots precede user-initiated grilling and reconciliation kickoffs.
+- Graph streams emit node creation/update, stale propagation, snapshots, stage completion, finalization, glossary, ADR, and contradiction events.
+- Cross-scope edges link nodes across the global and per-project graphs through four predicates: =:REFERENCES:= (project node cites a global node), =:EXTENDS:= (project glossary term extends a global term while preserving its meaning), =:OVERRIDES:= (project glossary term replaces a global term within project scope), and =:HOSTED_IN:= (global architecture node declares which board project owns the component). Cross-scope edges are advisory at write-time and enforced at finalize-time by the reconcile-completion gates.
+
+** Constraints
+- =glossary.org=, =decisions.org=, =architecture.org=, and =docs/adr/*.org= are daemon-owned.
+- Code files are not graph nodes, are not semantically hashed, and are never written by the daemon.
+- Nodes are superseded rather than deleted. Prose-only decision edits do not cascade.
+- =apply_revision= is atomic: hash update, stale propagation, and tx write succeed or fail together.
+- Finalize/reconcile completion rejects pending decisions, trace inconsistency, file-deletion/supersede mismatches, and invalid cross-scope references.
+- Glossary definitions contain no implementation details such as code paths, type signatures, or function names.
+
+** v0.0.1-pending
+The UI graph pass projects existing decision, architecture, glossary, and ADR edges into React Flow surfaces. The engine remains the authority for node and edge truth; the pending work is read-model exposure and UI traversal behavior, not a new graph semantics layer.
+
+** arch_MPAQT.1 graph node lifecycle
+:PROPERTIES:
+:ID:                 arch_MPAQT.1
+:SOURCE_PATHS:       crates/orgasmic-core/src/schema.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             file:architecture file:decisions
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_BVH7M.1 socket:events
+:DEPENDS_ON:
+:END:
+
+Creates, revises, validates, supersedes, finalizes, snapshots, and restores design graph nodes, enforcing atomic hash-update-plus-stale-propagation and emitting graph events on every mutation.
+
+** arch_MPAQT.2 semantic hash propagator
+:PROPERTIES:
+:ID:                 arch_MPAQT.2
+:SOURCE_PATHS:       crates/orgasmic-core/src/schema.rs crates/orgasmic-daemon/src/index.rs crates/orgasmic-daemon/src/api.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-daemon
+:READS:
+:WRITES:             projection:materialized-index
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_MPAQT.1
+:DEPENDS_ON:
+:END:
+
+Computes semantic hashes, detects advisory marker hints, propagates stale edges over the touched subgraph, and regenerates ADR views, projecting the resulting stale set into the materialized index.
+
+* arch_PCSQE Design pipeline agents
+:PROPERTIES:
+:ID:                 arch_PCSQE
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_TEKEB dec_XQ3F8
+:GLOSSARY_REFS:      term_X4JGJ term_P94BF term_H5YHC term_RG690
+:INTERFACE:          griller architector planner implementer glossarist state machines complete endpoints review questions
+:CONSTRAINTS:        one owner per layer architector owns architecture and ADR triage planner owns tasks no reconciler strict layer order conservative automation
+:COMPOSES:
+:DEPENDS_ON:         arch_R3EPE arch_MPAQT
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-D6Y0Y TASK-ZA4EW TASK-BHMDH TASK-E8BTA
+:END:
+
+** Purpose
+Turn user answers into architecture, tasks, and code through reviewable layer-owned artifacts.
+
+** Interfaces
+- Griller writes decisions; architector writes architecture and ADR triage; planner writes tasks; implementers write code through claimed tasks; glossarist proposes vocabulary maintenance.
+- Stage-complete endpoints let the manager cascade from grilling to architecture to planning to implementation.
+- Reconciliation reuses the same agents over the stale subset in layer order.
+
+** Constraints
+- There is no separate reconciler kind.
+- Each stage presents a reviewable artifact or question before downstream work proceeds.
+- Graph automation defaults conservative: scoped sessions, bounded question batches, explicit glossary maintenance, and batched advisory marker questions.
+
+** arch_PCSQE.1 stage endpoint cascade
+:PROPERTIES:
+:ID:                 arch_PCSQE.1
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/main.rs
+:TESTS:              cargo test -p orgasmic-daemon; cargo test -p orgasmic-cli
+:READS:
+:WRITES:
+:EXPOSES_REST:       arch_C87Z9.1
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_R3EPE.1
+:DEPENDS_ON:
+:END:
+
+Exposes grill, architect, plan, and reconcile stage-completion endpoints for layer-owned pipeline agents, triggering manager ticks that cascade to the next design stage.
+
+** arch_PCSQE.2 snapshot gatekeeper
+:PROPERTIES:
+:ID:                 arch_PCSQE.2
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/index.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:              file:architecture file:decisions
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_MPAQT.1
+:DEPENDS_ON:
+:END:
+
+Creates and restores graph snapshots before grilling and reconciliation work, providing a safe rollback point before pipeline agents mutate the design graph.
+
+* arch_QXS5W Template, skill, prompt, and convention compiler
+:PROPERTIES:
+:ID:                 arch_QXS5W
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_GRDFB dec_ASB1A dec_DK7AZ dec_XV9AK dec_KH07K dec_BP4NH dec_A4V2N
+:GLOSSARY_REFS:      term_WQMJJ term_KH8TX term_X4JGJ term_HQJWT term_Z5XDF term_K06Z5 term_VQ3F1 term_ZYE1R term_C9YBH term_H2GAN term_VD1MY term_T2NSV
+:INTERFACE:          skills discover list show agent-template list show dry-run prompt list show dry-run convention list show slot registry prompt bundle skill manifest convention bundle
+:CONSTRAINTS:        metadata not skill content strict slots no conditionals user overrides shipped fallback missing linked skill blocks spawn missing convention bundle blocks spawn notes not injected conventions are body-only org artifacts under shipped/conventions and user/conventions
+:COMPOSES:
+:DEPENDS_ON:         arch_WZFAX arch_BVH7M arch_A53QX
+:DECIDED_AT:         [2026-05-21 Thu 20:03]
+:REVISED_AT:         [2026-05-21 Thu 20:30]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-D6Y0Y TASK-ZA4EW TASK-BHMDH TASK-J25GR TASK-PV4WW TASK-F6D3T TASK-E8BTA TASK-ENVZM TASK-CD207 TASK-XBT65
+:END:
+
+** Purpose
+Compile the agent-facing runtime context from user/shipped templates, prompt templates, skill metadata, convention bundles, and the fixed slot registry.
+
+** Interfaces
+- Skill discovery scans configured host roots and writes metadata sidecars for external or native skills without copying external skill bodies.
+- Agent templates define kind, driver/model defaults, linked skills, applicable states, context budget, babysitter template, persona, and operating rules.
+- Prompt templates are keyed by =(kind, state)= and provide spawn-time and continuation injections.
+- Convention bundles are agent-facing behavioral rule documents at =shipped/conventions/<name>.org= (overridable at =user/conventions/<name>.org=) addressed from prompts via the slot =={{conventions.<name>}}==; the compiler injects the bundle's body verbatim wherever the slot appears.
+- Slot compilation performs strict variable substitution with no conditionals or loops; dry-run reports unknown or unfilled slots. The slot registry includes the =skills.*=, =skill_path.*=, and =conventions.*= namespaces alongside the static =task.*=, =project.*=, =worker.*=, =run.*=, =evidence.*=, and =worklog.*= sets.
+- Skill injection supports manifest, explicit full-body, and skill-path variants, with the manifest as the default prompt bundle behavior.
+- The final prompt bundle is persona plus operating rules, skill manifest, applicable convention bundles, and the selected prompt injection handed to the driver.
+
+** Constraints
+- User overrides are loaded before shipped defaults for every overridable template, prompt, and convention bundle file.
+- Missing linked skills and missing referenced convention bundles are compile errors in dry-run and block production spawn with a UI-visible error.
+- Convention bundles carry no slot interpolation in their own bodies and are not template-engine inputs; they are inert behavioral text whose only structure is org headings and prose.
+- The daemon does not enforce a bundle's content; bundles are advisory rules read by agents at spawn time, in the same epistemic class as the advisory in-code markers they may describe.
+- =** Notes= sections (in agent templates, prompt templates, and convention bundles) are user-editable and are never injected into prompts.
+
+** v0.0.1-pending
+TASK-YFAER adds the ={{task.activity}}= prompt slot, backed by the same materialized activity projection the task UI reads. The compiler remains strict: unknown or unfilled activity slots fail dry-run rather than silently dropping conversation context.
+
+** arch_QXS5W.1 slot registry compiler
+:PROPERTIES:
+:ID:                 arch_QXS5W.1
+:SOURCE_PATHS:       crates/orgasmic-core/src/slots.rs crates/orgasmic-core/src/schema.rs crates/orgasmic-daemon/src/content.rs
+:TESTS:              cargo test -p orgasmic-core; cargo test -p orgasmic-daemon
+:READS:              file:project
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_WZFAX.1
+:DEPENDS_ON:
+:END:
+
+Validates and substitutes strict prompt slots across task, project, worker, run, skill, and convention namespaces, with dry-run mode reporting unknown or unfilled slots as compile errors.
+
+** arch_QXS5W.2 prompt bundle loader
+:PROPERTIES:
+:ID:                 arch_QXS5W.2
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/content.rs crates/orgasmic-core/src/home.rs crates/orgasmic-core/src/workers.rs crates/orgasmic-daemon/src/api.rs
+:TESTS:              cargo test -p orgasmic-daemon; cargo test -p orgasmic-core
+:READS:
+:WRITES:             file:sessions
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_QXS5W.1 arch_A53QX.2
+:DEPENDS_ON:
+:END:
+
+Resolves agent templates, prompt templates, skill metadata, and convention bundles into the spawn-time prompt context, applying user-before-shipped override order and blocking spawn on missing linked resources.
+
+* arch_Z3Z3V Boot reconciliation and continuation
+:PROPERTIES:
+:ID:                 arch_Z3Z3V
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_ASB1A dec_DK7AZ dec_XV9AK dec_YYMSK dec_CSKBD
+:GLOSSARY_REFS:      term_Z672G term_N400W term_A8GT3 term_KH8TX term_X4JGJ term_N5SJT
+:INTERFACE:          restart recovery status daemon stream run reattach run continue classify active runtimes
+:CONSTRAINTS:        boot reconciliation not restore runtime identity non destructive no hidden auto resume manager mediated continuation stable request ids
+:COMPOSES:
+:DEPENDS_ON:         arch_A53QX arch_R3EPE arch_C87Z9 arch_MK2Q2 arch_MPAQT
+:DECIDED_AT:         [2026-05-21 Thu 19:32]
+:V0_0_1:             shipped
+:V0_0_1_EVIDENCE:    TASK-WG82T TASK-DNF8Y TASK-XC6RJ
+:END:
+
+** Purpose
+Make daemon restart or rebuilt-binary replacement feel like a reconnect instead of a lost coordination session.
+
+** Interfaces
+- =orgasmic restart= and controlled update write =daemon.restart_requested=, pause new acquisition, snapshot graph state, and ask writers to flush.
+- New daemon boot rebuilds the materialized index, scans run records, session files, and provider handles, then emits recovered classifications.
+- Recovery classifications include =run.reattached=, =interrupted=, terminal no-op, and ambiguous question.
+- =orgasmic recovery status= and =orgasmic run continue= expose the same state to CLI, manager, and UI.
+
+** Constraints
+- Recovery is boot reconciliation, not snapshot restore or daemon-owned hidden auto-resume.
+- Reattach only when the driver can prove a live runtime handle; otherwise non-terminal ACP-style runs become interrupted.
+- Continuation runs are new runs with =:PREVIOUS_RUN:=, prior session JSONL path, current worktree diff summary, and original acceptance criteria.
+- Runtime state changes are guarded by =(run_id, runtime_id, boot_id)= ownership so stale cleanup cannot clobber a replacement runtime.
+
+** arch_Z3Z3V.1 boot identity classifier
+:PROPERTIES:
+:ID:                 arch_Z3Z3V.1
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/runtime.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/lib.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:              projection:materialized-index file:sessions
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              socket:events
+:DEPENDS_ON:
+:END:
+
+Assigns boot identity, rebuilds materialized state, and classifies recovered runs as live-reattached, interrupted, terminal no-op, or ambiguous-question on each daemon startup.
+
+** arch_Z3Z3V.2 continuation runner
+:PROPERTIES:
+:ID:                 arch_Z3Z3V.2
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-cli/src/daemon_client.rs
+:TESTS:              cargo test -p orgasmic-daemon; cargo test -p orgasmic-cli
+:READS:              file:sessions
+:WRITES:             file:tx
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_A53QX.1
+:DEPENDS_ON:
+:END:
+
+Starts continuation runs with previous session JSONL path, worktree diff summary, runtime identity, and original acceptance criteria, recording the new run's relationship to its predecessor via :PREVIOUS_RUN: in tx.
+
+* Artifact pseudo-nodes
+
+These pseudo-nodes represent the durable files and in-memory projections that architecture leaf nodes read, write, or subscribe to. They are referenced in leaf node edge properties via =file:=, =projection:=, and =socket:= scheme prefixes.
+
+** file:tx
+:PROPERTIES:
+:ID:                 file:tx
+:KIND:               file
+:PATH:               .orgasmic/tx/*.org
+:END:
+
+The transaction log: append-only monthly event store recording every manager, implementer, reviewer, runtime, and watcher state change as property-drawer-only Org headings.
+
+** file:sprint
+:PROPERTIES:
+:ID:                 file:sprint
+:KIND:               file
+:PATH:               .orgasmic/tasks/sprint.org
+:END:
+
+Active sprint task headings with lifecycle stage, properties, acceptance criteria, evidence, and worklog sections, owned by the daemon writer and direct-edit surfaces.
+
+** file:goal
+:PROPERTIES:
+:ID:                 file:goal
+:KIND:               file
+:PATH:               .orgasmic/tasks/goal.org
+:END:
+
+Manager-authored active goal file: thin `* GOAL` headings with `:STATUS:`,
+goal statement, and optional reached criteria. Progress, next actions, and
+liveness live in `file:handoff`.
+
+** file:handoff
+:PROPERTIES:
+:ID:                 file:handoff
+:KIND:               file
+:PATH:               .orgasmic/tasks/handoff.org
+:END:
+
+Manager-authored continuity file: `* HANDOFF` headings with `:GOAL_ID:`,
+`:LIVENESS:`, Done so far, Next likely actions, In flight, and Divergence /
+Risks sections for recall/resume continuity.
+
+** file:no-skill-installed
+:PROPERTIES:
+:ID:                 file:no-skill-installed
+:KIND:               file
+:PATH:               .orgasmic/conventions/no-skill-installed.org
+:END:
+
+Repo-local no-skill manager fallback: role route, recall inputs, stop/resume
+rules, and Manager+Worker guard.
+
+** file:project
+:PROPERTIES:
+:ID:                 file:project
+:KIND:               file
+:PATH:               .orgasmic/project.org
+:END:
+
+Project metadata including id, repo URL, test/build commands, stage-to-worker defaults, and mission statement for a single opted-in project.
+
+** file:architecture
+:PROPERTIES:
+:ID:                 file:architecture
+:KIND:               file
+:PATH:               .orgasmic/architecture.org
+:END:
+
+Architecture graph source: top-level arch_NNN nodes with child arch_NNN.M leaf decompositions, typed edge properties, and source path evidence.
+
+** file:decisions
+:PROPERTIES:
+:ID:                 file:decisions
+:KIND:               file
+:PATH:               .orgasmic/decisions.org
+:END:
+
+Decision graph source: griller-authored ADR-style decision nodes with evidence and cross-references to architecture and glossary nodes.
+
+** file:board
+:PROPERTIES:
+:ID:                 file:board
+:KIND:               file
+:PATH:               user/board.org
+:END:
+
+Global explicit project registry storing project pointers (id, local path, repo URL, branch, status, timestamps) for every opted-in project.
+
+** file:sessions
+:PROPERTIES:
+:ID:                 file:sessions
+:KIND:               file
+:PATH:               sessions/*.jsonl
+:END:
+
+Native worker event sessions: one JSONL file per run recording driver events, tool calls, outputs, and lifecycle state changes as append-only lines.
+
+** projection:materialized-index
+:PROPERTIES:
+:ID:                 projection:materialized-index
+:KIND:               projection
+:PATH:               (in-memory)
+:END:
+
+In-memory board, task, graph, activity, and advisory-marker projection rebuilt at startup from tx and working Org files and refreshed incrementally by the filesystem watcher.
+
+** projection:activity-index
+:PROPERTIES:
+:ID:                 projection:activity-index
+:KIND:               projection
+:PATH:               (in-memory)
+:END:
+
+Task activity projection built from tx comment entries, state transitions, and run lifecycle events; powers the task detail activity rail, global Activity page, and {{task.activity}} prompt slot.
+
+** socket:events
+:PROPERTIES:
+:ID:                 socket:events
+:KIND:               socket
+:PATH:               ws://localhost:8739/ws
+:END:
+
+Filtered daemon event stream: WebSocket endpoint that fans out board, run, manager, graph, and daemon events to subscribed UI clients and test consumers.
+
+* TARGET ARCHITECTURE
+
+Architecture nodes that describe pure design intent beyond v0.0.1, or whole subsystems whose interfaces are not realized in any shipped code path.
+
+As of [2026-05-23 Sat 16:00], the UI redesign and model refactor decisions from =dec_CGVRW=..=dec_NZ9PS= add new target nodes here. The previous v0.0.1 nodes remain classified =:V0_0_1: shipped=; their new work is named in =** v0.0.1-pending= subsections until TASK-YFAER and the follow-on UI sessions land.
+
+Future architectural extensions that arrive whole land here first as =:V0_0_1: target=, and graduate to =* IMPLEMENTED v0.0.1= once an implementer task closes them.
+
+The roll-up architector task (TASK-M1MZ4) reviews this section after the v0.0.1 gap-closure tasks land, promotes any newly-surfaced design intent into target nodes, and demotes partials whose gaps were closed into =:V0_0_1: shipped=.
+
+* arch_A1FGY UI shell, routing, notifications, and mobile matrix
+:PROPERTIES:
+:ID:                 arch_A1FGY
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_CGVRW dec_HYD58 dec_H9P38 dec_JZDKT dec_JSX48 dec_NZ9PS
+:GLOSSARY_REFS:      term_FM60Y term_CEQFS term_X4JGJ
+:INTERFACE:          project selector sidebar top header notification bell TanStack routes mobile Sheets
+:CONSTRAINTS:        project scoped no Board page no Manager nav path primary query transient mobile feature parity browser back semantics
+:COMPOSES:
+:DEPENDS_ON:         arch_QFQTD arch_C87Z9 arch_MK2Q2
+:DECIDED_AT:         [2026-05-23 Sat 16:00]
+:V0_0_1:             target
+:V0_0_1_GAPS:        shell routing notifications mobile surfaces pending
+:V0_0_1_EVIDENCE:
+:END:
+
+** Description
+The primary UI shell becomes project-scoped. The old Board page is demoted to a project selector and on-demand management modal, while Decisions, Architecture, Tasks, and Glossary become the visible primary pages. Status and Settings move into top-header icon affordances, and the notification bell becomes the focused surface for user-blocking items.
+
+Routing becomes a TanStack Router path-plus-query model so project pages, deep-linked node/task modals, view modes, manager popover size, and back-stack state can be shared and restored predictably. Mobile behavior is a first-class matrix rather than a later responsive patch.
+
+** Interface
+- Sidebar starts with the active project selector; its footer offers add-project and manage-project dialogs.
+- Primary nav shows Decisions, Architecture, Tasks, and Glossary; ADR, Graph, Snapshots, and Activity live behind a Show more disclosure.
+- Header exposes connection LED, notification bell, theme toggle, and Settings gear, with theme and gear collapsed into mobile overflow below =md=.
+- Notification bell groups Questions, Interrupted Runs, and Parse Errors with primary row actions and dismiss controls, and links to Activity for history.
+- Routes use =/projects/<id>/...= paths for primary location and query parameters for transient view, manager, filter, and modal stack state.
+- Mobile maps sidebars, dropdowns, project selector, notifications, and modals onto Sheet primitives; kanban falls back to list below =md=.
+
+** Constraints
+- There is no separate Board page and no Manager nav page in the redesigned shell.
+- Browser back closes modal or sheet state before leaving the page route.
+- Mobile preserves feature parity where possible; surfaces transform shape rather than disappearing.
+- The bell is not a general todo list; only progress-blocking items count toward its badge.
+
+** Depends on
+- =arch_QFQTD= for project registry data.
+- =arch_C87Z9= for status, notification, and route-backed read APIs.
+- =arch_MK2Q2= for the existing React workbench and HAR-derived transport seams.
+
+** Decided by
+=dec_CGVRW= =dec_HYD58= =dec_H9P38= =dec_JZDKT= =dec_JSX48= =dec_NZ9PS=
+
+** Glossary gaps
+- project selector: Sidebar affordance that switches the active project and opens project management flows.
+- notification bell: Header surface for user-blocking questions, interrupted runs, and parse errors.
+- mobile behavior matrix: Per-surface responsive contract that defines how desktop workbench affordances map to Sheet and touch interactions.
+- TanStack route: Type-safe path/query route definition used by the React UI.
+
+* arch_B7YH2 Manager popover transport and compose surface
+:PROPERTIES:
+:ID:                 arch_B7YH2
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_DTJPD dec_HY3E0 dec_C6510
+:GLOSSARY_REFS:      term_X4JGJ term_KH8TX term_KCGEH
+:INTERFACE:          manager popover peek workbench focus xterm tmux websocket chat compose prompts direct data actions
+:CONSTRAINTS:        bottom persistent no manager nav driver adaptive intelligent ops compose data ops direct touch handle
+:COMPOSES:
+:DEPENDS_ON:         arch_A53QX arch_R3EPE arch_C87Z9 arch_MK2Q2
+:DECIDED_AT:         [2026-05-23 Sat 16:00]
+:V0_0_1:             target
+:V0_0_1_GAPS:        popover xterm bridge compose prompts pending
+:V0_0_1_EVIDENCE:
+:END:
+
+** Description
+Manager interaction moves into a permanent bottom popover available from every page. The surface has three sizes: peek for ambient status, workbench for active coordination while the sidebar remains visible, and focus for full-viewport transcript work.
+
+The popover renders manager content through the driver's native medium. The default =tmux_tui= driver renders a live terminal pane through xterm.js and a daemon WebSocket bridge; ACP-family drivers render structured chat bubbles from session JSONL. UI actions split by intelligence: manager-worthy actions prefill an editable prompt, while pure data operations call the daemon directly.
+
+** Interface
+- Peek handle shows activity state and last manager line.
+- Workbench and focus expose transcript, composer, manager tick controls, needs-you items, and deep manager actions.
+- =tmux_tui= sessions attach through =/ws/tmux/:run_id= into xterm.js.
+- Claude ACP, Codex appserver, and Hermes manager sessions render as chat messages from session events.
+- Start grilling, Architect, Plan, and intelligent Reconcile open the popover with a prefilled prompt the user can edit before sending.
+- Take snapshot, Regenerate ADRs, and simple Reconcile use direct daemon POSTs with confirmation feedback.
+
+** Constraints
+- The manager surface is not a separate route or sidebar nav entry.
+- Data operations do not spend LLM tokens when daemon mutation is sufficient.
+- Driver-adaptive rendering is required; terminal fidelity for =tmux_tui= is not approximated as chat.
+- Mobile handle targets are at least 44px and use pointer-event drag mechanics.
+
+** Depends on
+- =arch_A53QX= for runtime and session events.
+- =arch_R3EPE= for manager tick semantics and prompt discipline.
+- =arch_C87Z9= for WebSocket transport and daemon mutations.
+- =arch_MK2Q2= for UI shell integration.
+
+** Decided by
+=dec_DTJPD= =dec_HY3E0= =dec_C6510=
+
+** Glossary gaps
+- manager popover: Persistent bottom manager surface with peek, workbench, and focus sizes.
+- compose-to-manager: UI pattern that seeds an editable manager prompt only for intelligent operations.
+- driver-adaptive rendering: UI rendering rule that preserves each worker driver's native transcript medium.
+
+* arch_EVJYP Task lifecycle, run state, ownership, and hierarchy model
+:PROPERTIES:
+:ID:                 arch_EVJYP
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_MKC0A dec_RECYG dec_CX17K dec_JW9TJ dec_JW11K
+:GLOSSARY_REFS:      term_RG690 term_CEQFS term_KH8TX
+:INTERFACE:          lifecycle stage run substate owner stage agent map subtasks parent back edge path ids release agent
+:CONSTRAINTS:        one lifecycle for all kinds run substate off heading owner derived agent locks edits subtasks flat top level
+:COMPOSES:
+:DEPENDS_ON:         arch_QFQTD arch_A53QX arch_C87Z9
+:DECIDED_AT:         [2026-05-23 Sat 16:00]
+:V0_0_1:             target
+:V0_0_1_GAPS:        TASK-YFAER lifecycle run-state ownership subtasks pending
+:V0_0_1_EVIDENCE:
+:END:
+
+** Description
+Task headings switch from per-agent-kind states to one human-facing lifecycle: BACKLOG, EXPLORE, PLAN, IMPLEMENT, REVIEW, SHIP, DONE, BLOCKED, and CANCELLED. Agent-internal progress moves to run records as namespaced sub-states such as =agent.implementing=, =human.answering=, or =ci.running=.
+
+Ownership is derived from active runs rather than manually edited. A task with no active run is human-owned; a task with an active run is owned by =agent.<kind>= and its mutable fields lock in the UI except for comments. Stage transitions consult the project's =STAGE_WORKER_*= defaults in =config.org= and may auto-spawn a run. Subtasks remain top-level task headings with =:PARENT_TASK:= back-edges and path-style IDs.
+
+** Interface
+- Task heading TODO keyword stores the lifecycle stage.
+- Run records store a namespaced run sub-state and active owner.
+- =config.org= stores =:STAGE_WORKER_BACKLOG:= through =:STAGE_WORKER_DONE:= defaults.
+- =POST /runs/:id/release= force-cancels the active run and returns ownership to human after confirmation.
+- Subtasks use =:PARENT_TASK:= and IDs such as =TASK-XC6RJ.1= while staying flat in sprint/backlog/archive files.
+- The materialized index rejects orphan subtasks and rolls up child lists per parent.
+
+** Constraints
+- Kanban columns are lifecycle stages, not task kind or agent state.
+- Agent-owned tasks lock properties, description, and acceptance criteria; comments remain writable.
+- Stage-to-agent mapping is deterministic project configuration, not a per-task picker.
+- Subtask order is not encoded in the ID, and nested Org task headings are not used.
+
+** Depends on
+- =arch_QFQTD= for task heading storage and project configuration.
+- =arch_A53QX= for run records, active ownership, and auto-acquire behavior.
+- =arch_C87Z9= for transition, subtask, and release APIs.
+
+** Decided by
+=dec_MKC0A= =dec_RECYG= =dec_CX17K= =dec_JW9TJ= =dec_JW11K=
+
+** Glossary gaps
+- lifecycle stage: Human-facing task column/state stored on the task heading.
+- run sub-state: Namespaced active-run state that explains what actor is currently doing.
+- ownership lock: UI and daemon contract that prevents task field edits while an agent owns the task.
+- stage-agent map: Project configuration that maps lifecycle stages to default agent templates.
+- subtask back-edge: =:PARENT_TASK:= link from a flat child task to its parent task.
+
+* arch_NAFA1 Activity log, comments, and prompt activity slot
+:PROPERTIES:
+:ID:                 arch_NAFA1
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_A4V2N dec_E394G
+:GLOSSARY_REFS:      term_YC32J term_KCGEH term_N5SJT term_K06Z5 term_VQ3F1
+:INTERFACE:          comment tx activity_index task activity endpoint activity page prompt slot
+:CONSTRAINTS:        append only comments same writer merged feed task scoped feed task activity strict slot
+:COMPOSES:
+:DEPENDS_ON:         arch_BVH7M arch_C87Z9 arch_QXS5W
+:DECIDED_AT:         [2026-05-23 Sat 16:00]
+:V0_0_1:             target
+:V0_0_1_GAPS:        TASK-YFAER comments activity_index task.activity pending
+:V0_0_1_EVIDENCE:
+:END:
+
+** Description
+Human comments become first-class tx events instead of task-body edits or per-task files. The daemon materializes those tx entries, state transitions, and run lifecycle events into task-scoped activity feeds. The same projection powers the task detail activity rail, the global Activity page, and the ={{task.activity}}= prompt slot.
+
+** Interface
+- New =comment= tx type carries TX_ID, TIME, ACTOR, PROJECT, TASK, optional RUN_ID, ARTIFACTS, IN_REPLY_TO, and escaped markdown BODY.
+- =activity_index= maps task IDs to ordered activity entries rebuilt on boot and updated on append.
+- =POST /tasks/:id/comments= writes comments through the daemon writer.
+- =GET /tasks/:id/activity= returns comments, state transitions, and relevant run lifecycle records.
+- Global Activity page renders a chronological day-grouped feed with type, actor, date, and task filters.
+- Prompt compiler fills ={{task.activity}}= from the same projection when an agent picks up work.
+
+** Constraints
+- Comments are append-only and auditable through the tx substrate.
+- Agent evidence still lands in task Evidence sections; completion comments link to that evidence rather than duplicate it wholesale.
+- The activity endpoint is task-scoped and should not reparse files per request.
+- Prompt compilation remains strict for =task.activity=.
+
+** Depends on
+- =arch_BVH7M= for tx append authority.
+- =arch_C87Z9= for projection and HTTP endpoints.
+- =arch_QXS5W= for slot registry and prompt-bundle injection.
+
+** Decided by
+=dec_A4V2N= =dec_E394G=
+
+** Glossary gaps
+- comment tx: Append-only tx event representing a human, agent, or CI comment.
+- activity index: Materialized projection that merges task comments, state changes, and run lifecycle events.
+- task activity slot: Prompt slot that injects the current task's activity feed into agent context.
+
+* arch_PGY2G Task page, task detail, and status surfaces
+:PROPERTIES:
+:ID:                 arch_PGY2G
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_MKC0A dec_CX17K dec_A4V2N dec_JW11K dec_R3RE4 dec_P2X0Y dec_CXYVV dec_QWEQ8 dec_NZ9PS
+:GLOSSARY_REFS:      term_RG690 term_CEQFS term_YC32J term_X4JGJ
+:INTERFACE:          tasks page list kanban drag drop dialog subtasks activity rail property strip status pill mobile sheet
+:CONSTRAINTS:        dual view desktop list only mobile tx backed dnd lock agent owned centered dialog no side drawer
+:COMPOSES:
+:DEPENDS_ON:         arch_A1FGY arch_EVJYP arch_NAFA1
+:DECIDED_AT:         [2026-05-23 Sat 16:00]
+:V0_0_1:             target
+:V0_0_1_GAPS:        task list kanban dialog property strip status pill pending
+:V0_0_1_EVIDENCE:
+:END:
+
+** Description
+The Tasks page becomes a dual list/kanban workbench backed by the new lifecycle model. Dragging a card to another lifecycle column writes an audited =manager.action= tx and optimistically updates the view only if the daemon accepts the transition.
+
+Task detail opens as a large centered Dialog on desktop with subtask sidebar, main task body, and activity rail. On mobile it becomes a full-screen Sheet with single-column stacking, tabbed subtasks, and peekable activity. Status rendering uses one combined pill that shows stage plus active run sub-state when present.
+
+** Interface
+- View toggle switches between List and Kanban; below =md= the page auto-switches to List.
+- Kanban columns are BACKLOG, EXPLORE, PLAN, IMPLEMENT, REVIEW, SHIP, plus BLOCKED and CANCELLED lanes.
+- Drag-and-drop writes =manager.action= tx with actor, from_state, to_state, and reason.
+- Task Dialog uses left subtask rail, center description/properties/subtasks, and right activity rail.
+- Property strip exposes status, owner, kind, priority, depends-on, blocked-by, implements, tags, and last-updated.
+- Combined status pill renders =STAGE= or =STAGE . run.state= and opens valid-transition controls.
+
+** Constraints
+- Invalid drop targets are dimmed and rejected by the daemon, not only by the client.
+- Agent-owned tasks are read-only except for comments and release-agent confirmation.
+- The task detail surface is not a side drawer and not a route-only page on desktop.
+- Dates and time estimates are explicitly deferred from the property strip.
+
+** Depends on
+- =arch_A1FGY= for routing and mobile Sheet behavior.
+- =arch_EVJYP= for lifecycle, owner, subtask, and run-state data.
+- =arch_NAFA1= for activity rail and comments.
+
+** Decided by
+=dec_MKC0A= =dec_CX17K= =dec_A4V2N= =dec_JW11K= =dec_R3RE4= =dec_P2X0Y= =dec_CXYVV= =dec_QWEQ8= =dec_NZ9PS=
+
+** Glossary gaps
+- task detail Dialog: Desktop task inspection surface with subtask, main, and activity columns.
+- status pill: Combined visual token that renders lifecycle stage and optional run sub-state.
+- property strip: Compact task metadata row with locked and editable fields.
+
+* arch_M8JQT Design graph and reference pages
+:PROPERTIES:
+:ID:                 arch_M8JQT
+:KIND:               architecture
+:SEMANTIC_HASH:
+:MOTIVATED_BY:       dec_PA23Y dec_E394G dec_JSX48 dec_NZ9PS dec_WWAHT dec_KTF04
+:GLOSSARY_REFS:      term_P94BF term_H5YHC
+:INTERFACE:          overlay node list graph modal back stack react flow cross layer graph topology live graph_layout.org geometry curation backbone edges top-down superseded grayed two-level reset shared map nudge glossary left column mobile sheet
+:CONSTRAINTS:        overlay only topology read-only geometry editable three-tier position resolution localStorage shared graph_layout.org baseline deterministic default active tasks included backbone edges only toggle dense edges containment nesting two-level reset shared map nudge glossary off by default left column artifacts off by default
+:COMPOSES:
+:DEPENDS_ON:         arch_MPAQT arch_A1FGY arch_NAFA1
+:DECIDED_AT:         [2026-05-23 Sat 16:00]
+:V0_0_1:             target
+:V0_0_1_GAPS:        TASK-AQMTA daemon overlay endpoint graph_layout.org; TASK-JH9DD UI shell overlay-only graph; TASK-CKRYB UI position precedence and two-level reset; TASK-8BRYP superseded decision read-model
+:V0_0_1_EVIDENCE:
+:END:
+
+** Description
+The Graph page is an overlay-only cross-layer map: topology is live-derived from /graph/nodes and /graph/edges; only per-node geometry (x, y, w, h) and curation (hidden, pinned), keyed by node id, persist. The overlay is stored in .orgasmic/graph_layout.org (one heading per intentionally-placed node, geometry in the property drawer) and served as JSON via /graph/layout. This makes the Graph a hand-arrangeable inspection surface without coupling layout to topology mutations.
+
+Active tasks (backlog/todo/in_progress/in_review) join decisions and architecture as first-class nodes. Backbone edges (motivated_by, implements, supersedes) render top-down (decision → architecture → task). Superseded decisions (those targeted by another decision's :SUPERSEDES: property) surface grayed, per dec_KTF04; accepted decisions render normally. Dense edges and containment nesting are available as toggles.
+
+** Interface
+- Overlay-only: topology fetched live from /graph/nodes + /graph/edges; per-node geometry and curation fetched from /graph/layout (backed by graph_layout.org).
+- Node lists sort by numeric ID and show compact summary, relation chips, and links.
+- Node modals maintain a back-stack when clicking dependency, decision, or glossary chips.
+- Backbone edges (motivated_by, implements, supersedes) drawn top-down (decision → architecture → task); dense edges (depends_on, dataflow, task deps) are toggle layers; containment renders as nesting.
+- Superseded decisions rendered grayed (read-model over :SUPERSEDES: backrefs; per dec_KTF04).
+- Geometry and curation editable on the page; topology read-only (no node create/delete).
+- Two-level reset: global "reset to shared" clears all localStorage overrides; per-node "snap to shared" resets one node. A quiet "shared map updated" nudge appears when the shared baseline changes for locally-overridden nodes.
+- Glossary off by default (toggle); when enabled renders as a left column. Artifacts off by default.
+- Mobile renders node modals as full-screen Sheets with a back-stack header control.
+
+** Constraints
+- Position resolution is three-tier per-node: machine-local localStorage > shared graph_layout.org baseline > deterministic default band. Dragging writes localStorage only and never touches git or graph_layout.org. The shared overlay is written only deliberately (graph_curator agent or explicit publish). Viewport (pan/zoom) stays machine-local.
+- Active tasks (backlog/todo/in_progress/in_review) are included. Backbone edges (motivated_by, implements, supersedes) are on; dense edges (depends_on, dataflow, task deps) are toggle layers; containment renders as nesting.
+- Topology is read-only (no node create/delete); geometry and curation are editable. Reset is two-level: global "reset to shared" and per-node "snap to shared", with a quiet "shared map updated" nudge when the baseline changes for locally-overridden nodes.
+- Glossary is off by default (toggle), rendered as a left column when enabled. Artifacts are off by default.
+- Per-page glossary or ADR graphs are avoided; the cross-domain Graph owns that traversal.
+- Graph clicks inspect existing nodes; they do not create or revise graph topology.
+
+** Depends on
+- =arch_MPAQT= for canonical graph nodes, edges, snapshots, and ADR regeneration.
+- =arch_A1FGY= for route and mobile modal behavior.
+- =arch_NAFA1= for the global Activity page feed.
+
+** Decided by
+=dec_PA23Y= =dec_TQZTE= =dec_E394G= =dec_JSX48= =dec_NZ9PS=
+
+** Glossary gaps
+- node modal: Read-only graph-node inspection surface with back-stack traversal.
+- cross-domain graph: React Flow visualization over decisions, architecture, glossary terms, and ADRs.
+- reference page: Secondary list-first surface for glossary, ADR, snapshot, or activity records.

@@ -1,0 +1,53 @@
+#+title: Manager contribution — landing orgasmic changes via branch + PR
+#+orgasmic_version: 1
+
+* CONVENTION manager-contribution
+:PROPERTIES:
+:NAME:       manager-contribution
+:NAMESPACE:  conventions
+:APPLIES_TO: manager
+:VERSION:    1
+:END:
+
+How the manager frames a landing path when the active project is =orgasmic=
+itself (dogfooding contribution work).
+
+** Contribution landing flow
+When the active project is =orgasmic=, treat landed source or =.orgasmic/=
+changes as contribution work. Check =git remote -v= and
+=git branch --show-current= before framing a landing path.
+
+The common path is branch first, pull request second:
+- If =origin= is a contributor fork, suggest pushing the current branch to the
+  fork and opening a pull request against =theaspirational/orgasmic=.
+- If =origin= is the canonical upstream
+  =https://github.com/theaspirational/orgasmic.git= or
+  =git@github.com:theaspirational/orgasmic.git= and the user has write access,
+  suggest pushing the current branch to upstream and opening a pull request to
+  =main=.
+- If =origin= is upstream but write access is unknown or denied, suggest the fork
+  path instead.
+
+After the manager completes a sprint/dashboard task or files a requested backlog
+task, report the exact changed files and make the appropriate PR path obvious.
+Do not push or open the PR without an explicit user request.
+
+** Integration branch when dogfooding parallel worktrees
+The dispatch loop bases each worktree on HEAD and the integration merge is by
+hand (see =manager-dispatch=), so it follows whatever branch you dispatch from —
+no upstream write access is involved at any point:
+- *Landing directly for upstream* (canonical =origin=, write access): develop on
+  =main=, integrate topic branches onto =main=.
+- *Developing a feature for a PR* (fork, or any feature branch): =git switch -c
+  feature/...= first and dispatch from there so each worktree inherits it, then
+  integrate topic branches back onto =feature/...=. The PR is =feature/...= →
+  =theaspirational/orgasmic:main=.
+
+Leave =:DEFAULT_BRANCH:= in =.orgasmic/config.org= at =main= either way. It is a
+tracked file and an informational prompt signal (the =project.default_branch=
+slot), not the operative merge target; the merge target is your current base
+branch. Editing =:DEFAULT_BRANCH:= would change the default for every
+contributor and pollute the PR.
+
+** Notes
+[user-editable, not injected]

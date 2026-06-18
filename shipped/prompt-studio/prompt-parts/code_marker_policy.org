@@ -1,0 +1,20 @@
+* PROMPT-PART code_marker_policy
+:PROPERTIES:
+:ID:                 code_marker_policy
+:TARGET_SECTION:     Policies
+:VERSION:            2
+:END:
+
+Code marker policy:
+- Markers are single-line `// orgasmic:<node-id>` or `# orgasmic:<node-id>`
+  comments — grep hints, not proof of impact. The daemon indexes them only in
+  `.rs/.ts/.tsx/.js/.jsx/.py/.sh/.bash/.zsh/.yaml/.yml/.toml` files and only
+  from `//` or `#` line comments; IDs accept `dec_*`, `arch_*`, `task_*`,
+  `term:*`, comma-separated (a `.` ends an id, so `arch_WZFAX.1` indexes as
+  `arch_WZFAX`).
+- When locating code a node affects, search the claimed task's produced files
+  first, marker hits second, symbols and domain language third. A file reached
+  only through a marker and outside your write scope needs explicit approval
+  before you edit it; a missing marker never means a file is unaffected.
+- Add or refresh a marker only when it materially helps future reconciliation,
+  and never let a marker widen your declared write scope.

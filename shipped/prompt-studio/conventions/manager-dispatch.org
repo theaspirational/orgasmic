@@ -1,0 +1,111 @@
+#+title: Manager dispatch — delegation, review, and pre-flight discipline
+#+orgasmic_version: 1
+
+* CONVENTION manager-dispatch
+:PROPERTIES:
+:NAME:       manager-dispatch
+:NAMESPACE:  conventions
+:APPLIES_TO: manager
+:VERSION:    1
+:END:
+
+How the manager delegates code work, closes every landing with review, and keeps
+long-running dispatches recoverable. Read before dispatching code work.
+
+** Typed stage authority
+Prefer explicit stage transitions over implicit continuation. Implementer,
+verifier, adversarial reviewer, fixer, lander, and housekeeping are distinct jobs
+with distinct authority; do not ask one worker to quietly perform another
+stage's responsibilities unless the task brief explicitly grants that authority.
+
+Each dispatch brief must stand alone. Do not rely on hidden shared context between
+workers; pass prior-stage summaries, changed-file lists, gates, findings, and
+unresolved risks in the next brief as labeled claims for the worker to verify.
+
+** Every code-landing pass closes with a reviewer
+After an implementer merge:
+1. Dispatch a reviewer agent (kind `reviewer`) over the merged diff.
+2. Reviewer files findings as `reviewer.finding` tx entries linked to the
+   original task.
+3. Non-trivial findings → file a fix sprint task as a subtask
+   (`:PARENT_TASK:` back-edge), then dispatch a fresh implementer.
+4. Trivial findings → note and roll into the next pass over the same area.
+
+This applies even when the implementer's verification (tests, clippy, fmt)
+is clean. Tests verify code correctness; reviewers verify design and
+architectural fit.
+
+** Pre-flight tx for long-running dispatches
+Before launching any background work that outlives a single manager reply
+(codex implementer, reviewer agent, watcher, daemon-side recovery):
+
+Append a `manager.dispatch_started` tx with `:TASK:`, `:KIND:`
+(implementer / reviewer / etc.), `:WORKTREE:` (if applicable),
+`:BRIEF_PATH:` (harness-neutral; legacy `:CODEX_BRIEF_PATH:` still read),
+`:STARTED_AT:`, `:OWNER_PID:` (your own PID if observable).
+
+If you die before the dispatch finishes, the next manager:
+1. Sees the pre-flight tx in recall.
+2. Checks worktree state (`git -C <worktree> log`), brief, stdout log
+   (`ls <project_root>/.orgasmic/tmp/dispatch/` — one subfolder per task, e.g. `task-NNN-impl/`), and live process (`ps -ef | grep codex`).
+3. Decides: resume integration (merge + record `implementer.done`) if the
+   codex finished, or abort (worktree cleanup + record
+   `manager.dispatch_aborted`) if the brief is stale or the worktree
+   diverged.
+
+** Codex implementer via the =orgasmic manager dispatch= CLI
+When code work needs implementing, dispatch a headless codex worker
+(=implementer-codex-acp= by default; gpt-5.5, high effort) per task in
+an isolated git worktree, through the daemon's ACP dispatch endpoint.
+The contract:
+
+1. *Minimal self-contained brief.* Write the prompt to =<project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md=. The worker has no access to this chat, but the compiled bundle already injects the task heading (description, acceptance criteria, read/write scope, activity) and the worker persona — do not restate them. The brief carries only the delta: read-first anchors, target behaviour, non-negotiable invariants, verification gates, and the exact commit message. Shorter is better; never paste project conventions or file contents the worker can read from disk.
+2. *Dispatch.* From the project root:
+   #+begin_src bash
+   orgasmic manager dispatch \
+     --task TASK-NNN \
+     --kind implementer \
+     --worker implementer-codex-acp \
+     --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
+     --reason "<one-line reason — surfaces in tx + run.created>"
+   #+end_src
+   The CLI atomically: creates the per-task git worktree at =/tmp/orgasmic-worktrees/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=); writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking ACP (JSON-RPC 2.0) over stdio to the daemon. Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
+3. *Wait.* Install a single watcher Bash that polls =[ -s <project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt ] || ! ps -p <worker_pid> > /dev/null= in a loop with =sleep 30=, then exits with a summary. Run that watcher with =run_in_background=; the harness notifies on completion. Do NOT sleep-poll from the main agent — one watcher is enough for the whole batch.
+4. *Integrate.* Read =<project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt= for the worker summary, then from your base branch — the branch HEAD was on at dispatch (=git branch --show-current=): =main= in the default upstream flow, or your feature branch when developing a feature via parallel worktrees for a PR — run =git merge --no-ff task-NNN-impl=, resolve any same-file conflicts (usually only =use= statements when two tasks added imports to the same crate), run =cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings=, record evidence in the sprint task's =** Evidence= section, then =git worktree remove <path> --force && git branch -D task-NNN-impl=. The =implementer.done= close tx is emitted by the daemon when the worker terminates cleanly; if the close didn't fire (manager-rescued merge, aborted dispatch), record via =orgasmic tx record= or =orgasmic manager dispatch-close=. Never leave orphan pre-flight tx — see the exit checklist.
+5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer --worker reviewer-codex-acp=. Reviewer findings → fix subtasks with =:PARENT_TASK:= pointing at the reviewed task and =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
+6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").
+7. *Lockfile pitfall.* Pre-stage workspace deps before parallel rounds. If multiple codex runs need new =Cargo.toml= deps they will revert =Cargo.lock= to honour their stated write scope, leaving a stale lockfile on main. Add likely deps to the workspace =Cargo.toml= and commit =Cargo.lock= before the dispatch.
+
+*Worker name note.* Use the =-acp= names (=implementer-codex-acp=, =reviewer-codex-acp=); the legacy =-stdio= names resolve through a back-compat alias in =crates/orgasmic-daemon/src/content.rs::load_worker=.
+
+** Filing new nodes: mint IDs, never max+1
+New task/decision/architecture/glossary nodes get SHORT-RANDOM ids — 5-char
+Crockford base32 (0-9 A-Z minus I L O U, uppercase, at least one letter),
+class-prefixed: =TASK-XXXXX= / =dec_XXXXX= / =arch_XXXXX= / =term_XXXXX=.
+Mint with =orgasmic id mint --class task|decision|architecture|term= (no
+daemon needed), or any local CSPRNG honouring the grammar. NEVER allocate
+max+1-by-eye from the file — concurrent writers collide (two clones, two
+sessions, same next number). Daemon creation routes auto-mint when =id= is
+omitted and reject legacy sequential-numeric ids on create. Legacy ids
+remain valid as references.
+
+** Housekeeping while dispatching
+- When you (or a dispatched implementer) encounter any pre-existing
+  Pyright/TypeScript/clippy/other diagnostics or lints in files within the
+  task's read scope — fix them, even if unrelated to the current task. Codex
+  briefs should restate this rule so the implementer honours it inside the
+  worktree.
+- Code-level pitfalls live in =.orgasmic/gotchas.org=; read them before
+  dispatching code work and point codex briefs there.
+
+** Exit checklist
+- Confirm `tasks/handoff.org` `:LIVENESS:` matches HEAD.
+- Confirm `tasks/goal.org` stays thin: active goal plus optional reached
+  criteria only.
+- Confirm each touched task sits in the state file matching its heading keyword.
+- Confirm every `manager.dispatch_started` tx you appended has a matching
+  `implementer.done` / `reviewer.done` / `manager.dispatch_aborted` close tx;
+  never leave orphan pre-flight tx for a non-running dispatch.
+
+** Notes
+[user-editable, not injected]

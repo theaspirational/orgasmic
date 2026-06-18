@@ -1,0 +1,28 @@
+[package]
+name = "orgasmic-desktop"
+version = "0.0.1"
+description = "orgasmic desktop workbench"
+edition = "2021"
+rust-version = "1.78"
+license = "MIT"
+repository = "https://github.com/theaspirational/orgasmic"
+
+[lib]
+name = "orgasmic_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+orgasmic-core = { path = "../crates/orgasmic-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2.11.2", features = [] }
+tauri-plugin-dialog = "2.7.1"
+tauri-plugin-process = "2.3.1"
+tauri-plugin-shell = "2.3.5"
+tauri-plugin-updater = "2.10.1"
+url = "2"

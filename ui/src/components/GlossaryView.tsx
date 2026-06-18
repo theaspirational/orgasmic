@@ -1,0 +1,88 @@
+import { useMemo } from 'react';
+import { useNavigate, useSearch } from '@tanstack/react-router';
+
+import { Badge } from '@/components/ui/badge';
+import { useRefreshToken } from '@/hooks/useRefreshBus';
+import { fetchGlossary } from '@/lib/api';
+import { appendDrawerStack, routeSearch, type AppSearch } from '@/lib/searchState';
+import type { GlossarySummary } from '@/lib/types';
+import { useResource } from '@/lib/useResource';
+
+import { ErrorPanel, PageHeader } from './Primitives';
+import { NodeListView } from './node-views/NodeListView';
+import { NodeModal } from './node-views/NodeModal';
+import { firstSentence } from './node-views/orgNodes';
+
+type GlossarySearch = AppSearch & {
+  q?: string;
+};
+
+export function GlossaryView({ projectId }: { projectId: string }) {
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as GlossarySearch;
+  const refresh = useRefreshToken();
+  const glossary = useResource(`glossary:${projectId}:${refresh}`, () => fetchGlossary(projectId));
+  const query = search.q ?? '';
+  const items = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return [...(glossary.data ?? [])]
+      .sort((a, b) => (a.canonical ?? a.id).localeCompare(b.canonical ?? b.id))
+      .filter((term) => {
+        if (!q) return true;
+        return `${term.canonical ?? term.id} ${term.definition ?? ''}`.toLowerCase().includes(q);
+      });
+  }, [glossary.data, query]);
+
+  function setQuery(value: string) {
+    void navigate({
+      search: routeSearch((prev) => ({
+        ...prev,
+        q: value || undefined,
+      })),
+      replace: true,
+    });
+  }
+
+  function openNode(id: string) {
+    void navigate({
+      search: routeSearch((prev) => appendDrawerStack(prev, id)),
+    });
+  }
+
+  if (glossary.error) return <ErrorPanel error={glossary.error} />;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <PageHeader
+        title="Glossary"
+        count={items.length}
+        description="Canonical domain language. IDs stay hidden on this page."
+      />
+      <NodeListView<GlossarySummary>
+        ariaLabel="Glossary"
+        items={items}
+        getId={(item) => item.id}
+        search={query}
+        onSearchChange={setQuery}
+        onSelect={openNode}
+        loading={glossary.loading}
+        renderRow={(term) => (
+          <div className="grid w-full gap-2 md:grid-cols-[1fr_auto] md:items-center">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold">{term.canonical ?? term.id}</p>
+              <p className="truncate text-xs text-muted-foreground">{firstSentence(term.definition)}</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5 md:justify-end">
+              <Badge variant="outline" className="font-mono">↔{term.relates_to.length}</Badge>
+            </div>
+          </div>
+        )}
+      />
+      <NodeModal
+        projectId={projectId}
+        nodeKind="glossary"
+        seed={{ glossary: glossary.data ?? null }}
+      />
+    </div>
+  );
+}

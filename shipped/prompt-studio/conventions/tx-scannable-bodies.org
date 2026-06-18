@@ -1,0 +1,42 @@
+#+title: Scannable tx bodies — manager.action / manager.launch formatting
+#+orgasmic_version: 1
+
+* CONVENTION tx-scannable-bodies
+:PROPERTIES:
+:NAME:       tx-scannable-bodies
+:NAMESPACE:  conventions
+:APPLIES_TO: manager
+:VERSION:    1
+:END:
+
+`manager.action` and `manager.launch` tx bodies surface in the UI workbench
+recent-actions feed, so structure the prose for a reader skimming a list — not
+as one undifferentiated paragraph.
+
+** Lead with one crisp summary sentence
+≤ ~120 chars, ending in a period. The UI promotes that first sentence to a bold
+headline; everything after it collapses behind "Show more". Front-load the
+outcome (=TASK-ENXWA reviewer pass closed.=, =Dispatched implementer for
+TASK-Q9144.=), then add detail.
+
+** Reference every node by its canonical id
+=TASK-HCFBT=, =TASK-HCFBT.1=, =dec_QVSM0=, =arch_MK2Q2.5=. The UI auto-links these
+tokens so a reader can click through to the task/decision/architecture node. A
+body that says "the reviewer subtask" instead of =TASK-HCFBT.1= loses that link.
+
+** Plain prose only — no org emphasis markup
+Do not wrap text in =/slashes/=, =*asterisks*=, or ===equals===; the feed
+renders bodies literally, and file paths (=shipped/workers/foo.org=), ratios
+(=0H/1M/1L=, =28/28=), and run ids render correctly as-is precisely because they
+are left untouched.
+
+** Lean on the auto-decoration instead
+The UI auto-formats three token forms in plain prose, so just write them
+naturally: node ids (=TASK-HCFBT.1=, =dec_QVSM0=, =arch_MK2Q2.5=) become links;
+config/property keys written in org-property form =:STALL_TIMEOUT_SECS:= render
+as inline code; and canonical glossary terms link to their definition. Prefer
+the =:KEY:= colon form when naming a config key, and use a term's canonical
+spelling so it links.
+
+** Notes
+[user-editable, not injected]

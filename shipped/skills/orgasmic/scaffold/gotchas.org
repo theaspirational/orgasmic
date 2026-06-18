@@ -1,0 +1,9 @@
+#+title: {{PROJECT_NAME}} gotchas
+#+orgasmic_version: 1
+
+* (empty)
+
+** Format
+Use one heading per repeated operational pattern. Each gotcha should include
+evidence, the likely cause, an exit condition, and the backlog task expected to
+make the gotcha obsolete.

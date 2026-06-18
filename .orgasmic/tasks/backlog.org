@@ -1,0 +1,19 @@
+#+title: Backlog
+#+orgasmic_version: 1
+
+* BACKLOG TASK-P8ZSP Native Windows PATH support for the CLI (PowerShell/cmd, %USERPROFILE%)    :install:path:windows:platform:
+:PROPERTIES:
+:ID: TASK-P8ZSP
+:END:
+
+Extends dec_CKMW3 and dec_YKFZX. The current PATH-hardening is a POSIX-shell mechanism (env file sourced from ~/.*rc); native Windows shells do not read it. Make the CLI reachable on native Windows.
+
+Work required:
+- Home resolution: orgasmic-core Home::from_env uses $HOME; add %USERPROFILE% (and/or %ORGASMIC_HOME%) fallback for Windows.
+- Installer: install.sh is bash-only; provide a Windows install path (install.ps1 or equivalent) that downloads/places the runtime bundle.
+- PATH wiring: instead of a sourced sh env file, set the user PATH via PowerShell $PROFILE and/or setx / the User-PATH registry value; make it idempotent and reversible.
+- Binary linking: Windows symlinks need Developer Mode/privilege — fall back to copying the binary or a shim .cmd/.exe launcher into a bin dir on PATH.
+- CLI surfaces: path_env::relink_source_binary currently bails on non-unix; add Windows variants for `orgasmic path ensure`, `orgasmic doctor --fix`, and the doctor 'cli on PATH' finding.
+- Verification: confirm `orgasmic` resolves in a fresh PowerShell and cmd session.
+
+Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specifically native PowerShell/cmd.

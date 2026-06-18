@@ -1,0 +1,79 @@
+#+title: Manager handoff — thin goals and continuous continuity
+#+orgasmic_version: 1
+
+* CONVENTION manager-handoff
+:PROPERTIES:
+:NAME:       manager-handoff
+:NAMESPACE:  conventions
+:APPLIES_TO: manager
+:VERSION:    3
+:END:
+
+The manager may be killed at any point; recall must work from on-disk state
+alone. This convention keeps the stable objective separate from manager
+continuity.
+
+** File roles
+`.orgasmic/tasks/goal.org` is intentionally thin. It carries the manager's
+current focus: one active `* GOAL` heading with `:STATUS: active`, the goal
+statement, and optional `** Reached When` criteria. Do not put progress logs,
+next-action plans, run notes, or liveness bookkeeping in `goal.org`.
+
+`.orgasmic/tasks/handoff.org` is the continuity file. It carries the current
+handoff heading with `:GOAL_ID:`, `:LIVENESS:`, `:LIVENESS_AT:`, and concise
+sections for `** Done so far`, `** Next likely actions`, `** In flight`, and
+`** Divergence / Risks`.
+
+** Handoff is continuous, not a ritual
+Every commit you make that affects scope, plan, or progress MUST include the
+matching handoff update. Use `orgasmic node body set|append --section "Done so far"`
+and `orgasmic node prop set handoff-current LIVENESS <sha>`; do not hand-edit
+`handoff.org`:
+- `** Done so far` — append or compact one sentence per landed event with its
+  commit SHA, timestamp, and what changed. Pair node ids with a short readable
+  handle on first mention (conventions/node-references).
+- `** Next likely actions` — refresh whenever the planned next moves change.
+- `** In flight` — name live workers, worktrees, runs, or orphan dispatches.
+- `** Divergence / Risks` — name unrecorded commits, stale daemon state,
+  blocked decisions, or verification gaps.
+- `:LIVENESS:` — set to the current `HEAD` SHA before you commit (the parent
+  SHA you are building on). Set `:LIVENESS_AT:` to the current timestamp.
+
+After your commit, HEAD is exactly one commit ahead of handoff `:LIVENESS:`.
+The new commit's diff is the recorded progress since that liveness point.
+
+If a future recall finds HEAD more than one commit ahead of handoff
+`:LIVENESS:` on files affecting scope/plan/progress, the prior manager was
+killed mid-sequence: `git log <:LIVENESS:>..HEAD` lists the unrecorded commits,
+and the next manager reconstructs the handoff from those commits before taking
+new action.
+
+** Goal changes
+Only change the active goal via `orgasmic goal set|clear|supersede` when the
+goal itself changes, with user authorization when needed. Update handoff in the
+same commit so `:GOAL_ID:` points at the active goal and next actions match the
+new focus.
+
+** Tick-time reads
+At the start of each manager pickup, read:
+- `.orgasmic/tasks/goal.org`
+- `.orgasmic/tasks/handoff.org`
+- `orgasmic status` when the CLI/daemon is available
+- recent tx entries for `manager.action`, `manager.launch`,
+  `manager.dispatch_started`, `implementer.done`, and `reviewer.done`
+- `git status --short` and `git worktree list`
+
+If recall surfaces a handoff `:LIVENESS:` SHA that does not match HEAD on
+scope-relevant files, reconcile handoff before taking new action.
+
+** archive/ handoff documents are optional polish
+`archive/<YYYY-MM-DD>_manager-handoff/handoff.md` is rich prose for a human
+reader when a session ends gracefully. Recall does NOT require it. If
+`tasks/handoff.org` is current, the next manager has everything needed.
+
+Write an archive handoff only when the user explicitly asks for one, or when
+the session covered ground that warrants a human-readable summary. Never
+substitute it for `tasks/handoff.org`.
+
+** Notes
+[user-editable, not injected]

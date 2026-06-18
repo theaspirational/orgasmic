@@ -1,0 +1,23 @@
+#+title: {{PROJECT_NAME}} active goal
+#+orgasmic_version: 1
+#+scope: project
+
+* GOAL Bootstrap project state :goal:
+:PROPERTIES:
+:ID:               goal-bootstrap
+:STATUS:           active
+:SET_AT:
+:SET_BY:
+:REPLACES:
+:END:
+
+** Statement
+Bootstrap this repository's `.orgasmic/` state by completing TASK-C9V29 and its
+subtasks: infer the project baseline, decisions, glossary terms, and
+architecture from real code plus operator answers.
+
+** Reached When
+- [ ] TASK-C9V29.1, TASK-C9V29.2, and TASK-C9V29.3 are DONE.
+- [ ] `project.org`, `decisions.org`, `glossary.org`, and `architecture.org`
+      contain repo-specific records instead of placeholders.
+- [ ] At least one bootstrap activity record exists under `tx/`.

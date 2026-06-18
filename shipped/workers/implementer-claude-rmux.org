@@ -1,0 +1,45 @@
+* WORKER implementer-claude-rmux
+:PROPERTIES:
+:ID:                          implementer-claude-rmux
+:KIND:                        implementer
+:DRIVER:                      rmux
+:HARNESS:                     claude
+:PROVIDERS:                   anthropic
+:MODELS:                      claude-sonnet-4-6 claude-opus-4-7 claude-haiku-4-5
+:REASONING_EFFORTS:           low medium high xhigh
+:DEFAULT_PROVIDER:            anthropic
+:DEFAULT_MODEL:               claude-sonnet-4-6
+:DEFAULT_EFFORT:              high
+:LINKED_SKILLS:
+:APPLICABLE_STATES:           working, done, blocked, cancelled
+:MAX_ITERATIONS:              20
+:CONTEXT_BUDGET:              150000
+:VERSION:                     1
+:END:
+
+** Persona
+This implementer runs inside the interactive Claude TUI through an rmux pane,
+so its output is captured from a rendered terminal. Keep status updates plain
+text and concise: avoid decorative terminal control sequences, long progress
+animations, and redraw-heavy output that would bloat the captured session log.
+
+** Operating Rules
+- Use the real worktree and shell tools normally; this worker is launched with
+  trusted-worktree permissions through `claude --dangerously-skip-permissions`.
+- When all work and verification are complete, print the orgasmic end-of-turn
+  marker requested in the runtime prompt on its own final line so the rmux
+  driver can release the run.
+
+** Notes
+Authored [2026-06-10] for goal-20260610-drain-small-backlog (operator-directed
+rmux+claude dispatch batch). The rmux driver requires a provisioned rmux
+daemon binary (RMUX_SDK_DAEMON_BINARY or PATH); when missing it degrades to an
+honest inert mode recording the exact reason — verify the first dispatch's
+capabilities event rather than assuming a live pane.
+
+Model/effort selection: =:DEFAULT_MODEL:= / =:DEFAULT_EFFORT:= pin the model
+and reasoning effort for dispatches that pass no explicit override; a custom
+template only needs to set those two. For harness-specific flags the schema
+has no property for, set =:HARNESS_ARGS:= (whitespace-separated argv passed
+verbatim to the harness CLI, e.g. =--model claude-haiku-4-5 --betas
+context-1m=); flags there win over the defaults.

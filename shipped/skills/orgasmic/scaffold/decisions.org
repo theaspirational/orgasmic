@@ -1,0 +1,21 @@
+#+title: {{PROJECT_NAME}} decisions
+#+orgasmic_version: 1
+#+scope: project
+
+* dec_K1DR7 Bootstrap orgasmic project state :bootstrap:
+:PROPERTIES:
+:ID:            dec_K1DR7
+:GLOSSARY_REFS:
+:DECIDED_AT:
+:SOURCE:        scaffold
+:END:
+** Context
+A freshly initialized project has only scaffold files. Agents need one explicit
+starting decision so they do not treat empty project memory as authoritative.
+** Decision
+Bootstrap `.orgasmic/` from repository evidence and operator answers before
+relying on project, decision, glossary, or architecture records for downstream
+work.
+** Consequences
+TASK-C9V29 is the first work item. Later workers should treat scaffold prose as
+incomplete until TASK-C9V29 and its subtasks replace it with repo-specific state.

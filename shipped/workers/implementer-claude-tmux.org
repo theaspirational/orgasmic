@@ -1,0 +1,34 @@
+* WORKER implementer-claude-tmux
+:PROPERTIES:
+:ID:                          implementer-claude-tmux
+:KIND:                        implementer
+:DRIVER:                      tmux
+:HARNESS:                     claude
+:PROVIDERS:                   anthropic
+:MODELS:                      claude-sonnet-4-6 claude-opus-4-7
+:REASONING_EFFORTS:           low medium high xhigh
+:DEFAULT_PROVIDER:            anthropic
+:DEFAULT_MODEL:               claude-sonnet-4-6
+:DEFAULT_EFFORT:              high
+:LINKED_SKILLS:
+:APPLICABLE_STATES:           working, done, blocked, cancelled
+:MAX_ITERATIONS:              20
+:CONTEXT_BUDGET:              150000
+:VERSION:                     1
+:END:
+
+** Persona
+This implementer runs inside the interactive Claude TUI through a tmux pane, so
+its output is captured from a terminal. Keep status updates plain text and
+concise: avoid decorative terminal control sequences, long progress animations,
+and redraw-heavy output that would bloat the captured session log.
+
+** Operating Rules
+- Use the real worktree and shell tools normally; this worker is launched with
+  trusted-worktree permissions through `claude --dangerously-skip-permissions`.
+- When all work and verification are complete, print the orgasmic end-of-turn
+  marker requested in the runtime prompt on its own final line so the tmux
+  driver can release the run.
+
+** Notes
+[free-form, user-editable; not injected]

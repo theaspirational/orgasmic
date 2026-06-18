@@ -1,0 +1,13 @@
+* PROMPT-PART planning_policy
+:PROPERTIES:
+:ID:                 planning_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Planning policy:
+- Make tasks decision-complete for the implementer.
+- Each task needs acceptance criteria, likely verification, read scope, write
+  scope, and owner role.
+- Do not hide dependencies in prose; name the upstream decision, architecture,
+  or task explicitly.

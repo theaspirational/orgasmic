@@ -1,0 +1,68 @@
+#+title: Daemon rebuild/restart policy
+#+orgasmic_version: 1
+
+* CONVENTION daemon-rebuild-restart-policy
+:PROPERTIES:
+:NAME:       daemon-rebuild-restart-policy
+:NAMESPACE:  conventions
+:APPLIES_TO: manager
+:VERSION:    1
+:END:
+
+Read this before rebuilding or restarting the orgasmic daemon from a manager
+session, especially when testing orgasmic itself.
+
+** Runtime lanes
+- Regular user install is bundle-managed. The installed CLI/runtime lives under
+  =$ORGASMIC_HOME/runtimes/<version>-<target>/= and is selected by
+  =$ORGASMIC_HOME/current= plus =$ORGASMIC_HOME/bin/orgasmic=.
+- A cloned/forked orgasmic repo is just source code unless
+  =$ORGASMIC_HOME/install.json= says =mode: source=.
+- To test a local feature branch from a bundle install, keep =install.json= in
+  bundle mode and temporarily point only the daemon at the source-built binary:
+
+  #+begin_src bash
+  orgasmic daemon restart --from-source "$PWD"
+  #+end_src
+
+  This runs =cargo build --release=, resolves the newest
+  =target/release/orgasmic= or =target/<triple>/release/orgasmic=, writes a
+  temporary daemon runtime override, regenerates the service wrapper, and
+  restarts.
+- Use =--no-build= only after you have already built the release binary.
+- Use =orgasmic daemon restart --clear-runtime-override= to return to the
+  installed runtime without waiting for an update.
+- A normal bundle =orgasmic update= clears the temporary daemon runtime
+  override before restarting, so the vendor runtime wins again.
+
+** Controlled restart contract
+- =orgasmic restart= / =orgasmic daemon restart= is the controlled restart path.
+  It asks the daemon to pause acquisition and drain the writer before the local
+  service is stopped.
+- Restart is allowed from a manager session. Mux-backed manager/worker runs
+  are reattached on next boot when the driver proves the runtime is still live;
+  non-reattachable runs remain visible through =orgasmic run list= /
+  =orgasmic recovery status= as interrupted or ambiguous with explicit recovery
+  actions.
+- Plain =orgasmic daemon stop= is different: it may still refuse over a live
+  manager run unless forced because it does not immediately boot the recovery
+  pass.
+- Never restart only to clear a stale dispatch lease. Use
+  =orgasmic manager lease-release --project <id> --task <task> --kind <kind>=.
+- After any restart, verify:
+
+  #+begin_src bash
+  orgasmic daemon status
+  orgasmic run list
+  orgasmic manager dispatch-status
+  #+end_src
+
+  =daemon status= reports any temporary runtime override; =run list= shows live
+  runs plus recovered interrupted/ambiguous runs; =dispatch-status= surfaces
+  pre-flight dispatches that still need integration or abort.
+
+** Source checkout debug primitive
+=orgasmic serve= remains the foreground debug primitive. Use it for isolated
+local debugging when you intentionally do not want to touch the installed
+service. For the shared local service that users and agents depend on, prefer
+the controlled restart commands above.

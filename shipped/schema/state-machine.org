@@ -1,0 +1,86 @@
+#+title: orgasmic task lifecycle and run sub-states
+#+version: 3
+
+* STATE-MACHINE task-lifecycle
+:PROPERTIES:
+:VERSION: 3
+:END:
+
+** Heading keywords
+Org TODO keywords are single uppercase tokens; multi-word states use
+underscores. Display labels are prose:
+- BACKLOG -> Backlog
+- TODO -> Todo
+- IN_PROGRESS -> In Progress
+- IN_REVIEW -> In Review
+- DONE -> Done
+- CANCELLED -> Cancelled
+
+** Transitions
+- backlog     -> todo | in_progress | cancelled
+- todo        -> in_progress | cancelled
+- in_progress -> in_review | todo | cancelled
+- in_review   -> in_progress | done | cancelled
+- done        -> terminal
+- cancelled   -> terminal
+
+** Rule
+The task heading TODO keyword is the human-facing lifecycle column. Worker-phase
+detail lives on run records as performer-owned `<performer>.<verb>` sub-states.
+Blocked-ness is `:BLOCKED_BY:` plus a `<performer>.blocked` run sub-state; it is
+rendered as a badge, not a lifecycle column.
+
+** Heading properties
+- :FIX_SUBTASK: optional boolean. The manager sets =:FIX_SUBTASK: t= only on
+  subtasks filed to address reviewer findings. =dispatch-close --kind
+  implementer --status done= treats true-ish values (=t=, =true=, =1=) as
+  one-round fix subtasks and transitions IN_PROGRESS -> DONE; parent-task
+  pointers alone do not trigger this shortcut. Omit this property for polish
+  or organizational subtasks that still need a reviewer pass.
+
+* STATE-MACHINE goal-lifecycle
+:PROPERTIES:
+:VERSION: 1
+:END:
+
+** Heading keywords
+Goal headings in =tasks/goal.org= use their own keyword set (mirrored in the
+core parser's TODO keyword allowlist alongside the task set):
+- GOAL -> the single active goal
+- CLEARED -> closed without a replacement
+- SUPERSEDED -> replaced by a newer goal (=:REPLACES:= on the successor)
+
+** Transitions
+- (none)    -> GOAL        (=orgasmic goal set=; an existing GOAL is superseded in the same write)
+- GOAL      -> CLEARED     (=orgasmic goal clear=; sets =:STATUS: cleared=, =:CLEARED_AT:=/=:CLEARED_BY:=)
+- GOAL      -> SUPERSEDED  (=orgasmic goal supersede= or implicit on set; sets =:STATUS: superseded=, =:SUPERSEDED_AT:=)
+- CLEARED / SUPERSEDED -> terminal
+
+** Rule
+At most one GOAL heading is active at a time. Goal headings never carry
+=:LIVENESS:= (the daemon lints this as a parse error); manager continuity
+lives in =tasks/handoff.org=.
+
+* RUN-SUBSTATE
+:PROPERTIES:
+:VERSION: 1
+:END:
+
+** Namespace
+The namespace is the performer: any worker kind, `human`, or reserved `ci`.
+The namespace names whoever performs the transition; verbs are owned by that
+performer.
+
+** Base verbs
+working, done, blocked, cancelled
+
+** Verdict deltas
+Reviewer and human performers also use approved, requested_changes.
+
+** Examples
+- griller.working
+- implementer.working
+- reviewer.approved
+- human.requested_changes
+- manager.working
+- babysitter.working

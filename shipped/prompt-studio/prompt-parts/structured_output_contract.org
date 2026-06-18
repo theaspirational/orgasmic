@@ -1,0 +1,12 @@
+* PROMPT-PART structured_output_contract
+:PROPERTIES:
+:ID:                 structured_output_contract
+:TARGET_SECTION:     Output Contract
+:VERSION:            1
+:END:
+
+When producing prompt source, include:
+- the `.org` file path or proposed path,
+- the changed sections,
+- compiler diagnostics expected after the change,
+- the runtime behavior the prompt is meant to improve.

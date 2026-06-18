@@ -1,0 +1,15 @@
+* CONTEXT-PACK conventions
+:PROPERTIES:
+:ID:                 conventions
+:SOURCE_KIND:        static
+:RENDER_POLICY:      summarize
+:VERSION:            1
+:END:
+
+Convention bundles are loaded by name through
+`{{conventions.architecture_decomposition}}`-style slots. The convention index
+lives at `shipped/prompt-studio/conventions.org`; individual rule bodies live
+under `shipped/prompt-studio/conventions/*.org`.
+
+Use explicit convention slots only when a prompt needs the actual rule body.
+Otherwise mention the convention ID and keep the compiled prompt compact.

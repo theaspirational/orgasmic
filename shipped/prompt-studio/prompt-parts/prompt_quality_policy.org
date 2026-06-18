@@ -1,0 +1,21 @@
+* PROMPT-PART prompt_quality_policy
+:PROPERTIES:
+:ID:                 prompt_quality_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Prompt quality policy:
+- Keep role and goal short.
+- Separate context from policy.
+- Make output contracts explicit.
+- Use examples only when they change likely behavior.
+- Prefer context packs over pasted full-history prose.
+- For implementation or review briefs, use concrete sections: context, proven
+  problem, accepted design or target behavior, non-negotiable invariants, read
+  first anchors, task steps, verification gates, constraints, and return fields.
+- Distinguish evidence from claims. Prior agent summaries are useful context,
+  but verification prompts should label them as claims to reproduce.
+- Include exact commands and paths when they are known. If a command is risky,
+  flaky, or needs redirection, say that in the prompt instead of assuming the
+  worker will infer it.

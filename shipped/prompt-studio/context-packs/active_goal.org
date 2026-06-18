@@ -1,0 +1,12 @@
+* CONTEXT-PACK active_goal
+:PROPERTIES:
+:ID:                 active_goal
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/tasks/goal.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Current active manager goal: objective and optional reached criteria only.
+Render as a compact source reference by default; managers inspect handoff
+separately for progress and next actions.

@@ -1,0 +1,120 @@
+#+title: orgasmic gotchas
+#+orgasmic_version: 1
+
+* Gotchas
+
+Durable code-level traps for any agent touching the Rust/TS workspace, including
+codex implementers in their worktrees (which auto-read repo `AGENTS.md`). Each
+entry names the symptom/evidence, the cause, and the fix; transient entries also
+carry an exit condition and the task expected to make them obsolete.
+
+** Org TODO-keyword recognition is an allowlist, not "uppercase token"
+The app-owned Org parser must only recognise the per-kind state-machine states
+declared in `shipped/schema/state-machine.org` as TODO keywords. Otherwise
+untyped headings like `* PROJECT orgasmic`, `* TX …`, `* PROMPT …`,
+`* SCHEMA …`, `* SLOTS`, `* AGENT-TEMPLATE …` get misclassified. When you add a
+state to the state machine, mirror it in
+`crates/orgasmic-core/src/org.rs::TODO_KEYWORDS`. Durable invariant.
+
+** Slot field names allow kebab-case
+`{{skills.my-skill}}` and `{{skill_path.my-skill}}` are legal: the field
+component after the first `.` accepts `[A-Za-z0-9_-]+`. The namespace component
+is stricter (no dashes). Durable invariant.
+
+** macOS append-mode files are not readable
+`OpenOptions::new().append(true)` returns `EBADF` on read, so a tx-style appender
+cannot seek/read its own descriptor to decide on a leading blank line. Read the
+path with `std::fs::read` *before* opening the append handle, then carry the
+"needs blank line" decision in a bool. Encoded in arch_BVH7M.2. Durable invariant.
+
+** {{conventions.<name>}} slots are runtime-recognized
+Recognized by `crates/orgasmic-core/src/slots.rs::is_dynamic_skill_slot` (along
+with `skills.*` and `skill_path.*`). New convention bundles authored under
+`shipped/conventions/*.org` are immediately usable from any prompt without
+runtime allowlist changes. (An earlier note deferred this to TASK-D6Y0Y; that note
+is stale as of TASK-EZ0ST [2026-05-28].) Durable invariant.
+
+** macOS notify reports /private/var while temp_dir returns /var
+macOS `notify` reports `/private/var/...` while `std::env::temp_dir()` returns
+`/var/...`. Any `starts_with` comparison between a watcher event path and a
+configured project path must `std::fs::canonicalize` both sides first. The
+daemon's watcher does this in `crates/orgasmic-daemon/src/watcher.rs::flush`
+(encoded in arch_C87Z9.3); new watcher consumers should follow the same pattern.
+Durable invariant.
+
+** claude-acp quarantine LIFTED [2026-06-10] (was: DEFERRED since 2026-05-28)
+TASK-TGGAJ closed the silent simulated-mode fallback (merge =6262dc9=, reviewer
+verdict no-blocks-ship): real-wire is now the default whenever an executable
+`claude` is detectable on PATH; simulation is opt-in only via
+`ORGASMIC_DRIVER_SIMULATE=1` (or genuinely absent binary), and the fallback
+logs WHICH check failed. The exit condition of the old quarantine entry is
+met — claude-acp may be used again. Residual caution: the driver has had far
+less live mileage than codex-acp/tmux/rmux; watch the first few dispatches'
+capabilities events for `simulated:true` regressions. `cursor-acp` (TASK-GYMSP)
+remains a separate implementation either way.
+
+** Workspace MSRV is 1.87; avoid std APIs newer than that
+Workspace MSRV is 1.87 (per `Cargo.toml` `workspace.package`). The old 1.78
+floor stopped being truthful once current transitive dependencies adopted
+edition 2024 / higher `rust-version` metadata (TASK-BTESP verified the 1.78
+gate fails on `idna_adapter` and then `clap_builder`; the lockfile metadata now
+contains 1.87 dependencies).
+
+New std methods can still compile fine on the default toolchain while breaking
+MSRV CI/dev checks. Known offender:
+- `std::fs::File::unlock` / `try_lock_exclusive` (stable 1.89) — these also
+  shadow the `fs2::FileExt` trait when both are in scope. Call the trait methods
+  explicitly: `fs2::FileExt::unlock(&file)` / `fs2::FileExt::try_lock_exclusive(&file)`.
+
+For new code, prefer APIs available on Rust 1.87 unless this gotcha and
+`Cargo.toml` are intentionally raised together.
+
+** Never pipe cargo test output — redirect to a file and read it
+A test or driver that spawns a subprocess with inherited stdio can leave a
+descendant holding the pipe's write end open, so `cargo test … 2>&1 | tail`
+hangs forever *after* all tests pass (silence is indistinguishable from "still
+compiling"; this SIGKILLed one agent for 25 min on [2026-06-05]). Run
+`cargo test … > /tmp/x.log 2>&1` then read the file. When writing tests that
+spawn placeholder processes: null stdio + a Drop-guard that kills the whole
+process group (reference patterns: `ProcessGroupGuard` in
+`crates/orgasmic-drivers/tests/`, `SessionGuard` in `tmux.rs` tests, the
+supervisor-test `process_group(0)` reap). The production-side group reap is
+`reap_process_group` (TASK-AJZCK.3); don't reintroduce direct-child-only kills.
+Durable invariant.
+
+** Test daemon port isolation from checkout-resident production daemon
+Tests that spawn isolated test daemons must ensure the daemons don't default to
+port 4848 when running in parallel from a checkout where a production daemon is
+also running. The test infrastructure (DaemonClient, daemon_lifecycle) falls back
+to reading the home's config.yaml if ORGASMIC_DAEMON_URL is not set. When tests
+run in parallel from the main checkout (where the real daemon listens on 4848),
+any test daemon whose home config has the default port 4848 will collide: if the
+subprocess somehow loses the ORGASMIC_DAEMON_URL env var due to environment
+leakage in parallel mode, the CLI will silently talk to the main daemon instead
+of failing obviously. Fixed in TASK-CJXKM: test boot() now writes the home config
+with bind_port: 65533 (an unlikely port) so failed env-var inheritance fails
+fast rather than routing to the wrong daemon. Exit condition: either test
+daemons use unique ports that don't match the prod daemon (4848), or
+ORGASMIC_DAEMON_URL is guaranteed to be inherited in subprocess environments
+across all test modes. Durable invariant (parallel isolation).
+
+** cargo test/build does NOT run npm — release build does
+Debug and test builds skip `npm --prefix ui run build` and embed a placeholder
+UI. Only `cargo build --release` (or `ORGASMIC_EMBED_UI=1`) triggers the npm
+build and embeds the real dist. If npm fails in a release build, the error names
+npm/node as the cause and the one-line fix. Durable invariant; see build.rs.
+
+** Format
+Use one heading per repeated operational pattern. Each gotcha should include
+evidence, the likely cause, an exit condition, and the backlog task expected to
+make the gotcha obsolete. Entries marked "Durable invariant" are permanent
+engineering constraints rather than transient patterns awaiting a fix.
+
+** rmux workers intentionally do not auto-spawn babysitters
+rmux worker templates are interactive PTY smoke/proof surfaces, not the default
+production dispatch lane. Auto-spawning =babysitter_worker= there would require a
+second rmux-backed Claude pane, doubling scarce interactive PTY/runtime capacity
+and adding an observer whose prompt is tuned for implementer sessions rather than
+all rmux roles. Operators should not expect companion babysitters for
+=*-rmux.org= workers unless a future task designs a dedicated rmux babysitter
+policy and template. Durable policy as of TASK-GD0W1.

@@ -1,0 +1,54 @@
+#+title: orgasmic prompt-template slot registry
+#+version: 1
+
+* SLOTS
+:PROPERTIES:
+:VERSION: 1
+:END:
+
+** Substitution
+- Syntax: {{namespace.field}}
+- Strict variable substitution. No conditionals, no loops, no expressions.
+- Evaluated only inside ** Spawn-time injection and ** Continuation injection
+  body sections of a prompt template.
+- Unknown slot at compile time = compile error; surfaced in dry-run.
+
+** Available slots
+
+*** task.*
+- task.id, task.title, task.description, task.priority, task.tags
+- task.acceptance        (** Acceptance Criteria section content)
+- task.write_scope, task.read_scope
+- task.test_cmd          (per-task TEST_CMD; resolves from the heading, else the config default — TASK-Q68WE)
+- task.depends_on
+- task.activity          (materialized task activity feed: comments, state transitions, run lifecycle)
+
+*** dispatch.*
+- dispatch.brief         (manager handoff content supplied with a dispatch; non-dispatch compiles use "not set")
+
+*** project.*
+- project.id, project.name, project.path
+- project.test_cmd, project.lint_cmd, project.build_cmd
+- project.default_branch
+
+*** worker.*
+- worker.id, worker.kind
+- worker.persona            (** Persona section of the agent template)
+- worker.operating_rules    (** Operating Rules section)
+
+*** skills.*
+- skills.all                (manifest of all linked skills: id, description, triggers, abs path)
+- skills.<id>               (single skill body, inline)
+- skill_path.<id>           (single skill's absolute path, string)
+
+*** conventions.*
+- conventions.<name>        (body of shipped/conventions/<name>.org, or user/conventions/<name>.org when overridden; resolved via the loader rule per dec_GRDFB)
+
+*** run.*
+- run.id, run.iteration_count, run.previous_state
+
+*** evidence.*
+- evidence.so_far           (** Evidence section of the claimed task)
+
+*** worklog.*
+- worklog.tail              (last N worklog entries from the claimed task)

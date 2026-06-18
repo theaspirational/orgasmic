@@ -1,0 +1,229 @@
+#+title: orgasmic active manager goal
+#+orgasmic_version: 1
+#+scope: project
+
+* GOAL Ship the editable cross-layer Graph page (layout overlay + retained superseded decisions) :goal:
+:PROPERTIES:
+:ID:               goal-20260615-ship-the-editable
+:SET_AT:           [2026-06-15 Mon]
+:SET_BY:           theaspirational
+:REPLACES:         —
+:END:
+
+** Statement
+Execute the Graph-page implementation queue in dependency order, one task at a time, dispatching each via the rmux+claude implementer (implementer-claude-rmux). The manager reviews each merged diff and dispatches a reviewer-claude-rmux pass per the manager-dispatch convention. Prerequisite TASK-Z30V0 (arch_M8JQT revision) is already DONE.
+
+Order:
+1. TASK-8BRYP - daemon: retain superseded decisions, expose derived superseded flag (implements dec_KTF04).
+2. TASK-AQMTA - daemon: /graph/layout endpoint over a graph_layout.org overlay (implements dec_WWAHT). Sequential AFTER 8BRYP - overlapping WRITE_SCOPE on crates/orgasmic-daemon/src/index.rs and api.rs; never run these two in parallel.
+3. TASK-JH9DD - UI: Graph page shell (cross-layer NodeGraph, deterministic band layout, curation toggles). After 8BRYP and AQMTA.
+4. TASK-CKRYB - UI: three-tier layout precedence, persist-on-drag, two-level reset and update nudge. After JH9DD.
+5. TASK-G7BCJ - graph_curator prompt-spec; tagged deferred until the Graph UI ships.
+
+One task in flight at a time; keep WRITE_SCOPEs disjoint. Implementer = implementer-claude-rmux (driver rmux, harness claude); reviewer = reviewer-claude-rmux.
+
+** Reached When
+TASK-8BRYP, TASK-AQMTA, TASK-JH9DD, TASK-CKRYB are DONE with per-task gates green (cargo test -p orgasmic-daemon for the daemon tasks; cd ui && npm run typecheck for the UI tasks) and a reviewer-claude-rmux pass recorded for each. TASK-G7BCJ is DONE or remains explicitly deferred with rationale in its heading. The Graph page renders the cross-layer map with superseded decisions grayed, default band layout, curation toggles, and local-first drag persistence per dec_WWAHT/dec_KTF04. orgasmic status reports parse_errors 0.
+
+* CLEARED Drain remaining backlog one by one :goal:
+:PROPERTIES:
+:ID:               goal-20260613-remaining-backlog-one-by-one
+:SET_AT:           [2026-06-13 Sat]
+:SET_BY:           theaspirational
+:REPLACES:         goal-20260612-backlog-drain-in
+:STATUS:           cleared
+:CLEARED_AT:       [2026-06-13 Sat]
+:CLEARED_BY:       theaspirational
+:END:
+
+** Statement
+Drain the remaining open backlog one task at a time. Do not batch or parallelize unless the operator explicitly changes this goal. Current order:
+
+1. TASK-ZRZYB (worker template save-time validation / doctor lint).
+2. TASK-BTESP (workspace MSRV 1.78 dependency break).
+3. TASK-HCFBT.4 (remove codex-acp stall timeout overrides once proven safe).
+4. TASK-GKTWY.1 (coalesced stderr truncation).
+5. TASK-SV032 (run-dock polish).
+6. TASK-GFKFW.3 (updater live-run guard).
+7. TASK-GFKFW.2 (remote Linux daemon smoke).
+8. TASK-GFKFW.4 (update-channel Select polish).
+
+For each task: inspect the heading first, dispatch or implement only that task, verify gates, update Evidence, close or cancel it, then move to the next task. Keep dec_035A0 in force: do not revive companion babysitter worker attach as backlog cleanup.
+
+** Reached When
+All eight tasks listed in the statement are either DONE or explicitly CANCELLED with Evidence explaining the outcome; no task remains in TODO, IN_PROGRESS, or IN_REVIEW; shipped workers still have no :BABYSITTER_WORKER: declarations; orgasmic status reports parse_errors 0.
+
+* SUPERSEDED Backlog drain in leverage order (operator-reviewed queue 2026-06-13) :goal:
+:PROPERTIES:
+:ID:               goal-20260612-backlog-drain-in
+:SET_AT:           [2026-06-12 Fri]
+:SET_BY:           theaspirational
+:REPLACES:         —
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-06-13 Sat]
+:END:
+
+** Statement
+Drain the open backlog in the order below — set by dependency, leverage, and dogfood pain, deliberately overriding stored P-labels. Work strictly top-down unless WRITE_SCOPEs allow safe parallelism.
+
+TIER 1 — restore trust in the feedback loops:
+1. TASK-ZD72S (green the daemon test baseline) — every integration this week paid a replay tax to the red suite; real regressions hid in it.
+2. TASK-BRXGG (cli dispatch parallel-safety) — same disease; goal is full-workspace green from the dogfood checkout; consider one combined dispatch with ZD72S.
+3. TASK-YHA6V (codex thin last.txt) — codex dispatches discard the worker report; root cause already verified in the task.
+4. TASK-VVF8S (drain 56 dangling glossary slugs) — takes parse-errors to ZERO so the lint channel becomes a binary health check.
+
+TIER 2 — write-authority + schema follow-through:
+5. TASK-J2RZT (handoff/goal on the node surface) — retires the last agent direct-edit exception.
+6. TASK-38GGG (tokenless decision create + title repair verb).
+7. TASK-Q68WE (config defaults for dispatch params).
+8. TASK-VJXXC (first-class graph edges, index-derived inverses).
+
+TIER 3 — dispatch/daemon hardening, all small:
+9. TASK-T3ENY (tx TIME local/UTC skew). 10. TASK-9NTQY (daemon start readiness window). 11. TASK-EXFTV (claude-acp simulated-mode gate — one-condition fix unlocking a worker class). 12. TASK-GD0W1 (run telemetry sub_state/role). 13. TASK-GFKFW.1 (nightly auto-publish trigger dead). 14. TASK-84QVC (entity-link regex for minted IDs).
+
+TIER 4 — features/platform, after the loops are quiet: 15. TASK-GYMSP (cursor ACP adapter). 16. TASK-BJHKN (drift comparator + marker sweep). 17. TASK-MW5BX (architecture UI route; needs BJHKN). 18. TASK-R3TWA (OS service adapters). 19. TASK-PGFPM (functional babysitter; re-scope wording per dec_WC1PW first). 20. TASK-HCFBT.4 (drop stall overrides; piggyback on a long codex-acp run).
+
+TIER 5 — polish/long-tail: 21. TASK-GKTWY.1 (stderr coalesce truncation). 22. TASK-SV032 (run-dock papercuts). 23. TASK-GFKFW.3 (updater TOCTOU). 24. TASK-GFKFW.2 (remote Linux smoke; needs operator infra). 25. TASK-GFKFW.4 (shadcn Select polish).
+
+Housekeeping already applied at goal-set: TASK-KM5K1.1 state-repaired to done (completed 2026-05-25, heading had stayed BACKLOG).
+
+** Reached When
+Tiers 1-3 (items 1-14) are DONE with their gates — including cargo test --workspace green 3x consecutive from the dogfood checkout with the production daemon live (ZD72S+BRXGG) and parse-errors at 0 (VVF8S). At that checkpoint the operator re-reviews tiers 4-5 ordering before continuing.
+
+* CLEARED dec_HJENQ execution: prompt-composition fix first, then lint net, then migration :goal:
+:PROPERTIES:
+:ID:               goal-20260612-dec-hjenq-execution--prompt-composition
+:SET_AT:           [2026-06-12 Fri]
+:SET_BY:           theaspirational
+:REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-06-12 Fri]
+:CLEARED_BY:       theaspirational
+:END:
+
+** Statement
+Drain the dec_HJENQ chain in dependency-safe order. TASK-SMFHY (P1) first: dispatch prompt composition triplicates the brief and drops canonical task facts — every subsequent dispatch benefits. Then TASK-KY80Q (heading-token vs :ID: equality lint) so the mass migration runs under the detection net. Then TASK-PD8W5 (property migration, steps 1-7, ONE property-migration tagged commit). TASK-VJXXC and TASK-Q68WE follow. Sequential dispatches — WRITE_SCOPEs overlap in crates/orgasmic-daemon/src/ and crates/orgasmic-core/src/.
+
+** Reached When
+SMFHY, KY80Q, and PD8W5 are DONE: dispatch bundle regression test green (brief rendered exactly once, slots hydrated from the indexed record), equality lint live on the parse-errors channel, property-migration commit tagged and verified (fixtures reparse, daemon reload, board state counts), parse-errors at the 56 baseline or better.
+
+* CLEARED Execute the round-4 directive drain: seven-task queue + parallel schema ADR :goal:
+:PROPERTIES:
+:ID:               goal-20260612-round4-directive-drain
+:SET_AT:           [2026-06-12 Fri]
+:SET_BY:           theaspirational
+:REPLACES:         goal-20260611-prod-ready-for-strangers
+:RESUME_SKILL:     orgasmic resume
+:STATUS:           cleared
+:CLEARED_AT:       [2026-06-12 Fri]
+:CLEARED_BY:       theaspirational
+:END:
+
+** Statement
+#+begin_quote
+Execute the agreed queue in order: TASK-QRD3Y → TASK-WTJ5V → TASK-7R3NS →
+TASK-G9KCN → TASK-NP5H6 → TASK-BP5VB → TASK-2C3WZ, with TASK-55DH1
+parallel-safe (decisions.org write scope only — may run alongside any queue
+task). Implementer = cursor-agent with composer 2.5 fast for all queue
+dispatches. No dedicated reviewer stage: the manager reviews each diff and
+fixes findings directly at integration (review-and-fix by manager).
+#+end_quote
+
+** Reached When
+- All eight tasks DONE (or explicitly re-scoped with rationale in their
+  headings): TASK-QRD3Y, TASK-WTJ5V, TASK-7R3NS, TASK-G9KCN, TASK-NP5H6,
+  TASK-BP5VB, TASK-2C3WZ, TASK-55DH1.
+- Every merge carries a manager diff review; per-task TEST_CMD + clippy +
+  fmt gates green; workspace suite no worse than the TASK-ZD72S
+  pre-existing set.
+- dec_ZQJPA and dec_QQYXM are live in practice: agent org-writes go through
+  the daemon only, task files are per-state, dispatch worktrees live under
+  the project's =.orgasmic/tmp/dispatch/=.
+
+* CLEARED Close the stranger-readiness gap: reliability drain, green suite, no manual state surgery :goal:
+:PROPERTIES:
+:ID:               goal-20260611-prod-ready-for-strangers
+:SET_AT:           [2026-06-11 Thu]
+:SET_BY:           theaspirational
+:STATUS:           cleared
+:CLEARED_AT:       [2026-06-11 Thu]
+:CLEARED_BY:       theaspirational
+:REPLACES:         goal-20260610-drain-small-backlog
+:RESUME_SKILL:     orgasmic resume
+:END:
+
+Cleared [2026-06-11 Thu] after the IN_REVIEW round closed (TASK-ZSD0B/TASK-HC7PW/TASK-KBH4B DONE,
+TASK-HC7PW.1 guard-bypass fix landed =fa79c2d=). Reliability drain advanced but
+not declared reached — the stranger smoke (Reached-When item 4) and the P3 tail
+remain. No active focus; next =orgasmic resume= waits for new direction.
+
+** Statement
+#+begin_quote
+Make orgasmic prod-ready for strangers: an operator who is not the author must
+be able to install, dispatch, and recover without ever hand-editing daemon
+state. Drain the reliability backlog in priority order — TASK-RVEKT (daemon /tx
+persistence), TASK-WTJ5V (dispatch race re-validation under ab7bb93), TASK-BRXGG
+(dispatch-test parallel flake), then TASK-T3ENY/TASK-EXFTV/TASK-KM5K1.1 — plus the
+carried TASK-CJWT3.1. Workers dispatch via rmux+claude as validated; parallelize
+disjoint WRITE_SCOPEs; fresh implementer-N per substantial task.
+#+end_quote
+
+** Reached When
+- TASK-RVEKT, TASK-WTJ5V, and TASK-BRXGG DONE with reviewer passes; a full
+  dispatch→close cycle completes with zero manual tx appends or lifecycle
+  flips.
+- =cargo test --workspace= green twice consecutively from this checkout with
+  the production daemon live on 4848.
+- TASK-CJWT3.1, TASK-T3ENY, TASK-EXFTV, TASK-KM5K1.1 DONE or explicitly re-scoped
+  with rationale in their headings.
+- A stranger smoke documented: clean-machine install → init → dispatch →
+  close, no author intervention.
+
+* SUPERSEDED Drain the small backlog via rmux+claude workers :goal:
+:PROPERTIES:
+:ID:               goal-20260610-drain-small-backlog
+:SET_AT:           [2026-06-10 Wed]
+:SET_BY:           theaspirational
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-06-11 Thu]
+:REPLACES:         goal-20260528-finish-harden-housekeep
+:RESUME_SKILL:     orgasmic resume
+:END:
+
+** Statement
+#+begin_quote
+Drain the small backlog (TASK-CJWT3.1, TASK-HCFBT.4 if its gate is met, TASK-TGGAJ,
+and the unfiled polish items worth filing). Dispatch ALL workers — implementers
+AND reviewers — via the rmux driver with the claude harness (mode rmux, harness
+claude). Parallelize tasks whose WRITE_SCOPEs are disjoint; fresh implementer-N
+per substantial task as usual. Operator is watching the tasks page and will
+click into worker sessions from the in-progress badges.
+#+end_quote
+
+Outcome: reached in substance — TASK-TGGAJ/TASK-K5RG2/TASK-X9E92/TASK-CJXKM DONE with reviewer
+passes; TASK-HCFBT.4 reported gate-unmet; TASK-CJWT3.1 rolls into the successor
+goal.
+
+* CLEARED Finish current agenda, harden+refine, drain backlog, housekeep continuously until stopped :goal:
+:PROPERTIES:
+:ID:               goal-20260528-finish-harden-housekeep
+:SET_AT:           [2026-05-28 Thu 02:30]
+:SET_BY:           theaspirational
+:STATUS:           cleared
+:CLEARED_AT:       [2026-06-05 Fri]
+:CLEARED_BY:       theaspirational
+:REPLACES:         goal-20260522-target-impl
+:RESUME_SKILL:     orgasmic resume
+:END:
+
+** Statement
+#+begin_quote
+Finish current agenda, harden and refine, implement backlog tasks, do housekeeping — until I stop you.
+Do not forget to periodically check workers as they can behave strange.
+If codex will be out of quota, use cursor agent or claude via tmux driver.
+#+end_quote
+
+Session-by-session progress logs that previously lived here were trimmed
+[2026-06-10 Wed] per the thin-goal convention: manager continuity lives in
+=tasks/handoff.org=, durable rationale in =decisions.org=, and full history in
+git (this file before =8c0290f=).

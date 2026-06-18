@@ -1,0 +1,11 @@
+* CONTEXT-PACK architecture
+:PROPERTIES:
+:ID:                 architecture
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/architecture.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Authored architecture graph nodes, edges, and source-path evidence. Render as a
+compact source reference by default, not the full architecture document.

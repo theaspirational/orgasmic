@@ -1,0 +1,11 @@
+* CONTEXT-PACK sprint_tasks
+:PROPERTIES:
+:ID:                 sprint_tasks
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/tasks/backlog.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Current task lifecycle state and task bodies. Render as a compact source
+reference by default, not the full sprint file.

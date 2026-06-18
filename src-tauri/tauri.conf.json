@@ -1,0 +1,62 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "orgasmic",
+  "version": "0.0.1",
+  "identifier": "com.theaspirational.orgasmic",
+  "build": {
+    "beforeDevCommand": {
+      "cwd": "..",
+      "script": "npm --prefix ui run dev:bootstrap -- --port 5180",
+      "wait": false
+    },
+    "beforeBuildCommand": {
+      "cwd": "..",
+      "script": "npm --prefix ui run build:bootstrap",
+      "wait": true
+    },
+    "devUrl": "http://127.0.0.1:5180",
+    "frontendDist": "../ui/bootstrap-dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "orgasmic",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 700
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": ["app", "dmg"],
+    "category": "DeveloperTool",
+    "shortDescription": "Agent coordination workbench",
+    "longDescription": "orgasmic coordinates AI-agent work through repo-local plain-text state.",
+    "icon": ["../ui/public/brand/orgasmic-tauri-icon-rgba.png"],
+    "externalBin": [],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "hardenedRuntime": true,
+      "signingIdentity": "-"
+    },
+    "resources": {
+      "../README.md": "docs/README.md",
+      "../CONTRIBUTING.md": "docs/CONTRIBUTING.md"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI4MzZGODQ3OTg3MTkxNzUKUldSMWtYR1lSL2cydUpsNmRFY3RSaHI0QnFOQkRUZjNUeVB1TGpndjRZSWdwSkgxNXI0QnhGeWgK",
+      "endpoints": [
+        "https://github.com/theaspirational/orgasmic/releases/download/stable/latest.json"
+      ]
+    }
+  }
+}

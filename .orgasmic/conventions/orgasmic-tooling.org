@@ -1,0 +1,32 @@
+#+title: orgasmic tooling
+#+orgasmic_version: 1
+
+* Convention: working with installed orgasmic tooling
+
+Use the CLI as the agent/human surface. Treat the daemon as the CLI backend.
+
+- Check live tooling: `command -v orgasmic >/dev/null 2>&1 && orgasmic status >/dev/null 2>&1`.
+- `/orgasmic recall`: brief; stop.
+- `/orgasmic resume`: brief; continue the next clear action.
+- `orgasmic ...`: state-write surface when the check succeeds.
+- Daemon: write authority for `tx/` and sessions.
+- `.orgasmic/*.org`: CLI-only for agents (`orgasmic --help`); no hand-edits.
+- Missing `/orgasmic` skill: read `conventions/no-skill-installed.org`.
+
+* Convention: restarting the daemon
+
+Restarting the daemon (for example to pick up a rebuild) is permitted — from a
+manager session as well as by the operator. `orgasmic restart` /
+`orgasmic daemon restart` is recovery-aware: it asks the daemon to pause new
+acquisition and drain writes before the process is stopped, then the next boot
+reattaches live mux-backed runs when the driver can prove the runtime is still
+alive. Non-reattachable runs remain visible through `orgasmic run list` /
+`orgasmic recovery status` as interrupted or ambiguous with explicit recovery
+actions.
+
+Use `orgasmic daemon restart --from-source <checkout>` to test a local
+source-built daemon without switching the install to source mode. Use
+`--clear-runtime-override` to return to the installed runtime. For a stale or
+orphaned dispatch lease, prefer
+`orgasmic manager lease-release --project <id> --task <task> --kind <kind>`,
+which clears the lease without touching live runs.

@@ -1,0 +1,12 @@
+* CONTEXT-PACK manager_handoff
+:PROPERTIES:
+:ID:                 manager_handoff
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/tasks/handoff.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Current manager continuity: done so far, next likely actions, in-flight work,
+divergence/risks, and liveness. Render as a compact source reference by default;
+managers inspect it during recall/resume or before dispatching.

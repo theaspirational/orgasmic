@@ -1,0 +1,521 @@
+#+title: orgasmic project glossary
+#+orgasmic_version: 1
+#+scope: project
+#+project: orgasmic
+#+source: archive/21_05_26_init/spec.org
+
+* term_XJM14 Orgasmic
+:PROPERTIES:
+:ID:                 term_XJM14
+:CANONICAL:          orgasmic
+:AVOID:              HAR migration, Emacs workflow, team SaaS
+:RELATES_TO:         term_CJ2R4 term_CEQFS term_X4JGJ term_3YTBK
+:DEFINITION:         A local coordination app that lets a developer manage AI-agent work using plain-text project state.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_CJ2R4 Orgasmic home
+:PROPERTIES:
+:ID:                 term_CJ2R4
+:CANONICAL:          orgasmic home
+:AVOID:              repo root, source checkout, workspace
+:RELATES_TO:         term_WQMJJ term_FM60Y term_W0T9S
+:DEFINITION:         The developer-local runtime and data area that contains user overrides, registered projects, runtime state, sessions, secrets, logs, config, and optional CLI shims; contributor installs may also link an editable source checkout from it.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_DVSS2 Desktop distribution
+:PROPERTIES:
+:ID:                 term_DVSS2
+:CANONICAL:          desktop distribution
+:AVOID:              source install, dev server, clone-to-try
+:RELATES_TO:         term_CJ2R4 term_WQMJJ term_5SV2N term_TDNG3
+:DEFINITION:         The optional host app package, currently macOS Tauri, that launches an already installed orgasmic CLI/runtime and opens the daemon-served UI. For v0.0.1 free/dev distribution this means an Apple Silicon-only, ad-hoc-signed tester DMG; a frictionless public installer requires future Developer ID signing and notarization.
+:DECIDED_AT:         [2026-05-29 Fri 00:00]
+:END:
+
+* term_TDNG3 Remote daemon
+:PROPERTIES:
+:ID:                 term_TDNG3
+:CANONICAL:          remote daemon
+:AVOID:              mounted local project, remote app install, public daemon
+:RELATES_TO:         term_DVSS2 term_CJ2R4 term_KH8TX term_CEQFS
+:DEFINITION:         An orgasmic daemon installed and supervised on another machine, usually Linux, where the managed repositories, project state, worker processes, sessions, and logs actually live; the macOS app connects to it as a client profile.
+:DECIDED_AT:         [2026-05-29 Fri 00:00]
+:END:
+
+* term_CEQFS Project state
+:PROPERTIES:
+:ID:                 term_CEQFS
+:CANONICAL:          project state
+:AVOID:              central database, cloud state
+:RELATES_TO:         term_RG690 term_P94BF
+:DEFINITION:         Repo-local coordination files that describe project identity, work, decisions, architecture, and audit events for one opted-in project.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_FM60Y Global board
+:PROPERTIES:
+:ID:                 term_FM60Y
+:CANONICAL:          global board
+:AVOID:              auto scanner, project database
+:RELATES_TO:         term_CEQFS term_CJ2R4
+:DEFINITION:         A developer-local pointer list of projects that this orgasmic instance manages.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_WQMJJ Loader rule
+:PROPERTIES:
+:ID:                 term_WQMJJ
+:CANONICAL:          loader rule
+:AVOID:              monkey patch, in-place customization
+:RELATES_TO:         term_W0T9S term_5SV2N
+:DEFINITION:         The rule that user-authored overrides are read before shipped defaults without modifying shipped content.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_YC32J Tx file
+:PROPERTIES:
+:ID:                 term_YC32J
+:CANONICAL:          tx file
+:AVOID:              event database, EDN log
+:RELATES_TO:         term_N5SJT
+:DEFINITION:         An append-only audit artifact made of property-only headings that records durable coordination events.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_KCGEH Session file
+:PROPERTIES:
+:ID:                 term_KCGEH
+:CANONICAL:          session file
+:AVOID:              compressed transcript, opaque trace
+:RELATES_TO:         term_3YTBK term_KH8TX
+:DEFINITION:         An append-only JSONL transcript of one worker or manager run.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_N5SJT Daemon writer
+:PROPERTIES:
+:ID:                 term_N5SJT
+:CANONICAL:          daemon writer
+:AVOID:              multi writer, direct graph edit
+:RELATES_TO:         term_YC32J term_P94BF term_H5YHC
+:DEFINITION:         The local process role that serializes writes for audit, session, graph, snapshot, and generated decision artifacts.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_KH8TX Worker driver
+:PROPERTIES:
+:ID:                 term_KH8TX
+:CANONICAL:          worker driver
+:AVOID:              agent adapter, shell wrapper
+:RELATES_TO:         term_3YTBK term_GMTWY term_X4JGJ
+:DEFINITION:         A typed runtime adapter that starts an AI worker, streams its events, and exposes orgasmic task-state tools.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_X4JGJ Manager agent
+:PROPERTIES:
+:ID:                 term_X4JGJ
+:CANONICAL:          manager agent
+:AVOID:              always-on daemon brain, approval queue
+:RELATES_TO:         term_FM60Y term_3YTBK term_465BG
+:DEFINITION:         A fresh event-triggered coordination agent that reads orgasmic state and acts through the orgasmic CLI.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_P94BF Decision graph
+:PROPERTIES:
+:ID:                 term_P94BF
+:CANONICAL:          decision graph
+:AVOID:              design notes, free-form rationale
+:RELATES_TO:         term_H5YHC term_J5X55
+:DEFINITION:         The set of scoped question nodes, options, chosen answers, and edges that anchor later architecture and planning.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_H5YHC Architecture graph
+:PROPERTIES:
+:ID:                 term_H5YHC
+:CANONICAL:          architecture graph
+:AVOID:              implementation plan, task list
+:RELATES_TO:         term_P94BF
+:DEFINITION:         The set of scoped component nodes with interfaces, constraints, and decision back-edges.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_J5X55 Stale propagation
+:PROPERTIES:
+:ID:                 term_J5X55
+:CANONICAL:          stale propagation
+:AVOID:              re-run everything, manual audit
+:RELATES_TO:         term_C3A8T
+:DEFINITION:         The graph update rule that marks downstream nodes stale when an upstream semantic choice changes.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_HQJWT Advisory code marker
+:PROPERTIES:
+:ID:                 term_HQJWT
+:CANONICAL:          advisory code marker
+:AVOID:              daemon pragma, authoritative code link
+:RELATES_TO:         term_RG690
+:DEFINITION:         An optional source comment that helps future agents find code related to a graph node without becoming authoritative state.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_RG690 Task heading
+:PROPERTIES:
+:ID:                 term_RG690
+:CANONICAL:          task heading
+:AVOID:              issue clone, ticket database
+:RELATES_TO:         term_3YTBK term_CEQFS
+:DEFINITION:         A work item represented as an Org heading with state, ownership, scope hints, acceptance criteria, evidence, and worklog sections.
+:DECIDED_AT:         [2026-05-21 Thu 19:06]
+:END:
+
+* term_Z672G Boot reconciliation
+:PROPERTIES:
+:ID:                 term_Z672G
+:CANONICAL:          boot reconciliation
+:AVOID:              automatic restore, startup replay, hidden resume
+:RELATES_TO:         term_N5SJT term_N400W term_A8GT3 term_X4JGJ
+:DEFINITION:         A non-destructive daemon startup pass that rebuilds current truth from disk, classifies active runtimes, and emits recovery events without rolling graph state back.
+:DECIDED_AT:         [2026-05-21 Thu 19:26]
+:END:
+
+* term_N400W Runtime identity
+:PROPERTIES:
+:ID:                 term_N400W
+:CANONICAL:          runtime identity
+:AVOID:              worker id only, process id as truth
+:RELATES_TO:         term_KH8TX term_3YTBK term_Z672G
+:DEFINITION:         The tuple of run id, runtime id, and boot id used to distinguish a current worker runtime from stale cleanup or an older daemon process.
+:DECIDED_AT:         [2026-05-21 Thu 19:26]
+:END:
+
+* term_A8GT3 Continuation run
+:PROPERTIES:
+:ID:                 term_A8GT3
+:CANONICAL:          continuation run
+:AVOID:              silent resume, duplicate run, retry without context
+:RELATES_TO:         term_3YTBK term_KCGEH term_Z672G
+:DEFINITION:         A new worker run that continues an interrupted run using durable task state, prior session JSONL, current worktree diff, and the original acceptance criteria.
+:DECIDED_AT:         [2026-05-21 Thu 19:26]
+:END:
+
+* term_Z5XDF Convention bundle
+:PROPERTIES:
+:ID:                 term_Z5XDF
+:CANONICAL:          convention bundle
+:AVOID:              template engine input, include directive, pragma file
+:RELATES_TO:         term_WQMJJ term_HQJWT term_K06Z5 term_VQ3F1
+:DEFINITION:         An agent-facing behavioral rule document, addressable from prompts as a named slot in the conventions namespace and resolved user-first via the loader rule.
+:DECIDED_AT:         [2026-05-21 Thu 21:13]
+:END:
+
+* term_K06Z5 Slot registry
+:PROPERTIES:
+:ID:                 term_K06Z5
+:CANONICAL:          slot registry
+:AVOID:              free-form variables, template macros, dynamic include map
+:RELATES_TO:         term_VQ3F1 term_Z5XDF term_KH8TX term_X4JGJ
+:DEFINITION:         The fixed catalog of slot namespaces the prompt compiler will resolve, combining static task, project, worker, run, evidence, and worklog namespaces with dynamic skill and convention namespaces.
+:DECIDED_AT:         [2026-05-21 Thu 21:13]
+:END:
+
+* term_VQ3F1 Prompt bundle
+:PROPERTIES:
+:ID:                 term_VQ3F1
+:CANONICAL:          prompt bundle
+:AVOID:              raw prompt string, single template, agent transcript
+:RELATES_TO:         term_Z5XDF term_K06Z5 term_KH8TX term_X4JGJ
+:DEFINITION:         The final agent-spawn payload combining persona, operating rules, skill manifest, applicable convention bundles, and the selected spawn-time or continuation prompt injection handed to a driver.
+:DECIDED_AT:         [2026-05-21 Thu 21:13]
+:END:
+
+* term_ZYE1R Skill manifest
+:PROPERTIES:
+:ID:                 term_ZYE1R
+:CANONICAL:          skill manifest
+:AVOID:              copied skill body, skill source, full instructions
+:RELATES_TO:         term_VQ3F1 term_K06Z5 term_KH8TX
+:DEFINITION:         A compact prompt-bundle input that names the skills available to an agent and provides enough metadata for selection without embedding their full bodies by default.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_C9YBH Persona
+:PROPERTIES:
+:ID:                 term_C9YBH
+:CANONICAL:          persona
+:AVOID:              model identity, user profile, runtime state
+:RELATES_TO:         term_H2GAN term_VQ3F1 term_X4JGJ term_3YTBK
+:DEFINITION:         The agent-facing role description that frames what kind of work an agent is responsible for and how it should understand its assignment.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_H2GAN Operating rules
+:PROPERTIES:
+:ID:                 term_H2GAN
+:CANONICAL:          operating rules
+:AVOID:              code policy, hidden system prompt, task acceptance criteria
+:RELATES_TO:         term_C9YBH term_VQ3F1 term_Z5XDF term_X4JGJ
+:DEFINITION:         The agent-facing behavioral constraints that shape how a persona works across tasks, independent of one task's specific acceptance criteria.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_VD1MY Dry-run compile
+:PROPERTIES:
+:ID:                 term_VD1MY
+:CANONICAL:          dry-run compile
+:AVOID:              best-effort preview, production spawn, syntax-only check
+:RELATES_TO:         term_VQ3F1 term_K06Z5 term_ZYE1R term_Z5XDF
+:DEFINITION:         A non-spawning validation pass that resolves the planned agent context and reports missing, unknown, or unfilled inputs before a worker run can start.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_T2NSV Prompt injection
+:PROPERTIES:
+:ID:                 term_T2NSV
+:CANONICAL:          prompt injection
+:AVOID:              adversarial prompt, global persona, slot registry
+:RELATES_TO:         term_VQ3F1 term_A8GT3 term_VD1MY term_3YTBK
+:DEFINITION:         The task- and state-specific prompt portion selected for a worker run, with spawn-time injection starting new work and continuation injection resuming interrupted work with prior context.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_GBTJS Prompt spec
+:PROPERTIES:
+:ID:                 term_GBTJS
+:CANONICAL:          prompt spec
+:AVOID:              raw prompt, prompt template, manager persona file
+:RELATES_TO:         term_H9SJX term_HPKAZ term_VQ3F1 term_VD1MY
+:DEFINITION:         A typed `.org` source file that defines one agent prompt through role, goal, boundaries, inputs, policies, output contract, security, examples, inherited prompt parts, and context packs.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:END:
+
+* term_H9SJX Prompt part
+:PROPERTIES:
+:ID:                 term_H9SJX
+:CANONICAL:          prompt part
+:AVOID:              macro, include snippet, hidden instruction
+:RELATES_TO:         term_GBTJS term_HPKAZ term_VQ3F1
+:DEFINITION:         A reusable `.org` prompt fragment with a declared target section, applied by the prompt compiler so overlapping agent behavior is shared without duplicating full prompt specs.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:END:
+
+* term_HPKAZ Context pack
+:PROPERTIES:
+:ID:                 term_HPKAZ
+:CANONICAL:          context pack
+:AVOID:              full history dump, prompt macro, raw file paste
+:RELATES_TO:         term_GBTJS term_H9SJX term_VD1MY term_CEQFS
+:DEFINITION:         A typed prompt input that tells the compiler how to render a bounded slice of runtime context, such as project state, decisions, glossary, architecture, telemetry, workers, or skills.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:END:
+
+* term_EWGAK Gotcha
+:PROPERTIES:
+:ID:                 term_EWGAK
+:CANONICAL:          gotcha
+:AVOID:              one-off bug, blame note, generic lesson
+:RELATES_TO:         term_GBTJS term_RG690 term_ZYE1R
+:DEFINITION:         A repeated operational failure pattern captured with evidence and an exit condition, intended to be emptied by backlog work that changes code, prompts, or skills.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:END:
+
+* term_ERXMF Finalize gate
+:PROPERTIES:
+:ID:                 term_ERXMF
+:CANONICAL:          finalize gate
+:AVOID:              advisory warning, writer lock, manual checklist
+:RELATES_TO:         term_P94BF term_H5YHC term_J5X55 term_C3A8T
+:DEFINITION:         A completion-time validation boundary that prevents graph finalization while unresolved decisions, trace inconsistencies, lifecycle mismatches, or invalid cross-scope references remain.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_C3A8T Semantic hash
+:PROPERTIES:
+:ID:                 term_C3A8T
+:CANONICAL:          semantic hash
+:AVOID:              prose checksum, file hash, code hash
+:RELATES_TO:         term_J5X55 term_P94BF term_H5YHC term_ERXMF
+:DEFINITION:         A stable digest of the meaning-bearing fields of a graph node used to detect changes that should propagate staleness downstream.
+:DECIDED_AT:         [2026-05-21 Thu 22:28]
+:END:
+
+* term_DN08P Run lease
+:PROPERTIES:
+:ID:                 term_DN08P
+:CANONICAL:          run lease
+:AVOID:              global mutex, file lock, queue slot
+:RELATES_TO:         term_GMTWY term_3YTBK term_N400W term_E0TAB
+:DEFINITION:         The supervisor's claim that grants at most one active run per (task_id, kind) tuple; it is taken on acquire and surrendered on release, with state changes guarded by (run_id, runtime_id, boot_id) ownership so stale cleanup cannot clobber a replacement runtime.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_A53QX.1
+:END:
+
+* term_E0TAB Babysitter
+:PROPERTIES:
+:ID:                 term_E0TAB
+:CANONICAL:          babysitter
+:AVOID:              co-pilot, second implementer, reviewer
+:RELATES_TO:         term_3YTBK term_GMTWY term_DN08P term_KCGEH
+:DEFINITION:         A restricted companion run spawned beside a live implementer that receives summarized session chunks and may only poke, restart, escalate, or record a finding through its closed babysitter tool set; it cannot edit code or mutate other state. The babysitter auto-spawner coalesces implementer events and launches this run, writing to sessions/<run-id>.babysitter.jsonl.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_A53QX.5
+:END:
+
+* term_H29TQ Materialized index
+:PROPERTIES:
+:ID:                 term_H29TQ
+:CANONICAL:          materialized index
+:AVOID:              database, cache, persisted store
+:RELATES_TO:         term_N5SJT term_CEQFS term_RG690 term_FM60Y
+:DEFINITION:         The daemon's in-memory read projection of board, projects, tasks, activity, graph nodes, and advisory markers, rebuilt from the .org files at boot and incrementally refreshed by the watcher; the API, CLI, and UI read from it rather than re-parsing files, and on a parse failure the last-good projection for that file is kept. Also called the materialized read index.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_C87Z9.4
+:END:
+
+* term_RWJ36 Recovery classification
+:PROPERTIES:
+:ID:                 term_RWJ36
+:CANONICAL:          recovery classification
+:AVOID:              crash report, restart status, snapshot diff
+:RELATES_TO:         term_Z672G term_A8GT3 term_N400W term_3YTBK
+:DEFINITION:         The label boot reconciliation assigns to each prior run when the daemon restarts, one of live-reattached, interrupted, terminal no-op, or ambiguous-question; reattachment requires a provable live runtime handle, and interrupted runs are eligible to become continuation runs.
+:DECIDED_AT:         [2026-06-05 Fri 00:00]
+:PRIMARY_LEAF:       arch_Z3Z3V.1
+:END:
+
+* term_VV48W Run sub-state
+:PROPERTIES:
+:ID:                 term_VV48W
+:CANONICAL:          run sub-state
+:AVOID:              stage, status, phase, lifecycle state
+:RELATES_TO:         term_RG690 term_DN08P term_KH8TX term_X4JGJ
+:DEFINITION:         The performer-namespaced progress value on a run record, shaped <performer>.<verb> where the performer is the worker kind doing the run (griller, planner, implementer, reviewer, babysitter, manager, ...), human, or the reserved ci. Verbs are a shared minimal base — working, done, blocked, cancelled — plus verdict deltas (reviewer/human approved, requested_changes). It carries the worker-phase detail the task lifecycle columns no longer encode: one In Progress task moves griller.working -> implementer.working without changing column (dec_WV1ZH, dec_P7EY8).
+:DECIDED_AT:         [2026-06-10 Wed]
+:END:
+
+* term_P9JK1 Worker pipeline
+:PROPERTIES:
+:ID:                 term_P9JK1
+:CANONICAL:          worker pipeline
+:AVOID:              stage worker mapping, STAGE_WORKER
+:RELATES_TO:         term_VV48W term_RG690 term_X4JGJ
+:DEFINITION:         The ordered list of worker kinds that serve a task (project default in config.org, e.g. griller planner implementer reviewer; per-task override via :PIPELINE: or implied by :KIND:). The task's position is read from the latest run sub-state — griller.done means the planner is next — and phases are skippable. Replaces the per-stage STAGE_WORKER_* mapping (dec_DEH2T).
+:DECIDED_AT:         [2026-06-10 Wed]
+:END:
+
+* term_3YTBK Worker run
+:PROPERTIES:
+:AVOID: job, process, session (the session file is its transcript, not the run)
+:CANONICAL: worker run
+:DEFINITION: One supervised execution of a worker agent: acquired through a driver lease, streaming driver events into a session file, owned by the supervisor from acquire to release. Identified by a run_id (timestamp + random); every dispatch, babysitter attach, and recovery continuation is a worker run.
+:ID: term_3YTBK
+:RELATES_TO: term_DN08P term_KH8TX term_KCGEH term_N400W term_A8GT3
+:END:
+
+* term_GMTWY Supervisor
+:PROPERTIES:
+:AVOID: scheduler, orchestrator
+:CANONICAL: supervisor
+:DEFINITION: The daemon component that owns worker-run lifecycle: lease acquisition, driver event ingestion, stall detection, timeout release, and process-group reaping. The single authority for which runs are live.
+:ID: term_GMTWY
+:RELATES_TO: term_3YTBK term_DN08P term_E0TAB term_KH8TX
+:END:
+
+* term_465BG Question system
+:PROPERTIES:
+:AVOID: chat, prompt
+:CANONICAL: question system
+:DEFINITION: The blocking question/answer channel between agents and the operator: an agent asks through the daemon, the run blocks until a human answers via CLI or UI. Questions and answers persist as tx records.
+:ID: term_465BG
+:RELATES_TO: term_X4JGJ term_3YTBK
+:END:
+
+* term_5SV2N Shipped content
+:PROPERTIES:
+:AVOID: templates, assets
+:CANONICAL: shipped content
+:DEFINITION: The read-only instruction and schema tree distributed with the runtime (shipped/): prompt specs, conventions, workers, schemas, scaffold templates. Loaded by loader rules; never edited per-project.
+:ID: term_5SV2N
+:RELATES_TO: term_WQMJJ term_DVSS2
+:END:
+
+* term_W0T9S User overrides
+:PROPERTIES:
+:AVOID: settings, config (config.yaml is daemon config, not content)
+:CANONICAL: user overrides
+:DEFINITION: Per-user content under the orgasmic home (user/) that loader rules prefer over shipped content, letting an operator customize prompts, workers, or conventions without forking the runtime tree.
+:ID: term_W0T9S
+:RELATES_TO: term_WQMJJ term_CJ2R4
+:END:
+
+* term_9B3V8 Task state machine
+:PROPERTIES:
+:AVOID: workflow, kanban (the board renders it; the schema defines it)
+:CANONICAL: task state machine
+:DEFINITION: The per-kind lifecycle allowlist in shipped/schema/state-machine.org: BACKLOG, TODO, IN_PROGRESS, IN_REVIEW, DONE, CANCELLED for tasks, with file-per-state membership (dec_QQYXM) and daemon-executed cross-file transitions.
+:ID: term_9B3V8
+:RELATES_TO: term_RG690
+:END:
+
+* term_5FAFJ installed runtime
+:PROPERTIES:
+:AVOID: source checkout, app bundle, repo clone
+:CANONICAL: installed runtime
+:DEFINITION: The managed prebuilt orgasmic runtime under $ORGASMIC_HOME/runtimes/<version>-<target>/, selected by $ORGASMIC_HOME/current and used by the CLI, daemon, shipped content, and installed skill symlink. Install/update may replace this runtime but must preserve user data and project state.
+:ID: term_5FAFJ
+:RELATES_TO: dec_YKFZX
+:END:
+
+* term_NYE02 source checkout
+:PROPERTIES:
+:AVOID: installed runtime, runtime home, regular install
+:CANONICAL: source checkout
+:DEFINITION: An editable git clone of the orgasmic repository used for contribution and unreleased-branch testing. Its presence on a machine does not make it the regular-user install; source mode is selected explicitly by scripts/install.sh --from-source <checkout>.
+:ID: term_NYE02
+:RELATES_TO: dec_YKFZX
+:END:
+
+* term_5N4M6 Layout overlay
+:PROPERTIES:
+:AVOID: graph snapshot, saved graph, graph layout file
+:CANONICAL: layout overlay
+:DEFINITION: The only persisted state of the Graph page: per-node geometry (x,y,w,h) and curation (hidden,pinned), keyed by node id. It never contains topology, which is live-derived. On disk it is .orgasmic/graph_layout.org, served to the UI as JSON via /graph/layout.
+:ID: term_5N4M6
+:END:
+
+* term_4ZDYK Graph topology
+:PROPERTIES:
+:AVOID: graph layout, graph overlay
+:CANONICAL: graph topology
+:DEFINITION: The live-derived set of graph nodes and edges (from /graph/nodes and /graph/edges). It is never hand-authored or persisted by the Graph page; the page joins it against the layout overlay at render time.
+:ID: term_4ZDYK
+:END:
+
+* term_8A66N Superseded decision
+:PROPERTIES:
+:AVOID: deleted decision, rejected decision, obsolete decision
+:CANONICAL: superseded decision
+:DEFINITION: A decision that is the target of another present decision's :SUPERSEDES: property. It is retained (no longer deleted), excluded from accepted, and rendered gray at the top of the Graph page. Superseded is a derived read-model, not a status field.
+:ID: term_8A66N
+:END:
+
+* term_QYV3K Graph curator
+:PROPERTIES:
+:AVOID: graph editor, graph author
+:CANONICAL: graph curator
+:DEFINITION: The agent role (graph_curator prompt-spec) that writes the shared layout overlay - curation and arrangement. Its write scope is graph_layout.org only; it cannot create or revise graph nodes (topology is read-only to it).
+:ID: term_QYV3K
+:END:
+
+* term_FJ883 Baseline arrangement
+:PROPERTIES:
+:AVOID: authoritative layout, canonical layout
+:CANONICAL: baseline arrangement
+:DEFINITION: The shared, deliberately-published graph_layout.org overlay that sits beneath each user's machine-local arrangement as a default. It is adopted via reset and never auto-overrides local edits; a nudge surfaces when it changes for locally-overridden nodes.
+:ID: term_FJ883
+:END:

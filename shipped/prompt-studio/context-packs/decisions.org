@@ -1,0 +1,11 @@
+* CONTEXT-PACK decisions
+:PROPERTIES:
+:ID:                 decisions
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/decisions.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Durable rationale records. Decisions are the ADR surface. Render as a compact
+source reference by default, not the full decision log.

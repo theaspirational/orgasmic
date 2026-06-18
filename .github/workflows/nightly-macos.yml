@@ -1,0 +1,208 @@
+name: Nightly macOS app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: nightly-macos-app
+  cancel-in-progress: true
+
+jobs:
+  publish-nightly-macos:
+    name: Build and publish macOS nightly
+    runs-on: macos-latest
+
+    env:
+      NIGHTLY_TAG: nightly
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix ui
+
+      - name: Prepare nightly version
+        id: version
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const runNumber = Number(process.env.GITHUB_RUN_NUMBER || '0');
+          const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT || '1');
+          const version = `0.99.${runNumber * 100 + runAttempt}`;
+
+          const tauriPath = 'src-tauri/tauri.conf.json';
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
+          tauriConfig.version = version;
+          fs.writeFileSync(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
+
+          const packagePath = 'ui/package.json';
+          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+          packageJson.version = version;
+          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const cargoPath = 'src-tauri/Cargo.toml';
+          const cargoToml = fs.readFileSync(cargoPath, 'utf8').replace(
+            /^version = ".*"$/m,
+            `version = "${version}"`,
+          );
+          fs.writeFileSync(cargoPath, cargoToml);
+
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          NODE
+
+      - name: Verify signing key
+        run: |
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY secret is required for nightly updater artifacts"
+            exit 1
+          fi
+
+      - name: Build macOS bundle
+        run: npm --prefix ui run tauri:bundle:mac
+
+      - name: Build runtime bundle
+        env:
+          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          bash scripts/package-runtime.sh \
+            --version "${NIGHTLY_VERSION}" \
+            --target aarch64-apple-darwin \
+            --target-key darwin-aarch64 \
+            --out-dir dist/nightly
+
+      - name: Stage macOS release assets
+        env:
+          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/nightly
+
+          dmg_path="$(find src-tauri/target/aarch64-apple-darwin/release/bundle/dmg -name 'orgasmic_*_aarch64.dmg' -print -quit)"
+          update_path="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/orgasmic.app.tar.gz"
+          signature_path="${update_path}.sig"
+
+          if [ -z "${dmg_path}" ] || [ ! -f "${update_path}" ] || [ ! -f "${signature_path}" ]; then
+            echo "::error::Expected Tauri DMG and desktop updater artifacts were not produced"
+            exit 1
+          fi
+
+          cp "${dmg_path}" dist/nightly/orgasmic_nightly_aarch64.dmg
+          cp "${update_path}" dist/nightly/orgasmic.app.tar.gz
+          cp "${signature_path}" dist/nightly/orgasmic.app.tar.gz.sig
+          runtime_asset="orgasmic-runtime_${NIGHTLY_VERSION}_darwin_aarch64.tar.gz"
+          runtime_path="dist/nightly/${runtime_asset}"
+          runtime_sha_path="${runtime_path}.sha256"
+          if [ ! -f "${runtime_path}" ] || [ ! -f "${runtime_sha_path}" ]; then
+            echo "::error::Expected runtime bundle was not produced"
+            exit 1
+          fi
+
+          SIGNATURE_PATH="dist/nightly/orgasmic.app.tar.gz.sig" \
+          MANIFEST_PATH="dist/nightly/latest.json" \
+          UPDATE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${NIGHTLY_TAG}/orgasmic.app.tar.gz" \
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const manifest = {
+            version: process.env.NIGHTLY_VERSION,
+            notes: `Nightly macOS build from ${process.env.GITHUB_SHA}`,
+            pub_date: new Date().toISOString(),
+            platforms: {
+              'darwin-aarch64': {
+                signature: fs.readFileSync(process.env.SIGNATURE_PATH, 'utf8').trim(),
+                url: process.env.UPDATE_URL,
+              },
+            },
+          };
+
+          fs.writeFileSync(process.env.MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+
+          RUNTIME_MANIFEST_PATH="dist/nightly/runtime-latest.json" \
+          RUNTIME_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${NIGHTLY_TAG}/${runtime_asset}" \
+          RUNTIME_SHA256="$(cat "${runtime_sha_path}")" \
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const manifest = {
+            version: process.env.NIGHTLY_VERSION,
+            channel: 'nightly',
+            pub_date: new Date().toISOString(),
+            runtimes: {
+              'darwin-aarch64': {
+                url: process.env.RUNTIME_URL,
+                sha256: process.env.RUNTIME_SHA256.trim(),
+              },
+            },
+          };
+
+          fs.writeFileSync(process.env.RUNTIME_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
+          NODE
+
+      - name: Publish macOS nightly release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          notes="Nightly builds from ${GITHUB_SHA}."
+
+          git tag -f "${NIGHTLY_TAG}" "${GITHUB_SHA}"
+          git push origin "refs/tags/${NIGHTLY_TAG}" --force
+
+          if gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1; then
+            gh release edit "${NIGHTLY_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "orgasmic nightly" \
+              --notes "${notes}" \
+              --prerelease
+          else
+            gh release create "${NIGHTLY_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "orgasmic nightly" \
+              --notes "${notes}" \
+              --prerelease \
+              --latest=false || \
+            gh release edit "${NIGHTLY_TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "orgasmic nightly" \
+              --notes "${notes}" \
+              --prerelease
+          fi
+
+          for asset in \
+            orgasmic_nightly_aarch64.dmg \
+            orgasmic.app.tar.gz \
+            orgasmic.app.tar.gz.sig \
+            latest.json \
+            runtime-latest.json \
+            "orgasmic-runtime_${NIGHTLY_VERSION}_darwin_aarch64.tar.gz" \
+            "orgasmic-runtime_${NIGHTLY_VERSION}_darwin_aarch64.tar.gz.sha256"
+          do
+            gh release delete-asset "${NIGHTLY_TAG}" "${asset}" --yes >/dev/null 2>&1 || true
+          done
+
+          gh release upload "${NIGHTLY_TAG}" dist/nightly/* --clobber

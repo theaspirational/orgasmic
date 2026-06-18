@@ -1,0 +1,12 @@
+* CONTEXT-PACK gotchas
+:PROPERTIES:
+:ID:                 gotchas
+:SOURCE_KIND:        project-file
+:FILE:               .orgasmic/gotchas.org
+:RENDER_POLICY:      reference
+:VERSION:            1
+:END:
+
+Repeated operational patterns that should be removed by backlog work. Render as
+a compact source reference by default unless a retro task explicitly needs the
+entries.

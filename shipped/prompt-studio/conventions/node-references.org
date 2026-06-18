@@ -1,0 +1,32 @@
+#+title: Node references in prose — id plus readable handle
+#+orgasmic_version: 1
+
+* CONVENTION node-references
+:PROPERTIES:
+:NAME:       node-references
+:NAMESPACE:  conventions
+:APPLIES_TO: all
+:VERSION:    1
+:END:
+
+Minted ids (TASK-XXXXX, dec_XXXXX, arch_XXXXX, term_XXXXX) are deliberately
+opaque (dec_X72P5): nothing about TASK-YHA6V tells a reader what it names.
+Whenever prose written for a human mentions a node id, pair it with a short
+readable handle on first mention.
+
+** The form
+`<ID> (<handle>)` — a 2–6 word fragment of the node's title or its essence:
+TASK-YHA6V (codex thin last.txt), dec_WC1PW (auto-spawn watcher removal),
+arch_QXS5W (prompt compiler). Later mentions in the same passage may use the
+bare id.
+
+** Where it applies
+Human-facing prose: status updates and answers to the operator, handoff
+"Done so far" entries, dispatch briefs, task Evidence sections, and commit
+messages where space allows.
+
+** Where it does not
+Data surfaces stay bare: property drawers (`:DEPENDS_ON:`), id lists, tx
+record properties. Tx feed bodies auto-link ids in the UI (see
+conventions/tx-scannable-bodies); there the leading summary sentence should
+still carry the handle when the id is the subject of the sentence.

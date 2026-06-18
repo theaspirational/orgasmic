@@ -1,0 +1,186 @@
+#+title: Cancelled
+#+orgasmic_version: 1
+
+* CANCELLED TASK-M5JTN.2 cursor-agent driver synthetic run_complete on subprocess exit (path-a refactor): clean last.txt summaries on live implementer dispatches :daemon:drivers:cursor:dispatch:design:superseded:
+:PROPERTIES:
+:ID:               TASK-M5JTN.2
+:SUPERSEDED_BY:    TASK-J95T2
+:PRIORITY:         P3
+:WORKER:           implementer-cursor
+:IMPLEMENTS:
+:PRODUCES:         crates/orgasmic-drivers/src/adapters/cursor.rs
+:WRITE_SCOPE:      crates/orgasmic-drivers/src/adapters/cursor.rs crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs
+:TEST_CMD:         cargo test --workspace
+:DEPENDS_ON:       TASK-M5JTN
+:END:
+
+** Description
+Closes TASK-M5JTN reviewer F-2: Item 1's path (c) (accumulate all system "thinking delta" chunks into the summary) produces noisy last.txt on live cursor-agent implementer dispatches (composer-2.5-fast emits 500+ raw thinking chunks with no terminal event). Path (a) — driver synthesizes a =DriverEvent::RunComplete { summary }= on clean subprocess exit when no terminal was emitted — is the correct long-term fix. The reviewer confirmed feasibility: =cursor.rs= already has =terminal_emitted=, =emit_run_complete_once=, =translate_result=; =subprocess_stream_json.rs= currently emits nothing on successful exit when =!terminal_emitted()= (lines 276-286).
+
+After path (a) ships, the system-text fallback in =dispatch_last_summary_from_session= becomes redundant for cursor-agent dispatches (the synthetic =run_complete= will win precedence). Decision: keep the system fallback in place as a defense-in-depth for other drivers that might exhibit the same emission pattern, OR remove it once path (a) is verified comprehensive — defer that judgment to this implementer.
+
+** Acceptance Criteria
+- [ ] In =crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs= (or =crates/orgasmic-drivers/src/adapters/cursor.rs=, depending on architectural fit), synthesize a =DriverEvent::RunComplete { summary }= when: (a) subprocess exits with status 0, (b) no terminal session marker (=RunComplete=, =Lifecycle::Release=) has been emitted, and (c) some content was accumulated during the run. Use the accumulated assistant text if available, otherwise the system text (consistent with =dispatch_last_summary_from_session= precedence).
+- [ ] Verify NO regression on cursor-agent dispatches that DO emit a natural terminal event (e.g., reviewer-cursor dispatches that emit their own =run_complete=) — the synthetic emission must NOT fire when a real one has already arrived. Use the existing =terminal_emitted= flag.
+- [ ] Live dispatch (or test that emulates the live shape) of an implementer-cursor run with no real terminal event produces a non-empty =last.txt= where the content is the SUMMARY (distilled assistant or system text), not raw concatenated thinking deltas.
+- [ ] Add a focused integration test in =crates/orgasmic-daemon/tests/dispatch_endpoint.rs= OR =crates/orgasmic-drivers/tests/= that emulates the cursor-agent "system-only, no terminal" shape, runs through the full driver-mode pipeline, and asserts the synthetic =RunComplete= is emitted with the expected summary.
+- [ ] Optional: with path (a) shipped, the system-text fallback in =dispatch_last_summary_from_session= becomes potentially-removable. If the implementer determines it's safely removable (no other driver depends on it), remove and document. Otherwise leave in place as defense-in-depth and note why.
+- [ ] =cargo test --workspace + clippy + fmt + diff= all green. MSRV 1.78.
+
+** Notes
+NOT :FIX_SUBTASK: t — this is an architectural refactor (not a one-round fix on a prior reviewer's findings list), so full IMPLEMENT → REVIEW → DONE lifecycle applies. Reviewer pass after merge per persona rule 2. P3 because the system-fallback path SHIPPED in TASK-M5JTN covers the immediate gap; this is the clean-up. Could be safely deferred behind higher-priority work (TASK-NGDNP hung endpoint, install-path hardening, etc.) unless the implementer dogfood velocity matters more than the cleanup.
+
+
+* CANCELLED TASK-K3Y04 Make Settings reachable for a projectless visitor (ConnectGate "Advanced →") :ui:auth:onboarding:routing:
+:PROPERTIES:
+:ID:               TASK-K3Y04
+:PRIORITY:         P3
+:WORKER:           manager-direct
+:WRITE_SCOPE:      ui/src/app/router.tsx ui/src/components/AppShell.tsx
+:READ_SCOPE:       ui/src/components/SettingsView.tsx ui/src/lib/backend.ts
+:TEST_CMD:         npm --prefix ui run build
+:DEPENDS_ON:       TASK-EBVHJ
+:END:
+
+** Description
+Follow-up to TASK-EBVHJ. The =ConnectGate= "Advanced →" button calls =goView('settings')=, but =pathForView= (=AppShell.tsx= ~136) falls back to =/board= whenever =projectId= is null, and Settings is only project-scoped (=/projects/$projectId/settings=). So for the exact target user — a fresh tunnel visitor with no project selected — "Advanced →" lands on =/board= instead of Settings, where they can't adjust baseUrl/profiles before connecting.
+
+Pick the smallest coherent fix:
+1. Add a global, project-independent Settings route (e.g. =/settings=) the gate can always reach (the connection/profile section needs no project); OR
+2. If a global route is too invasive pre-MVP, hide/disable "Advanced →" in =ConnectGate= when there is no active project (so the button never dead-ends), and surface profile/baseUrl editing inline in the gate instead.
+
+** Acceptance Criteria
+- [ ] From a projectless origin, the visitor can reach connection/profile settings (baseUrl + token) without first selecting a project — OR the dead-end affordance is removed and equivalent control lives in the gate.
+- [X] No regression to TASK-EBVHJ's blocking token flow; =npm --prefix ui run build= + =tsc --noEmit= green.
+
+** Evidence
+Chose option 1 (global route — cleaner than hiding the affordance, and =SettingsView= already handles =projectId: null= by disabling the project-config section). Implemented directly by the manager (trivial ~16-line scope), landed on main in =cbe7c6e=: new root-level =globalSettingsRoute= (path =settings=) → =<SettingsView projectId={null}/>= in =ui/src/app/router.tsx= (added to =routeTree=); =pathForView= in =AppShell.tsx= now returns =/settings= for =goView('settings')= when =projectId= is null (else the existing =/projects/$projectId/settings=). So "Advanced →" and the header settings button both reach Settings projectless. Gates: =tsc --noEmit= + =npm run build= green. Browser click-through unverified this session (no browser-automation tool).
+
+*Reverted (cancelled).* On operator review (screenshot), the =ConnectGate= "Advanced →" button was removed entirely (=9d688fe=): it was added scope beyond the original ask AND subtly broken — =ConnectGate= is a blocking Radix modal, so navigating to settings left the overlay on top, blocking the page it opened; and a tunnel visitor's =baseUrl= defaults to same-origin, so only the token is needed. With the button gone, this task's premise (make its target reachable) no longer applies, so the global =/settings= route + =pathForView= branch were reverted in the same commit. The modal is now just token input + Connect. Net effect of TASK-K3Y04 on the tree: nil.
+
+* CANCELLED TASK-Y8TVF Fix stale shipped-worker count assertion in parses_every_shipped_worker (16 vs 18) :core:tests:fixtures:polish:
+:PROPERTIES:
+:ID:               TASK-Y8TVF
+:PRIORITY:         P4
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-core/tests/fixtures.rs
+:READ_SCOPE:       crates/orgasmic-core/tests/fixtures.rs shipped/workers/
+:TEST_CMD:         cargo test -p orgasmic-core --test fixtures
+:END:
+
+** Description
+=parses_every_shipped_worker= (crates/orgasmic-core/tests/fixtures.rs:495)
+asserts =count == 16=, but =e94d8fa= added two worker templates
+(implementer-claude-rmux, reviewer-claude-rmux), making 18. The test fails on
+every =cargo test --workspace= since then; worker worktrees missed it because
+their workspace runs died earlier on the missing-ui-node_modules TypeScript
+issue. Bump the count — or better, replace the hardcoded tripwire with an
+assertion that every =shipped/workers/*.org= parses plus a minimum-count floor
+(e.g. >= 16), so template additions stop breaking it. Keep the
+unsupported-pair check unchanged.
+
+** Acceptance Criteria
+- [ ] =cargo test -p orgasmic-core --test fixtures= green with 18 templates.
+- [ ] Adding a future template does not require touching this test (or the
+  test states clearly why a manual bump is intended).
+- [ ] Gates: clippy -D warnings, fmt --check, MSRV 1.78.
+
+** Evidence
+CANCELLED [2026-06-10]: resolved as housekeeping inside TASK-K5RG2 (worker
+commit =4a6a020=, merged =1ba44b8=) — count bumped 16→18 plus the
+selector-determinism template list updated. The structural improvement
+(derive count from the directory) was NOT done; reopen only if template
+churn makes the manual bump painful.
+
+* CANCELLED TASK-E29XC EXFTV dogfood probe (throwaway): confirm claude-acp real-wire :dogfood:throwaway:
+:PROPERTIES:
+:ID: TASK-E29XC
+:PRIORITY: P5
+:WRITE_SCOPE: crates/orgasmic-drivers/src/adapters/claude.rs
+:END:
+
+Add a single trailing doc-comment line at the very top of crates/orgasmic-drivers/src/adapters/claude.rs noting the adapter was dogfood-verified. This is a throwaway probe to validate the real-wire claude-acp stdio path (TASK-EXFTV).
+
+* CANCELLED TASK-PGFPM Make companion babysitting functional, then restore default worker attach :daemon:supervisor:babysitter:wiring:reenable:low:
+:PROPERTIES:
+:ID:               TASK-PGFPM
+:PRIORITY:         P5
+:WORKER:           implementer-claude-rmux
+:WRITE_SCOPE:      crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/tests/ shipped/workers/**
+:READ_SCOPE:       crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-core/src/session.rs shipped/workers/babysitter-stall-detector.org
+:TEST_CMD:         cargo test -p orgasmic-daemon
+:END:
+
+** Description
+The babysitter (=babysitter-stall-detector=) is a companion run attached by
+explicit manager dispatch when the resolved worker template declares
+=:BABYSITTER_WORKER:=. It is not the deleted task-state auto-spawn watcher from
+dec_WC1PW, and this task must not reintroduce implicit worker spawns from task
+lifecycle transitions.
+
+The companion babysitter has never actually done its job: in practice it either
+died at boot (=Not logged in= under the acp-stdio claude harness) or sat idle
+until the stall detector reaped it. Investigation [2026-06-11] found the
+intervention path is also unwired independent of auth:
+
+- =flush_babysitter_summary= in =supervisor.rs= -- the function that packages
+  the implementer's coalesced events into a =BabysitterSummaryChunk= every 50
+  events / 60s -- is only ever called from tests. No live daemon loop forwards
+  summaries to the babysitter run.
+- Its four tools (=poke_implementer=, =escalate_to_human=,
+  =restart_implementer=, =record_finding=) are an acp-stdio/ACP concept with no
+  delivery channel on the TUI drivers.
+
+As an interim, companion attach was disabled by removing =:BABYSITTER_WORKER:=
+from all 17 default worker configs, and =babysitter-stall-detector.org= was
+repointed from acp-stdio/sonnet to rmux/claude/=claude-haiku-4-5= (an
+authenticated path) so it at least boots and is watchable. This task makes the
+explicit-dispatch companion babysitter real, then restores default worker
+=:BABYSITTER_WORKER:= declarations without reviving the removed task-state
+watcher.
+
+** Acceptance Criteria
+- [ ] A live supervisor loop forwards =BabysitterSummaryChunk= envelopes to the
+      explicit-dispatch companion babysitter run on the documented cadence
+      (about 50 events / 60s), driven from real implementer activity rather than
+      a test-only call.
+- [ ] The babysitter's closed tool set is reachable on its chosen driver
+      (=poke_implementer=, =escalate_to_human=, =restart_implementer=,
+      =record_finding=), and a tool call produces the expected supervisor
+      effect.
+- [ ] An integration test drives an explicit dispatch or supervisor acquire with
+      a worker declaring =:BABYSITTER_WORKER:=, asserts the babysitter receives
+      at least one forwarded summary chunk, and asserts =record_finding= lands
+      on the task's Evidence.
+- [ ] Once the above pass, restore =:BABYSITTER_WORKER: babysitter-stall-detector=
+      on default explicit-dispatch worker templates where companion babysitting
+      is intended. Do not restore or recreate the deleted task-state auto-spawn
+      watcher path from dec_WC1PW.
+- [ ] Re-confirm the UI watcher dot (TaskAgentBadges) opens the companion
+      babysitter's live transcript for a real intervening babysitter run, or
+      document the exact blocker if live UI verification is impossible in this
+      dispatch.
+
+** Evidence
+- [2026-06-13 Sat] Manager-implementer commit 504ccf3 implemented live companion babysitter summary forwarding: worker driver events now auto-flush BabysitterSummary chunks to the companion JSONL at 50 events / 60s; BabysitterTool accepts the shipped prompt's long tool names (poke_implementer, restart_implementer, escalate_to_human, record_finding) while keeping short aliases; :BABYSITTER_WORKER: babysitter-stall-detector restored on non-rmux shipped workers only. Gates: cargo test -p orgasmic-core babysitter_tool_set_is_closed; cargo test -p orgasmic-drivers babysitter_tool_set_is_closed; cargo test -p orgasmic-daemon live_babysitter_summary_flushes_on_event_threshold; cargo test -p orgasmic-daemon babysitter_can_invoke_allowed_tool; cargo test -p orgasmic-daemon; cargo fmt --check; cargo clippy --workspace --all-targets -- -D warnings; git diff --check. Task remains TODO: real record_finding -> task Evidence and live UI watcher-dot verification are not proven in this manager session; current Supervisor has no project/task Evidence writer hook for babysitter-origin tool calls.
+
+* CANCELLED TASK-GFKFW.2 fix-subtask: live remote-Linux daemon smoke (systemd --user + SSH tunnel) :install:remote:daemon:smoke:fix:
+:PROPERTIES:
+:ID:               TASK-GFKFW.2
+:PRIORITY:         P3
+:WRITE_SCOPE:      .orgasmic/backlog.org README.md
+:TEST_CMD:         git diff --check
+:END:
+
+** Description
+Close TASK-GFKFW's one open acceptance criterion: stand up a =systemd --user=
+daemon on a Linux host with linger, SSH-tunnel =4848:127.0.0.1:4848= from
+macOS, add a remote backend profile with token, init a project on the server,
+and confirm a worker run executes on that host. Ops smoke + Evidence entry; no
+code expected unless gaps surface.
+
+** Evidence
+- Verified premise: TASK-GFKFW.2 is the live remote-Linux ops smoke left open from TASK-GFKFW, not a code implementation task. It requires a real Linux host with =systemd --user=/linger, an SSH tunnel, a remote backend profile/token, a project initialized on that host, and a worker run executed there.
+- Existing repo documentation already describes the remote Linux path: install the daemon on the Linux host, supervise with =systemd --user=, keep daemon bind on =127.0.0.1=, connect from macOS by SSH tunnel, and treat remote project paths as owned by the remote daemon host. Prior TASK-GFKFW evidence also records this as documented-path-only and explicitly says the live Linux smoke was not run.
+- Current environment does not provide a designated remote Linux smoke target, token, or operator approval for one of the available SSH aliases. Running the smoke against an arbitrary host would be unsafe and outside the task evidence contract.
+- No code/doc gap surfaced inside the task scope; the missing ingredient is operator-provided remote infrastructure. Closing this queued item as CANCELLED rather than leaving an unactionable in-progress task.

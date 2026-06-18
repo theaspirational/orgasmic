@@ -1,0 +1,37 @@
+#+title: orgasmic manager handoff
+#+orgasmic_version: 1
+#+scope: project
+
+* HANDOFF current :handoff:
+:PROPERTIES:
+:ID:               handoff-current
+:GOAL_ID:          goal-20260615-ship-the-editable
+:LIVENESS:         7cc91d1
+:LIVENESS_AT:      [2026-06-15 Mon 22:35]
+:UPDATED_AT:       [2026-06-16 Tue 10:13]
+:END:
+
+Manager-owned snapshot at Graph-page goal completion. Goal goal-20260615-ship-the-editable is REACHED at the code level: all 5 queued tasks DONE (+ a bonus concurrency fix), gates green, parse_errors 0. The one remaining step is operator-dependent: restart/rebuild the :4848 daemon to activate the new endpoints and visually verify the Graph page. Use task Evidence, decisions.org, tx logs, and git for detail.
+
+** Done so far
+- TASK-8BRYP (1/5) DONE - superseded flag on /decisions + /graph/nodes; DecisionsView hide-by-default toggle (b9b30e6 + bf204bd).
+- TASK-AQMTA (2/5) DONE - /graph/layout overlay endpoint (0e5b21e); concurrency hardened by TASK-3VEM8 (atomic RMW in the writer + node_id validation + curation symmetry, 8-round concurrent test; 4334bbf).
+- TASK-JH9DD (3/5) DONE - cross-layer Graph page: new GraphView + generalized NodeGraph, deterministic band layout (superseded gray -> decisions -> architecture -> tasks; glossary left column), curation toggles, backbone-on/dense-off edge layers, route + sidebar nav (31c950d + 63a0bde fail-soft/anchors/toggle).
+- TASK-CKRYB (4/5) DONE - three-tier precedence (localStorage > shared overlay > default), persist-on-drag (localStorage only), publish (only write-to-shared), two-level reset, shared-map-updated nudge (d46a18f + 126c5ac int-coords/baseline/tests). 79 UI tests pass incl. 6 buildFlowGraph cases.
+- TASK-G7BCJ (5/5) DONE - graph_curator prompt-spec (overlay-scoped, topology read-only) + stripped stale architector layout-hint wording (5e0a357). prompt compile/lint clean.
+- Each implementation task: manager diff review + reviewer-claude-rmux (opus-4-8) pass; the AQMTA reviewer caught a real lost-update bug, fixed in 3VEM8.
+
+** Next likely actions
+- DONE: daemon restarted on the fresh binary (pid 26428, target/release/orgasmic rebuilt 09:36); /graph/layout returns {} (live, not 404) and /graph/nodes decisions carry superseded (dec_XSV21=true). The no-restart-from-manager restriction was lifted (conventions/orgasmic-tooling.org).
+- The Graph page can now be verified live: open the orgasmic UI (Vite :5180 or the app), Graph in the sidebar (between Architecture and Tasks).
+- TASK-E18NC DONE: restart is now recovery-aware for live manager runs, CLI restart no longer uses the plain-stop guard, and local-source daemon rebuild/restart is documented in shipped/prompt-studio/conventions/daemon-rebuild-restart-policy.org.
+- Goal goal-20260615-ship-the-editable is code-complete and the daemon is live; await operator direction for the next goal.
+
+** In flight
+- Nothing in flight. No open dispatch; all dispatch worktrees removed; todo/in_progress/in_review all empty.
+
+** Divergence / Risks
+- RESTART POLICY CHANGED (2026-06-16): the "never restart the daemon from a manager session" restriction was lifted at operator direction and TASK-E18NC landed the recovery-aware replacement. Use shipped/prompt-studio/conventions/daemon-rebuild-restart-policy.org for the correct local-source rebuild/restart flow and post-restart recovery checks.
+- PRE-EXISTING RED TEST (candidate follow-up): crates/orgasmic-daemon/tests/integration.rs:799 skill_routes_include_shipped_and_user_markdown_skills fails on clean main; out of scope for the graph goal.
+- TOOLING NIT: dispatching a reviewer (kind reviewer) on an IN_REVIEW task flips the heading to IN_PROGRESS; worked around at each close.
+- Standing: dec_035A0 babysitter policy unchanged; avoid stashing/replacing live .orgasmic state while the daemon runs.

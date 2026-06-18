@@ -1,0 +1,198 @@
+#+title: orgasmic tx schema (property-drawer-only)
+#+version: 1
+
+* SCHEMA tx
+:PROPERTIES:
+:VERSION: 1
+:END:
+
+** Required properties on every tx
+- :TX_ID:        globally unique within the file
+- :TIME:         org timestamp [YYYY-MM-DD Day HH:MM:SS]
+- :TYPE:         from the tx type vocabulary (below)
+- :ACTOR:        git config user.email of the operator
+- :MACHINE:      hostname
+
+** Tx types (v0.0.1 vocabulary)
+
+*** Project lifecycle
+- project.added
+- project.initialized
+- project.removed
+- project.archived
+- project.status_changed
+
+*** Task lifecycle
+- task.created
+- task.updated
+- task.deleted
+- task.state_transitioned
+- task.property_updated
+
+*** Comments
+- comment
+
+Properties:
+- :TX_ID:        tx id
+- :TIME:         org timestamp
+- :TYPE:         comment
+- :ACTOR:        email | agent.<kind> | ci.<system>
+- :MACHINE:      hostname
+- :PROJECT:      project id
+- :TASK:         TASK-NNN(.M)
+- :RUN_ID:       optional run id
+- :ARTIFACTS:    optional space-separated refs (dec_NNN, arch_NNN, TASK-NNN(.M), adr_NNNN, sha:abc123)
+- :IN_REPLY_TO:  optional parent TX_ID
+- :BODY:         escaped markdown; newline is \n and literal backslash is \\
+
+*** Run lifecycle
+- run.created
+- run.failed             (stage completion watcher; =<stage>.failed= with stage "run")
+
+Auto-spawn success records reuse =run.created= with extras:
+- :RUN_ID:         supervisor-assigned run id
+- :ORIGIN:         =auto_spawn=
+- :WORKER:         worker id from the project stage map (or eligibility-selected)
+- :STAGE:          lifecycle stage that triggered the spawn
+- :AGENT_KIND:     =implementer= | =reviewer=
+- :DRIVER:         driver mode resolved for the worker (e.g. =acp-stdio=, =acp-ws=, =subprocess-stream-json=, =tmux=)
+- :HARNESS:        harness id resolved for the worker (e.g. =claude=, =codex=, =cursor-agent=, =hermes=)
+
+*** Auto-spawn failures
+- auto_spawn.failed
+
+Emitted when the auto-spawn consumer cannot complete the worker → driver → supervisor chain for an =AutoSpawnRequested= event. Extras:
+- :ORIGIN:         =auto_spawn=
+- :WORKER:         requested or selected worker id (may be the stage-map default if matching failed before selection)
+- :STAGE:          lifecycle stage that triggered the spawn
+- :AGENT_KIND:     =implementer= | =reviewer=
+- :ERROR:          escaped, single-line failure cause (filesystem paths are sanitised at emission)
+- :TARGET:         optional session path (populated only when the failure occurred after the session file was reserved)
+
+*** Worker / driver
+- worker.spawned
+- worker.ready
+- worker.crashed
+- worker.stopped
+
+*** Babysitter
+- babysitter.spawned
+- babysitter.poke
+- babysitter.restart
+- babysitter.escalate
+- babysitter.finding_recorded
+
+*** Manager
+- manager.action
+- manager.question_answered
+- manager.set_goal       (records a new active goal; canonical state lives in =.orgasmic/tasks/goal.org=; extras: =:GOAL_ID:=, =:REPLACES:= (previous goal id or "—"))
+- manager.clear_goal     (active goal flipped GOAL→CLEARED with no replacement; extras: =:GOAL_ID:=)
+- manager.supersede_goal (active goal flipped GOAL→SUPERSEDED without setting a replacement — =goal set= records the replacement via =:REPLACES:= on its own =manager.set_goal=; extras: =:GOAL_ID:=)
+- manager.dispatch_started
+- manager.dispatch_aborted
+- implementer.commit_pending
+- implementer.done
+- reviewer.done
+
+*** Task
+- task.state_transitioned (standalone task lifecycle flip via =orgasmic task update --state= / =POST /projects/:id/tasks/:task_id=; extras: =:FROM_STATE:=, =:TO_STATE:=. Dispatch-cycle flips keep their own record types above.)
+- task.property_updated (task drawer property change via =orgasmic task update --property= / same POST route; changed keys recorded as extra =:KEY:= properties on the tx)
+
+Dispatch-cycle records:
+
+**** manager.dispatch_started
+Properties in addition to the required base properties:
+- :PROJECT: project id
+- :TASK: task id; subtask paths such as =TASK-ZYPJC.5.1= are valid
+- :KIND: =implementer= | =reviewer=
+- :WORKTREE: absolute git worktree path
+- :BRANCH: branch name created for the dispatch
+- :BRIEF_PATH: brief file path (project-relative in committed tx); lives under =<project_root>/.orgasmic/tmp/dispatch/<task-stem>/=. Legacy alias =:CODEX_BRIEF_PATH:= is still read.
+- :MODEL: model id, for example =gpt-5.5= (legacy alias =:CODEX_MODEL:= still read)
+- :EFFORT: reasoning effort label, for example =high= or =xhigh= (legacy alias =:CODEX_EFFORT:= still read)
+- :STARTED_AT: org timestamp; normally the same value as =:TIME:= for easy grepping
+- :WORKER_PID: optional detached child pid; omitted when the tx is appended before spawn (legacy alias =:CODEX_PID:= still read)
+- :GOAL_ID: optional active goal id from =goal.org=
+- :LIVENESS: optional parent commit sha for crash recovery
+- :REASON_INITIAL: optional free text describing dispatch scope
+- :NEXT: optional manager follow-up intent, for example =fix-implementer-watch-then-integrate= or =reviewer-watch-then-fix-or-close=
+
+**** implementer.commit_pending
+Signal emitted when a cli dispatch run completes with =RunComplete= but the worktree still has uncommitted changes. The manager inspects and decides whether to commit on behalf of the implementer.
+
+Properties in addition to the required base properties:
+- :PROJECT: project id
+- :TASK: task id
+- :RUN_ID: supervisor-assigned run id
+- :WORKTREE: absolute git worktree path
+- :HAS_UNCOMMITTED: =yes= | =no=
+
+**** implementer.done
+Required properties in addition to the base tx properties:
+- :PROJECT: project id
+- :TASK: task id
+- :MERGE_SHA: merge commit sha on main
+- :BRANCH: branch that landed
+- :CLOSED_TX: =TX_ID= of the matching =manager.dispatch_started=
+
+Optional properties:
+- :WORKER_COMMIT: optional commit sha produced by the worker on its branch (legacy alias =:CODEX_COMMIT:= still read)
+- :WORKER_SESSION: optional worker session id (legacy alias =:CODEX_SESSION:= still read)
+- :MODEL: model id mirrored from =manager.dispatch_started= (legacy alias =:CODEX_MODEL:= still read)
+- :EFFORT: effort label mirrored from =manager.dispatch_started= (legacy alias =:CODEX_EFFORT:= still read)
+- :WALL: optional free-form duration string
+- :TOKENS: optional integer token count
+- :FILES_CHANGED: optional integer
+- :INSERTIONS: optional integer
+- :DELETIONS: optional integer
+- :BUILD_GATE: optional free text describing build or test verification
+- :GOAL_ID: optional active goal id
+- :REASON: optional free text describing what landed
+- :CLEANUP_STATUS: =ok= | =worktree_failed= | =branch_failed= | =partial= | =worktree_missing= | =cleanup_already_run=
+- :CLEANUP_ERROR: optional one-line cleanup failure detail
+
+**** reviewer.done
+Required properties in addition to the base tx properties:
+- :PROJECT: project id
+- :TASK: task id
+- :CLOSED_TX: =TX_ID= of the matching =manager.dispatch_started=
+- :VERDICT: =clean= | =has-issues= | =blocks-ship=
+- :REPORT_PATH: absolute review report path
+
+Optional properties:
+- :WORKER_SESSION: optional worker session id (legacy alias =:CODEX_SESSION:= still read)
+- :MODEL: model id mirrored from =manager.dispatch_started= (legacy alias =:CODEX_MODEL:= still read)
+- :EFFORT: effort label mirrored from =manager.dispatch_started= (legacy alias =:CODEX_EFFORT:= still read)
+- :WALL: optional free-form duration string
+- :TOKENS: optional integer token count
+- :BLOCKS_SHIP: =yes= | =no=
+- :FINDINGS_TOTAL: integer
+- :FINDINGS_BY_SEVERITY: free-form summary
+- :FINDINGS_BY_KIND: free-form summary
+- :REVIEWED_DIFF: git range or path-limited range reviewed
+- :RECOMMENDED_SUBTASKS: space-separated task ids, or =-= when none
+- :GOAL_ID: optional active goal id
+- :REASON: optional free text describing review result
+- :CLEANUP_STATUS: =ok= | =worktree_failed= | =branch_failed= | =partial= | =worktree_missing= | =cleanup_already_run=
+- :CLEANUP_ERROR: optional one-line cleanup failure detail
+
+**** manager.dispatch_aborted
+Properties in addition to the required base properties:
+- :PROJECT: project id
+- :TASK: task id
+- :REASON: required explanation of why the dispatch aborted
+- :CLOSED_TX: =TX_ID= of the matching =manager.dispatch_started=
+- :WORKTREE: worktree path mirrored for forensics
+- :CLEANUP_STATUS: =ok= | =worktree_failed= | =branch_failed= | =partial= | =worktree_missing= | =cleanup_already_run=
+- :CLEANUP_ERROR: optional one-line cleanup failure detail
+
+*** Template application
+- template.applied        (records the version compiled for a run)
+
+*** Question system
+- question.raised
+- question.answered
+
+** Property registry (per type)
+[Filled out during v0.0.1 implementation from `.orgasmic/decisions.org`,
+`.orgasmic/architecture.org`, and `.orgasmic/tasks/<state>.org`.]

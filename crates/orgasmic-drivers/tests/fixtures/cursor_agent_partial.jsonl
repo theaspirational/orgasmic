@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init","apiKeySource":"login","cwd":"/private/tmp/orgasmic-worktrees/task-056.1","session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","model":"Composer 2.5 Fast","permissionMode":"default"}
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"say hi"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","timestamp_ms":1779633603479}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" — good"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","timestamp_ms":1779633603481}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" to meet you."}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","timestamp_ms":1779633603482}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" What would"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","timestamp_ms":1779633603482}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" you like to work"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","timestamp_ms":1779633603482}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":" on?"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","timestamp_ms":1779633603485}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi — good to meet you. What would you like to work on?"}]},"session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36"}
+{"type":"result","subtype":"success","duration_ms":3547,"duration_api_ms":3547,"is_error":false,"result":"Hi — good to meet you. What would you like to work on?","session_id":"e31a3c8c-153b-4c36-b56a-f3c902423b36","request_id":"5cae6b3e-de7b-47e9-9e99-e918f78115c9","usage":{"inputTokens":17424,"outputTokens":51,"cacheReadTokens":2432,"cacheWriteTokens":0}}

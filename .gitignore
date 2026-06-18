@@ -1,0 +1,34 @@
+# Rust build artifacts
+/target
+/crates/*/target
+**/*.rs.bk
+Cargo.lock.bak
+
+# UI build artifacts
+/ui/node_modules
+/ui/dist
+/ui/bootstrap-dist
+/ui/.vite
+
+# Tauri build artifacts and generated sidecars
+/src-tauri/target
+/src-tauri/binaries/orgasmic-*
+/src-tauri/gen/schemas
+
+# IDE / OS
+.DS_Store
+.idea
+.vscode
+.vorg.db
+*.swp
+
+# orgasmic user-local data (when this repo lives inside $ORGASMIC_HOME at runtime,
+# user data is a sibling — but if a contributor's checkout accidentally
+# accumulates these, ignore them)
+/state
+/sessions
+/secrets
+/logs
+/user
+/bin
+config.yaml

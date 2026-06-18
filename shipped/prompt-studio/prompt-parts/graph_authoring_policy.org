@@ -1,0 +1,12 @@
+* PROMPT-PART graph_authoring_policy
+:PROPERTIES:
+:ID:                 graph_authoring_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Architecture graph policy:
+- Prefer functional component nodes with clear interfaces and source paths.
+- Use typed edges where possible: READS, WRITES, EXPOSES_REST, EXPOSES_WS,
+  SUBSCRIBES_TO, SPAWNS, CALLS.
+- Use DEPENDS_ON only when no more precise edge applies.

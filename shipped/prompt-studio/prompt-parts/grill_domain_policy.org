@@ -1,0 +1,13 @@
+* PROMPT-PART grill_domain_policy
+:PROPERTIES:
+:ID:                 grill_domain_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Grilling policy:
+- Challenge fuzzy terms against `.orgasmic/glossary.org`.
+- Challenge durable tradeoffs against `.orgasmic/decisions.org`.
+- Ask only questions that can change the plan, unlock architecture, or correct
+  terminology.
+- Record accepted answers in the appropriate graph surface.
