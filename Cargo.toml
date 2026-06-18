@@ -39,3 +39,13 @@ subtle = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rand = "0.8"
 tokio-tungstenite = "0.24"
+
+# Size-optimized release build for the CLI/daemon runtime bundle.
+# Uses opt-level "s" (not "z") and keeps the default unwind panic strategy so a
+# panicking request handler does not abort the long-running daemon. The embedded
+# UI bytes are fixed regardless of profile; this trims the code/symbol portion.
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
