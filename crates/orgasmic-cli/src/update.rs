@@ -81,6 +81,21 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
         .runtimes
         .get(&target)
         .with_context(|| format!("manifest has no runtime for target {target}"))?;
+
+    // Already up to date: the channel advertises the version we already have
+    // installed and active, and the daemon is on that managed runtime (no
+    // temporary `--from-source` override to clear). Skip the re-download/swap.
+    if state.version.as_deref() == Some(manifest.version.as_str())
+        && runtime_is_active(home, &manifest.version, &target)
+        && daemon_runtime::read(home)?.is_none()
+    {
+        println!(
+            "✓ already up to date: {} ({target}) on channel {channel}",
+            manifest.version
+        );
+        return Ok(());
+    }
+
     let asset_url = resolve_asset_url(&manifest_url, &asset.url);
     println!("→ downloading runtime {} for {target}", manifest.version);
 
@@ -148,6 +163,20 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
     })();
     let _ = std::fs::remove_dir_all(&work);
     result
+}
+
+/// True when `version` for `target` is already installed and active — its
+/// runtime directory validates and `current` points at it — so an update would
+/// have nothing to do. Callers additionally require no temporary daemon runtime
+/// override before treating this as up to date.
+fn runtime_is_active(home: &Home, version: &str, target: &str) -> bool {
+    let runtime_name = format!("{version}-{target}");
+    if validate_runtime_dir(&home.runtimes().join(&runtime_name)).is_err() {
+        return false;
+    }
+    read_symlink(&home.current_runtime())
+        .map(|link| link == Path::new("runtimes").join(&runtime_name))
+        .unwrap_or(false)
 }
 
 fn preflight_daemon(home: &Home) -> Result<bool> {
@@ -856,6 +885,53 @@ mod tests {
         assert_eq!(
             std::fs::read_link(home.bin_orgasmic()).unwrap(),
             PathBuf::from("../current/bin/orgasmic")
+        );
+    }
+
+    #[test]
+    fn bundle_update_short_circuits_when_already_current() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+
+        // Install runtime 0.2.0 and make it the active `current`.
+        let runtime = home.runtimes().join("0.2.0-darwin-aarch64");
+        write_runtime_payload(&runtime, "current");
+        swap_runtime_links(&home, &runtime).unwrap();
+
+        // Manifest advertises the SAME version, but with an asset URL that would
+        // fail if fetched — proving the short-circuit returns before downloading.
+        let manifest = tmp.path().join("runtime-latest.json");
+        write(
+            &manifest,
+            &bundle_manifest(
+                "0.2.0",
+                Path::new("/orgasmic/nonexistent-runtime.tar.gz"),
+                "deadbeef",
+            ),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.2.0".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        // Same version, active runtime, no override -> no-op success without
+        // touching the (unfetchable) asset URL.
+        run(&home, "main", true).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.2.0-darwin-aarch64")
         );
     }
 
