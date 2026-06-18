@@ -53,7 +53,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI4MzZGODQ3OTg3MTkxNzUKUldSMWtYR1lSL2cydUpsNmRFY3RSaHI0QnFOQkRUZjNUeVB1TGpndjRZSWdwSkgxNXI0QnhGeWgK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IERCMjVEQTVERjUyNzFCQkMKUldTOEd5ZjFYZG9sMnlzR1BJUjlvOGo2cjRnWlBvK0hpUUxCUGE0TzB4R0VMdVN5eTdHdzVGM2cK",
       "endpoints": [
         "https://github.com/theaspirational/orgasmic/releases/download/stable/latest.json"
       ]
