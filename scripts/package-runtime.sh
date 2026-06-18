@@ -87,6 +87,24 @@ STAGE="$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-runtime.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/bin" "$STAGE/docs"
 cp "$BIN" "$STAGE/bin/orgasmic$EXE"
+
+# Optional: re-sign the binary with a stable code-signing identity so macOS keeps
+# file-access (TCC) grants across versions instead of re-prompting on every build.
+# Ad-hoc/linker signatures key TCC on the per-build cdhash; a fixed identity +
+# identifier give a stable designated requirement. macOS-only, no-op unless
+# ORGASMIC_CODESIGN_IDENTITY is set (so Linux/Windows legs and local builds skip).
+if [[ -n "${ORGASMIC_CODESIGN_IDENTITY:-}" ]] && command -v codesign >/dev/null 2>&1; then
+    echo "→ codesigning bin/orgasmic as '${ORGASMIC_CODESIGN_IDENTITY}'"
+    codesign --force \
+        --identifier "${ORGASMIC_CODESIGN_BUNDLE_ID:-com.theaspirational.orgasmic}" \
+        ${ORGASMIC_CODESIGN_KEYCHAIN:+--keychain "$ORGASMIC_CODESIGN_KEYCHAIN"} \
+        --sign "$ORGASMIC_CODESIGN_IDENTITY" \
+        "$STAGE/bin/orgasmic$EXE"
+    codesign --verify --strict "$STAGE/bin/orgasmic$EXE"
+    echo "→ designated requirement:"
+    codesign -d -r- "$STAGE/bin/orgasmic$EXE" 2>&1 | sed 's/^/    /'
+fi
+
 cp -R "$ROOT/shipped" "$STAGE/shipped"
 cp "$ROOT/README.md" "$STAGE/docs/README.md"
 cp "$ROOT/CONTRIBUTING.md" "$STAGE/docs/CONTRIBUTING.md"

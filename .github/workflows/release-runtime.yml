@@ -50,6 +50,7 @@ jobs:
     uses: ./.github/workflows/runtime-bundles.yml
     permissions:
       contents: write
+    secrets: inherit
     with:
       tag: stable
       version: ${{ needs.resolve.outputs.version }}

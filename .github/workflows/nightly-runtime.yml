@@ -19,5 +19,6 @@ jobs:
     uses: ./.github/workflows/runtime-bundles.yml
     permissions:
       contents: write
+    secrets: inherit
     with:
       tag: nightly
