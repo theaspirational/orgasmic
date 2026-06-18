@@ -9,7 +9,7 @@ PR.
 
 ## Contribution priorities
 
-1. **Build out v0.0.1** per the scope in the spec.
+1. **Build** per the scope in the decisions.org. Suggest new decisions / architecture / tasks / etc.
 2. **Bug fixes** — parser correctness, supervisor recovery, daemon stability.
 3. **Cross-platform compatibility** — Linux, macOS, WSL2.
 4. **Security hardening** — local API token handling, path traversal in the

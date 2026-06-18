@@ -92,7 +92,7 @@ If you fork or clone orgasmic to work on a feature, keep the bundle install and
 temporarily point only the daemon at your local build:
 
 ```bash
-git clone https://github.com/theaspirational/orgasmic
+git clone https://github.com/theaspirational/orgasmic (or your fork)
 cd orgasmic
 git switch -c feature/my-change
 orgasmic project add "$PWD"
@@ -111,7 +111,7 @@ Contributor source install is separate and explicit. Use it only when you want
 runtime bundles:
 
 ```bash
-git clone https://github.com/theaspirational/orgasmic
+git clone https://github.com/theaspirational/orgasmic (or your fork)
 cd orgasmic
 bash scripts/install.sh --from-source "$PWD"
 ```
