@@ -26,3 +26,12 @@ tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-updater = "2.10.1"
 url = "2"
+
+# Size-optimized release build for the desktop app and Android lib.
+# Shrinks both the macOS .app/.dmg and the Android .so.
+[profile.release]
+opt-level = "z"      # optimize for size
+lto = true           # link-time optimization across crates
+codegen-units = 1    # better cross-module size optimization
+panic = "abort"      # drop unwinding tables
+strip = true         # strip symbols from the binary
