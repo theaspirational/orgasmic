@@ -97,16 +97,6 @@ jobs:
       - name: Build macOS bundle
         run: npm --prefix ui run tauri:bundle:mac
 
-      - name: Build runtime bundle
-        env:
-          STABLE_VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          bash scripts/package-runtime.sh \
-            --version "${STABLE_VERSION}" \
-            --target aarch64-apple-darwin \
-            --target-key darwin-aarch64 \
-            --out-dir dist/stable
-
       - name: Stage macOS release assets
         env:
           STABLE_VERSION: ${{ steps.version.outputs.version }}
@@ -126,13 +116,6 @@ jobs:
           cp "${dmg_path}" dist/stable/orgasmic_stable_aarch64.dmg
           cp "${update_path}" dist/stable/orgasmic.app.tar.gz
           cp "${signature_path}" dist/stable/orgasmic.app.tar.gz.sig
-          runtime_asset="orgasmic-runtime_${STABLE_VERSION}_darwin_aarch64.tar.gz"
-          runtime_path="dist/stable/${runtime_asset}"
-          runtime_sha_path="${runtime_path}.sha256"
-          if [ ! -f "${runtime_path}" ] || [ ! -f "${runtime_sha_path}" ]; then
-            echo "::error::Expected runtime bundle was not produced"
-            exit 1
-          fi
 
           SIGNATURE_PATH="dist/stable/orgasmic.app.tar.gz.sig" \
           MANIFEST_PATH="dist/stable/latest.json" \
@@ -153,27 +136,6 @@ jobs:
           };
 
           fs.writeFileSync(process.env.MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
-          NODE
-
-          RUNTIME_MANIFEST_PATH="dist/stable/runtime-latest.json" \
-          RUNTIME_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${STABLE_TAG}/${runtime_asset}" \
-          RUNTIME_SHA256="$(cat "${runtime_sha_path}")" \
-          node <<'NODE'
-          const fs = require('node:fs');
-
-          const manifest = {
-            version: process.env.STABLE_VERSION,
-            channel: 'stable',
-            pub_date: new Date().toISOString(),
-            runtimes: {
-              'darwin-aarch64': {
-                url: process.env.RUNTIME_URL,
-                sha256: process.env.RUNTIME_SHA256.trim(),
-              },
-            },
-          };
-
-          fs.writeFileSync(process.env.RUNTIME_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
           NODE
 
       - name: Publish macOS stable release assets
@@ -212,7 +174,7 @@ jobs:
           gh release view "${STABLE_TAG}" --json assets --jq '.assets[].name' |
             while IFS= read -r asset; do
               case "${asset}" in
-                orgasmic_*_aarch64.dmg|orgasmic.app.tar.gz|orgasmic.app.tar.gz.sig|latest.json|runtime-latest.json|orgasmic-runtime_*_darwin_*.tar.gz|orgasmic-runtime_*_darwin_*.tar.gz.sha256)
+                orgasmic_*_aarch64.dmg|orgasmic.app.tar.gz|orgasmic.app.tar.gz.sig|latest.json)
                   gh release delete-asset "${STABLE_TAG}" "${asset}" --yes
                   ;;
               esac
