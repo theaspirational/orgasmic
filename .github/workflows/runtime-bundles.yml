@@ -154,9 +154,13 @@ jobs:
           const fs = require('node:fs');
           const dir = 'dist';
           const files = fs.readdirSync(dir).filter((f) => f.endsWith('.tar.gz'));
+          // Asset suffix is the target key with '-' replaced by '_' (e.g. key
+          // darwin-x86_64 -> ..._darwin_x86_64.tar.gz). Recover the key by
+          // splitting os (first segment) from arch (the rest, which may itself
+          // contain '_' as in x86_64): os '-' arch.
           const keyFromName = (f) => {
-            const m = f.match(/^orgasmic-runtime_.+?_(.+)\.tar\.gz$/);
-            return m ? m[1].replace(/_/g, '-') : null;
+            const m = f.match(/^orgasmic-runtime_.+?_([a-z0-9]+)_(.+)\.tar\.gz$/);
+            return m ? `${m[1]}-${m[2]}` : null;
           };
           const runtimes = {};
           for (const f of files.sort()) {
