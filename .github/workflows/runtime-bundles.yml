@@ -116,7 +116,13 @@ jobs:
           echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cs.p12"
           security import "$RUNNER_TEMP/cs.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign -A
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$kcpw" "$keychain" >/dev/null
+          # Add the temp keychain to the search list so codesign can resolve the
+          # identity by name (--keychain alone does not make a name lookup work).
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -s "$keychain"
           rm -f "$RUNNER_TEMP/cs.p12"
+          echo "available signing identities:"
+          security find-identity -v -p codesigning "$keychain"
           {
             echo "ORGASMIC_CODESIGN_KEYCHAIN=$keychain"
             echo "ORGASMIC_CODESIGN_IDENTITY=$CODESIGN_IDENTITY"
