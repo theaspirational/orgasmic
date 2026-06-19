@@ -167,6 +167,13 @@ fn push_cli_path_findings(out: &mut Vec<Finding>, home: &Home) {
         )));
         return;
     }
+    if let Some(link) = path_env::shim_on_path(home) {
+        out.push(Finding::Ok(format!(
+            "cli on PATH via shim: {} resolves orgasmic in this shell",
+            link.display()
+        )));
+        return;
+    }
     if path_env::env_file_ok(home) && path_env::rc_sourced(home) {
         out.push(Finding::Warn(format!(
             "cli not on PATH in this shell, but startup files are wired — \

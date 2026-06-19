@@ -8,9 +8,17 @@
 //! shell startup files (rustup-style). Everything here is idempotent so install,
 //! update, and `orgasmic doctor --fix` can all re-assert it safely.
 //!
+//! The env file only reaches *newly started* shells. To also make `orgasmic`
+//! resolve in shells that are *already open* (e.g. the one that ran the
+//! installer), we additionally drop a convenience symlink into `~/.local/bin`
+//! — but only when that dir already exists and is already on PATH, so we lean
+//! on an entry the live shell already has rather than inventing a new one. We
+//! never create the dir and never clobber a file we don't own. This is
+//! Unix-only; Windows manages PATH through a different mechanism.
+//!
 //! `--no-modify-path` (or `ORGASMIC_NO_MODIFY_PATH=1`) writes the env file but
-//! never touches shell startup files — for CI and users who manage PATH
-//! themselves.
+//! never touches shell startup files or the `~/.local/bin` shim — for CI and
+//! users who manage PATH themselves.
 
 use std::path::{Path, PathBuf};
 
@@ -29,6 +37,27 @@ pub struct EnsureReport {
     pub rc_files_modified: Vec<PathBuf>,
     pub modify_path_skipped: bool,
     pub already_on_path: bool,
+    /// A convenience symlink we created or refreshed in an on-PATH user bin
+    /// dir, so `orgasmic` resolves in shells that are already open.
+    pub shim_linked: Option<PathBuf>,
+    /// Our shim was already in place and correct (nothing to do).
+    pub shim_already: bool,
+    /// A path where we wanted the shim but found a file we don't own; left
+    /// untouched.
+    pub shim_blocked: Option<PathBuf>,
+}
+
+/// Outcome of [`ensure_path_shim`].
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShimOutcome {
+    /// We created or re-pointed our managed symlink.
+    Linked(PathBuf),
+    /// Our symlink was already correct.
+    AlreadyLinked(PathBuf),
+    /// A file we don't own occupies the path; left untouched.
+    Blocked(PathBuf),
+    /// No `~/.local/bin` on PATH — nothing to do.
+    NoEligibleDir,
 }
 
 // ---- generated file contents -------------------------------------------------
@@ -91,16 +120,43 @@ fn rc_block(home: &Home) -> String {
 
 // ---- predicates (read-only; used by doctor) ----------------------------------
 
-/// Is the orgasmic bin dir on the *current process'* PATH?
-pub fn bin_on_path(home: &Home) -> bool {
-    let bin = std::fs::canonicalize(home.bin()).unwrap_or_else(|_| home.bin());
+/// Is `dir` on the *current process'* PATH (compared by canonical path)?
+fn dir_on_path(dir: &Path) -> bool {
+    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     let Ok(path) = std::env::var("PATH") else {
         return false;
     };
     std::env::split_paths(&path).any(|entry| {
         let entry = std::fs::canonicalize(&entry).unwrap_or(entry);
-        entry == bin
+        entry == dir
     })
+}
+
+/// Is the orgasmic bin dir on the *current process'* PATH?
+pub fn bin_on_path(home: &Home) -> bool {
+    dir_on_path(&home.bin())
+}
+
+/// User bin dir we may drop a convenience shim into. Returns the candidate path
+/// regardless of whether it exists or is on PATH — eligibility is checked by the
+/// caller so read-only predicates and mutating ops share one definition.
+fn shim_dir() -> Option<PathBuf> {
+    let home = std::env::var("HOME").ok().filter(|h| !h.is_empty())?;
+    Some(PathBuf::from(home).join(".local").join("bin"))
+}
+
+/// If a convenience shim makes a bare `orgasmic` resolve in *this* process'
+/// PATH, return its path. The shim must live in a dir on PATH and resolve to the
+/// same file as the managed bin symlink.
+pub fn shim_on_path(home: &Home) -> Option<PathBuf> {
+    let dir = shim_dir()?;
+    if !dir_on_path(&dir) {
+        return None;
+    }
+    let link = dir.join("orgasmic");
+    let resolved = std::fs::canonicalize(&link).ok()?;
+    let target = std::fs::canonicalize(home.bin_orgasmic()).ok()?;
+    (resolved == target).then_some(link)
 }
 
 /// Does the env file exist with the expected contents?
@@ -223,8 +279,74 @@ pub fn ensure_rc_sourcing(home: &Home, targets: &[PathBuf]) -> Result<Vec<PathBu
     Ok(modified)
 }
 
+/// Is `link` a symlink that orgasmic owns — i.e. an `orgasmic` entry whose
+/// target sits directly in our managed `bin/` dir? We canonicalize the target's
+/// *parent* (a real dir) rather than the target file itself: following the file
+/// would walk the `bin/orgasmic -> ../current/...` chain out of `bin/` and, on
+/// macOS, also trip the `/var -> /private/var` symlink. Stays true when the link
+/// is dangling, so we repair our own stale shims but never adopt a foreign one.
+#[cfg(unix)]
+fn shim_owned(home: &Home, link: &Path) -> bool {
+    let Ok(target) = std::fs::read_link(link) else {
+        return false;
+    };
+    let abs = if target.is_absolute() {
+        target
+    } else {
+        match link.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        }
+    };
+    if abs.file_name() != Some(std::ffi::OsStr::new("orgasmic")) {
+        return false;
+    }
+    let Some(parent) = abs.parent() else {
+        return false;
+    };
+    let parent = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    let bin = std::fs::canonicalize(home.bin()).unwrap_or_else(|_| home.bin());
+    parent == bin
+}
+
+/// Drop (or refresh) a convenience `orgasmic` symlink in `~/.local/bin` when
+/// that dir already exists and is already on PATH — so the command resolves in
+/// shells that are already open. Best-effort and idempotent: never creates the
+/// dir, never clobbers a file we don't own.
+#[cfg(unix)]
+pub fn ensure_path_shim(home: &Home) -> Result<ShimOutcome> {
+    let Some(dir) = shim_dir().filter(|d| d.is_dir() && dir_on_path(d)) else {
+        return Ok(ShimOutcome::NoEligibleDir);
+    };
+    let link = dir.join("orgasmic");
+    let target = home.bin_orgasmic();
+    match std::fs::symlink_metadata(&link) {
+        Err(_) => {
+            crate::update::replace_symlink(&link, &target)?;
+            Ok(ShimOutcome::Linked(link))
+        }
+        Ok(meta) => {
+            // A real file, or a symlink to some *other* orgasmic: respect it.
+            if !meta.file_type().is_symlink() || !shim_owned(home, &link) {
+                return Ok(ShimOutcome::Blocked(link));
+            }
+            if std::fs::read_link(&link).ok().as_deref() == Some(target.as_path()) {
+                Ok(ShimOutcome::AlreadyLinked(link))
+            } else {
+                crate::update::replace_symlink(&link, &target)?;
+                Ok(ShimOutcome::Linked(link))
+            }
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn ensure_path_shim(_home: &Home) -> Result<ShimOutcome> {
+    Ok(ShimOutcome::NoEligibleDir)
+}
+
 /// Ensure the env file exists and (unless `no_modify_path` / opt-out) that the
-/// user's shell startup sources it.
+/// user's shell startup sources it and a `~/.local/bin` shim is in place.
 pub fn ensure(home: &Home, no_modify_path: bool) -> Result<EnsureReport> {
     let mut report = EnsureReport {
         already_on_path: bin_on_path(home),
@@ -236,6 +358,15 @@ pub fn ensure(home: &Home, no_modify_path: bool) -> Result<EnsureReport> {
         return Ok(report);
     }
     report.rc_files_modified = ensure_rc_sourcing(home, &effective_targets())?;
+    // Best-effort: a shim hiccup must never fail the (more important) env/rc
+    // wiring above.
+    match ensure_path_shim(home) {
+        Ok(ShimOutcome::Linked(link)) => report.shim_linked = Some(link),
+        Ok(ShimOutcome::AlreadyLinked(_)) => report.shim_already = true,
+        Ok(ShimOutcome::Blocked(link)) => report.shim_blocked = Some(link),
+        Ok(ShimOutcome::NoEligibleDir) => {}
+        Err(_) => {}
+    }
     Ok(report)
 }
 
@@ -416,5 +547,145 @@ mod tests {
     fn resolve_source_binary_none_when_unbuilt() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(resolve_source_binary(tmp.path()).is_none());
+    }
+
+    /// Build a home whose `bin/orgasmic` is a real file, so the managed bin
+    /// symlink and any shim pointing at it resolve under `canonicalize`.
+    #[cfg(unix)]
+    fn home_with_binary(tmp: &Path) -> Home {
+        let home = Home::at(tmp.join(".orgasmic"));
+        std::fs::create_dir_all(home.bin()).unwrap();
+        std::fs::write(home.bin_orgasmic(), "bin").unwrap();
+        home
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_links_shim_into_local_bin_on_path_and_is_idempotent() {
+        let _g = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let local_bin = tmp.path().join(".local/bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let _env = ScopedEnv::set(&[
+            ("HOME", tmp.path().to_str().unwrap()),
+            ("SHELL", "/bin/zsh"),
+            ("PATH", local_bin.to_str().unwrap()),
+            (NO_MODIFY_ENV, "0"),
+        ]);
+        let home = home_with_binary(tmp.path());
+
+        let report = ensure(&home, false).unwrap();
+        let shim = local_bin.join("orgasmic");
+        assert_eq!(report.shim_linked.as_deref(), Some(shim.as_path()));
+        assert!(shim.is_symlink());
+        // doctor's read-only predicate sees it resolve.
+        assert_eq!(shim_on_path(&home).as_deref(), Some(shim.as_path()));
+
+        // Re-running adds nothing new.
+        let second = ensure(&home, false).unwrap();
+        assert!(second.shim_linked.is_none());
+        assert!(second.shim_blocked.is_none());
+    }
+
+    /// Mirrors the real install layout where `bin/orgasmic` is itself a symlink
+    /// to a binary *outside* `bin/` (the `../current/...` chain). A second
+    /// `ensure` must recognise its own shim and re-link nothing.
+    #[cfg(unix)]
+    #[test]
+    fn ensure_shim_is_idempotent_with_symlinked_managed_binary() {
+        let _g = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let local_bin = tmp.path().join(".local/bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let _env = ScopedEnv::set(&[
+            ("HOME", tmp.path().to_str().unwrap()),
+            ("SHELL", "/bin/zsh"),
+            ("PATH", local_bin.to_str().unwrap()),
+            (NO_MODIFY_ENV, "0"),
+        ]);
+        // bin/orgasmic -> a real binary living outside bin/, like the runtime chain.
+        let home = Home::at(tmp.path().join(".orgasmic"));
+        std::fs::create_dir_all(home.bin()).unwrap();
+        let real = tmp.path().join(".orgasmic/runtimes/r/orgasmic");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "bin").unwrap();
+        std::os::unix::fs::symlink(&real, home.bin_orgasmic()).unwrap();
+
+        let first = ensure(&home, false).unwrap();
+        let shim = local_bin.join("orgasmic");
+        assert_eq!(first.shim_linked.as_deref(), Some(shim.as_path()));
+
+        let second = ensure(&home, false).unwrap();
+        assert!(second.shim_linked.is_none(), "own shim must be recognised");
+        assert!(second.shim_already, "own shim must report already-present");
+        assert!(second.shim_blocked.is_none(), "own shim must not look foreign");
+        assert_eq!(shim_on_path(&home).as_deref(), Some(shim.as_path()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_leaves_foreign_orgasmic_in_local_bin() {
+        let _g = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let local_bin = tmp.path().join(".local/bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let foreign = local_bin.join("orgasmic");
+        std::fs::write(&foreign, "#!/bin/sh\necho not ours\n").unwrap();
+        let _env = ScopedEnv::set(&[
+            ("HOME", tmp.path().to_str().unwrap()),
+            ("SHELL", "/bin/zsh"),
+            ("PATH", local_bin.to_str().unwrap()),
+            (NO_MODIFY_ENV, "0"),
+        ]);
+        let home = home_with_binary(tmp.path());
+
+        let report = ensure(&home, false).unwrap();
+        assert!(report.shim_linked.is_none());
+        assert_eq!(report.shim_blocked.as_deref(), Some(foreign.as_path()));
+        // Untouched.
+        assert!(!foreign.is_symlink());
+        assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "#!/bin/sh\necho not ours\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_skips_shim_when_local_bin_not_on_path() {
+        let _g = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let local_bin = tmp.path().join(".local/bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let _env = ScopedEnv::set(&[
+            ("HOME", tmp.path().to_str().unwrap()),
+            ("SHELL", "/bin/zsh"),
+            ("PATH", "/usr/bin:/bin"), // local_bin deliberately absent
+            (NO_MODIFY_ENV, "0"),
+        ]);
+        let home = home_with_binary(tmp.path());
+
+        let report = ensure(&home, false).unwrap();
+        assert!(report.shim_linked.is_none());
+        assert!(report.shim_blocked.is_none());
+        assert!(!local_bin.join("orgasmic").exists());
+        assert!(shim_on_path(&home).is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_modify_path_also_skips_shim() {
+        let _g = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let local_bin = tmp.path().join(".local/bin");
+        std::fs::create_dir_all(&local_bin).unwrap();
+        let _env = ScopedEnv::set(&[
+            ("HOME", tmp.path().to_str().unwrap()),
+            ("SHELL", "/bin/zsh"),
+            ("PATH", local_bin.to_str().unwrap()),
+        ]);
+        let home = home_with_binary(tmp.path());
+
+        let report = ensure(&home, true).unwrap();
+        assert!(report.modify_path_skipped);
+        assert!(report.shim_linked.is_none());
+        assert!(!local_bin.join("orgasmic").exists());
     }
 }

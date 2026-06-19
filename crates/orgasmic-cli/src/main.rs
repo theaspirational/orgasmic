@@ -1085,13 +1085,31 @@ fn print_path_report(home: &Home, report: &path_env::EnsureReport) {
     for f in &report.rc_files_modified {
         println!("→ added PATH line to {}", f.display());
     }
+    if let Some(link) = &report.shim_linked {
+        println!(
+            "→ linked {} -> {}",
+            link.display(),
+            home.bin_orgasmic().display()
+        );
+    }
+    if let Some(link) = &report.shim_blocked {
+        println!(
+            "  note: {} exists and isn't managed by orgasmic; left as-is",
+            link.display()
+        );
+    }
     if report.modify_path_skipped {
         println!("→ left shell startup files untouched (--no-modify-path)");
         println!("  add this line yourself: {}", path_env::source_line(home));
-    } else if report.rc_files_modified.is_empty() && !report.env_file_written {
+    } else if report.rc_files_modified.is_empty()
+        && !report.env_file_written
+        && report.shim_linked.is_none()
+    {
         println!("→ already wired: {}", home.env_file().display());
     }
-    if !report.already_on_path && !report.modify_path_skipped {
+    if report.shim_linked.is_some() || report.shim_already {
+        println!("  `orgasmic` now resolves in this shell — no new terminal needed");
+    } else if !report.already_on_path && !report.modify_path_skipped {
         println!(
             "  open a new terminal or run `. {}` to use orgasmic in this shell",
             home.env_file().display()
