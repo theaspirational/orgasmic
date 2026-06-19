@@ -69,7 +69,44 @@ To pick up new releases later, run:
 /orgasmic update
 ```
 
-### 2. Adopt a repository
+### 2. Open the UI
+
+```bash
+orgasmic ui
+```
+
+This mints a one-time launch URL and opens the daemon-hosted web UI in your
+browser, auto-starting the local daemon if it isn't already running. To get the
+URL without opening a browser (e.g. on a headless host, or to open it on another
+device), use:
+
+```bash
+orgasmic ui --print-url
+```
+
+If `orgasmic` isn't yet on your `PATH` in the current shell, call it by its
+installed path or open a new terminal:
+
+```bash
+~/.orgasmic/bin/orgasmic ui
+```
+
+The daemon listens on `127.0.0.1:4848` by default, but you can't just browse to
+that address — the UI is auth-gated. `orgasmic ui` mints a one-time URL that
+plants a session cookie; after opening it once, `http://localhost:4848` works
+directly in that same browser until the session expires.
+
+If the UI ever asks for a token directly, it's the bearer token created when the
+daemon first starts, stored at `~/.orgasmic/user/auth/token`:
+
+```bash
+cat ~/.orgasmic/user/auth/token
+```
+
+(`orgasmic auth show` confirms the token file's location, but prints only its
+path and size — not the value; use `cat` to read the token itself.)
+
+### 3. Adopt a repository
 
 Open your coding agent in the repository you want orgasmic to manage:
 
@@ -82,6 +119,9 @@ Then ask the agent:
 ```text
 /orgasmic init
 ```
+
+Once a repository is adopted, it appears in the UI's board so you can review and
+drive its agents from there.
 
 That creates `.orgasmic/` in that repository, then asks whether to start the
 bootstrap pass now or leave it for `/orgasmic resume`.
