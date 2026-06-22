@@ -1,2 +1,1 @@
-
-This repo is coordinated with orgasmic. Start at [`.orgasmic/entry.org`](.orgasmic/entry.org) — it orients you to the project state and tells you what to read for your task.
+This repo is coordinated with **orgasmic**. Before you answer, search, edit, or run any tool here, you MUST read [`.orgasmic/entry.org`](.orgasmic/entry.org) and follow it. No exceptions — read it first.

@@ -122,9 +122,10 @@ const LOCAL_INSTRUCTIONS_PLACEHOLDER: &str = concat!(
 const ROOT_POINTER_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 const ROOT_POINTER_TARGET: &str = ".orgasmic/entry.org";
 const ROOT_POINTER_LINE: &str = concat!(
-    "This repo is coordinated with orgasmic. Start at ",
-    "[`.orgasmic/entry.org`](.orgasmic/entry.org) — it orients you to the ",
-    "project state and tells you what to read for your task.\n",
+    "This repo is coordinated with **orgasmic**. Before you answer, search, ",
+    "edit, or run any tool here, you MUST read ",
+    "[`.orgasmic/entry.org`](.orgasmic/entry.org) and follow it. ",
+    "No exceptions — read it first.\n",
 );
 
 /// Initialize `<project_root>/.orgasmic/` from the shipped scaffold templates.
