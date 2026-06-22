@@ -4,6 +4,9 @@
 **/*.rs.bk
 Cargo.lock.bak
 
+# Runtime bundle output (scripts/package-runtime.sh, scripts/publish-runtime.sh)
+/dist
+
 # UI build artifacts
 /ui/node_modules
 /ui/dist
