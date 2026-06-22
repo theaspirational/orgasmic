@@ -59,6 +59,15 @@ done
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Prefer the rustup-managed toolchain. Cross builds need the per-target std libs
+# that `rustup target add` installs into ~/.rustup; a Homebrew/system cargo only
+# carries the host target and fails the darwin-x86_64 / linux legs with
+# "can't find crate for `core`". Putting the rustup shims first fixes this and
+# also resolves `cargo zigbuild` from ~/.cargo/bin.
+if [[ -x "$HOME/.cargo/bin/cargo" ]]; then
+    PATH="$HOME/.cargo/bin:$PATH"
+fi
+
 for cmd in git gh node cargo rustc shasum tar; do
     command -v "$cmd" >/dev/null 2>&1 || { echo "error: required command not found: $cmd" >&2; exit 1; }
 done
@@ -67,6 +76,16 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     echo "error: publish-runtime.sh builds + signs the darwin targets and must run on macOS" >&2
     exit 1
 fi
+
+# Preflight: the cross targets must be present in the active rustup toolchain.
+installed_targets="$(rustup target list --installed 2>/dev/null || true)"
+for t in x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+    if ! printf '%s\n' "$installed_targets" | grep -qx "$t"; then
+        echo "error: rust target '$t' is not installed for the active toolchain ($(rustc --version 2>/dev/null))" >&2
+        echo "       run: rustup target add $t" >&2
+        exit 1
+    fi
+done
 
 if [[ -z "$REPO" ]]; then
     REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
