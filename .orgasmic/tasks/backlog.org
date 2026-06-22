@@ -17,3 +17,39 @@ Work required:
 - Verification: confirm `orgasmic` resolves in a fresh PowerShell and cmd session.
 
 Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specifically native PowerShell/cmd.
+
+* BACKLOG TASK-32R7Z Implement dec_B4147 release pipeline: local-first manual runtime builds    :release:ci:build:install-distribution:
+:PROPERTIES:
+:ID: TASK-32R7Z
+:END:
+
+Implements dec_B4147 (relates dec_YKFZX, arch_WZFAX; sibling dec_2D5BC). Split releases into two fully-manual lines: runtime/CLI built locally -> `stable`; apps -> manual CI to a separate `apps` release.
+
+Work required:
+- scripts/package-runtime.sh: add a cargo-zigbuild path for linux-x86_64 + linux-aarch64 with a pinned old glibc floor; reuse a prebuilt ui/dist; stamp a per-target `version` into runtime-manifest.json.
+- crates/orgasmic-daemon/build.rs: skip `npm run build` when ui/dist/index.html already exists, so the UI builds once and is reused across all four target compiles.
+- scripts/publish-runtime.sh (NEW): clean-tree guard (refuse dirty/HEAD-mismatch); build UI once; build darwin-aarch64 (native), darwin-x86_64 (rustup cross), linux-x86_64 + linux-aarch64 (zigbuild); temp-keychain-sign the darwin binaries from ~/.tauri (stable DR); smoke test (native run; x86_64 via Rosetta; linux via `docker run --version`); MERGE only the built per-target entries into stable's runtime-latest.json (with per-target version) and replace only those tarballs.
+- scripts/install.sh: prefer the per-target `version` field when naming the runtime dir (so a lagging Windows entry is truthful).
+- .github/workflows/runtime-bundles.yml: add single-target (Windows) mode; merge-not-clobber publish; set upload-artifact retention-days: 1.
+- .github/workflows/release-macos.yml + release-android.yml: drop the `push: tags: v*` trigger; dispatch-only; publish to the `apps` release/tag; take app version from tauri.conf.json (decoupled from workspace Cargo.toml).
+- delete .github/workflows/release-runtime.yml.
+- revert the v0.0.5 app-file bumps (tauri.conf.json, ui/package.json, src-tauri/Cargo.toml) per the CLI=workspace / app=tauri.conf split.
+- add `// orgasmic:dec_B4147` markers to touched source; add an arch_WZFAX.3 sub-node (SOURCE_PATHS + TESTS) for the publish pipeline; keep `orgasmic architecture drift` clean.
+- preflight (maintainer machine): brew install zig + cargo install cargo-zigbuild + rustup target add x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu.
+
+Acceptance: a local `scripts/publish-runtime.sh` builds + signs + publishes darwin x2 and linux x2 to the `stable` release with a merged manifest; a Windows CI dispatch merges its entry without clobbering; app workflows build only via dispatch to `apps`; no workflow triggers on `v*`; `orgasmic architecture drift` is clean.
+
+* BACKLOG TASK-38RK6 dec_B4147 cleanup: delete v* tags and purge stale CI artifacts    :release:ci:cleanup:
+:PROPERTIES:
+:ID: TASK-38RK6
+:BLOCKED_BY: TASK-32R7Z
+:END:
+
+Implements dec_B4147 (post-implementation cleanup). Destructive / outward-facing — run only after explicit maintainer approval, and after TASK-32R7Z lands (the new flow no longer needs v* tags and sets artifact retention).
+
+Work:
+- Delete git tags v0.0.1, v0.0.2, v0.0.3, v0.0.4, v0.0.5 locally and their remote refs (origin). decisions.org keeps version provenance; runtime-manifest.json stamps commit+version.
+- Purge the ~49 stale `runtime-*` Actions artifacts (gh api / UI) to reclaim ~300 MB.
+- Confirm runtime-bundles.yml upload-artifact retention-days: 1 is in effect so the leak does not recur.
+
+Note: the `stable` and `nightly` GitHub releases are NOT tied to v* tags and must be left intact (install.sh consumes `stable`).

@@ -40,7 +40,7 @@ Conventions:
 :ID:                 arch_WZFAX
 :KIND:               architecture
 :SEMANTIC_HASH:
-:MOTIVATED_BY:       dec_K1DR7 dec_XSV21 dec_GRDFB dec_N17XX dec_A6CXY dec_SCVKG dec_PVDP3 dec_J2YM8
+:MOTIVATED_BY:       dec_K1DR7 dec_XSV21 dec_GRDFB dec_N17XX dec_A6CXY dec_SCVKG dec_PVDP3 dec_J2YM8 dec_YKFZX dec_B4147
 :GLOSSARY_REFS:      term_XJM14 term_CJ2R4 term_WQMJJ term_DVSS2 term_TDNG3 term_ZYE1R
 :INTERFACE:          install update init doctor loader config secrets logs sessions under ORGASMIC_HOME
 :CONSTRAINTS:        two layer home user overrides before shipped content local first no telemetry plain secrets

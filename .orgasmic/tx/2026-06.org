@@ -14171,3 +14171,107 @@
 :REASON:       edited decision node dec_YKFZX
 :NODE_ID:      dec_YKFZX
 :END:
+
+
+* TX 2026-06-22 Mon 08:59:28 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0898
+:TIME:         [2026-06-22 Mon 08:59:28]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_B4147
+:NODE_ID:      dec_B4147
+:END:
+
+* TX 2026-06-22 Mon 09:23:07 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0899
+:TIME:         [2026-06-22 Mon 09:23:07]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_B4147
+:NODE_ID:      dec_B4147
+:END:
+
+* TX 2026-06-22 Mon 09:23:07 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0900
+:TIME:         [2026-06-22 Mon 09:23:07]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_WZFAX
+:NODE_ID:      arch_WZFAX
+:END:
+
+* TX 2026-06-22 Mon 09:24:34 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0901
+:TIME:         [2026-06-22 Mon 09:24:34]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      local
+:PROJECT:      orgasmic
+:TARGET:       dec_B4147 arch_WZFAX conventions/contributing.org
+:REASON:       Record dec_B4147 (release pipeline: local-first manual runtime builds, separate app line, merged per-target manifest); link RELATES_TO dec_YKFZX/dec_2D5BC; fix arch_WZFAX MOTIVATED_BY drift (add live dec_YKFZX + dec_B4147); relax contributing.org to greenfield-mutable graph policy
+:END:
+
+* TX 2026-06-22 Mon 12:07:07 task.created TASK-32R7Z
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0902
+:TIME:         [2026-06-22 Mon 12:07:07]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-32R7Z
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Track dec_B4147 implementation
+:END:
+
+* TX 2026-06-22 Mon 12:07:22 task.created TASK-38RK6
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0903
+:TIME:         [2026-06-22 Mon 12:07:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-38RK6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Track dec_B4147 destructive cleanup ops
+:END:
+
+* TX 2026-06-22 Mon 12:07:55 task.edited TASK-38RK6
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0904
+:TIME:         [2026-06-22 Mon 12:07:55]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-38RK6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-38RK6
+:NODE_ID:      TASK-38RK6
+:END:
+
+* TX 2026-06-22 Mon 12:17:43 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0905
+:TIME:         [2026-06-22 Mon 12:17:43]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      local
+:PROJECT:      orgasmic
+:TARGET:       AGENTS.md crates/orgasmic-core/src/projects.rs
+:REASON:       Harden root agent-pointer so agents do not skip .orgasmic/entry.org: rewrote ROOT_POINTER_LINE (scaffold, all new projects) + repo AGENTS.md from soft 'Start at … orients you' to a forcing MUST-read precondition naming the skip rationalization and stakes; scaffold tests green
+:END:
