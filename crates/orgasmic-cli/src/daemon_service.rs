@@ -522,6 +522,14 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
 }
 
 fn render_linux_systemd_unit(spec: &ServiceSpec) -> String {
+    // systemd does not apply uniform quoting across directives. `ExecStart=` is a
+    // command line and `Environment=` is a list of assignments — both support and
+    // need double-quote escaping for values with spaces. But the single-value path
+    // directives (`WorkingDirectory=`, `StandardOutput=append:`, `StandardError=`)
+    // take the rest of the line verbatim: a wrapping quote becomes part of the
+    // path, so the unit is rejected as "path is not absolute" and never starts.
+    // Emit those paths raw (the whole value is the path, so embedded spaces are
+    // fine without quoting).
     format!(
         "[Unit]\n\
 Description=orgasmic daemon\n\
@@ -541,11 +549,11 @@ RestartSec=2\n\
 [Install]\n\
 WantedBy=default.target\n",
         systemd_quote_arg(&path_text(&spec.exe)),
-        systemd_quote_arg(&path_text(&spec.cwd)),
+        path_text(&spec.cwd),
         systemd_quote_env("ORGASMIC_HOME", &path_text(&spec.home)),
         systemd_quote_env("PATH", &spec.path),
-        systemd_quote_arg(&path_text(&spec.stdout)),
-        systemd_quote_arg(&path_text(&spec.stderr)),
+        path_text(&spec.stdout),
+        path_text(&spec.stderr),
     )
 }
 
@@ -720,6 +728,17 @@ mod tests {
         assert!(unit.contains("Environment=\"PATH=/opt/homebrew/bin:/Users/tester/.cargo/bin"));
         assert!(unit.contains("WantedBy=default.target"));
         assert!(unit.contains("Restart=on-failure"));
+        // Single-value path directives must be raw/unquoted — systemd rejects the
+        // unit ("path is not absolute") if the value is wrapped in double quotes.
+        assert!(unit.contains("WorkingDirectory=/Users/tester/src/orgasmic\n"));
+        assert!(
+            unit.contains("StandardOutput=append:/Users/tester/Orgasmic Home/logs/daemon.out.log\n")
+        );
+        assert!(
+            unit.contains("StandardError=append:/Users/tester/Orgasmic Home/logs/daemon.err.log\n")
+        );
+        assert!(!unit.contains("WorkingDirectory=\""));
+        assert!(!unit.contains("append:\""));
     }
 
     #[test]
