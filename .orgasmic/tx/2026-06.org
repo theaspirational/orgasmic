@@ -14288,3 +14288,166 @@
 :REASON:       created graph node arch_WZFAX.3
 :NODE_ID:      arch_WZFAX.3
 :END:
+
+
+* TX 2026-06-22 Mon 14:31:45 task.state_transitioned TASK-32R7Z
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0907
+:TIME:         [2026-06-22 Mon 14:31:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-32R7Z
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       dec_B4147 implemented; runtime 0.0.5 published to stable (darwin x2 + linux x2, merged manifest preserving windows); gates green; drift adds no new findings
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-22 Mon 14:31:46 task.state_transitioned TASK-38RK6
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0908
+:TIME:         [2026-06-22 Mon 14:31:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-38RK6
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       post-32R7Z cleanup: deleted tags v0.0.1-v0.0.5 (local+remote); purged 50 runtime-* Actions artifacts (~389MB); retention-days:1 in runtime-bundles.yml
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-22 Mon 14:32:47 task.edited TASK-32R7Z
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0909
+:TIME:         [2026-06-22 Mon 14:32:47]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-32R7Z
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-32R7Z
+:NODE_ID:      TASK-32R7Z
+:END:
+
+* TX 2026-06-22 Mon 14:32:47 task.edited TASK-38RK6
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0910
+:TIME:         [2026-06-22 Mon 14:32:47]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-38RK6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-38RK6
+:NODE_ID:      TASK-38RK6
+:END:
+
+* TX 2026-06-22 Mon 14:33:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0911
+:TIME:         [2026-06-22 Mon 14:33:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0912
+:TIME:         [2026-06-22 Mon 14:33:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:22 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0913
+:TIME:         [2026-06-22 Mon 14:33:22]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0914
+:TIME:         [2026-06-22 Mon 14:33:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0915
+:TIME:         [2026-06-22 Mon 14:33:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0916
+:TIME:         [2026-06-22 Mon 14:33:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0917
+:TIME:         [2026-06-22 Mon 14:33:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-06-22 Mon 14:33:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0918
+:TIME:         [2026-06-22 Mon 14:33:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
