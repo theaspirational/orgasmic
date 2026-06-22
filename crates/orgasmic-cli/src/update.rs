@@ -39,6 +39,11 @@ struct RuntimeChannelManifest {
 struct RuntimeAsset {
     url: String,
     sha256: String,
+    // orgasmic:dec_B4147 — per-target version; a lagging target (e.g. windows,
+    // refreshed by a separate CI dispatch) advertises its own version rather than
+    // the manifest's top-level one. Falls back to the top-level version when absent.
+    #[serde(default)]
+    version: Option<String>,
 }
 
 pub fn run(home: &Home, branch: &str, do_build: bool) -> Result<()> {
@@ -81,23 +86,24 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
         .runtimes
         .get(&target)
         .with_context(|| format!("manifest has no runtime for target {target}"))?;
+    let asset_version = asset
+        .version
+        .clone()
+        .unwrap_or_else(|| manifest.version.clone());
 
     // Already up to date: the channel advertises the version we already have
     // installed and active, and the daemon is on that managed runtime (no
     // temporary `--from-source` override to clear). Skip the re-download/swap.
-    if state.version.as_deref() == Some(manifest.version.as_str())
-        && runtime_is_active(home, &manifest.version, &target)
+    if state.version.as_deref() == Some(asset_version.as_str())
+        && runtime_is_active(home, &asset_version, &target)
         && daemon_runtime::read(home)?.is_none()
     {
-        println!(
-            "✓ already up to date: {} ({target}) on channel {channel}",
-            manifest.version
-        );
+        println!("✓ already up to date: {asset_version} ({target}) on channel {channel}");
         return Ok(());
     }
 
     let asset_url = resolve_asset_url(&manifest_url, &asset.url);
-    println!("→ downloading runtime {} for {target}", manifest.version);
+    println!("→ downloading runtime {asset_version} for {target}");
 
     let work = prepare_work_dir(home, "runtime-update")?;
     let result = (|| {
@@ -113,13 +119,13 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
         std::fs::write(&bundle, &bytes).with_context(|| format!("write {}", bundle.display()))?;
 
         let was_running = preflight_daemon(home)?;
-        let final_runtime = install_bundle_payload(home, &bundle, &manifest.version, &target)?;
+        let final_runtime = install_bundle_payload(home, &bundle, &asset_version, &target)?;
         let old_state = install_state::read(home)?;
         let previous_current = read_symlink(&home.current_runtime());
         let new_state = InstallState {
             mode: InstallMode::Bundle,
             channel: manifest.channel.clone().or(Some(channel)),
-            version: Some(manifest.version.clone()),
+            version: Some(asset_version.clone()),
             target: Some(target.clone()),
             manifest_url: Some(manifest_url.clone()),
             runtime_dir: Some(final_runtime.clone()),
@@ -149,7 +155,7 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
 
         println!(
             "✓ runtime updated to {} ({target}) at {}",
-            manifest.version,
+            asset_version,
             final_runtime.display()
         );
         if cleared_override {

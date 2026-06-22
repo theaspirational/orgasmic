@@ -1,3 +1,4 @@
+// orgasmic:dec_B4147
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -253,15 +254,24 @@ fn arch_markers_at_file_top(path: &Path) -> Result<BTreeSet<String>> {
         if trimmed.is_empty() {
             continue;
         }
-        if let Some(rest) = trimmed.strip_prefix("// arch:") {
+        // Drift markers carry the leaf id via a `// arch:` / `// @arch` comment.
+        // Shell sources (build scripts, the publish pipeline) use `#` comments,
+        // so accept the `#` variants too. orgasmic:dec_B4147
+        if let Some(rest) = trimmed
+            .strip_prefix("// arch:")
+            .or_else(|| trimmed.strip_prefix("# arch:"))
+        {
             insert_marker_ids(rest, &mut ids);
             continue;
         }
-        if let Some(rest) = trimmed.strip_prefix("// @arch") {
+        if let Some(rest) = trimmed
+            .strip_prefix("// @arch")
+            .or_else(|| trimmed.strip_prefix("# @arch"))
+        {
             insert_marker_ids(rest, &mut ids);
             continue;
         }
-        if trimmed.starts_with("//") {
+        if trimmed.starts_with("//") || trimmed.starts_with('#') {
             continue;
         }
         break;
@@ -294,7 +304,9 @@ fn is_arch_leaf_id(id: &str) -> bool {
 fn is_source_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("rs" | "ts" | "tsx" | "js" | "jsx")
+        // orgasmic:dec_B4147 — shell extensions so the runtime publish pipeline
+        // (a .sh leaf source) participates in marker drift like Rust/TS sources.
+        Some("rs" | "ts" | "tsx" | "js" | "jsx" | "sh" | "bash" | "zsh")
     )
 }
 

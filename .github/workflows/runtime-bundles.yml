@@ -18,6 +18,10 @@ on:
         description: 'Version string (e.g. 0.0.1). Empty => derived 0.99.<run> (use a real semver for stable).'
         required: false
         type: string
+      only:
+        description: 'Comma-separated target keys to build (e.g. windows-x86_64). Empty => all targets. Use windows-x86_64 to refresh just the Windows runtime on stable without clobbering the locally-published darwin/linux bundles.'
+        required: false
+        type: string
   workflow_call:
     inputs:
       tag:
@@ -26,6 +30,10 @@ on:
         type: string
       version:
         description: 'Version string; empty => derived 0.99.<run>.'
+        required: false
+        type: string
+      only:
+        description: 'Comma-separated target keys to build. Empty => all targets.'
         required: false
         type: string
 
@@ -37,11 +45,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  version:
-    name: Resolve version
+  setup:
+    name: Resolve version and matrix
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
+      matrix: ${{ steps.m.outputs.matrix }}
     steps:
       - id: v
         env:
@@ -57,21 +66,38 @@ jobs:
           fi
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "resolved version: $v"
+      - id: m
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          # Filter the full target matrix by the optional `only` key list so a
+          # single-target dispatch (e.g. windows-x86_64) builds just that leg.
+          ONLY="$ONLY" node <<'NODE' >> "$GITHUB_OUTPUT"
+          const all = [
+            { runner: 'macos-14',         target: 'aarch64-apple-darwin',      key: 'darwin-aarch64' },
+            // Intel macOS: build on the arm64 runner (macos-13 Intel runners queue
+            // indefinitely). Same OS + universal SDK; validated by arch, not run.
+            { runner: 'macos-14',         target: 'x86_64-apple-darwin',       key: 'darwin-x86_64', cross: true },
+            { runner: 'ubuntu-latest',    target: 'x86_64-unknown-linux-gnu',  key: 'linux-x86_64' },
+            { runner: 'ubuntu-24.04-arm', target: 'aarch64-unknown-linux-gnu', key: 'linux-aarch64' },
+            { runner: 'windows-latest',   target: 'x86_64-pc-windows-msvc',    key: 'windows-x86_64' },
+          ];
+          const only = (process.env.ONLY || '').split(',').map((s) => s.trim()).filter(Boolean);
+          const include = only.length ? all.filter((e) => only.includes(e.key)) : all;
+          if (!include.length) {
+            console.error(`::error::no targets matched only='${process.env.ONLY}'`);
+            process.exit(1);
+          }
+          console.log(`matrix=${JSON.stringify({ include })}`);
+          NODE
+          echo "selected targets: ${ONLY:-all}"
 
   build:
     name: ${{ matrix.key }}
-    needs: version
+    needs: setup
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - { runner: macos-14,         target: aarch64-apple-darwin,      key: darwin-aarch64 }
-          # Intel macOS: build on the arm64 runner (macos-13 Intel runners queue
-          # indefinitely). Same OS + universal SDK; validated by arch, not run.
-          - { runner: macos-14,         target: x86_64-apple-darwin,       key: darwin-x86_64, cross: true }
-          - { runner: ubuntu-latest,    target: x86_64-unknown-linux-gnu,  key: linux-x86_64 }
-          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, key: linux-aarch64 }
-          - { runner: windows-latest,   target: x86_64-pc-windows-msvc,    key: windows-x86_64 }
+      matrix: ${{ fromJSON(needs.setup.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
@@ -131,7 +157,7 @@ jobs:
       - name: Build runtime bundle
         shell: bash
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.setup.outputs.version }}
         run: |
           bash scripts/package-runtime.sh \
             --version "$VERSION" \
@@ -165,16 +191,21 @@ jobs:
           name: runtime-${{ matrix.key }}
           path: dist/runtime/*
           if-no-files-found: error
+          # orgasmic:dec_B4147 — these are handed to the publish job within the run;
+          # 1-day retention stops ~300 MB of runtime-* artifacts accumulating.
+          retention-days: 1
 
   publish:
     name: Assemble manifest and publish
-    needs: [version, build]
-    if: ${{ always() && needs.version.result == 'success' }}
+    needs: [setup, build]
+    # Run even if some matrix legs failed (fail-fast: false): merge-not-clobber
+    # means publishing the legs that DID build never wipes the other targets.
+    if: ${{ always() && needs.setup.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ inputs.tag }}
-      VERSION: ${{ needs.version.outputs.version }}
+      VERSION: ${{ needs.setup.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -188,51 +219,6 @@ jobs:
           pattern: runtime-*
           merge-multiple: true
 
-      - name: Assemble runtime-latest.json
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          shopt -s nullglob
-          found=(incoming/orgasmic-runtime_*.tar.gz)
-          if [ ${#found[@]} -eq 0 ]; then
-            echo "::error::no runtime bundles were produced by any matrix leg"; exit 1
-          fi
-          cp incoming/orgasmic-runtime_*.tar.gz incoming/orgasmic-runtime_*.tar.gz.sha256 dist/
-          REPO="$GITHUB_REPOSITORY" TAG="$TAG" VERSION="$VERSION" node <<'NODE'
-          const fs = require('node:fs');
-          const dir = 'dist';
-          const files = fs.readdirSync(dir).filter((f) => f.endsWith('.tar.gz'));
-          // Asset suffix is the target key with '-' replaced by '_' (e.g. key
-          // darwin-x86_64 -> ..._darwin_x86_64.tar.gz). Recover the key by
-          // splitting os (first segment) from arch (the rest, which may itself
-          // contain '_' as in x86_64): os '-' arch.
-          const keyFromName = (f) => {
-            const m = f.match(/^orgasmic-runtime_.+?_([a-z0-9]+)_(.+)\.tar\.gz$/);
-            return m ? `${m[1]}-${m[2]}` : null;
-          };
-          const runtimes = {};
-          for (const f of files.sort()) {
-            const key = keyFromName(f);
-            if (!key) continue;
-            const sha = fs.readFileSync(`${dir}/${f}.sha256`, 'utf8').trim().split(/\s+/)[0];
-            runtimes[key] = {
-              url: `https://github.com/${process.env.REPO}/releases/download/${process.env.TAG}/${f}`,
-              sha256: sha,
-            };
-          }
-          const channel = process.env.TAG === 'stable' ? 'stable' : 'nightly';
-          const manifest = {
-            version: process.env.VERSION,
-            channel,
-            pub_date: new Date().toISOString(),
-            runtimes,
-          };
-          fs.writeFileSync(`${dir}/runtime-latest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
-          console.log(`published targets: ${Object.keys(runtimes).join(', ')}`);
-          NODE
-          echo "=== runtime-latest.json ==="
-          cat dist/runtime-latest.json
-
       - name: Ensure release exists
         run: |
           set -euo pipefail
@@ -242,15 +228,79 @@ jobs:
             gh release create "$TAG" "${flags[@]}"
           fi
 
-      - name: Replace runtime assets on release
+      - name: Assemble merged runtime-latest.json
         run: |
           set -euo pipefail
-          gh release view "$TAG" --json assets --jq '.assets[].name' | while IFS= read -r a; do
-            case "$a" in
-              runtime-latest.json|orgasmic-runtime_*.tar.gz|orgasmic-runtime_*.tar.gz.sha256)
-                gh release delete-asset "$TAG" "$a" --yes ;;
-            esac
+          mkdir -p dist
+          shopt -s nullglob
+          found=(incoming/orgasmic-runtime_*.tar.gz)
+          if [ ${#found[@]} -eq 0 ]; then
+            echo "::error::no runtime bundles were produced by any matrix leg"; exit 1
+          fi
+          cp incoming/orgasmic-runtime_*.tar.gz incoming/orgasmic-runtime_*.tar.gz.sha256 dist/
+          # orgasmic:dec_B4147 — MERGE, don't clobber: pull the existing manifest off
+          # the release and overlay only the targets this run built, so a single-target
+          # (Windows) dispatch never wipes the locally-published darwin/linux entries.
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -qx 'runtime-latest.json'; then
+            gh release download "$TAG" -p runtime-latest.json -O dist/.existing.json --clobber
+          else
+            echo '{}' > dist/.existing.json
+          fi
+          REPO="$GITHUB_REPOSITORY" TAG="$TAG" VERSION="$VERSION" COMMIT="$GITHUB_SHA" node <<'NODE'
+          const fs = require('node:fs');
+          const dir = 'dist';
+          let manifest = {};
+          try { manifest = JSON.parse(fs.readFileSync(`${dir}/.existing.json`, 'utf8')) || {}; } catch { manifest = {}; }
+          if (!manifest.runtimes || typeof manifest.runtimes !== 'object') manifest.runtimes = {};
+          // Asset suffix is the target key with '-' replaced by '_' (e.g. key
+          // darwin-x86_64 -> ..._darwin_x86_64.tar.gz). Recover the key by
+          // splitting os (first segment) from arch (the rest, which may itself
+          // contain '_' as in x86_64): os '-' arch.
+          const keyFromName = (f) => {
+            const m = f.match(/^orgasmic-runtime_.+?_([a-z0-9]+)_(.+)\.tar\.gz$/);
+            return m ? `${m[1]}-${m[2]}` : null;
+          };
+          const built = [];
+          for (const f of fs.readdirSync(dir).filter((f) => f.endsWith('.tar.gz')).sort()) {
+            const key = keyFromName(f);
+            if (!key) continue;
+            const sha = fs.readFileSync(`${dir}/${f}.sha256`, 'utf8').trim().split(/\s+/)[0];
+            manifest.runtimes[key] = {
+              url: `https://github.com/${process.env.REPO}/releases/download/${process.env.TAG}/${f}`,
+              sha256: sha,
+              version: process.env.VERSION, // per-target version; lagging targets keep their own
+            };
+            built.push(key);
+          }
+          manifest.version = process.env.VERSION; // top-level fallback for older installers
+          manifest.channel = process.env.TAG === 'stable' ? 'stable' : (manifest.channel || 'nightly');
+          manifest.commit = process.env.COMMIT;
+          manifest.pub_date = new Date().toISOString();
+          fs.writeFileSync(`${dir}/runtime-latest.json`, `${JSON.stringify(manifest, null, 2)}\n`);
+          console.log(`built targets:   ${built.join(', ')}`);
+          console.log(`merged manifest: ${Object.keys(manifest.runtimes).join(', ')}`);
+          NODE
+          rm -f dist/.existing.json
+          echo "=== runtime-latest.json ==="
+          cat dist/runtime-latest.json
+
+      - name: Replace built runtime assets on release
+        run: |
+          set -euo pipefail
+          # Delete ONLY the assets for the targets we just built (+ the manifest);
+          # leave every other target's tarball in place. Merge, not clobber.
+          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          delete_asset() {
+            if printf '%s\n' "$existing" | grep -qx "$1"; then
+              gh release delete-asset "$TAG" "$1" --yes
+            fi
+          }
+          for f in dist/orgasmic-runtime_*.tar.gz; do
+            base="$(basename "$f")"
+            delete_asset "$base"
+            delete_asset "$base.sha256"
           done
+          delete_asset "runtime-latest.json"
           gh release upload "$TAG" \
             dist/runtime-latest.json \
             dist/orgasmic-runtime_*.tar.gz \

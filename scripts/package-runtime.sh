@@ -9,6 +9,10 @@ TARGET_TRIPLE=""
 TARGET_KEY=""
 OUT_DIR="dist/runtime"
 PROFILE="release"
+# orgasmic:dec_B4147 — glibc floor for cargo-zigbuild Linux cross builds. Pinning
+# an old floor (CentOS 7 / RHEL 7 era) lets one maintainer-host build run on old
+# distros regardless of the host's own glibc.
+GLIBC_FLOOR="2.17"
 
 usage() {
     cat <<'EOF'
@@ -19,6 +23,7 @@ Options:
   --target-key <key>         Runtime manifest key (default derived from target)
   --out-dir <dir>            Output directory (default: dist/runtime)
   --profile <profile>        Cargo profile (default: release)
+  --glibc <version>          glibc floor for linux-gnu zigbuild (default: 2.17)
 EOF
 }
 
@@ -29,6 +34,7 @@ while [[ $# -gt 0 ]]; do
         --target-key) TARGET_KEY="$2"; shift 2 ;;
         --out-dir) OUT_DIR="$2"; shift 2 ;;
         --profile) PROFILE="$2"; shift 2 ;;
+        --glibc) GLIBC_FLOOR="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 1 ;;
     esac
@@ -70,8 +76,26 @@ else
     CARGO_PROFILE_DIR="$PROFILE"
 fi
 
-echo "→ building orgasmic CLI for $TARGET_TRIPLE ($PROFILE)"
-cargo build --profile "$PROFILE" --package orgasmic-cli --target "$TARGET_TRIPLE"
+# orgasmic:dec_B4147 — Linux GNU targets cross-build through cargo-zigbuild with a
+# pinned glibc floor; everything else uses the native cargo target compiler. The
+# UI is reused (not rebuilt) per target when ORGASMIC_UI_PREBUILT=1 (handled in
+# crates/orgasmic-daemon/build.rs), so a four-target publish runs npm only once.
+case "$TARGET_TRIPLE" in
+    *-unknown-linux-gnu)
+        if ! command -v cargo-zigbuild >/dev/null 2>&1; then
+            echo "error: cargo-zigbuild is required for $TARGET_TRIPLE" >&2
+            echo "       install it with: cargo install cargo-zigbuild  (and: brew install zig)" >&2
+            exit 1
+        fi
+        echo "→ building orgasmic CLI for $TARGET_TRIPLE via cargo-zigbuild (glibc $GLIBC_FLOOR)"
+        cargo zigbuild --profile "$PROFILE" --package orgasmic-cli \
+            --target "${TARGET_TRIPLE}.${GLIBC_FLOOR}"
+        ;;
+    *)
+        echo "→ building orgasmic CLI for $TARGET_TRIPLE ($PROFILE)"
+        cargo build --profile "$PROFILE" --package orgasmic-cli --target "$TARGET_TRIPLE"
+        ;;
+esac
 
 # Windows binaries carry a .exe suffix; the bundle keeps it so the Windows
 # installer finds bin/orgasmic.exe. POSIX targets stay bin/orgasmic.
@@ -93,7 +117,11 @@ cp "$BIN" "$STAGE/bin/orgasmic$EXE"
 # Ad-hoc/linker signatures key TCC on the per-build cdhash; a fixed identity +
 # identifier give a stable designated requirement. macOS-only, no-op unless
 # ORGASMIC_CODESIGN_IDENTITY is set (so Linux/Windows legs and local builds skip).
-if [[ -n "${ORGASMIC_CODESIGN_IDENTITY:-}" ]] && command -v codesign >/dev/null 2>&1; then
+# orgasmic:dec_B4147 — only sign apple-darwin (Mach-O) binaries. The local publish
+# pipeline builds all four targets on one macOS host where codesign exists and the
+# identity is set, so the Linux legs must not be handed to codesign.
+case "$TARGET_TRIPLE" in *-apple-darwin) IS_DARWIN_TARGET=1 ;; *) IS_DARWIN_TARGET=0 ;; esac
+if [[ "$IS_DARWIN_TARGET" == "1" && -n "${ORGASMIC_CODESIGN_IDENTITY:-}" ]] && command -v codesign >/dev/null 2>&1; then
     echo "→ codesigning bin/orgasmic as '${ORGASMIC_CODESIGN_IDENTITY}'"
     codesign --force \
         --identifier "${ORGASMIC_CODESIGN_BUNDLE_ID:-com.theaspirational.orgasmic}" \

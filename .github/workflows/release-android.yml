@@ -1,29 +1,30 @@
-name: Stable Android APK
+name: Android APK (apps release)
 
+# orgasmic:dec_B4147 — apps are a separate, fully-manual release line. Dispatch
+# only (no v* tag trigger), published to the `apps` release/tag so it never races
+# the runtime's `stable` release. App version comes from src-tauri/tauri.conf.json
+# (decoupled from the workspace Cargo.toml / CLI version).
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to publish (e.g. 0.0.1). Required for manual dispatch.'
+        description: 'Override app version (e.g. 0.0.5). Empty => use src-tauri/tauri.conf.json.'
         required: false
 
 permissions:
   contents: write
 
 concurrency:
-  group: stable-android-apk
+  group: apps-android
   cancel-in-progress: true
 
 jobs:
-  publish-stable-android:
-    name: Build and publish Android stable
+  publish-apps-android:
+    name: Build and publish Android app
     runs-on: macos-latest
 
     env:
-      STABLE_TAG: stable
+      APPS_TAG: apps
       ANDROID_NDK_VERSION: 29.0.14206865
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -67,7 +68,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix ui
 
-      - name: Prepare Android stable version
+      - name: Resolve Android app version
         id: version
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -75,14 +76,17 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
 
-          const refName = process.env.GITHUB_REF_NAME || '';
-          const refType = process.env.GITHUB_REF_TYPE || '';
+          // App version is sourced from tauri.conf.json (decoupled from the CLI /
+          // workspace Cargo.toml). An optional input override re-stamps the app
+          // files; with no override we publish exactly what the tree declares.
+          const tauriPath = 'src-tauri/tauri.conf.json';
+          const tauriConfig = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
           const inputVersion = (process.env.INPUT_VERSION || '').trim();
-          const version = inputVersion || (refType === 'tag' ? refName.replace(/^v/, '') : '');
+          const version = inputVersion || tauriConfig.version || '';
           const match = /^(\d+)\.(\d+)\.(\d+)([-.+].*)?$/.exec(version);
           if (!match) {
             console.error(
-              `::error::could not derive a semver version (ref=${refName} type=${refType} input=${inputVersion}); push a vX.Y.Z tag or pass the version input`,
+              `::error::no valid app version (tauri.conf.json=${tauriConfig.version} input=${inputVersion})`,
             );
             process.exit(1);
           }
@@ -90,30 +94,33 @@ jobs:
           const versionCode =
             Number(match[1]) * 10000 + Number(match[2]) * 100 + Number(match[3]);
 
-          const tauriPath = 'src-tauri/tauri.conf.json';
-          const tauriConfig = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
-          tauriConfig.version = version;
-          fs.writeFileSync(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
+          if (inputVersion) {
+            tauriConfig.version = version;
+            fs.writeFileSync(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
 
+            const packagePath = 'ui/package.json';
+            const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+            packageJson.version = version;
+            fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+
+            const cargoPath = 'src-tauri/Cargo.toml';
+            const cargoToml = fs.readFileSync(cargoPath, 'utf8').replace(
+              /^version = ".*"$/m,
+              `version = "${version}"`,
+            );
+            fs.writeFileSync(cargoPath, cargoToml);
+          }
+
+          // versionCode is always stamped from the resolved version so the APK is
+          // monotonic regardless of override.
           const androidTauriPath = 'src-tauri/tauri.android.conf.json';
           const androidTauriConfig = JSON.parse(fs.readFileSync(androidTauriPath, 'utf8'));
           androidTauriConfig.bundle.android.versionCode = versionCode;
           fs.writeFileSync(androidTauriPath, `${JSON.stringify(androidTauriConfig, null, 2)}\n`);
 
-          const packagePath = 'ui/package.json';
-          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-          packageJson.version = version;
-          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
-
-          const cargoPath = 'src-tauri/Cargo.toml';
-          const cargoToml = fs.readFileSync(cargoPath, 'utf8').replace(
-            /^version = ".*"$/m,
-            `version = "${version}"`,
-          );
-          fs.writeFileSync(cargoPath, cargoToml);
-
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `version_code=${versionCode}\n`);
+          console.log(`android app version: ${version} (code ${versionCode})${inputVersion ? ' (override)' : ' (from tauri.conf.json)'}`);
           NODE
 
       - name: Verify Android signing keys
@@ -151,11 +158,11 @@ jobs:
 
       - name: Stage Android release assets
         env:
-          STABLE_VERSION: ${{ steps.version.outputs.version }}
+          APPS_VERSION: ${{ steps.version.outputs.version }}
           ANDROID_VERSION_CODE: ${{ steps.version.outputs.version_code }}
         run: |
           set -euo pipefail
-          mkdir -p dist/stable
+          mkdir -p dist/apps
 
           apk_path="$(find src-tauri/gen/android/app/build/outputs/apk -path '*/release/*' -name '*.apk' -print -quit)"
           if [ -z "${apk_path}" ]; then
@@ -163,23 +170,23 @@ jobs:
             exit 1
           fi
 
-          android_apk_name="orgasmic_${STABLE_VERSION}_${ANDROID_VERSION_CODE}_android_aarch64.apk"
-          cp "${apk_path}" "dist/stable/${android_apk_name}"
+          android_apk_name="orgasmic_${APPS_VERSION}_${ANDROID_VERSION_CODE}_android_aarch64.apk"
+          cp "${apk_path}" "dist/apps/${android_apk_name}"
 
-          apk_sha256="$(shasum -a 256 "dist/stable/${android_apk_name}" | awk '{print $1}')"
+          apk_sha256="$(shasum -a 256 "dist/apps/${android_apk_name}" | awk '{print $1}')"
 
-          ANDROID_MANIFEST_PATH="dist/stable/android-latest.json" \
-          ANDROID_APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${STABLE_TAG}/${android_apk_name}" \
+          ANDROID_MANIFEST_PATH="dist/apps/android-latest.json" \
+          ANDROID_APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${APPS_TAG}/${android_apk_name}" \
           ANDROID_APK_SHA256="${apk_sha256}" \
           node <<'NODE'
           const fs = require('node:fs');
 
           const manifest = {
-            channel: process.env.STABLE_TAG,
+            channel: process.env.APPS_TAG,
             packageName: 'com.theaspirational.orgasmic',
-            version: process.env.STABLE_VERSION,
+            version: process.env.APPS_VERSION,
             versionCode: Number(process.env.ANDROID_VERSION_CODE),
-            notes: `Stable Android APK ${process.env.STABLE_VERSION} from ${process.env.GITHUB_SHA}`,
+            notes: `Android APK ${process.env.APPS_VERSION} from ${process.env.GITHUB_SHA}`,
             pubDate: new Date().toISOString(),
             apkUrl: process.env.ANDROID_APK_URL,
             apkSha256: process.env.ANDROID_APK_SHA256,
@@ -188,46 +195,38 @@ jobs:
           fs.writeFileSync(process.env.ANDROID_MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
           NODE
 
-      - name: Publish Android stable release assets
+      - name: Publish Android app release assets
         env:
           GH_TOKEN: ${{ github.token }}
-          STABLE_VERSION: ${{ steps.version.outputs.version }}
+          APPS_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          title="orgasmic ${STABLE_VERSION}"
-          notes="Stable release ${STABLE_VERSION} from ${GITHUB_SHA}."
+          title="orgasmic apps ${APPS_VERSION}"
+          notes="macOS + Android app builds ${APPS_VERSION} from ${GITHUB_SHA}."
 
-          git tag -f "${STABLE_TAG}" "${GITHUB_SHA}"
-          git push origin "refs/tags/${STABLE_TAG}" --force
-
-          if gh release view "${STABLE_TAG}" >/dev/null 2>&1; then
-            gh release edit "${STABLE_TAG}" \
+          # No v* / stable tag is moved: apps own the dedicated `apps` release/tag.
+          # --latest=false so it never steals the runtime `stable` release's badge.
+          if gh release view "${APPS_TAG}" >/dev/null 2>&1; then
+            gh release edit "${APPS_TAG}" \
               --target "${GITHUB_SHA}" \
               --title "${title}" \
               --notes "${notes}" \
-              --prerelease=false \
-              --latest=true
+              --latest=false
           else
-            gh release create "${STABLE_TAG}" \
+            gh release create "${APPS_TAG}" \
               --target "${GITHUB_SHA}" \
               --title "${title}" \
               --notes "${notes}" \
-              --latest=true || \
-            gh release edit "${STABLE_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "${title}" \
-              --notes "${notes}" \
-              --prerelease=false \
-              --latest=true
+              --latest=false
           fi
 
-          gh release view "${STABLE_TAG}" --json assets --jq '.assets[].name' |
+          gh release view "${APPS_TAG}" --json assets --jq '.assets[].name' |
             while IFS= read -r asset; do
               case "${asset}" in
                 orgasmic_*_android_*.apk|android-latest.json)
-                  gh release delete-asset "${STABLE_TAG}" "${asset}" --yes
+                  gh release delete-asset "${APPS_TAG}" "${asset}" --yes
                   ;;
               esac
             done
 
-          gh release upload "${STABLE_TAG}" dist/stable/* --clobber
+          gh release upload "${APPS_TAG}" dist/apps/* --clobber

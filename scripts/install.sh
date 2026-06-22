@@ -331,7 +331,13 @@ install_bundle_mode() {
         manifest_url="https://github.com/${RELEASE_REPO}/releases/download/${tag}/runtime-latest.json"
         echo "→ manifest      = $manifest_url"
         fetch_to_file "$manifest_url" "$work/runtime-latest.json"
-        runtime_version="$(extract_json_string version "$work/runtime-latest.json")"
+        # orgasmic:dec_B4147 — prefer the per-target version so a lagging entry
+        # (e.g. windows, refreshed by a separate CI dispatch) names its runtime
+        # dir honestly instead of inheriting the manifest's top-level version.
+        runtime_version="$(extract_runtime_field "$runtime_target" version "$work/runtime-latest.json")"
+        if [[ -z "$runtime_version" ]]; then
+            runtime_version="$(extract_json_string version "$work/runtime-latest.json")"
+        fi
         bundle_url="$(extract_runtime_field "$runtime_target" url "$work/runtime-latest.json")"
         expected_sha="$(extract_runtime_field "$runtime_target" sha256 "$work/runtime-latest.json")"
         if [[ -z "$runtime_version" || -z "$bundle_url" || -z "$expected_sha" ]]; then

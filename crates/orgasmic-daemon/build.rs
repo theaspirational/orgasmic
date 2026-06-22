@@ -35,8 +35,24 @@ fn main() {
     let profile = std::env::var("PROFILE").unwrap_or_default();
     let embed_ui = std::env::var("ORGASMIC_EMBED_UI").as_deref() == Ok("1");
 
+    // orgasmic:dec_B4147 — when a caller has already built ui/dist once and sets
+    // ORGASMIC_UI_PREBUILT=1, reuse it instead of re-running npm per target. The
+    // local publish pipeline (scripts/publish-runtime.sh) builds the UI once and
+    // then compiles all four runtime targets, so the npm build must not fire four
+    // times. Guarded by the existence check so a stale opt-in degrades to a fresh
+    // build rather than embedding a missing dist.
+    let reuse_prebuilt = std::env::var("ORGASMIC_UI_PREBUILT").as_deref() == Ok("1")
+        && ui_dist.join("index.html").exists();
+
     let dist_dir = if profile == "release" || embed_ui {
-        run_npm_build(&repo_root);
+        if reuse_prebuilt {
+            println!(
+                "cargo:warning=reusing prebuilt UI at {} (ORGASMIC_UI_PREBUILT=1)",
+                ui_dist.display()
+            );
+        } else {
+            run_npm_build(&repo_root);
+        }
         assert!(
             ui_dist.join("index.html").exists(),
             "npm build did not produce {}/index.html — check ui/dist after `npm --prefix ui run build`",

@@ -14275,3 +14275,16 @@
 :TARGET:       AGENTS.md crates/orgasmic-core/src/projects.rs
 :REASON:       Harden root agent-pointer so agents do not skip .orgasmic/entry.org: rewrote ROOT_POINTER_LINE (scaffold, all new projects) + repo AGENTS.md from soft 'Start at … orients you' to a forcing MUST-read precondition naming the skip rationalization and stakes; scaffold tests green
 :END:
+
+* TX 2026-06-22 Mon 13:37:25 graph.architecture.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260622-orgasmic-0906
+:TIME:         [2026-06-22 Mon 13:37:25]
+:TYPE:         graph.architecture.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       created graph node arch_WZFAX.3
+:NODE_ID:      arch_WZFAX.3
+:END:

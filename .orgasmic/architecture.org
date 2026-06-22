@@ -162,6 +162,32 @@ update with stash/restore. The skill wizard is the simple user-facing install
 surface; the source installer remains the mechanics layer for contributor and
 server bootstrap until dedicated binary packages exist.
 
+** arch_WZFAX.3 runtime publish pipeline
+:PROPERTIES:
+:ID:                 arch_WZFAX.3
+:SOURCE_PATHS:       scripts/publish-runtime.sh
+:TESTS:              bash -n scripts/publish-runtime.sh; bash scripts/publish-runtime.sh --dry-run
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:MOTIVATED_BY:       dec_B4147
+:DEPENDS_ON:         arch_WZFAX.2
+:END:
+
+Local-first runtime publish (dec_B4147): builds the four maintainer-buildable
+targets on one macOS host (darwin x2 native+cross, linux x2 via cargo-zigbuild
+with a pinned glibc floor), signs the darwin binaries with the stable codesign
+identity from ~/.tauri, smoke-tests each (native run; x86_64 via Rosetta; linux
+via docker run), then MERGES only the built targets into the release
+runtime-latest.json and replaces only their tarballs. Windows is refreshed by a
+separate single-target runtime-bundles.yml dispatch; apps build via dispatch to
+the decoupled apps release. Replaces the deleted tag-driven release-runtime.yml
+for the stable runtime line.
+
 * arch_QFQTD Project registry and task store
 :PROPERTIES:
 :ID:                 arch_QFQTD
