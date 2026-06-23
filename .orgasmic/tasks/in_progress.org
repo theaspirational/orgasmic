@@ -1,3 +1,41 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-2Q7RQ Finalize dec_B4147 rollout: Windows runtime, apps release, retire stale stable app assets, eval local app builds :release:ci:install-distribution:apps:windows:
+:PROPERTIES:
+:ID: TASK-2Q7RQ
+:END:
+
+Post-implementation follow-ups after dec_B4147 / TASK-32R7Z (runtime publish pipeline) and TASK-38RK6 (tag+artifact cleanup) landed and runtime 0.0.5 was published to stable. Relates dec_B4147, arch_WZFAX.3.
+
+Work (ordered for safety):
+1. Windows runtime refresh. Dispatch runtime-bundles.yml with tag=stable only=windows-x86_64 (gh workflow run runtime-bundles.yml -f tag=stable -f only=windows-x86_64). The stable manifest's windows-x86_64 entry is a stale build from the old flow and lacks the per-target version field (shows v? in runtime-latest.json). Verify the single-target merge-not-clobber path rebuilds only Windows and leaves the locally-published darwin/linux entries + tarballs untouched, and that the refreshed entry carries version. Windows MSVC cannot build on the Mac, so this stays CI.
+2. Populate the apps release. Dispatch release-macos.yml and release-android.yml (both dispatch-only now). Confirm the apps release/tag gets the DMG + orgasmic.app.tar.gz(.sig) + latest.json and the signed APK + android-latest.json, with --latest=false so stable keeps the latest badge. Confirm the desktop updater endpoint https://github.com/theaspirational/orgasmic/releases/download/apps/latest.json resolves. DO THIS BEFORE step 3 so there is never a window with zero app downloads available.
+3. Retire stale app assets from the stable release. After apps live on the apps release, delete the leftover app assets still on stable from the old coupled flow: latest.json, orgasmic.app.tar.gz, orgasmic.app.tar.gz.sig, orgasmic_stable_aarch64.dmg, orgasmic_0.0.5_5_android_aarch64.apk, android-latest.json. Leave all runtime-* assets + runtime-latest.json. Outward-facing/destructive: requires explicit maintainer approval at execution.
+4. Investigate building the apps locally on this Mac (extend the local-first model). macOS app: native tauri:bundle:mac with TAURI_SIGNING_PRIVATE_KEY material in ~/.tauri (updater key id DB25DA5DF5271BBC). Android APK: needs NDK + Java + the upload keystore (~/.tauri/org-shell-android-upload.jks + .password). All signing material is already on-machine. Assess whether a scripts/publish-apps.sh (mirroring publish-runtime.sh: build -> sign -> publish to the apps release) is worthwhile, or whether apps should stay on CI. Output: a feasibility note, and if adopted, a new decision or a dec_B4147 amendment.
+
+Acceptance: Windows runtime entry on stable rebuilt with a per-target version via the single-target dispatch (merge-not-clobber verified); apps release populated with current macOS + Android artifacts and the updater endpoint resolving; stable release carries runtime assets only; a written decision/feasibility note on local app builds.
+** Evidence
+[step 4 feasibility — local app builds on this Mac, 2026-06-23]
+
+BOTH apps are buildable locally with ZERO provisioning — only env-var alignment. Full local-first parity with CI is achievable.
+
+macOS app: READY NOW.
+- Toolchain: tauri-cli 2.11.1, node v22.22.3, rustup target aarch64-apple-darwin.
+- Build identical to CI: `npm --prefix ui run tauri:bundle:mac` => `tauri build --target aarch64-apple-darwin --bundles app,dmg`.
+- Updater key on-machine: ~/.tauri/orgasmic-updater.key (id DB25DA5DF5271BBC) matches src-tauri/tauri.conf.json pubkey; password in ~/.tauri/orgasmic-updater.key.password. Export TAURI_SIGNING_PRIVATE_KEY / _PASSWORD like the CI secret.
+- NOTE: release-macos.yml does NOT Apple-codesign/notarize the .app/.dmg — ships only the Tauri minisign updater signature. The ~/.tauri/orgasmic-codesign.p12 cert is for the RUNTIME CLI binary, not the Tauri app. A local build matches CI (no Apple notarization); notarization would be a separate additive improvement.
+- Stage->apps: orgasmic_<ver>_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json.
+
+Android APK: READY NOW (correction — toolchain IS installed via Homebrew; earlier "missing SDK/NDK" was a stale ANDROID_HOME).
+- Installed at /opt/homebrew/share/android-commandlinetools: platforms;android-36, build-tools;35.0.0 (+36.0.0), ndk;29.0.14206865 (exact CI version), platform-tools. JDK 17 present (openjdk@17 17.0.17) — matches CI's temurin 17.
+- All 4 rust android targets installed; upload keystore ~/.tauri/org-shell-android-upload.jks + .password on-machine; tauri:android:build already prepends ~/.cargo/bin to PATH.
+- The ONLY blocker was env: ANDROID_HOME pointed at nonexistent ~/Library/Android/sdk. Script must set its own ANDROID_HOME/ANDROID_SDK_ROOT=/opt/homebrew/share/android-commandlinetools, ANDROID_NDK_HOME=$SDK/ndk/29.0.14206865, JAVA_HOME=openjdk@17 (do NOT rely on the user's shell env), exactly as publish-runtime.sh self-sets ~/.cargo/bin.
+- Signing/version: write src-tauri/gen/android/keystore.properties (keyAlias/password/storeFile->jks) + stamp tauri.android.conf.json versionCode = major*10000+minor*100+patch, as CI.
+
+Recommendation: ADOPT scripts/publish-apps.sh mirroring publish-runtime.sh (clean-tree+HEAD==origin/main guard; build->sign->stage->publish to the `apps` release with --latest=false; replace only built targets). Build BOTH darwin-arm macOS app AND android-aarch64 APK locally — the Mac can fully sign and produce both. CI release-macos.yml/release-android.yml stay as dispatch fallback. Frame as a dec_B4147 AMENDMENT (same "build locally what the Mac can sign, keep CI for what it can't" principle; only the Windows RUNTIME genuinely must stay CI). Optional shell hygiene for the maintainer: fix the stale ANDROID_HOME in ~/.zshenv to /opt/homebrew/share/android-commandlinetools, but the script must not depend on it.
+[execution 2026-06-23 — steps 1-3 done & verified]
+Step 1 (Windows runtime -> stable): dispatched runtime-bundles.yml only=windows-x86_64. First run omitted version -> derived 0.99.401 (mistake); re-dispatched with version=0.0.5 (run 28012342951, success). Final stable runtime-latest.json: top-level 0.0.5; all 5 targets version=0.0.5; darwin/linux shas UNCHANGED (b2e5922a/fc763ead/e5b4711d/4ac06ca0) confirming merge-not-clobber; windows refreshed sha=a1d4a083 and now carries per-target version. All 5 tarball URLs HTTP 200.
+Step 2 (apps release): dispatched release-macos.yml + release-android.yml (success). `apps` release populated: orgasmic_0.0.4_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json, orgasmic_0.0.4_4_android_aarch64.apk, android-latest.json. Desktop updater endpoint apps/latest.json resolves (v0.0.4, darwin-aarch64 sig+url). apps isLatest=false, stable isLatest=true (no badge theft).
+Step 3 (retire stale stable app assets): maintainer-approved. Deleted from stable: latest.json, android-latest.json, orgasmic.app.tar.gz, orgasmic.app.tar.gz.sig, orgasmic_stable_aarch64.dmg, orgasmic_0.0.5_5_android_aarch64.apk; plus 2 orphaned 0.99.401 windows assets from the bad run. stable now = runtime assets only.
+Step 4 (local app build feasibility): see feasibility note above — BOTH apps buildable locally with zero provisioning; recommend scripts/publish-apps.sh as a dec_B4147 amendment. ADOPTION decision pending maintainer.

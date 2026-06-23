@@ -14490,3 +14490,86 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       created task TASK-2Q7RQ
 :END:
+
+* TX 2026-06-23 Tue 08:02:04 task.state_transitioned TASK-2Q7RQ
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0922
+:TIME:         [2026-06-23 Tue 08:02:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2Q7RQ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Kicking off dec_B4147 rollout: step 1 Windows runtime refresh
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-06-23 Tue 08:06:00 task.edited TASK-2Q7RQ
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0923
+:TIME:         [2026-06-23 Tue 08:06:00]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2Q7RQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-2Q7RQ
+:NODE_ID:      TASK-2Q7RQ
+:END:
+
+* TX 2026-06-23 Tue 08:15:29 task.edited TASK-2Q7RQ
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0924
+:TIME:         [2026-06-23 Tue 08:15:29]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2Q7RQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-2Q7RQ
+:NODE_ID:      TASK-2Q7RQ
+:END:
+
+* TX 2026-06-23 Tue 08:27:05 task.edited TASK-2Q7RQ
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0925
+:TIME:         [2026-06-23 Tue 08:27:05]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2Q7RQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-2Q7RQ
+:NODE_ID:      TASK-2Q7RQ
+:END:
+
+* TX 2026-06-23 Tue 08:34:06 graph.architecture.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0926
+:TIME:         [2026-06-23 Tue 08:34:06]
+:TYPE:         graph.architecture.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       created graph node arch_WZFAX.4
+:NODE_ID:      arch_WZFAX.4
+:END:
+
+* TX 2026-06-23 Tue 08:38:53 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0927
+:TIME:         [2026-06-23 Tue 08:38:53]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_B4147
+:NODE_ID:      dec_B4147
+:END:

@@ -188,6 +188,34 @@ separate single-target runtime-bundles.yml dispatch; apps build via dispatch to
 the decoupled apps release. Replaces the deleted tag-driven release-runtime.yml
 for the stable runtime line.
 
+** arch_WZFAX.4 apps publish pipeline
+:PROPERTIES:
+:ID:                 arch_WZFAX.4
+:SOURCE_PATHS:       scripts/publish-apps.sh
+:TESTS:              bash -n scripts/publish-apps.sh; bash scripts/publish-apps.sh --dry-run
+:READS:
+:WRITES:
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:
+:MOTIVATED_BY:       dec_B4147
+:DEPENDS_ON:         arch_WZFAX.2
+:END:
+
+Local-first apps publish (dec_B4147 amendment): mirrors arch_WZFAX.3 for the app
+line. Builds the maintainer-buildable app targets on one macOS host — the
+darwin-arm macOS app (.dmg + Tauri minisign updater .app.tar.gz/.sig) and the
+android-aarch64 APK — signing with the keys in ~/.tauri (orgasmic-updater.key for
+the desktop updater; org-shell upload keystore for the APK). Self-sets the
+Homebrew-managed Android SDK/NDK + JDK 17 (routing around a stale ANDROID_HOME)
+and snapshot+restores the stamped tauri.android.conf.json versionCode so the tree
+stays clean. MERGES only the built targets onto the `apps` release with
+--latest=false (the runtime `stable` release keeps the latest badge). The CI
+release-macos.yml/release-android.yml stay as the dispatch fallback; only the
+Windows runtime genuinely must stay CI.
+
 * arch_QFQTD Project registry and task store
 :PROPERTIES:
 :ID:                 arch_QFQTD

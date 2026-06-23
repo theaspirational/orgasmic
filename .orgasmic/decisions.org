@@ -1476,3 +1476,20 @@ Mechanisms:
 - CI Actions artifact retention set to 1 day; existing stale artifacts purged.
 
 Consequences: A typical CLI fix releases from the maintainer's machine in minutes with no CI queue and a hardened glibc floor — directly shortening the path the systemd bug exposed. The stable-tag race and the version/asset mismatch are eliminated. App builds become deliberate, occasional, separately-versioned events off the CLI critical path, cutting runner cost. Trade-off: Windows runtime lags until a manual CI dispatch refreshes it (acceptable while Windows downloads are ~0; the per-target version keeps the manifest truthful meanwhile). Local builds rely on maintainer-side toolchain (zig + cargo-zigbuild; Docker for linux smoke) and the ~/.tauri signing material; the clean-tree guard preserves provenance.
+Amendment (2026-06-23, TASK-2Q7RQ): Extend the local-first model from the runtime
+to the apps line. Mechanism #2 ("apps -> CI dispatch only") is refined: BOTH the
+darwin-arm macOS app and the android-aarch64 APK are now buildable AND signable on
+the maintainer's macOS host, so the apps get a local-first publisher too —
+scripts/publish-apps.sh (arch_WZFAX.4), the app-line mirror of publish-runtime.sh:
+clean-tree+HEAD==origin guard -> build (tauri:bundle:mac / tauri:android:build,
+tauri builds the UI via beforeBuildCommand) -> sign (orgasmic-updater.key minisign
+for the desktop updater artifact; org-shell upload keystore for the APK) -> MERGE
+only the built targets onto the `apps` release with --latest=false (stable keeps
+the latest badge). It self-sets the Homebrew Android SDK/NDK + JDK 17 (routing
+around a stale ANDROID_HOME) and snapshot+restores the stamped
+tauri.android.conf.json versionCode so the tree stays clean. Parity note: like CI,
+the macOS app is NOT Apple-notarized (only the Tauri minisign updater signature);
+notarization remains a separate additive improvement. release-macos.yml /
+release-android.yml stay as the dispatch FALLBACK (proven, heavier). Net principle,
+unchanged in spirit: build locally whatever the Mac can sign; keep CI only for what
+it genuinely cannot — which is now ONLY the Windows runtime (MSVC).
