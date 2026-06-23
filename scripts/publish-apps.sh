@@ -175,7 +175,11 @@ if [[ "$BUILD_MAC" == "1" ]]; then
     export TAURI_SIGNING_PRIVATE_KEY="$(cat "$UPDATER_KEY")"
     export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$(cat "$UPDATER_PW")"
 
-    npm --prefix ui run tauri:bundle:mac
+    # CI=1 makes tauri-bundler invoke create-dmg with --skip-jenkins, which skips
+    # the Finder/AppleScript "prettify" pass in bundle_dmg.sh. That pass needs a
+    # logged-in Aqua session and fails in a non-GUI/headless shell; GitHub's macOS
+    # runner sets CI=true, so this just matches the CI build's DMG behavior.
+    CI=true npm --prefix ui run tauri:bundle:mac
 
     bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
     dmg_path="$(find "$bundle/dmg" -name 'orgasmic_*_aarch64.dmg' -print -quit 2>/dev/null || true)"
