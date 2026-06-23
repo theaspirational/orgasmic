@@ -90,9 +90,11 @@ jobs:
             );
             process.exit(1);
           }
-          // Monotonic Android versionCode from semver: major*10000 + minor*100 + patch.
-          const versionCode =
-            Number(match[1]) * 10000 + Number(match[2]) * 100 + Number(match[3]);
+          // Monotonic Android versionCode = build-time epoch seconds — one scale
+          // shared with local (publish-apps.sh) and the nightly workflow, so every
+          // later build (nightly or stable) sorts above earlier ones and channel
+          // switches stay in-place updates. Fits signed int32 until 2038. dec_B4147.
+          const versionCode = Math.floor(Date.now() / 1000);
 
           if (inputVersion) {
             tauriConfig.version = version;

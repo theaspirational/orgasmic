@@ -308,25 +308,17 @@ if [[ "$BUILD_ANDROID" == "1" ]]; then
         echo "storeFile=$JKS"
     } > src-tauri/gen/android/keystore.properties   # gitignored
 
-    # Monotonic versionCode, stamped into the tracked android config.
-    # Snapshot+restore (via the EXIT trap) keeps the working tree clean.
-    # Stable: small semver-derived code (major*10000+minor*100+patch). Nightly:
-    # epoch seconds — a monotonic code distinguishing successive nightlies that
-    # fits a signed 32-bit versionCode (until 2038); the semver-prefix code would
-    # collide across same-day nightlies. NOTE: local nightly codes (~1.7e9) are
-    # far above CI's run-derived codes, so going from a local nightly back to a
-    # CI nightly needs a reinstall (Android blocks versionCode downgrades). dec_B4147.
+    # Monotonic versionCode, stamped into the tracked android config (snapshot+
+    # restored via the EXIT trap). Build-time epoch seconds for BOTH channels —
+    # ONE scale shared with the CI workflows (nightly-android / release-android),
+    # so every later build (nightly or stable, local or CI) sorts above earlier
+    # ones and channel switches stay in-place updates (no reinstall). Fits a
+    # signed 32-bit versionCode until 2038. dec_B4147.
     RESTORE_ANDROID_TREE=1
-    VERSION_CODE="$(VERSION="$VERSION" CHANNEL="$CHANNEL" node <<'NODE'
+    VERSION_CODE="$(node <<'NODE'
 const fs = require('node:fs');
 const p = 'src-tauri/tauri.android.conf.json';
-let code;
-if (process.env.CHANNEL === 'nightly') {
-  code = Math.floor(Date.now() / 1000);
-} else {
-  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(process.env.VERSION);
-  code = Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]);
-}
+const code = Math.floor(Date.now() / 1000);
 const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
 cfg.bundle.android.versionCode = code;
 fs.writeFileSync(p, `${JSON.stringify(cfg, null, 2)}\n`);

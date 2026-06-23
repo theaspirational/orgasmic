@@ -70,10 +70,11 @@ jobs:
           const fs = require('node:fs');
 
           const runNumber = Number(process.env.GITHUB_RUN_NUMBER || '0');
-          const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT || '1');
-          // Android requires a monotonic integer versionCode independent of the
-          // human-facing semver string; keep the run-derived counter.
-          const versionCode = runNumber * 100 + runAttempt;
+          // Android requires a monotonic integer versionCode. Build-time epoch
+          // seconds gives ONE scale shared by local (publish-apps.sh) and CI
+          // builds, so every later build sorts above earlier ones and channel
+          // switches stay in-place updates. Fits signed int32 until 2038. dec_B4147.
+          const versionCode = Math.floor(Date.now() / 1000);
 
           const tauriPath = 'src-tauri/tauri.conf.json';
           const tauriConfig = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
