@@ -13,8 +13,9 @@
 
 set -euo pipefail
 
-TAG="apps"
+TAG=""            # default derived from CHANNEL after arg parsing
 TARGET="all"
+CHANNEL="stable"
 REPO="${ORGASMIC_RELEASE_REPO:-}"
 DRY_RUN=0
 ALLOW_HEAD_MISMATCH="${ORGASMIC_PUBLISH_ALLOW_HEAD_MISMATCH:-0}"
@@ -31,8 +32,11 @@ Builds + signs the macOS app and/or the Android APK locally and merges them onto
 the `apps` release. App version comes from src-tauri/tauri.conf.json.
 
 Options:
+  --channel <stable|nightly>  stable -> `apps` tag (version from tauri.conf.json);
+                              nightly -> `apps-nightly` tag, version
+                              <base>-nightly.<UTCdate>.<epoch> (default: stable)
   --target <mac|android|all>  Which app(s) to build/publish (default: all)
-  --tag <tag>                 Release tag to publish to (default: apps)
+  --tag <tag>                 Release tag override (default: derived from --channel)
   --repo <owner/name>         GitHub repo (default: gh repo view / ORGASMIC_RELEASE_REPO)
   --dry-run                   Build + sign + stage, but do NOT touch the release
   -h, --help                  Show this help
@@ -50,6 +54,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --channel) CHANNEL="$2"; shift 2 ;;
         --target) TARGET="$2"; shift 2 ;;
         --tag) TAG="$2"; shift 2 ;;
         --repo) REPO="$2"; shift 2 ;;
@@ -63,6 +68,15 @@ case "$TARGET" in
     mac|android|all) ;;
     *) echo "error: --target must be one of: mac, android, all" >&2; exit 1 ;;
 esac
+case "$CHANNEL" in
+    stable|nightly) ;;
+    *) echo "error: --channel must be one of: stable, nightly" >&2; exit 1 ;;
+esac
+# Tag defaults from the channel: the app line is namespaced (dec_B4147) —
+# stable -> `apps`, nightly -> `apps-nightly`. --tag overrides for test tags.
+if [[ -z "$TAG" ]]; then
+    [[ "$CHANNEL" == "nightly" ]] && TAG="apps-nightly" || TAG="apps"
+fi
 BUILD_MAC=0; BUILD_ANDROID=0
 [[ "$TARGET" == "mac" || "$TARGET" == "all" ]] && BUILD_MAC=1
 [[ "$TARGET" == "android" || "$TARGET" == "all" ]] && BUILD_ANDROID=1
@@ -112,9 +126,16 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.+].*)?$ ]]; then
     echo "error: invalid app version in src-tauri/tauri.conf.json: '$VERSION'" >&2
     exit 1
 fi
+# Nightly = SemVer 2.0 prerelease of the in-dev app version:
+# <base>-nightly.<UTCdate>.<epoch> (mirrors nightly-macos.yml/nightly-android.yml;
+# epoch seconds is a monotonic local stand-in for the CI run number). dec_B4147.
+if [[ "$CHANNEL" == "nightly" ]]; then
+    VERSION="$(BASE="$VERSION" node -e 'const b=process.env.BASE;const d=new Date();const D=`${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,"0")}${String(d.getUTCDate()).padStart(2,"0")}`;process.stdout.write(`${b}-nightly.${D}.${Math.floor(d.getTime()/1000)}`)')"
+fi
 
 echo "→ repo    = $REPO"
 echo "→ tag     = $TAG"
+echo "→ channel = $CHANNEL"
 echo "→ version = $VERSION"
 echo "→ targets = $([[ $BUILD_MAC == 1 ]] && printf 'mac ')$([[ $BUILD_ANDROID == 1 ]] && printf 'android')"
 [[ "$DRY_RUN" == "1" ]] && echo "→ DRY RUN (no release changes)"
@@ -144,13 +165,35 @@ echo "✓ clean tree at $HEAD_SHA"
 # exit so a published run leaves no local drift behind.
 ANDROID_CONF="src-tauri/tauri.android.conf.json"
 RESTORE_ANDROID_TREE=0
+RESTORE_VERSION_FILES=0
 cleanup() {
     if [[ "$RESTORE_ANDROID_TREE" == "1" ]]; then
         git checkout -- "$ANDROID_CONF" 2>/dev/null || true
         git checkout -- src-tauri/gen/android 2>/dev/null || true
     fi
+    if [[ "$RESTORE_VERSION_FILES" == "1" ]]; then
+        git checkout -- src-tauri/tauri.conf.json ui/package.json 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
+
+# Nightly: stamp the prerelease version into the app config so the BUILT app
+# embeds it. The Tauri updater compares the installed app's OWN version against
+# the manifest; without stamping, every nightly check would re-offer the same
+# build forever. Snapshot-restored on exit via the trap; stable builds use the
+# committed version untouched. dec_B4147.
+if [[ "$CHANNEL" == "nightly" ]]; then
+    RESTORE_VERSION_FILES=1
+    VERSION="$VERSION" node -e '
+const fs = require("node:fs");
+const v = process.env.VERSION;
+for (const p of ["src-tauri/tauri.conf.json", "ui/package.json"]) {
+  const j = JSON.parse(fs.readFileSync(p, "utf8"));
+  j.version = v;
+  fs.writeFileSync(p, `${JSON.stringify(j, null, 2)}\n`);
+}'
+    echo "→ stamped nightly version into tauri.conf.json + ui/package.json (restored on exit)"
+fi
 
 OUT_DIR="dist/apps"
 rm -rf "$OUT_DIR"
@@ -265,14 +308,25 @@ if [[ "$BUILD_ANDROID" == "1" ]]; then
         echo "storeFile=$JKS"
     } > src-tauri/gen/android/keystore.properties   # gitignored
 
-    # Monotonic versionCode from semver, stamped into the tracked android config.
+    # Monotonic versionCode, stamped into the tracked android config.
     # Snapshot+restore (via the EXIT trap) keeps the working tree clean.
+    # Stable: small semver-derived code (major*10000+minor*100+patch). Nightly:
+    # epoch seconds — a monotonic code distinguishing successive nightlies that
+    # fits a signed 32-bit versionCode (until 2038); the semver-prefix code would
+    # collide across same-day nightlies. NOTE: local nightly codes (~1.7e9) are
+    # far above CI's run-derived codes, so going from a local nightly back to a
+    # CI nightly needs a reinstall (Android blocks versionCode downgrades). dec_B4147.
     RESTORE_ANDROID_TREE=1
-    VERSION_CODE="$(VERSION="$VERSION" node <<'NODE'
+    VERSION_CODE="$(VERSION="$VERSION" CHANNEL="$CHANNEL" node <<'NODE'
 const fs = require('node:fs');
 const p = 'src-tauri/tauri.android.conf.json';
-const m = /^(\d+)\.(\d+)\.(\d+)/.exec(process.env.VERSION);
-const code = Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]);
+let code;
+if (process.env.CHANNEL === 'nightly') {
+  code = Math.floor(Date.now() / 1000);
+} else {
+  const m = /^(\d+)\.(\d+)\.(\d+)/.exec(process.env.VERSION);
+  code = Number(m[1]) * 10000 + Number(m[2]) * 100 + Number(m[3]);
+}
 const cfg = JSON.parse(fs.readFileSync(p, 'utf8'));
 cfg.bundle.android.versionCode = code;
 fs.writeFileSync(p, `${JSON.stringify(cfg, null, 2)}\n`);
@@ -327,14 +381,22 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo ""; echo "=== publishing to $TAG ==="
-title="orgasmic apps ${VERSION}"
-notes="orgasmic app builds ${VERSION} from ${HEAD_SHA}."
-# --latest=false: apps own the dedicated `apps` release; the runtime `stable`
-# release keeps the "latest" badge.
-if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-    gh release edit "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" --latest=false >/dev/null
+# Title: stable carries the version; nightly stays a rolling "orgasmic apps
+# nightly" so repeated local/CI nightly publishes don't churn the title.
+# --latest=false always (apps own the dedicated apps/apps-nightly releases; the
+# runtime `stable` release keeps the "latest" badge); nightly is a --prerelease.
+if [[ "$CHANNEL" == "nightly" ]]; then
+    title="orgasmic apps nightly"
+    relflags=(--latest=false --prerelease)
 else
-    gh release create "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" --latest=false
+    title="orgasmic apps ${VERSION}"
+    relflags=(--latest=false)
+fi
+notes="orgasmic app builds ${VERSION} from ${HEAD_SHA}."
+if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+    gh release edit "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" "${relflags[@]}" >/dev/null
+else
+    gh release create "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" "${relflags[@]}"
 fi
 
 # Version-less asset names (dec_B4147): --clobber overwrites each built target's

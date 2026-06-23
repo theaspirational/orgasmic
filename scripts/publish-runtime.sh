@@ -11,8 +11,9 @@
 
 set -euo pipefail
 
-TAG="stable"
+TAG=""            # default derived from CHANNEL after arg parsing
 VERSION=""
+CHANNEL="stable"
 REPO="${ORGASMIC_RELEASE_REPO:-}"
 GLIBC_FLOOR="2.17"
 BUNDLE_ID="${ORGASMIC_CODESIGN_BUNDLE_ID:-com.theaspirational.orgasmic}"
@@ -28,7 +29,10 @@ Builds + signs + smoke-tests darwin-aarch64, darwin-x86_64, linux-x86_64 and
 linux-aarch64, then merges them into the release's runtime-latest.json.
 
 Options:
-  --tag <tag>          Release tag to publish to (default: stable)
+  --channel <stable|nightly>  stable -> `stable` tag (version from Cargo.toml);
+                       nightly -> `nightly` tag, version
+                       <base>-nightly.<UTCdate>.<epoch> (default: stable)
+  --tag <tag>          Release tag override (default: derived from --channel)
   --version <v>        Version to stamp (default: workspace.package version)
   --repo <owner/name>  GitHub repo (default: gh repo view / ORGASMIC_RELEASE_REPO)
   --glibc <version>    glibc floor for linux zigbuild (default: 2.17)
@@ -45,6 +49,7 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --channel) CHANNEL="$2"; shift 2 ;;
         --tag) TAG="$2"; shift 2 ;;
         --version) VERSION="$2"; shift 2 ;;
         --repo) REPO="$2"; shift 2 ;;
@@ -87,6 +92,16 @@ for t in x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu;
     fi
 done
 
+case "$CHANNEL" in
+    stable|nightly) ;;
+    *) echo "error: --channel must be one of: stable, nightly" >&2; exit 1 ;;
+esac
+# Tag defaults from the channel: stable -> `stable`, nightly -> `nightly`.
+# --tag overrides for throwaway test tags. Windows is refreshed separately by a
+# manual runtime-bundles.yml dispatch for EITHER channel (macOS can't build it).
+if [[ -z "$TAG" ]]; then
+    [[ "$CHANNEL" == "nightly" ]] && TAG="nightly" || TAG="stable"
+fi
 if [[ -z "$REPO" ]]; then
     REPO="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
 fi
@@ -97,9 +112,16 @@ if [[ -z "$VERSION" ]]; then
     echo "error: could not resolve version from Cargo.toml [workspace.package]" >&2
     exit 1
 fi
+# Nightly = SemVer 2.0 prerelease of the in-dev runtime version:
+# <base>-nightly.<UTCdate>.<epoch> (mirrors runtime-bundles.yml; epoch seconds is
+# a monotonic local stand-in for the CI run number). dec_B4147.
+if [[ "$CHANNEL" == "nightly" ]]; then
+    VERSION="$(BASE="$VERSION" node -e 'const b=process.env.BASE;const d=new Date();const D=`${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,"0")}${String(d.getUTCDate()).padStart(2,"0")}`;process.stdout.write(`${b}-nightly.${D}.${Math.floor(d.getTime()/1000)}`)')"
+fi
 
 echo "→ repo    = $REPO"
 echo "→ tag     = $TAG"
+echo "→ channel = $CHANNEL"
 echo "→ version = $VERSION"
 echo "→ glibc   = $GLIBC_FLOOR"
 [[ "$DRY_RUN" == "1" ]] && echo "→ DRY RUN (no release changes)"
@@ -137,6 +159,7 @@ P12="$TAURI_DIR/orgasmic-codesign.p12"
 P12_PW_FILE="$TAURI_DIR/orgasmic-codesign.p12.password"
 KEYCHAIN=""
 ORIG_KEYCHAINS="$(security list-keychains -d user | sed 's/"//g' | xargs || true)"
+RESTORE_VERSION_FILES=0
 
 cleanup() {
     if [[ -n "$KEYCHAIN" ]]; then
@@ -144,8 +167,26 @@ cleanup() {
         [[ -n "$ORIG_KEYCHAINS" ]] && security list-keychains -d user -s $ORIG_KEYCHAINS >/dev/null 2>&1 || true
         security delete-keychain "$KEYCHAIN" >/dev/null 2>&1 || true
     fi
+    if [[ "$RESTORE_VERSION_FILES" == "1" ]]; then
+        git checkout -- Cargo.toml Cargo.lock 2>/dev/null || true
+    fi
 }
 trap cleanup EXIT
+
+# Nightly: stamp the prerelease version into Cargo.toml [workspace.package] so the
+# built binary reports it (orgasmic --version) and the in-bundle runtime-manifest
+# matches the channel manifest. The cross builds refresh Cargo.lock; both are
+# snapshot-restored on exit via the trap. Stable builds use the committed version
+# untouched. dec_B4147.
+if [[ "$CHANNEL" == "nightly" ]]; then
+    RESTORE_VERSION_FILES=1
+    # sed range: end pattern is searched from the line AFTER the start, so the
+    # `[workspace.package]` header (which also starts with `[`) doesn't collapse
+    # the range; the version line within the section is rewritten. macOS sed needs
+    # the empty `-i ''` backup arg (this script is Darwin-only).
+    sed -i '' '/^\[workspace.package\]/,/^\[/ s/^version = "[^"]*"/version = "'"$VERSION"'"/' Cargo.toml
+    echo "→ stamped nightly version into Cargo.toml [workspace.package] (restored on exit)"
+fi
 
 if [[ -f "$P12" && -f "$P12_PW_FILE" ]]; then
     echo "→ importing codesign identity from $P12"
@@ -331,10 +372,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo ""; echo "=== publishing to $TAG ==="
-# Refresh release metadata on EVERY publish so a rolling release (e.g. `stable`)
-# never strands an old version in its title/notes. Title carries the headline
-# version (matches the apps release); notes record version + commit. dec_B4147.
-title="orgasmic $VERSION"
+# Refresh release metadata on EVERY publish so a rolling release never strands an
+# old version. Stable carries the headline version in its title (matches the apps
+# release); nightly stays a rolling "orgasmic nightly" so repeated local/CI nightly
+# publishes don't churn the title. Notes always record version + commit. dec_B4147.
+if [[ "$TAG" == "stable" ]]; then title="orgasmic $VERSION"; else title="orgasmic $TAG"; fi
 notes="Runtime bundles $VERSION ($HEAD_SHA)."
 meta=(--title "$title" --notes "$notes" --target "$HEAD_SHA")
 if [[ "$TAG" == "stable" ]]; then meta+=(--latest=true --prerelease=false); else meta+=(--latest=false --prerelease=true); fi
