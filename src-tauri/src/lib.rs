@@ -105,14 +105,16 @@ fn runtime_launch_url() -> Result<String, String> {
 
 #[tauri::command]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn update_runtime() -> Result<String, String> {
+fn update_runtime(channel: String) -> Result<String, String> {
     let cli = discover_cli().ok_or_else(|| "orgasmic CLI is not installed".to_string())?;
-    command_stdout(&cli, &["update"])
+    // Keep the runtime on the same channel the app user selected, so switching
+    // the app's channel toggle moves both the app and its runtime together.
+    command_stdout(&cli, &["update", "--channel", &channel])
 }
 
 #[tauri::command]
 #[cfg(any(target_os = "android", target_os = "ios"))]
-fn update_runtime() -> Result<String, String> {
+fn update_runtime(_channel: String) -> Result<String, String> {
     Err("local CLI runtime is not available on mobile".to_string())
 }
 

@@ -68,11 +68,18 @@ jobs:
 
           const runNumber = Number(process.env.GITHUB_RUN_NUMBER || '0');
           const runAttempt = Number(process.env.GITHUB_RUN_ATTEMPT || '1');
+          // Android requires a monotonic integer versionCode independent of the
+          // human-facing semver string; keep the run-derived counter.
           const versionCode = runNumber * 100 + runAttempt;
-          const version = `0.99.${versionCode}`;
 
           const tauriPath = 'src-tauri/tauri.conf.json';
           const tauriConfig = JSON.parse(fs.readFileSync(tauriPath, 'utf8'));
+          // Nightly = SemVer 2.0 prerelease of the next (in-development) app version
+          // in tauri.conf.json: <base>-nightly.<YYYYMMDD>.<run>. dec_B4147 versioning amendment.
+          const base = tauriConfig.version;
+          const now = new Date();
+          const date = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, '0')}${String(now.getUTCDate()).padStart(2, '0')}`;
+          const version = `${base}-nightly.${date}.${runNumber}`;
           tauriConfig.version = version;
           fs.writeFileSync(tauriPath, `${JSON.stringify(tauriConfig, null, 2)}\n`);
 

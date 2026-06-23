@@ -102,6 +102,10 @@ Examples:
         branch: String,
         #[arg(long)]
         no_build: bool,
+        /// Switch the runtime release channel (e.g. stable, nightly) and install
+        /// that channel's head. Without it, the currently pinned channel is used.
+        #[arg(long)]
+        channel: Option<String>,
     },
     /// Per-project commands.
     Project {
@@ -769,7 +773,11 @@ fn main() -> Result<()> {
             no_modify_path,
         ),
         Cmd::Path { cmd } => cmd_path(&home, cmd),
-        Cmd::Update { branch, no_build } => update::run(&home, &branch, !no_build),
+        Cmd::Update {
+            branch,
+            no_build,
+            channel,
+        } => update::run(&home, &branch, !no_build, channel),
         Cmd::Project { cmd } => match cmd {
             ProjectCmd::Init {
                 path,

@@ -1493,3 +1493,29 @@ notarization remains a separate additive improvement. release-macos.yml /
 release-android.yml stay as the dispatch FALLBACK (proven, heavier). Net principle,
 unchanged in spirit: build locally whatever the Mac can sign; keep CI only for what
 it genuinely cannot — which is now ONLY the Windows runtime (MSVC).
+Amendment 2 (2026-06-23, versioning): Unify channel versioning on SemVer 2.0
+prerelease tags. The CHANNEL is the release tag / updater feed, NEVER encoded in
+the version number. Replaces the nightly hack 0.99.<run*100+attempt> — a second,
+inflated scheme that made nightly look newer/more mature than stable and broke
+the nightly->stable comparison.
+- stable: X.Y.Z (runtime from Cargo.toml [workspace.package]; app from tauri.conf.json).
+- nightly: <base>-nightly.<YYYYMMDD>.<run>, a prerelease of the NEXT in-development
+  version. SemVer orders it correctly: last-stable < <base>-nightly.* < <base>
+  (next stable), so a nightly user rolls cleanly onto the next stable instead of
+  being stranded above it.
+- Convention: the repo holds the next in-dev version, bumped after each release.
+  Now runtime=0.0.6, app=0.0.5. publish-runtime.sh/publish-apps.sh publish the
+  stripped X.Y.Z; nightly workflows append the prerelease suffix (runtime-bundles.yml
+  derives base from Cargo.toml; nightly-macos/android from tauri.conf.json).
+- Android keeps a separate monotonic integer versionCode (run-derived) as the
+  platform requires; nightly->stable on Android still needs a reinstall (Android
+  blocks a versionCode downgrade) — acceptable for the sideload surface.
+- Channel switching (single channel-aware app, as decided): the app already queries
+  releases/download/<channel>/latest.json with an equality comparator
+  (release.version != current) so an explicit switch surfaces even when the target's
+  semver is lower. Added: `orgasmic update --channel <stable|nightly>` re-pins +
+  installs the runtime channel head (runtime updater is equality-based, recomputes
+  the manifest URL on switch); the app's update_runtime now forwards the selected
+  channel so app + runtime track one channel together.
+Files: runtime-bundles.yml, nightly-macos.yml, nightly-android.yml, update.rs,
+main.rs, src-tauri/src/lib.rs, ui/src/lib/appUpdate.ts; versions bumped to next in-dev.

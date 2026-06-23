@@ -80,7 +80,11 @@ export async function installAppUpdate(update?: AppUpdateMetadata | null): Promi
   }
 
   await invoke('install_app_update');
-  if (isDesktopTauriApp()) await invoke<string>('update_runtime');
+  // Move the runtime onto the same channel the app was just updated on, so the
+  // app + its CLI/daemon runtime track one channel together.
+  if (isDesktopTauriApp()) {
+    await invoke<string>('update_runtime', { channel: update?.channel ?? 'stable' });
+  }
 }
 
 async function checkAndroidSideloadUpdate(channel: UpdateChannel): Promise<AppUpdateMetadata | null> {

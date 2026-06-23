@@ -52,6 +52,7 @@ jobs:
       version: ${{ steps.v.outputs.version }}
       matrix: ${{ steps.m.outputs.matrix }}
     steps:
+      - uses: actions/checkout@v4
       - id: v
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -59,7 +60,13 @@ jobs:
           set -euo pipefail
           v="${INPUT_VERSION:-}"
           if [ -z "$v" ]; then
-            v="0.99.$(( GITHUB_RUN_NUMBER * 100 + GITHUB_RUN_ATTEMPT ))"
+            # No explicit version => nightly: a SemVer 2.0 prerelease of the next
+            # (in-development) version held in Cargo.toml. Ordering is automatic —
+            # last-stable < <base>-nightly.* < <base> (next stable). The channel is
+            # the release tag, never encoded in the number. dec_B4147 versioning amendment.
+            base="$(sed -n '/^\[workspace.package\]/,/^\[/{ s/^version = "\([^"]*\)".*/\1/p; }' Cargo.toml | head -1)"
+            [ -n "$base" ] || { echo "::error::could not read [workspace.package] version from Cargo.toml"; exit 1; }
+            v="${base}-nightly.$(date -u +%Y%m%d).${GITHUB_RUN_NUMBER}"
           fi
           if ! printf '%s' "$v" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+].*)?$'; then
             echo "::error::version '$v' is not a valid semver"; exit 1

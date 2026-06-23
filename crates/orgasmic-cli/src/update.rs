@@ -46,20 +46,34 @@ struct RuntimeAsset {
     version: Option<String>,
 }
 
-pub fn run(home: &Home, branch: &str, do_build: bool) -> Result<()> {
+pub fn run(home: &Home, branch: &str, do_build: bool, channel: Option<String>) -> Result<()> {
     match install_state::read(home)? {
         Some(state) if state.mode == InstallMode::Bundle => {
-            run_bundle(home, state, branch, do_build)
+            run_bundle(home, state, branch, do_build, channel)
         }
         Some(state) if state.mode == InstallMode::Source => {
+            if channel.is_some() {
+                bail!("--channel only applies to a prebuilt-bundle install, not a source checkout");
+            }
             let source = state.source_checkout.unwrap_or_else(|| home.source());
             run_source(home, &source, branch, do_build)
         }
-        _ => run_source(home, &home.source(), branch, do_build),
+        _ => {
+            if channel.is_some() {
+                bail!("--channel only applies to a prebuilt-bundle install, not a source checkout");
+            }
+            run_source(home, &home.source(), branch, do_build)
+        }
     }
 }
 
-fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) -> Result<()> {
+fn run_bundle(
+    home: &Home,
+    state: InstallState,
+    branch: &str,
+    do_build: bool,
+    channel_override: Option<String>,
+) -> Result<()> {
     if branch != "main" {
         bail!("--branch is only supported for contributor source installs");
     }
@@ -69,14 +83,29 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
 
     home.ensure().context("prepare ORGASMIC_HOME")?;
     let target = state.target.clone().unwrap_or_else(current_target_key);
-    let channel = state
-        .channel
-        .clone()
+    // An explicit --channel switches feeds. The stored manifest_url points at the
+    // OLD channel, so on a switch we recompute it from the channel and skip the
+    // up-to-date short-circuit so the new channel pin is always persisted. The
+    // installer is equality-based (it installs the channel head regardless of
+    // whether its semver is higher or lower), which is exactly what a deliberate
+    // channel switch needs. dec_B4147 versioning amendment.
+    let switching = channel_override
+        .as_deref()
+        .is_some_and(|c| Some(c) != state.channel.as_deref());
+    let channel = channel_override
+        .or_else(|| state.channel.clone())
         .unwrap_or_else(|| "stable".to_string());
-    let manifest_url = state
-        .manifest_url
-        .clone()
-        .unwrap_or_else(|| default_manifest_url(&channel));
+    let manifest_url = if switching {
+        default_manifest_url(&channel)
+    } else {
+        state
+            .manifest_url
+            .clone()
+            .unwrap_or_else(|| default_manifest_url(&channel))
+    };
+    if switching {
+        println!("→ switching runtime channel → {channel}");
+    }
     println!("→ checking {channel} runtime manifest: {manifest_url}");
 
     let manifest_raw = fetch_text(&manifest_url)?;
@@ -94,7 +123,8 @@ fn run_bundle(home: &Home, state: InstallState, branch: &str, do_build: bool) ->
     // Already up to date: the channel advertises the version we already have
     // installed and active, and the daemon is on that managed runtime (no
     // temporary `--from-source` override to clear). Skip the re-download/swap.
-    if state.version.as_deref() == Some(asset_version.as_str())
+    if !switching
+        && state.version.as_deref() == Some(asset_version.as_str())
         && runtime_is_active(home, &asset_version, &target)
         && daemon_runtime::read(home)?.is_none()
     {
@@ -797,7 +827,7 @@ mod tests {
         let skills_dir = tmp.path().join("skills");
         let previous_skills_dir = std::env::var_os("AGENT_SKILLS_DIR");
         std::env::set_var("AGENT_SKILLS_DIR", &skills_dir);
-        let result = run(&home, "main", true);
+        let result = run(&home, "main", true, None);
         if let Some(previous) = previous_skills_dir {
             std::env::set_var("AGENT_SKILLS_DIR", previous);
         } else {
@@ -876,7 +906,7 @@ mod tests {
         let skills_dir = tmp.path().join("skills");
         let previous_skills_dir = std::env::var_os("AGENT_SKILLS_DIR");
         std::env::set_var("AGENT_SKILLS_DIR", &skills_dir);
-        let result = run(&home, "main", true);
+        let result = run(&home, "main", true, None);
         if let Some(previous) = previous_skills_dir {
             std::env::set_var("AGENT_SKILLS_DIR", previous);
         } else {
@@ -933,7 +963,7 @@ mod tests {
 
         // Same version, active runtime, no override -> no-op success without
         // touching the (unfetchable) asset URL.
-        run(&home, "main", true).unwrap();
+        run(&home, "main", true, None).unwrap();
 
         assert_eq!(
             std::fs::read_link(home.current_runtime()).unwrap(),
@@ -966,7 +996,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = run(&home, "main", true).unwrap_err().to_string();
+        let err = run(&home, "main", true, None).unwrap_err().to_string();
         assert!(err.contains("checksum mismatch"), "{err}");
         assert!(!home.current_runtime().exists());
     }
