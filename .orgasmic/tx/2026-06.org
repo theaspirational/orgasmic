@@ -14573,3 +14573,32 @@
 :REASON:       edited decision node dec_B4147
 :NODE_ID:      dec_B4147
 :END:
+
+* TX 2026-06-23 Tue 08:54:59 task.edited TASK-2Q7RQ
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0928
+:TIME:         [2026-06-23 Tue 08:54:59]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2Q7RQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-2Q7RQ
+:NODE_ID:      TASK-2Q7RQ
+:END:
+
+* TX 2026-06-23 Tue 08:55:00 task.state_transitioned TASK-2Q7RQ
+:PROPERTIES:
+:TX_ID:        tx-20260623-orgasmic-0929
+:TIME:         [2026-06-23 Tue 08:55:00]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2Q7RQ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       dec_B4147 rollout complete: windows runtime refreshed, apps release populated, stale stable assets retired, publish-apps.sh built+validated (mac+android) with dec_B4147 amendment
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
