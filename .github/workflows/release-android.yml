@@ -170,7 +170,10 @@ jobs:
             exit 1
           fi
 
-          android_apk_name="orgasmic_${APPS_VERSION}_${ANDROID_VERSION_CODE}_android_aarch64.apk"
+          # Version-less name (dec_B4147): version + versionCode live in
+          # android-latest.json (and inside the APK), so each publish clobbers the
+          # same file and nothing orphans.
+          android_apk_name="orgasmic_android_aarch64.apk"
           cp "${apk_path}" "dist/apps/${android_apk_name}"
 
           apk_sha256="$(shasum -a 256 "dist/apps/${android_apk_name}" | awk '{print $1}')"
@@ -220,13 +223,6 @@ jobs:
               --latest=false
           fi
 
-          gh release view "${APPS_TAG}" --json assets --jq '.assets[].name' |
-            while IFS= read -r asset; do
-              case "${asset}" in
-                orgasmic_*_android_*.apk|android-latest.json)
-                  gh release delete-asset "${APPS_TAG}" "${asset}" --yes
-                  ;;
-              esac
-            done
-
+          # Version-less asset names (dec_B4147): --clobber overwrites in place,
+          # so nothing orphans and there is no delete/prune step.
           gh release upload "${APPS_TAG}" dist/apps/* --clobber

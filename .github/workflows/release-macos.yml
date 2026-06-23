@@ -118,7 +118,9 @@ jobs:
             exit 1
           fi
 
-          cp "${dmg_path}" "dist/apps/orgasmic_${APPS_VERSION}_aarch64.dmg"
+          # Version-less asset name (dec_B4147): version lives in latest.json, so
+          # each publish clobbers the same file and nothing orphans.
+          cp "${dmg_path}" "dist/apps/orgasmic_darwin_aarch64.dmg"
           cp "${update_path}" dist/apps/orgasmic.app.tar.gz
           cp "${signature_path}" dist/apps/orgasmic.app.tar.gz.sig
 
@@ -170,13 +172,6 @@ jobs:
               --latest=false
           fi
 
-          gh release view "${APPS_TAG}" --json assets --jq '.assets[].name' |
-            while IFS= read -r asset; do
-              case "${asset}" in
-                orgasmic_*_aarch64.dmg|orgasmic.app.tar.gz|orgasmic.app.tar.gz.sig|latest.json)
-                  gh release delete-asset "${APPS_TAG}" "${asset}" --yes
-                  ;;
-              esac
-            done
-
+          # Version-less asset names (dec_B4147): --clobber overwrites in place,
+          # so nothing orphans and there is no delete/prune step.
           gh release upload "${APPS_TAG}" dist/apps/* --clobber

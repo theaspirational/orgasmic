@@ -25,19 +25,6 @@ export type AppUpdateMetadata = {
 
 type DesktopAppUpdateMetadata = Omit<AppUpdateMetadata, 'platform'>;
 
-type GitHubReleaseAsset = {
-  name: string;
-  browser_download_url: string;
-};
-
-type GitHubRelease = {
-  body?: string | null;
-  published_at?: string | null;
-  assets?: GitHubReleaseAsset[];
-};
-
-const ANDROID_APK_ASSET_PATTERN = /^orgasmic_(?<version>[^_]+)_(?<versionCode>\d+)_android_[^/]+\.apk$/;
-
 function isMobileUserAgent(): boolean {
   return typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
@@ -87,18 +74,25 @@ export async function installAppUpdate(update?: AppUpdateMetadata | null): Promi
   }
 }
 
+// Version lives in android-latest.json (dec_B4147), not the APK filename — the
+// APK is the version-less orgasmic_android_aarch64.apk. Read the manifest for the
+// version + signed apkUrl rather than scraping release assets by name.
+type AndroidManifest = {
+  version?: string;
+  versionCode?: number;
+  apkUrl?: string;
+  notes?: string;
+  pubDate?: string;
+};
+
 async function checkAndroidSideloadUpdate(channel: UpdateChannel): Promise<AppUpdateMetadata | null> {
   const currentVersion = await getVersion();
-  const release = await fetchGitHubRelease(channel);
-  if (!release) return null;
+  const manifest = await fetchAndroidManifest(channel);
+  if (!manifest) return null;
 
-  const apk = findAndroidApkAsset(release.assets ?? []);
-  if (!apk) return null;
-
-  const match = ANDROID_APK_ASSET_PATTERN.exec(apk.name);
-  const version = match?.groups?.version;
-  if (!version) {
-    throw new Error(`Android APK asset name must match orgasmic_<version>_<versionCode>_android_<target>.apk`);
+  const { version, apkUrl } = manifest;
+  if (!version || !apkUrl) {
+    throw new Error('android-latest.json must carry both version and apkUrl');
   }
   if (version === currentVersion) return null;
 
@@ -107,27 +101,19 @@ async function checkAndroidSideloadUpdate(channel: UpdateChannel): Promise<AppUp
     currentVersion,
     version,
     platform: 'android-sideload',
-    downloadUrl: apk.browser_download_url,
-    notes: release.body ?? undefined,
-    pubDate: release.published_at ?? undefined,
-    versionCode: Number(match?.groups?.versionCode),
+    downloadUrl: apkUrl,
+    notes: manifest.notes ?? undefined,
+    pubDate: manifest.pubDate ?? undefined,
+    versionCode: typeof manifest.versionCode === 'number' ? manifest.versionCode : undefined,
   };
 }
 
-async function fetchGitHubRelease(channel: UpdateChannel): Promise<GitHubRelease | null> {
-  const url = `https://api.github.com/repos/${UPDATE_REPO}/releases/tags/${channel}`;
+async function fetchAndroidManifest(channel: UpdateChannel): Promise<AndroidManifest | null> {
+  const url = `https://github.com/${UPDATE_REPO}/releases/download/${channel}/android-latest.json`;
   const response = await fetch(url, { cache: 'no-store' });
   if (response.status === 404) return null;
   if (!response.ok) {
-    throw new Error(`GitHub release request failed: ${response.status} ${response.statusText}`);
+    throw new Error(`Android manifest request failed: ${response.status} ${response.statusText}`);
   }
-  return response.json() as Promise<GitHubRelease>;
-}
-
-function findAndroidApkAsset(assets: GitHubReleaseAsset[]): GitHubReleaseAsset | null {
-  return (
-    assets.find((asset) => ANDROID_APK_ASSET_PATTERN.test(asset.name)) ??
-    assets.find((asset) => asset.name.includes('_android_') && asset.name.endsWith('.apk')) ??
-    null
-  );
+  return response.json() as Promise<AndroidManifest>;
 }

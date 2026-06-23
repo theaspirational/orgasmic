@@ -280,9 +280,10 @@ let manifest = {};
 try { manifest = JSON.parse(fs.readFileSync(EXISTING, 'utf8')) || {}; } catch { manifest = {}; }
 if (!manifest.runtimes || typeof manifest.runtimes !== 'object') manifest.runtimes = {};
 
-// Recover the target key from the asset suffix (os '-' arch; arch may contain '_').
+// Version-less asset name (dec_B4147): orgasmic-runtime_<os>_<arch>.tar.gz.
+// Recover the target key as os '-' arch (arch may contain '_', e.g. x86_64).
 const keyFromName = (f) => {
-  const m = f.match(/^orgasmic-runtime_.+?_([a-z0-9]+)_(.+)\.tar\.gz$/);
+  const m = f.match(/^orgasmic-runtime_([a-z0-9]+)_(.+)\.tar\.gz$/);
   return m ? `${m[1]}-${m[2]}` : null;
 };
 
@@ -336,21 +337,9 @@ if ! gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
     gh release create "$TAG" -R "$REPO" "${flags[@]}"
 fi
 
-# Delete ONLY the assets we are replacing (built target tarballs + sha256 + the
-# manifest). Other targets (e.g. windows-x86_64) are left intact — merge, not clobber.
-existing_assets="$(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name')"
-delete_asset() {
-    local name="$1"
-    if printf '%s\n' "$existing_assets" | grep -qx "$name"; then
-        gh release delete-asset "$TAG" "$name" -R "$REPO" --yes
-    fi
-}
-for t in "${BUILT_TARBALLS[@]}"; do
-    delete_asset "$t"
-    delete_asset "$t.sha256"
-done
-delete_asset "runtime-latest.json"
-
+# Version-less asset names (dec_B4147): --clobber overwrites each built target's
+# one asset in place; other targets (e.g. windows-x86_64) keep their existing asset
+# (merge, not clobber). Nothing ever orphans, so there is no delete/prune step.
 upload=("$OUT_DIR/runtime-latest.json")
 for t in "${BUILT_TARBALLS[@]}"; do
     upload+=("$OUT_DIR/$t" "$OUT_DIR/$t.sha256")

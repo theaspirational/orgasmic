@@ -103,7 +103,9 @@ jobs:
             exit 1
           fi
 
-          cp "${dmg_path}" dist/nightly/orgasmic_nightly_aarch64.dmg
+          # Version-less asset name (dec_B4147): one dmg per (channel,target),
+          # clobbered in place; the version lives in latest.json.
+          cp "${dmg_path}" dist/nightly/orgasmic_darwin_aarch64.dmg
           cp "${update_path}" dist/nightly/orgasmic.app.tar.gz
           cp "${signature_path}" dist/nightly/orgasmic.app.tar.gz.sig
 
@@ -159,13 +161,6 @@ jobs:
               --prerelease
           fi
 
-          for asset in \
-            orgasmic_nightly_aarch64.dmg \
-            orgasmic.app.tar.gz \
-            orgasmic.app.tar.gz.sig \
-            latest.json
-          do
-            gh release delete-asset "${NIGHTLY_TAG}" "${asset}" --yes >/dev/null 2>&1 || true
-          done
-
+          # Version-less asset names (dec_B4147): --clobber overwrites in place,
+          # so nothing orphans and there is no delete/prune step.
           gh release upload "${NIGHTLY_TAG}" dist/nightly/* --clobber

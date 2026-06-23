@@ -1519,3 +1519,22 @@ the nightly->stable comparison.
   channel so app + runtime track one channel together.
 Files: runtime-bundles.yml, nightly-macos.yml, nightly-android.yml, update.rs,
 main.rs, src-tauri/src/lib.rs, ui/src/lib/appUpdate.ts; versions bumped to next in-dev.
+Amendment 3 (2026-06-23, version-less assets): Eliminate release-asset
+accumulation by removing the version from asset FILENAMES; the version lives only
+in the manifest (runtime-latest.json / latest.json / android-latest.json carry
+version + sha/signature + commit). Asset names are version-less per (channel,
+target): orgasmic-runtime_<os>_<arch>.tar.gz, orgasmic_darwin_aarch64.dmg,
+orgasmic_android_aarch64.apk (orgasmic.app.tar.gz already was). Every publish
+`gh release upload --clobber`s its target's one asset in place; targets not built
+this run keep theirs (merge-not-clobber preserved, since one file per target).
+Result: a FIXED asset set per channel — nothing ever orphans on stable OR nightly,
+so ALL delete/prune logic was removed from the runtime + app publishers and the
+workflows. This also retires the stable bump-orphan class (e.g. the 0.99.401 /
+0.0.5 leftovers that previously needed manual cleanup). Trade-off: only the channel
+head is downloadable by URL (no historical-version URLs) — already true since
+dec_B4147 dropped per-version tags; provenance stays in the manifest
+(version+commit+sha). Bonus: permanent per-channel download URLs. The Android
+in-app sideload check now reads android-latest.json for version + apkUrl instead of
+scraping the APK filename. Files: package-runtime.sh, publish-runtime.sh,
+runtime-bundles.yml, publish-apps.sh, release-macos/android.yml,
+nightly-macos/android.yml, ui/src/lib/appUpdate.ts.

@@ -151,7 +151,9 @@ jobs:
             exit 1
           fi
 
-          android_apk_name="orgasmic_${NIGHTLY_VERSION}_${ANDROID_VERSION_CODE}_android_aarch64.apk"
+          # Version-less name (dec_B4147): version + versionCode live in
+          # android-latest.json (and inside the APK); clobbered in place.
+          android_apk_name="orgasmic_android_aarch64.apk"
           cp "${apk_path}" "dist/nightly/${android_apk_name}"
 
           apk_sha256="$(shasum -a 256 "dist/nightly/${android_apk_name}" | awk '{print $1}')"
@@ -207,13 +209,6 @@ jobs:
               --prerelease
           fi
 
-          gh release view "${NIGHTLY_TAG}" --json assets --jq '.assets[].name' |
-            while IFS= read -r asset; do
-              case "${asset}" in
-                orgasmic_*_android_*.apk|android-latest.json)
-                  gh release delete-asset "${NIGHTLY_TAG}" "${asset}" --yes
-                  ;;
-              esac
-            done
-
+          # Version-less asset names (dec_B4147): --clobber overwrites in place,
+          # so nothing orphans and there is no delete/prune step.
           gh release upload "${NIGHTLY_TAG}" dist/nightly/* --clobber

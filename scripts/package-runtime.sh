@@ -150,8 +150,12 @@ cat > "$STAGE/runtime-manifest.json" <<JSON
 JSON
 
 mkdir -p "$OUT_DIR"
+# Version-less, per-target asset name (dec_B4147 versioning amendment): the
+# version lives in the manifest (runtime-latest.json: version+sha+commit), not the
+# filename, so each build clobbers its target's one asset and nothing ever orphans
+# — on stable OR nightly. The rolling channel tag makes this a stable download URL.
 ASSET_TARGET="$(printf '%s' "$TARGET_KEY" | tr '-' '_')"
-OUT="$OUT_DIR/orgasmic-runtime_${VERSION}_${ASSET_TARGET}.tar.gz"
+OUT="$OUT_DIR/orgasmic-runtime_${ASSET_TARGET}.tar.gz"
 tar -czf "$OUT" -C "$STAGE" .
 
 if command -v shasum >/dev/null 2>&1; then

@@ -271,12 +271,10 @@ jobs:
           let manifest = {};
           try { manifest = JSON.parse(fs.readFileSync(`${dir}/.existing.json`, 'utf8')) || {}; } catch { manifest = {}; }
           if (!manifest.runtimes || typeof manifest.runtimes !== 'object') manifest.runtimes = {};
-          // Asset suffix is the target key with '-' replaced by '_' (e.g. key
-          // darwin-x86_64 -> ..._darwin_x86_64.tar.gz). Recover the key by
-          // splitting os (first segment) from arch (the rest, which may itself
-          // contain '_' as in x86_64): os '-' arch.
+          // Version-less asset name (dec_B4147): orgasmic-runtime_<os>_<arch>.tar.gz.
+          // Recover the target key as os '-' arch (arch may contain '_', e.g. x86_64).
           const keyFromName = (f) => {
-            const m = f.match(/^orgasmic-runtime_.+?_([a-z0-9]+)_(.+)\.tar\.gz$/);
+            const m = f.match(/^orgasmic-runtime_([a-z0-9]+)_(.+)\.tar\.gz$/);
             return m ? `${m[1]}-${m[2]}` : null;
           };
           const built = [];
@@ -303,23 +301,13 @@ jobs:
           echo "=== runtime-latest.json ==="
           cat dist/runtime-latest.json
 
-      - name: Replace built runtime assets on release
+      - name: Publish built runtime assets on release
         run: |
           set -euo pipefail
-          # Delete ONLY the assets for the targets we just built (+ the manifest);
-          # leave every other target's tarball in place. Merge, not clobber.
-          existing="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
-          delete_asset() {
-            if printf '%s\n' "$existing" | grep -qx "$1"; then
-              gh release delete-asset "$TAG" "$1" --yes
-            fi
-          }
-          for f in dist/orgasmic-runtime_*.tar.gz; do
-            base="$(basename "$f")"
-            delete_asset "$base"
-            delete_asset "$base.sha256"
-          done
-          delete_asset "runtime-latest.json"
+          # Version-less asset names (dec_B4147): --clobber overwrites each built
+          # target's one asset in place; targets not built this run keep their
+          # existing asset (merge, not clobber). Nothing ever orphans, so there is
+          # no delete/prune step.
           gh release upload "$TAG" \
             dist/runtime-latest.json \
             dist/orgasmic-runtime_*.tar.gz \

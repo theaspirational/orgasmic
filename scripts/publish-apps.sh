@@ -190,7 +190,9 @@ if [[ "$BUILD_MAC" == "1" ]]; then
         exit 1
     fi
 
-    cp "$dmg_path" "$OUT_DIR/orgasmic_${VERSION}_aarch64.dmg"
+    # Version-less asset names (dec_B4147): the version lives in latest.json, so
+    # each publish clobbers the same files and nothing orphans.
+    cp "$dmg_path" "$OUT_DIR/orgasmic_darwin_aarch64.dmg"
     cp "$update_path" "$OUT_DIR/orgasmic.app.tar.gz"
     cp "$sig_path" "$OUT_DIR/orgasmic.app.tar.gz.sig"
 
@@ -286,7 +288,9 @@ NODE
         echo "error: expected Android release APK was not produced" >&2
         exit 1
     fi
-    ANDROID_APK_NAME="orgasmic_${VERSION}_${VERSION_CODE}_android_aarch64.apk"
+    # Version-less name (dec_B4147): version + versionCode live in android-latest.json
+    # (and inside the APK), so each publish clobbers the same file and nothing orphans.
+    ANDROID_APK_NAME="orgasmic_android_aarch64.apk"
     cp "$apk_path" "$OUT_DIR/$ANDROID_APK_NAME"
     apk_sha="$(shasum -a 256 "$OUT_DIR/$ANDROID_APK_NAME" | awk '{print $1}')"
 
@@ -310,20 +314,14 @@ NODE
     echo "✓ staged Android APK ${VERSION} (code ${VERSION_CODE})"
 fi
 
-# --- publish (merge-not-clobber onto the apps release) -----------------------
+# --- publish (clobber onto the apps release) ---------------------------------
 echo ""; echo "=== staged assets ==="
 ls -1 "$OUT_DIR"
 
-# the asset names this run owns and will replace on the release
-REPLACE=()
-[[ "$MAC_BUILT" == "1" ]] && REPLACE+=("orgasmic_${VERSION}_aarch64.dmg" "orgasmic.app.tar.gz" "orgasmic.app.tar.gz.sig" "latest.json")
-[[ "$ANDROID_BUILT" == "1" ]] && REPLACE+=("$ANDROID_APK_NAME" "android-latest.json")
-
 if [[ "$DRY_RUN" == "1" ]]; then
     echo ""
-    echo "→ DRY RUN: would publish to $TAG (target $HEAD_SHA, --latest=false) and replace:"
-    for a in "${REPLACE[@]}"; do echo "    $a"; done
-    # also delete any stale dmg/apk at OTHER versions for the built target(s)
+    echo "→ DRY RUN: would publish to $TAG (target $HEAD_SHA, --latest=false) and clobber:"
+    for a in "$OUT_DIR"/*; do echo "    $(basename "$a")"; done
     echo "✓ dry run complete (no release changes)"
     exit 0
 fi
@@ -339,27 +337,12 @@ else
     gh release create "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" --latest=false
 fi
 
-# Delete the assets this run replaces — including stale dmg/apk at older versions
-# for the built target(s) (their filenames carry the version). Assets for a target
-# we did NOT build (e.g. android when --target mac) are left intact.
-existing_assets="$(gh release view "$TAG" -R "$REPO" --json assets -q '.assets[].name')"
-del() {
-    printf '%s\n' "$existing_assets" | grep -qx "$1" && gh release delete-asset "$TAG" "$1" -R "$REPO" --yes || true
-}
-if [[ "$MAC_BUILT" == "1" ]]; then
-    while IFS= read -r a; do
-        case "$a" in orgasmic_*_aarch64.dmg|orgasmic.app.tar.gz|orgasmic.app.tar.gz.sig|latest.json) del "$a" ;; esac
-    done <<<"$existing_assets"
-fi
-if [[ "$ANDROID_BUILT" == "1" ]]; then
-    while IFS= read -r a; do
-        case "$a" in orgasmic_*_android_*.apk|android-latest.json) del "$a" ;; esac
-    done <<<"$existing_assets"
-fi
-
+# Version-less asset names (dec_B4147): --clobber overwrites each built target's
+# assets in place; a target not built this run (e.g. android when --target mac)
+# keeps its existing assets. Nothing ever orphans, so there is no delete/prune step.
 gh release upload "$TAG" -R "$REPO" "$OUT_DIR"/* --clobber
 
 echo ""
 echo "✓ published apps to $TAG ($VERSION):"
-[[ "$MAC_BUILT" == "1" ]] && echo "    macOS:   orgasmic_${VERSION}_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json"
+[[ "$MAC_BUILT" == "1" ]] && echo "    macOS:   orgasmic_darwin_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json"
 [[ "$ANDROID_BUILT" == "1" ]] && echo "    Android: $ANDROID_APK_NAME, android-latest.json"
