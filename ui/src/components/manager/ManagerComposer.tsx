@@ -1,3 +1,4 @@
+// @arch arch_MK2Q2.5
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { Send } from 'lucide-react';
 

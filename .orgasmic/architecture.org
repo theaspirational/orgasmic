@@ -747,7 +747,7 @@ Loads route data and fans out daemon WebSocket events into refresh tokens and co
 ** arch_MK2Q2.4 workbench shell
 :PROPERTIES:
 :ID:                 arch_MK2Q2.4
-:SOURCE_PATHS:       ui/src/components/AppShell.tsx ui/src/components/ConnectionBanner.tsx ui/src/components/ProjectSelector.tsx ui/src/components/notifications/NotificationBell.tsx ui/src/components/notifications/NotificationPopover.tsx
+:SOURCE_PATHS:       ui/src/components/AppShell.tsx ui/src/components/ConnectionBanner.tsx ui/src/components/ProjectTabs.tsx ui/src/components/notifications/NotificationBell.tsx ui/src/components/notifications/NotificationPopover.tsx
 :TESTS:              cd ui && npm run typecheck
 :READS:
 :WRITES:
@@ -764,7 +764,7 @@ Renders project-scoped navigation, sidebar, project selector, reconnect banner, 
 ** arch_MK2Q2.5 manager popover workbench
 :PROPERTIES:
 :ID:                 arch_MK2Q2.5
-:SOURCE_PATHS:       ui/src/components/manager/ManagerPopover.tsx ui/src/components/manager/ManagerWorkbench.tsx ui/src/components/manager/ManagerChatTranscript.tsx ui/src/components/manager/ManagerPeekBar.tsx ui/src/components/manager/ManagerTmuxPane.tsx
+:SOURCE_PATHS:       ui/src/components/manager/ManagerWorkbench.tsx ui/src/components/manager/ManagerChatTranscript.tsx ui/src/components/manager/ManagerPeekBar.tsx ui/src/components/manager/ManagerTmuxPane.tsx ui/src/components/manager/ManagerComposer.tsx
 :TESTS:              cd ui && npm run typecheck
 :READS:              arch_R3EPE.2
 :WRITES:

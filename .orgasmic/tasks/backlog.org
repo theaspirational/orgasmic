@@ -18,3 +18,17 @@ Work required:
 
 Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specifically native PowerShell/cmd.
 
+* BACKLOG TASK-2Q7RQ Finalize dec_B4147 rollout: Windows runtime, apps release, retire stale stable app assets, eval local app builds    :release:ci:install-distribution:apps:windows:
+:PROPERTIES:
+:ID: TASK-2Q7RQ
+:END:
+
+Post-implementation follow-ups after dec_B4147 / TASK-32R7Z (runtime publish pipeline) and TASK-38RK6 (tag+artifact cleanup) landed and runtime 0.0.5 was published to stable. Relates dec_B4147, arch_WZFAX.3.
+
+Work (ordered for safety):
+1. Windows runtime refresh. Dispatch runtime-bundles.yml with tag=stable only=windows-x86_64 (gh workflow run runtime-bundles.yml -f tag=stable -f only=windows-x86_64). The stable manifest's windows-x86_64 entry is a stale build from the old flow and lacks the per-target version field (shows v? in runtime-latest.json). Verify the single-target merge-not-clobber path rebuilds only Windows and leaves the locally-published darwin/linux entries + tarballs untouched, and that the refreshed entry carries version. Windows MSVC cannot build on the Mac, so this stays CI.
+2. Populate the apps release. Dispatch release-macos.yml and release-android.yml (both dispatch-only now). Confirm the apps release/tag gets the DMG + orgasmic.app.tar.gz(.sig) + latest.json and the signed APK + android-latest.json, with --latest=false so stable keeps the latest badge. Confirm the desktop updater endpoint https://github.com/theaspirational/orgasmic/releases/download/apps/latest.json resolves. DO THIS BEFORE step 3 so there is never a window with zero app downloads available.
+3. Retire stale app assets from the stable release. After apps live on the apps release, delete the leftover app assets still on stable from the old coupled flow: latest.json, orgasmic.app.tar.gz, orgasmic.app.tar.gz.sig, orgasmic_stable_aarch64.dmg, orgasmic_0.0.5_5_android_aarch64.apk, android-latest.json. Leave all runtime-* assets + runtime-latest.json. Outward-facing/destructive: requires explicit maintainer approval at execution.
+4. Investigate building the apps locally on this Mac (extend the local-first model). macOS app: native tauri:bundle:mac with TAURI_SIGNING_PRIVATE_KEY material in ~/.tauri (updater key id DB25DA5DF5271BBC). Android APK: needs NDK + Java + the upload keystore (~/.tauri/org-shell-android-upload.jks + .password). All signing material is already on-machine. Assess whether a scripts/publish-apps.sh (mirroring publish-runtime.sh: build -> sign -> publish to the apps release) is worthwhile, or whether apps should stay on CI. Output: a feasibility note, and if adopted, a new decision or a dec_B4147 amendment.
+
+Acceptance: Windows runtime entry on stable rebuilt with a per-target version via the single-target dispatch (merge-not-clobber verified); apps release populated with current macOS + Android artifacts and the updater endpoint resolving; stable release carries runtime assets only; a written decision/feasibility note on local app builds.
