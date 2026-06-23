@@ -16,7 +16,10 @@ jobs:
     runs-on: macos-latest
 
     env:
-      NIGHTLY_TAG: nightly
+      # App line is namespaced: app nightly publishes to `apps-nightly`, NOT the
+      # runtime's `nightly` tag (dec_B4147). Keeps the two lines' release tags
+      # disjoint so they no longer fight over the shared tag/commit.
+      NIGHTLY_TAG: apps-nightly
       ANDROID_NDK_VERSION: 29.0.14206865
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -192,19 +195,19 @@ jobs:
           if gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1; then
             gh release edit "${NIGHTLY_TAG}" \
               --target "${GITHUB_SHA}" \
-              --title "orgasmic nightly" \
+              --title "orgasmic apps nightly" \
               --notes "${notes}" \
               --prerelease
           else
             gh release create "${NIGHTLY_TAG}" \
               --target "${GITHUB_SHA}" \
-              --title "orgasmic nightly" \
+              --title "orgasmic apps nightly" \
               --notes "${notes}" \
               --prerelease \
               --latest=false || \
             gh release edit "${NIGHTLY_TAG}" \
               --target "${GITHUB_SHA}" \
-              --title "orgasmic nightly" \
+              --title "orgasmic apps nightly" \
               --notes "${notes}" \
               --prerelease
           fi

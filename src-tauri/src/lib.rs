@@ -265,12 +265,21 @@ pub fn run() {
 }
 
 fn update_endpoint(channel: &str) -> Result<Url, String> {
+    let tag = app_release_tag(channel)?;
+    let url = format!("https://github.com/{UPDATE_REPO}/releases/download/{tag}/latest.json");
+    Url::parse(&url).map_err(|err| err.to_string())
+}
+
+/// Map the user-facing update channel to the APP line's release tag. The app
+/// line is namespaced — stable -> `apps`, nightly -> `apps-nightly` — so each
+/// product line owns its own release tags (the runtime line keeps the bare
+/// `stable`/`nightly` tags). App assets no longer share the runtime `nightly`
+/// tag; this mapping is what fixes the old stable-channel 404 (app-stable lives
+/// in `apps`, never `stable`). dec_B4147.
+fn app_release_tag(channel: &str) -> Result<&'static str, String> {
     match channel {
-        "stable" | "nightly" => {
-            let url =
-                format!("https://github.com/{UPDATE_REPO}/releases/download/{channel}/latest.json");
-            Url::parse(&url).map_err(|err| err.to_string())
-        }
+        "stable" => Ok("apps"),
+        "nightly" => Ok("apps-nightly"),
         _ => Err(format!("unsupported update channel: {channel}")),
     }
 }

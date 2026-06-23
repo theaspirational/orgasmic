@@ -108,8 +108,15 @@ async function checkAndroidSideloadUpdate(channel: UpdateChannel): Promise<AppUp
   };
 }
 
+// The app line is namespaced: stable -> `apps`, nightly -> `apps-nightly`
+// (mirrors app_release_tag in src-tauri/src/lib.rs). App assets no longer share
+// the runtime `nightly` tag, so the channel name is not the tag name. dec_B4147.
+function appReleaseTag(channel: UpdateChannel): string {
+  return channel === 'nightly' ? 'apps-nightly' : 'apps';
+}
+
 async function fetchAndroidManifest(channel: UpdateChannel): Promise<AndroidManifest | null> {
-  const url = `https://github.com/${UPDATE_REPO}/releases/download/${channel}/android-latest.json`;
+  const url = `https://github.com/${UPDATE_REPO}/releases/download/${appReleaseTag(channel)}/android-latest.json`;
   const response = await fetch(url, { cache: 'no-store' });
   if (response.status === 404) return null;
   if (!response.ok) {
