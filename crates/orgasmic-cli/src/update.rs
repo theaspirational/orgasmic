@@ -27,6 +27,15 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "shipped/skills/orgasmic/SKILL.md",
 ];
 
+// dec_B4147 retention amendment: after a successful runtime swap, keep the
+// active runtime plus this many previous installs for the SAME target (most
+// recently installed first) and reclaim the rest. Release asset filenames are
+// version-less now, but each version still unpacks into its own
+// `runtimes/{version}-{target}` dir, so without this they accumulate forever.
+// One previous install is kept so a manual rollback still has a target.
+// Override with $ORGASMIC_RUNTIME_RETENTION.
+const DEFAULT_RUNTIME_RETENTION: usize = 1;
+
 #[derive(Debug, Clone, Deserialize)]
 struct RuntimeChannelManifest {
     version: String,
@@ -191,8 +200,20 @@ fn run_bundle(
         if cleared_override {
             println!("  cleared daemon runtime override; future starts use the updated runtime");
         }
+
+        // Retention: keep the active runtime + N previous installs for this
+        // target; reclaim older ones. Best-effort — the swap already succeeded,
+        // so a prune failure must not fail the update. dec_B4147.
+        let retention = runtime_retention();
+        match prune_old_runtimes(home, &final_runtime, &target, retention) {
+            Ok(removed) if !removed.is_empty() => {
+                println!("  pruned {} old runtime(s): {}", removed.len(), removed.join(", "));
+            }
+            Ok(_) => {}
+            Err(error) => eprintln!("warning: runtime prune skipped: {error}"),
+        }
         println!(
-            "  previous runtime kept under {}",
+            "  kept current + {retention} previous under {}",
             home.runtimes().display()
         );
         Ok(())
@@ -213,6 +234,68 @@ fn runtime_is_active(home: &Home, version: &str, target: &str) -> bool {
     read_symlink(&home.current_runtime())
         .map(|link| link == Path::new("runtimes").join(&runtime_name))
         .unwrap_or(false)
+}
+
+/// How many previous runtimes to retain for the active target, in addition to
+/// the current one. `$ORGASMIC_RUNTIME_RETENTION` overrides the default.
+fn runtime_retention() -> usize {
+    std::env::var("ORGASMIC_RUNTIME_RETENTION")
+        .ok()
+        .and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(DEFAULT_RUNTIME_RETENTION)
+}
+
+/// Reclaim old runtime installs. Keeps `keep_current` plus the `retention`
+/// most-recently-installed other runtimes for `target` (ordered by directory
+/// mtime, i.e. install time, newest first) and removes the rest. Only touches
+/// `{version}-{target}` dirs for the active target; other targets are left
+/// alone. Returns the names removed. A per-dir removal failure is logged and
+/// skipped rather than aborting — callers treat this as best-effort cleanup.
+fn prune_old_runtimes(
+    home: &Home,
+    keep_current: &Path,
+    target: &str,
+    retention: usize,
+) -> Result<Vec<String>> {
+    let runtimes = home.runtimes();
+    let suffix = format!("-{target}");
+    let current_name = keep_current.file_name().and_then(|name| name.to_str());
+
+    let mut candidates: Vec<(PathBuf, String, std::time::SystemTime)> = Vec::new();
+    for entry in std::fs::read_dir(&runtimes)
+        .with_context(|| format!("read {}", runtimes.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.ends_with(&suffix) {
+            continue; // a different target — not ours to manage
+        }
+        if Some(name) == current_name {
+            continue; // never remove the active runtime
+        }
+        let mtime = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        candidates.push((entry.path(), name.to_string(), mtime));
+    }
+
+    // Newest install first; keep the first `retention`, remove the remainder.
+    candidates.sort_by(|a, b| b.2.cmp(&a.2));
+    let mut removed = Vec::new();
+    for (path, name, _) in candidates.into_iter().skip(retention) {
+        match std::fs::remove_dir_all(&path) {
+            Ok(()) => removed.push(name),
+            Err(error) => {
+                eprintln!("warning: failed to prune old runtime {}: {error}", path.display());
+            }
+        }
+    }
+    Ok(removed)
 }
 
 fn preflight_daemon(home: &Home) -> Result<bool> {
@@ -999,5 +1082,64 @@ mod tests {
         let err = run(&home, "main", true, None).unwrap_err().to_string();
         assert!(err.contains("checksum mismatch"), "{err}");
         assert!(!home.current_runtime().exists());
+    }
+
+    fn touch_mtime(path: &Path, stamp: &str) {
+        // stamp: YYYYMMDDhhmm — pin mtime so prune ordering is deterministic.
+        let status = Command::new("touch")
+            .arg("-t")
+            .arg(stamp)
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn prune_keeps_current_plus_one_previous_for_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+
+        let target = "darwin-aarch64";
+        let mk = |version: &str, stamp: &str| {
+            let dir = home.runtimes().join(format!("{version}-{target}"));
+            write_runtime_payload(&dir, version);
+            touch_mtime(&dir, stamp); // after writing payload, which bumps the dir mtime
+            dir
+        };
+        let oldest = mk("0.0.1", "202601010000");
+        let previous = mk("0.0.3", "202602010000");
+        let current = mk("0.0.6", "202603010000");
+        // A different target must be left untouched even though it is the oldest.
+        let other_target = home.runtimes().join("0.0.5-linux-x86_64");
+        write_runtime_payload(&other_target, "linux");
+        touch_mtime(&other_target, "202512010000");
+
+        let removed = prune_old_runtimes(&home, &current, target, 1).unwrap();
+
+        assert_eq!(removed, vec!["0.0.1-darwin-aarch64".to_string()]);
+        assert!(!oldest.exists(), "oldest darwin runtime should be pruned");
+        assert!(previous.exists(), "the retained previous runtime must remain");
+        assert!(current.exists(), "the active runtime must never be pruned");
+        assert!(other_target.exists(), "other-target runtimes must be left alone");
+    }
+
+    #[test]
+    fn prune_removes_nothing_when_within_retention() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let target = "darwin-aarch64";
+        let current = home.runtimes().join(format!("0.0.6-{target}"));
+        write_runtime_payload(&current, "current");
+        let previous = home.runtimes().join(format!("0.0.3-{target}"));
+        write_runtime_payload(&previous, "previous");
+
+        let removed = prune_old_runtimes(&home, &current, target, 1).unwrap();
+
+        assert!(removed.is_empty(), "one previous runtime is within retention=1");
+        assert!(previous.exists());
+        assert!(current.exists());
     }
 }
