@@ -122,6 +122,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # Linux targets cross-compile via cargo-zigbuild with a pinned glibc floor
+      # (dec_B4147). darwin/windows build natively and skip this. Without it,
+      # package-runtime.sh aborts with "cargo-zigbuild is required".
+      - name: Setup Zig (linux cross targets)
+        if: contains(matrix.target, '-linux-')
+        uses: mlugg/setup-zig@v2
+      - name: Install cargo-zigbuild (linux cross targets)
+        if: contains(matrix.target, '-linux-')
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
       - name: Install frontend dependencies
         run: npm ci --prefix ui
 
