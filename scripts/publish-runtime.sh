@@ -215,7 +215,7 @@ ensure_docker() {
 smoke_one() {
     local key="$1" smoke="$2"
     local asset; asset="$(printf '%s' "$key" | tr '-' '_')"
-    local tarball; tarball="$(ls "$OUT_DIR"/orgasmic-runtime_*_"${asset}".tar.gz 2>/dev/null | head -1)"
+    local tarball; tarball="$OUT_DIR/orgasmic-runtime_${asset}.tar.gz"
     [[ -f "$tarball" ]] || { echo "error: missing tarball for $key" >&2; return 1; }
     local stage; stage="$(mktemp -d)"
     tar -xzf "$tarball" -C "$stage"

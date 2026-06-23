@@ -189,7 +189,8 @@ jobs:
         run: |
           set -euo pipefail
           asset_key="$(printf '%s' '${{ matrix.key }}' | tr '-' '_')"
-          tarball="$(ls dist/runtime/orgasmic-runtime_*_"${asset_key}".tar.gz)"
+          # Version-less asset name (dec_B4147): orgasmic-runtime_<os>_<arch>.tar.gz.
+          tarball="dist/runtime/orgasmic-runtime_${asset_key}.tar.gz"
           echo "checking $tarball"
           stage="$(mktemp -d)"
           tar -xzf "$tarball" -C "$stage"
