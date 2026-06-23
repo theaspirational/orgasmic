@@ -331,11 +331,25 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo ""; echo "=== publishing to $TAG ==="
-if ! gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-    flags=(--title "orgasmic $TAG" --notes "Runtime bundles $VERSION ($HEAD_SHA)" --target "$HEAD_SHA")
-    if [[ "$TAG" == "stable" ]]; then flags+=(--latest); else flags+=(--prerelease); fi
-    gh release create "$TAG" -R "$REPO" "${flags[@]}"
+# Refresh release metadata on EVERY publish so a rolling release (e.g. `stable`)
+# never strands an old version in its title/notes. Title carries the headline
+# version (matches the apps release); notes record version + commit. dec_B4147.
+title="orgasmic $VERSION"
+notes="Runtime bundles $VERSION ($HEAD_SHA)."
+meta=(--title "$title" --notes "$notes" --target "$HEAD_SHA")
+if [[ "$TAG" == "stable" ]]; then meta+=(--latest=true --prerelease=false); else meta+=(--latest=false --prerelease=true); fi
+if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
+    gh release edit "$TAG" -R "$REPO" "${meta[@]}" >/dev/null
+else
+    gh release create "$TAG" -R "$REPO" "${meta[@]}"
 fi
+# The GitHub release tag is fetched by NAME (install.sh / the updater never read
+# its commit), so target_commitish is ignored once the tag exists. Move the ref
+# explicitly onto the publish commit so the release's displayed commit tracks the
+# shipped version instead of freezing at the tag's original commit. Cosmetic —
+# downloads are unaffected — so a failure only warns.
+git push -f origin "$HEAD_SHA:refs/tags/$TAG" >/dev/null 2>&1 \
+    || echo "warning: could not move $TAG tag to $HEAD_SHA (cosmetic; downloads unaffected)" >&2
 
 # Version-less asset names (dec_B4147): --clobber overwrites each built target's
 # one asset in place; other targets (e.g. windows-x86_64) keep their existing asset
