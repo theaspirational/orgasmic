@@ -244,7 +244,11 @@ fn walk_dir(root: &Path, dir: &Path, visit: &mut dyn FnMut(&Path) -> Result<()>)
 }
 
 fn arch_markers_at_file_top(path: &Path) -> Result<BTreeSet<String>> {
-    let source = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    // A file we can't read as UTF-8 (dangling symlink, binary, permissions) cannot
+    // carry a top-of-file marker — skip it rather than aborting the whole scan.
+    let Ok(source) = fs::read_to_string(path) else {
+        return Ok(BTreeSet::new());
+    };
     let mut ids = BTreeSet::new();
     for (idx, line) in source.lines().take(8).enumerate() {
         let trimmed = line.trim_start();
@@ -311,17 +315,26 @@ fn is_source_file(path: &Path) -> bool {
 }
 
 fn should_skip_rel(rel: &str) -> bool {
+    let rel = rel.trim_end_matches('/');
+    // Build-output / VCS dirs that can appear NESTED, not just at the repo root:
+    // root target/, src-tauri/target/, crates/*/target/, any node_modules/, .git/.
+    // A local app build (publish-apps.sh) populates src-tauri/target with codegen
+    // assets (incl. symlinks) that must never be scanned. orgasmic:dec_B4147
+    let skip_segments = ["target", "node_modules", ".git"];
+    if rel.split('/').any(|seg| skip_segments.contains(&seg)) {
+        return true;
+    }
+    // Root-anchored build outputs / scratch dirs.
     let skip_prefixes = [
         "archive/",
-        "target/",
-        ".git/",
-        "node_modules/",
+        "dist/",
         "ui/dist/",
+        "ui/bootstrap-dist/",
         ".orgasmic/tmp/",
     ];
-    skip_prefixes.iter().any(|prefix| {
-        rel.starts_with(prefix) || rel.trim_end_matches('/') == prefix.trim_end_matches('/')
-    }) || rel.contains("/node_modules/")
+    skip_prefixes
+        .iter()
+        .any(|prefix| rel.starts_with(prefix) || rel == prefix.trim_end_matches('/'))
 }
 
 fn rel_path(root: &Path, path: &Path) -> Result<String> {
