@@ -1,6 +1,6 @@
 [package]
 name = "orgasmic-desktop"
-version = "0.0.6"
+version = "0.0.7"
 description = "orgasmic desktop workbench"
 edition = "2021"
 rust-version = "1.78"
