@@ -4,7 +4,7 @@
 # Local-first apps publish. Builds the maintainer-buildable app targets on one
 # macOS host — the darwin-arm macOS app (.dmg + Tauri updater .app.tar.gz/.sig)
 # and the android-aarch64 APK — signs them with the keys in ~/.tauri, then MERGES
-# only the built targets onto the `apps` release (replacing just their assets,
+# only the built targets onto the `apps-stable` release (replacing just their assets,
 # --latest=false so it never steals the runtime `stable` release's badge). This is
 # the local mirror of release-macos.yml / release-android.yml; those CI workflows
 # stay as the dispatch fallback. App version is the source-of-truth in
@@ -29,10 +29,10 @@ usage() {
 Usage: bash scripts/publish-apps.sh [options]
 
 Builds + signs the macOS app and/or the Android APK locally and merges them onto
-the `apps` release. App version comes from src-tauri/tauri.conf.json.
+the `apps-stable` release. App version comes from src-tauri/tauri.conf.json.
 
 Options:
-  --channel <stable|nightly>  stable -> `apps` tag (version from tauri.conf.json);
+  --channel <stable|nightly>  stable -> `apps-stable` tag (version from tauri.conf.json);
                               nightly -> `apps-nightly` tag, version
                               <base>-nightly.<UTCdate>.<epoch> (default: stable)
   --target <mac|android|all>  Which app(s) to build/publish (default: all)
@@ -72,10 +72,11 @@ case "$CHANNEL" in
     stable|nightly) ;;
     *) echo "error: --channel must be one of: stable, nightly" >&2; exit 1 ;;
 esac
-# Tag defaults from the channel: the app line is namespaced (dec_B4147) —
-# stable -> `apps`, nightly -> `apps-nightly`. --tag overrides for test tags.
+# Tag defaults from the channel: the app line is namespaced + symmetric
+# (dec_B4147) — stable -> `apps-stable`, nightly -> `apps-nightly`. --tag
+# overrides for test tags.
 if [[ -z "$TAG" ]]; then
-    [[ "$CHANNEL" == "nightly" ]] && TAG="apps-nightly" || TAG="apps"
+    [[ "$CHANNEL" == "nightly" ]] && TAG="apps-nightly" || TAG="apps-stable"
 fi
 BUILD_MAC=0; BUILD_ANDROID=0
 [[ "$TARGET" == "mac" || "$TARGET" == "all" ]] && BUILD_MAC=1

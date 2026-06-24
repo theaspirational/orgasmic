@@ -1,8 +1,8 @@
 name: Android APK (apps release)
 
 # orgasmic:dec_B4147 — apps are a separate, fully-manual release line. Dispatch
-# only (no v* tag trigger), published to the `apps` release/tag so it never races
-# the runtime's `stable` release. App version comes from src-tauri/tauri.conf.json
+# only (no v* tag trigger), published to the `apps-stable` release/tag so it never
+# races the runtime's `stable` release. App version comes from src-tauri/tauri.conf.json
 # (decoupled from the workspace Cargo.toml / CLI version).
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ jobs:
     runs-on: macos-latest
 
     env:
-      APPS_TAG: apps
+      APPS_TAG: apps-stable
       ANDROID_NDK_VERSION: 29.0.14206865
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
@@ -209,7 +209,7 @@ jobs:
           title="orgasmic apps ${APPS_VERSION}"
           notes="macOS + Android app builds ${APPS_VERSION} from ${GITHUB_SHA}."
 
-          # No v* / stable tag is moved: apps own the dedicated `apps` release/tag.
+          # No v* / stable tag is moved: apps own the dedicated `apps-stable` release/tag.
           # --latest=false so it never steals the runtime `stable` release's badge.
           if gh release view "${APPS_TAG}" >/dev/null 2>&1; then
             gh release edit "${APPS_TAG}" \
