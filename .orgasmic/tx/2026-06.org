@@ -14694,3 +14694,58 @@
 :REASON:       edited decision node dec_B4147
 :NODE_ID:      dec_B4147
 :END:
+
+
+* TX 2026-06-25 Thu 08:17:28 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260625-orgasmic-0937
+:TIME:         [2026-06-25 Thu 08:17:28]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PVDP3
+:NODE_ID:      dec_PVDP3
+:END:
+
+* TX 2026-06-25 Thu 08:17:39 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260625-orgasmic-0938
+:TIME:         [2026-06-25 Thu 08:17:39]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       dec_PVDP3
+:REASON:       Android/mobile remote-daemon connect: bootstrap 'Connect to runtime' screen (URL+token -> UI-session ticket -> daemon-served UI) for the no-local-CLI case; Android cleartext network-security-config; refined dec_PVDP3. Operator-side: daemon LAN bind is runtime config, not repo state.
+:component:    mobile-remote-connect
+:files:        ui/bootstrap.html,ui/src/bootstrap.ts,src-tauri/gen/android/app/src/main/res/xml/network_security_config.xml,src-tauri/gen/android/app/src/main/AndroidManifest.xml
+:END:
+
+* TX 2026-06-25 Thu 08:40:05 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260625-orgasmic-0939
+:TIME:         [2026-06-25 Thu 08:40:05]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PVDP3
+:NODE_ID:      dec_PVDP3
+:END:
+
+* TX 2026-06-25 Thu 08:40:05 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260625-orgasmic-0940
+:TIME:         [2026-06-25 Thu 08:40:05]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       dec_PVDP3
+:REASON:       Added launch-time, channel-aware app-update check + manual re-check button and channel toggle to the Android bootstrap connect screen (the connected daemon-origin UI has no IPC to run the SPA updater). Reuses appUpdate.ts; gates auto-connect behind an update banner.
+:component:    mobile-update-check
+:files:        ui/bootstrap.html,ui/src/bootstrap.ts
+:END:
