@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  orgasmic connects to a user-specified daemon URL entered at runtime (a LAN IP,
+  a Tailscale/VPN address, or a tunnel). The v0.0.1 daemon speaks plain HTTP, so
+  cleartext must be permitted: the target host is not known at build time and
+  Android's network-security-config cannot express private-subnet ranges, only
+  exact domains. HTTPS endpoints (e.g. a cloudflared tunnel) still get normal
+  certificate validation via the trust anchors below; prefer a TLS tunnel on
+  untrusted networks.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true">
+    <trust-anchors>
+      <certificates src="system" />
+      <certificates src="user" />
+    </trust-anchors>
+  </base-config>
+</network-security-config>

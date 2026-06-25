@@ -12,10 +12,66 @@
     <main class="runtime-shell">
       <section class="runtime-panel">
         <div class="runtime-mark">orgasmic</div>
-        <h1>Opening local runtime</h1>
+        <h1 id="title">Opening runtime</h1>
         <p id="status">Checking for the orgasmic CLI.</p>
+
+        <div id="updatebar" hidden>
+          <p id="updatemsg"></p>
+          <div class="actions">
+            <button id="download" type="button">Download update</button>
+            <button id="dismiss" type="button">Continue</button>
+          </div>
+        </div>
+
+        <form id="remote" hidden>
+          <label class="field">
+            <span>Daemon URL</span>
+            <input
+              id="url"
+              type="url"
+              inputmode="url"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="http://192.168.1.50:4848"
+            />
+          </label>
+          <label class="field">
+            <span>Bearer token</span>
+            <input
+              id="token"
+              type="password"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="token from ~/.orgasmic/user/auth/token"
+            />
+          </label>
+          <p class="hint">
+            On the host Mac: enable LAN in <code>~/.orgasmic/config.yaml</code>
+            (<code>bind_host: 0.0.0.0</code>, <code>lan_enabled: true</code>),
+            restart the daemon, and copy the token from
+            <code>~/.orgasmic/user/auth/token</code>. On another network, point
+            this at a tunnel URL (e.g. cloudflared) or a Tailscale address.
+          </p>
+        </form>
+
+        <div id="updatecontrols" hidden class="updcontrols">
+          <label class="chan">
+            <span>Update channel</span>
+            <select id="channel">
+              <option value="stable">stable</option>
+              <option value="nightly">nightly</option>
+            </select>
+          </label>
+          <button id="check" type="button">Check for updates</button>
+        </div>
+
         <pre id="detail"></pre>
         <div class="actions">
+          <button id="connect" type="button" hidden>Connect</button>
           <button id="retry" type="button">Retry</button>
         </div>
       </section>

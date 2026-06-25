@@ -244,6 +244,47 @@ async fn assert_no_live_runs_before_update() -> Result<(), String> {
     Ok(())
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AndroidUpdateManifest {
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    version_code: Option<u64>,
+    #[serde(default)]
+    apk_url: Option<String>,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    pub_date: Option<String>,
+}
+
+/// Fetch the Android sideload manifest for `channel` from its GitHub release in
+/// the app process (no webview CORS). Returns `None` when the release carries no
+/// manifest yet (404). The JS side compares versions and drives the prompt.
+#[tauri::command]
+async fn check_android_update(channel: String) -> Result<Option<AndroidUpdateManifest>, String> {
+    let tag = app_release_tag(&channel)?;
+    let url = format!("https://github.com/{UPDATE_REPO}/releases/download/{tag}/android-latest.json");
+    let response = reqwest::Client::new()
+        .get(&url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|err| format!("android update request failed: {err}"))?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!("android update request failed: {}", response.status()));
+    }
+    response
+        .json::<AndroidUpdateManifest>()
+        .await
+        .map(Some)
+        .map_err(|err| format!("parse android-latest.json: {err}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -258,7 +299,8 @@ pub fn run() {
             local_backend_profile,
             check_app_update,
             install_app_update,
-            update_runtime
+            update_runtime,
+            check_android_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running orgasmic app");

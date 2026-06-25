@@ -6,7 +6,6 @@ export const UPDATE_CHANNELS = ['stable', 'nightly'] as const;
 export const UPDATE_CHANNEL_STORAGE_KEY = 'orgasmic:update-channel';
 export const UPDATE_LAST_NOTIFIED_KEY = 'orgasmic:last-notified-update';
 export const UPDATE_AUTO_CHECK_MS = 15 * 60 * 1000;
-const UPDATE_REPO = 'theaspirational/orgasmic';
 
 export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];
 export type AppUpdatePlatform = 'desktop' | 'android-sideload';
@@ -108,19 +107,10 @@ async function checkAndroidSideloadUpdate(channel: UpdateChannel): Promise<AppUp
   };
 }
 
-// The app line is namespaced and symmetric: stable -> `apps-stable`, nightly ->
-// `apps-nightly` (mirrors app_release_tag in src-tauri/src/lib.rs). App assets no
-// longer share the runtime tags, so the channel name is not the tag name. dec_B4147.
-function appReleaseTag(channel: UpdateChannel): string {
-  return channel === 'nightly' ? 'apps-nightly' : 'apps-stable';
-}
-
+// Fetched in the app process via the check_android_update Tauri command (no
+// webview CORS). Rust owns the release-tag mapping (stable -> apps-stable,
+// nightly -> apps-nightly, mirroring app_release_tag in src-tauri/src/lib.rs)
+// and 404 handling. dec_B4147 / dec_PVDP3.
 async function fetchAndroidManifest(channel: UpdateChannel): Promise<AndroidManifest | null> {
-  const url = `https://github.com/${UPDATE_REPO}/releases/download/${appReleaseTag(channel)}/android-latest.json`;
-  const response = await fetch(url, { cache: 'no-store' });
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    throw new Error(`Android manifest request failed: ${response.status} ${response.statusText}`);
-  }
-  return response.json() as Promise<AndroidManifest>;
+  return invoke<AndroidManifest | null>('check_android_update', { channel });
 }

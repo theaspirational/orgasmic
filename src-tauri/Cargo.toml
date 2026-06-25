@@ -26,6 +26,9 @@ tauri-plugin-process = "2.3.1"
 tauri-plugin-shell = "2.3.5"
 tauri-plugin-updater = "2.10.1"
 url = "2"
+# Reuses the rustls stack already pulled in by tauri-plugin-updater (no native-tls);
+# used by check_android_update to fetch the sideload manifest in-process (no CORS).
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 
 # Size-optimized release build for the desktop app and Android lib.
 # Shrinks both the macOS .app/.dmg and the Android .so.
