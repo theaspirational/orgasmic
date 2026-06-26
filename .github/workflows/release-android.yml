@@ -206,24 +206,16 @@ jobs:
           APPS_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          title="orgasmic apps ${APPS_VERSION}"
-          notes="macOS + Android app builds ${APPS_VERSION} from ${GITHUB_SHA}."
 
           # No v* / stable tag is moved: apps own the dedicated `apps-stable` release/tag.
           # --latest=false so it never steals the runtime `stable` release's badge.
-          if gh release view "${APPS_TAG}" >/dev/null 2>&1; then
-            gh release edit "${APPS_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "${title}" \
-              --notes "${notes}" \
-              --latest=false
-          else
-            gh release create "${APPS_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "${title}" \
-              --notes "${notes}" \
-              --latest=false
-          fi
+          bash scripts/sync-release-metadata.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$APPS_TAG" \
+            --line apps \
+            --channel stable \
+            --version "$APPS_VERSION" \
+            --commit "$GITHUB_SHA"
 
           # Version-less asset names (dec_B4147): --clobber overwrites in place,
           # so nothing orphans and there is no delete/prune step.

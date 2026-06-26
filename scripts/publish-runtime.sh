@@ -372,19 +372,15 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo ""; echo "=== publishing to $TAG ==="
-# Refresh release metadata on EVERY publish so a rolling release never strands an
-# old version. Stable carries the headline version in its title (matches the apps
-# release); nightly stays a rolling "orgasmic nightly" so repeated local/CI nightly
-# publishes don't churn the title. Notes always record version + commit. dec_B4147.
-if [[ "$TAG" == "stable" ]]; then title="orgasmic $VERSION"; else title="orgasmic $TAG"; fi
-notes="Runtime bundles $VERSION ($HEAD_SHA)."
-meta=(--title "$title" --notes "$notes" --target "$HEAD_SHA")
-if [[ "$TAG" == "stable" ]]; then meta+=(--latest=true --prerelease=false); else meta+=(--latest=false --prerelease=true); fi
-if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-    gh release edit "$TAG" -R "$REPO" "${meta[@]}" >/dev/null
-else
-    gh release create "$TAG" -R "$REPO" "${meta[@]}"
-fi
+# Refresh release metadata on EVERY publish through the shared policy helper so
+# local and CI publishers keep title/notes/latest/prerelease in sync.
+bash scripts/sync-release-metadata.sh \
+    --repo "$REPO" \
+    --tag "$TAG" \
+    --line runtime \
+    --channel "$CHANNEL" \
+    --version "$VERSION" \
+    --commit "$HEAD_SHA"
 # The GitHub release tag is fetched by NAME (install.sh / the updater never read
 # its commit), so target_commitish is ignored once the tag exists. Move the ref
 # explicitly onto the publish commit so the release's displayed commit tracks the

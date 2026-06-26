@@ -188,30 +188,17 @@ jobs:
           NIGHTLY_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          notes="Nightly builds from ${GITHUB_SHA}."
 
           git tag -f "${NIGHTLY_TAG}" "${GITHUB_SHA}"
           git push origin "refs/tags/${NIGHTLY_TAG}" --force
 
-          if gh release view "${NIGHTLY_TAG}" >/dev/null 2>&1; then
-            gh release edit "${NIGHTLY_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "orgasmic apps nightly" \
-              --notes "${notes}" \
-              --prerelease
-          else
-            gh release create "${NIGHTLY_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "orgasmic apps nightly" \
-              --notes "${notes}" \
-              --prerelease \
-              --latest=false || \
-            gh release edit "${NIGHTLY_TAG}" \
-              --target "${GITHUB_SHA}" \
-              --title "orgasmic apps nightly" \
-              --notes "${notes}" \
-              --prerelease
-          fi
+          bash scripts/sync-release-metadata.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$NIGHTLY_TAG" \
+            --line apps \
+            --channel nightly \
+            --version "$NIGHTLY_VERSION" \
+            --commit "$GITHUB_SHA"
 
           # Version-less asset names (dec_B4147): --clobber overwrites in place,
           # so nothing orphans and there is no delete/prune step.

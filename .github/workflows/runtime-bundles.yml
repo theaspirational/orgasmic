@@ -239,14 +239,18 @@ jobs:
           pattern: runtime-*
           merge-multiple: true
 
-      - name: Ensure release exists
+      - name: Sync release metadata
         run: |
           set -euo pipefail
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            flags=(--title "orgasmic $TAG" --notes "Runtime bundles $VERSION (${GITHUB_SHA})" --target "$GITHUB_SHA")
-            if [ "$TAG" = "stable" ]; then flags+=(--latest); else flags+=(--prerelease); fi
-            gh release create "$TAG" "${flags[@]}"
-          fi
+          channel=nightly
+          if [ "$TAG" = "stable" ]; then channel=stable; fi
+          bash scripts/sync-release-metadata.sh \
+            --repo "$GITHUB_REPOSITORY" \
+            --tag "$TAG" \
+            --line runtime \
+            --channel "$channel" \
+            --version "$VERSION" \
+            --commit "$GITHUB_SHA"
 
       - name: Assemble merged runtime-latest.json
         run: |

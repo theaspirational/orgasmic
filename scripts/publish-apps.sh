@@ -374,23 +374,15 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 
 echo ""; echo "=== publishing to $TAG ==="
-# Title: stable carries the version; nightly stays a rolling "orgasmic apps
-# nightly" so repeated local/CI nightly publishes don't churn the title.
-# --latest=false always (apps own the dedicated apps/apps-nightly releases; the
-# runtime `stable` release keeps the "latest" badge); nightly is a --prerelease.
-if [[ "$CHANNEL" == "nightly" ]]; then
-    title="orgasmic apps nightly"
-    relflags=(--latest=false --prerelease)
-else
-    title="orgasmic apps ${VERSION}"
-    relflags=(--latest=false)
-fi
-notes="orgasmic app builds ${VERSION} from ${HEAD_SHA}."
-if gh release view "$TAG" -R "$REPO" >/dev/null 2>&1; then
-    gh release edit "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" "${relflags[@]}" >/dev/null
-else
-    gh release create "$TAG" -R "$REPO" --target "$HEAD_SHA" --title "$title" --notes "$notes" "${relflags[@]}"
-fi
+# Refresh release metadata on EVERY publish through the shared policy helper so
+# local and CI publishers keep title/notes/latest/prerelease in sync.
+bash scripts/sync-release-metadata.sh \
+    --repo "$REPO" \
+    --tag "$TAG" \
+    --line apps \
+    --channel "$CHANNEL" \
+    --version "$VERSION" \
+    --commit "$HEAD_SHA"
 
 # Version-less asset names (dec_B4147): --clobber overwrites each built target's
 # assets in place; a target not built this run (e.g. android when --target mac)
