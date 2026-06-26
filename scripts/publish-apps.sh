@@ -391,5 +391,11 @@ gh release upload "$TAG" -R "$REPO" "$OUT_DIR"/* --clobber
 
 echo ""
 echo "✓ published apps to $TAG ($VERSION):"
-[[ "$MAC_BUILT" == "1" ]] && echo "    macOS:   orgasmic_darwin_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json"
-[[ "$ANDROID_BUILT" == "1" ]] && echo "    Android: $ANDROID_APK_NAME, android-latest.json"
+# Use `if` (not `[[ ]] && echo`): a false test as the script's last command
+# would make a successful single-target publish exit non-zero.
+if [[ "$MAC_BUILT" == "1" ]]; then
+    echo "    macOS:   orgasmic_darwin_aarch64.dmg, orgasmic.app.tar.gz(.sig), latest.json"
+fi
+if [[ "$ANDROID_BUILT" == "1" ]]; then
+    echo "    Android: $ANDROID_APK_NAME, android-latest.json"
+fi

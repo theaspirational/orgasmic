@@ -204,10 +204,16 @@ infer_commit() {
     if command -v git >/dev/null 2>&1; then
         tag_sha="$(git ls-remote "https://github.com/${REPO}.git" "refs/tags/${TAG}" 2>/dev/null | awk 'NR == 1 { print $1 }')"
     fi
-    if [[ -n "$tag_sha" ]]; then
-        printf '%s\n' "$tag_sha"
-    elif [[ -n "$target" && "$target" != "null" ]]; then
+    # Prefer the release's recorded targetCommitish (set at publish time to the
+    # publish commit) over the git tag ref. A rolling tag like apps-nightly can
+    # lag behind the published commit (publish-apps.sh moves the release target
+    # via gh but not the tag), so trusting the tag first would reset the release
+    # target backward on a notes-only sync. Matches the documented priority:
+    # "inferred from release target/tag".
+    if [[ -n "$target" && "$target" != "null" ]]; then
         printf '%s\n' "$target"
+    elif [[ -n "$tag_sha" ]]; then
+        printf '%s\n' "$tag_sha"
     else
         echo "error: could not infer commit from release target or tag $TAG" >&2
         return 1
