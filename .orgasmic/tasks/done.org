@@ -11191,3 +11191,58 @@ No real local publish performed (apps release already carries identical 0.0.4 fr
 step 2). Commits: f66faac (script+arch+amendment), e9cb9df (CI=1 DMG fix + lock).
 Acceptance met: windows runtime per-target version on stable; apps release populated +
 updater resolves; stable carries runtime assets only; decision/feasibility recorded.
+
+* DONE TASK-2DFTX Implement nested decisions (arbitrary-depth :PARENT: tree, model M2) :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: dec_2GQ7Q
+:ID: TASK-2DFTX
+:END:
+
+Implements [[dec_2GQ7Q]]. Add arbitrary-depth decision nesting via a stored :PARENT: pointer: stable flat dec_ IDs, 1.1.1 as a derived display path, file stays flat, tree is an index read-model. Single node kind; title = the problem (convention); parents carry a synthesis ruling. See [[dec_2GQ7Q]] for the full :PARENT: contract, surfaces, and deferred scope. Subtasks below.
+
+* DONE TASK-2DFTX.1 Core: generic path/tree helper + DecisionNode.parent + :PARENT: edge vocab :decision-model:
+:PROPERTIES:
+:ID: TASK-2DFTX.1
+:END:
+
+Part of [[TASK-2DFTX]]. In orgasmic-core: (1) extract a generic, class-agnostic path/tree helper — validate :PARENT:, derive parent + ancestor chain, cycle/self-parent check — reusable by tasks later; (2) DecisionNode gains parent parsed from :PARENT: (schema.rs:328); (3) add :PARENT: to the canonical edge vocabulary ([[dec_HJENQ]]). Same-class + create-time-existence rules live here.
+
+* DONE TASK-2DFTX.2 Daemon index: decision tree read-model (parent/children/depth/path, orphan, ghost) :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2DFTX.1
+:ID: TASK-2DFTX.2
+:END:
+
+Part of [[TASK-2DFTX]]. In orgasmic-daemon/index.rs: build a decision tree index mirroring build_subtask_index (index.rs:1404) — parent, children ordered by document position, depth, derived full-numeric path (root = 1-based index among roots). Orphan :PARENT: -> ParseError (mirror task orphan, index.rs:1415). Superseded parent with live children kept as a ghost grouping node.
+
+* DONE TASK-2DFTX.3 Daemon API: :PARENT: contract validation + reparent tx tag :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2DFTX.1
+:ID: TASK-2DFTX.3
+:END:
+
+Part of [[TASK-2DFTX]]. In orgasmic-daemon/api.rs decision create/update/delete handlers: enforce the :PARENT: contract (cycle/self-parent, same-class, create-time existence, block deletion of a parent with children). Re-parent rides POST /decisions/:id updating :PARENT:; tag :PARENT:-changing updates as reparent in tx (api.rs:6751). No new endpoints.
+
+* DONE TASK-2DFTX.4 CLI: outline in decision list/get :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2DFTX.2
+:ID: TASK-2DFTX.4
+:END:
+
+Part of [[TASK-2DFTX]]. orgasmic-cli: decision list renders the indented numbered outline (1 / 3.1 / 3.2.1); decision get shows parent, children, path. CLI stays mutation-free for nesting (re-parent via API/UI).
+
+* DONE TASK-2DFTX.5 UI: tree-primary DecisionsView + breadcrumb/children/PARENT chip + add-sub-decision :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2DFTX.2 TASK-2DFTX.3
+:ID: TASK-2DFTX.5
+:END:
+
+Part of [[TASK-2DFTX]]. UI (ui/src): DecisionsView becomes tree-primary (collapsible, path numbers, ghost superseded, ancestor-context on tag-filter); NodeModal gains a parent breadcrumb, ordered children list, single-value PARENT link-chip; descriptor.ts gains a PARENT field; an 'Add sub-decision' action prefills the parent. Drag-and-drop and Graph-page nesting deferred. See [[dec_PA23Y]].
+
+* DONE TASK-2DFTX.6 Fix reviewer findings: nested decision-row button + stale NodeModal cache :decision-model:
+:PROPERTIES:
+:ID: TASK-2DFTX.6
+:END:
+
+Fixes two MEDIUM reviewer findings on [[TASK-2DFTX]]: #1 (tx-20260627-orgasmic-0966) invalid nested <button> in DecisionsView (CopyIdBadge button inside the row button); #3 (tx-20260627-orgasmic-0968) NodeModal stale seed cache hides a new child's summary. Finding #2 (live :PARENT: canonical vocab) handled separately via CLI on dec_HJENQ + contributing.org. UI-only; base at 423b267.
+

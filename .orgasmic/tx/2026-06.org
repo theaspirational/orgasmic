@@ -15454,3 +15454,134 @@
 :FROM_STATE:   in_review
 :TO_STATE:     in_progress
 :END:
+
+* TX 2026-06-27 Sat 16:19:22 graph.architecture.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0983
+:TIME:         [2026-06-27 Sat 16:19:22]
+:TYPE:         graph.architecture.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       created graph node arch_Q1JVD
+:NODE_ID:      arch_Q1JVD
+:END:
+
+* TX 2026-06-27 Sat 16:19:47 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0984
+:TIME:         [2026-06-27 Sat 16:19:47]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_C87Z9
+:NODE_ID:      arch_C87Z9
+:END:
+
+* TX 2026-06-27 Sat 16:19:47 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0985
+:TIME:         [2026-06-27 Sat 16:19:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 16:19:48 task.state_transitioned TASK-2DFTX.1
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0986
+:TIME:         [2026-06-27 Sat 16:19:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 16:19:48 task.state_transitioned TASK-2DFTX.2
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0987
+:TIME:         [2026-06-27 Sat 16:19:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 16:19:48 task.state_transitioned TASK-2DFTX.3
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0988
+:TIME:         [2026-06-27 Sat 16:19:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 16:19:48 task.state_transitioned TASK-2DFTX.4
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0989
+:TIME:         [2026-06-27 Sat 16:19:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.4
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 16:19:49 task.state_transitioned TASK-2DFTX.5
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0990
+:TIME:         [2026-06-27 Sat 16:19:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 16:19:49 task.state_transitioned TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0991
+:TIME:         [2026-06-27 Sat 16:19:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       nested decisions landed: merged to main (dc3a8ad), tests/clippy/UI build green, arch_Q1JVD authored
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

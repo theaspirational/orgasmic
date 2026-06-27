@@ -574,7 +574,7 @@ Records manager-visible actions as =manager.action= tx events and maintains the 
 :ID:                 arch_C87Z9
 :KIND:               architecture
 :SEMANTIC_HASH:
-:MOTIVATED_BY:       dec_XV9AK dec_N17XX dec_YYMSK dec_CSKBD dec_HY3E0 dec_A4V2N dec_JW11K dec_R3RE4
+:MOTIVATED_BY:       dec_XV9AK dec_N17XX dec_YYMSK dec_CSKBD dec_HY3E0 dec_A4V2N dec_JW11K dec_R3RE4 dec_2GQ7Q
 :GLOSSARY_REFS:      term_N5SJT term_FM60Y term_CEQFS term_Z672G
 :INTERFACE:          HTTP REST WS complete CLI watcher materialized index auth request id idempotency
 :CONSTRAINTS:        localhost default LAN opt in no MCP v0.0.1 reads from in memory index notify debounce bearer token
@@ -1550,3 +1550,15 @@ Active tasks (backlog/todo/in_progress/in_review) join decisions and architectur
 - node modal: Read-only graph-node inspection surface with back-stack traversal.
 - cross-domain graph: React Flow visualization over decisions, architecture, glossary terms, and ADRs.
 - reference page: Secondary list-first surface for glossary, ADR, snapshot, or activity records.
+
+* arch_Q1JVD Decision :PARENT: nesting tree and read-model (M2)
+:PROPERTIES:
+:CONSTRAINTS: stable dec_ identity; path is derived display only; single stored :PARENT: (no new fields); same-class; no cycle/self-parent; create-time existence; orphan->ParseError; superseded-parent ghost; file stays flat
+:DECIDED_AT: [2026-06-27 Sat]
+:DEPENDS_ON: arch_C87Z9
+:ID: arch_Q1JVD
+:INTERFACE: parse_parent_value validate_parent_tree DecisionNode.parent decision_tree-index :PARENT:-contract reparent-tx decision-list/get-outline tree-primary-DecisionsView PARENT-chip
+:MOTIVATED_BY: dec_2GQ7Q dec_HJENQ dec_JW11K
+:END:
+
+Arbitrary-depth decision nesting (model M2): a single stored :PARENT: pointer on the child is the only new field; the 1.1.1 outline is a derived display path, never identity; the file stays physically flat and the tree is a pure index read-model. Spans (1) a generic, class-agnostic path/tree helper in orgasmic-core (parse/validate :PARENT:, derive parent + ancestor chain, cycle/self-parent detection), (2) the daemon decision-tree index read-model (parent, document-ordered children, depth, derived path; orphan -> ParseError; a superseded parent with live children is retained as a ghost), (3) the :PARENT: write contract on the decision create/update/delete handlers (same-class, no cycle/self-parent, create-time existence, block delete of a parent that still has children) with :PARENT:-changing updates tagged reparent in tx, (4) the CLI decision list/get outline, and (5) the tree-primary DecisionsView + NodeModal breadcrumb/children/single-value PARENT chip.
