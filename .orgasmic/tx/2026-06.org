@@ -14749,3 +14749,708 @@
 :component:    mobile-update-check
 :files:        ui/bootstrap.html,ui/src/bootstrap.ts
 :END:
+
+* TX 2026-06-27 Sat 10:56:58 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0941
+:TIME:         [2026-06-27 Sat 10:56:58]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_2GQ7Q
+:NODE_ID:      dec_2GQ7Q
+:END:
+
+* TX 2026-06-27 Sat 10:57:53 task.created TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0942
+:TIME:         [2026-06-27 Sat 10:57:53]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Record nested-decisions implementation umbrella from grilling session
+:END:
+
+* TX 2026-06-27 Sat 10:58:29 task.created TASK-2DFTX.1
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0943
+:TIME:         [2026-06-27 Sat 10:58:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       nested-decisions subtask
+:END:
+
+* TX 2026-06-27 Sat 10:58:30 task.created TASK-2DFTX.2
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0944
+:TIME:         [2026-06-27 Sat 10:58:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       nested-decisions subtask
+:END:
+
+* TX 2026-06-27 Sat 10:58:30 task.created TASK-2DFTX.3
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0945
+:TIME:         [2026-06-27 Sat 10:58:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       nested-decisions subtask
+:END:
+
+* TX 2026-06-27 Sat 10:58:30 task.created TASK-2DFTX.4
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0946
+:TIME:         [2026-06-27 Sat 10:58:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.4
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       nested-decisions subtask
+:END:
+
+* TX 2026-06-27 Sat 10:58:30 task.created TASK-2DFTX.5
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0947
+:TIME:         [2026-06-27 Sat 10:58:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       nested-decisions subtask
+:END:
+
+* TX 2026-06-27 Sat 10:58:31 task.created TASK-KZ0VF
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0948
+:TIME:         [2026-06-27 Sat 10:58:31]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KZ0VF
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       nested-decisions follow-up
+:END:
+
+* TX 2026-06-27 Sat 10:58:47 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0949
+:TIME:         [2026-06-27 Sat 10:58:47]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JW11K
+:NODE_ID:      dec_JW11K
+:END:
+
+* TX 2026-06-27 Sat 10:58:47 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0950
+:TIME:         [2026-06-27 Sat 10:58:47]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HJENQ
+:NODE_ID:      dec_HJENQ
+:END:
+
+* TX 2026-06-27 Sat 14:41:59 task.created TASK-KNENN
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0951
+:TIME:         [2026-06-27 Sat 14:41:59]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KNENN
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Captured from observed agent misstep: used codex CLI directly in a managed repo
+:END:
+
+* TX 2026-06-27 Sat 14:48:02 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0952
+:TIME:         [2026-06-27 Sat 14:48:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2DFTX to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-06-27 Sat 14:48:02 manager.dispatch_started TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0953
+:TIME:         [2026-06-27 Sat 14:48:02]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx/worktree
+:BRANCH:       feat/nested-decisions
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-brief.md
+:STARTED_AT:   [2026-06-27 Sat 14:48:02]
+:LIVENESS:     94accd94b36781906ed22a88b3bac64a6d871d82
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:REASON_INITIAL: Implement dec_2GQ7Q nested decisions (umbrella .1-.5)
+:END:
+
+* TX 2026-06-27 Sat 14:48:02 run.created TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0954
+:TIME:         [2026-06-27 Sat 14:48:02]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2DFTX-implementer-20260627T144802.jsonl
+:REASON:       Implement dec_2GQ7Q nested decisions (umbrella .1-.5)
+:RUN_ID:       run-20260627T144802-9d10cc43d71b4f50a9898a4800151463
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-appserver
+:KIND:         implementer
+:DRIVER:       acp-ws
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-stdout.log
+:DISPATCH_TX:  tx-20260627-orgasmic-0953
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-06-27 Sat 14:50:08 manager.dispatch_aborted TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0955
+:TIME:         [2026-06-27 Sat 14:50:08]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:       appserver/acp-ws ran simulated (no ws endpoint configured, endpoint empty -> HarnessRequest::Simulated); re-dispatching on acp-stdio for real codex execution
+:CLOSED_TX:    tx-20260627-orgasmic-0953
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-06-27 Sat 14:50:08 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0956
+:TIME:         [2026-06-27 Sat 14:50:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-2DFTX to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-06-27 Sat 14:50:21 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0957
+:TIME:         [2026-06-27 Sat 14:50:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2DFTX to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-06-27 Sat 14:50:21 manager.dispatch_started TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0958
+:TIME:         [2026-06-27 Sat 14:50:21]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx/worktree
+:BRANCH:       feat/nested-decisions
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-brief.md
+:STARTED_AT:   [2026-06-27 Sat 14:50:21]
+:LIVENESS:     94accd94b36781906ed22a88b3bac64a6d871d82
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:REASON_INITIAL: Implement dec_2GQ7Q nested decisions (umbrella .1-.5); acp-stdio real codex
+:END:
+
+* TX 2026-06-27 Sat 14:50:21 run.created TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0959
+:TIME:         [2026-06-27 Sat 14:50:21]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2DFTX-implementer-20260627T145021.jsonl
+:REASON:       Implement dec_2GQ7Q nested decisions (umbrella .1-.5); acp-stdio real codex
+:RUN_ID:       run-20260627T145021-8590c526833a4b93884371ca4fef7538
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/nested-decisions/nested-decisions-stdout.log
+:PID:          92475
+:DISPATCH_TX:  tx-20260627-orgasmic-0958
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-06-27 Sat 15:04:37 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0960
+:TIME:         [2026-06-27 Sat 15:04:37]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_QWC9V
+:NODE_ID:      dec_QWC9V
+:END:
+
+* TX 2026-06-27 Sat 15:05:01 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0961
+:TIME:         [2026-06-27 Sat 15:05:01]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ASB1A
+:NODE_ID:      dec_ASB1A
+:END:
+
+
+* TX 2026-06-27 Sat 15:30:32 implementer.done TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0962
+:TIME:         [2026-06-27 Sat 15:30:32]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:       implementer done; committed 423b267 on feat/nested-decisions (PR flow; not merged to main yet); cargo test+clippy+UI build green
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:WORKER_COMMIT: 423b267
+:MERGE_SHA:    423b267
+:BRANCH:       feat/nested-decisions
+:CLOSED_TX:    tx-20260627-orgasmic-0958
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-06-27 Sat 15:30:32 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0963
+:TIME:         [2026-06-27 Sat 15:30:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2DFTX to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-06-27 Sat 15:30:41 manager.dispatch_started TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0964
+:TIME:         [2026-06-27 Sat 15:30:41]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:
+:KIND:         reviewer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx-review/worktree
+:BRANCH:       review/nested-decisions
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions-review/nested-decisions-review-brief.md
+:STARTED_AT:   [2026-06-27 Sat 15:30:41]
+:LIVENESS:     423b267857bd22590fea18eb7ab81336e6838a27
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:REASON_INITIAL: Adversarial review of nested-decisions diff (94accd9..423b267)
+:END:
+
+* TX 2026-06-27 Sat 15:30:41 run.created TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0965
+:TIME:         [2026-06-27 Sat 15:30:41]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2DFTX-reviewer-20260627T153041.jsonl
+:REASON:       Adversarial review of nested-decisions diff (94accd9..423b267)
+:RUN_ID:       run-20260627T153041-aae1ebcb89064e9dbbade56f72114322
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-acp
+:KIND:         reviewer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions-review/nested-decisions-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/nested-decisions-review/nested-decisions-review-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/nested-decisions-review/nested-decisions-review-stdout.log
+:PID:          17010
+:DISPATCH_TX:  tx-20260627-orgasmic-0964
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-06-27 Sat 15:39:20 reviewer.finding TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0966
+:TIME:         [2026-06-27 Sat 15:39:20]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       ui/src/components/DecisionsView.tsx:261
+:REASON:       MEDIUM a11y/regression: DecisionsView wraps the row body in a button while rendering CopyIdBadge (also a button) inside it, producing invalid nested interactive HTML and unreliable row/copy focus/click behavior. Move the copy control outside the row button or use a non-button row primitive.
+:SEVERITY:     MEDIUM
+:KIND:         a11y
+:END:
+
+* TX 2026-06-27 Sat 15:39:20 reviewer.finding TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0967
+:TIME:         [2026-06-27 Sat 15:39:20]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/decisions.org:1208
+:REASON:       MEDIUM correctness/contract: dec_2GQ7Q requires :PARENT: in the canonical edge vocabulary, but the live dec_HJENQ vocabulary and contributing convention still omit it; only the shipped scaffold convention was updated. Update the live canonical vocabulary through the daemon/CLI so PARENT is not treated as an invented edge key.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:END:
+
+* TX 2026-06-27 Sat 15:39:20 reviewer.finding TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0968
+:TIME:         [2026-06-27 Sat 15:39:20]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       ui/src/components/node-views/NodeModal.tsx:109
+:REASON:       MEDIUM UI correctness: Add sub-decision opens the new child after refreshBump, but NodeModal caches seed decisions under node-modal:<project> and loadDetailData uses that stale seed instead of refetching. The newly opened child is missing from modal summaries, so parent breadcrumb/path/children are absent until a full reopen/refetch.
+:SEVERITY:     MEDIUM
+:KIND:         ui
+:END:
+
+* TX 2026-06-27 Sat 15:47:39 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0969
+:TIME:         [2026-06-27 Sat 15:47:39]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HJENQ
+:NODE_ID:      dec_HJENQ
+:END:
+
+* TX 2026-06-27 Sat 15:48:27 reviewer.done TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0970
+:TIME:         [2026-06-27 Sat 15:48:27]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:       reviewer pass complete: REQUEST CHANGES, 3 MEDIUM findings filed (tx 0966/0967/0968); core mechanism clean
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:CLOSED_TX:    tx-20260627-orgasmic-0964
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-06-27 Sat 15:48:27 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0971
+:TIME:         [2026-06-27 Sat 15:48:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2DFTX to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-06-27 Sat 15:49:19 task.created TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0972
+:TIME:         [2026-06-27 Sat 15:49:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       review fix subtask for TASK-2DFTX UI findings
+:END:
+
+* TX 2026-06-27 Sat 15:49:32 task.state_transitioned TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0973
+:TIME:         [2026-06-27 Sat 15:49:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2DFTX.6 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-06-27 Sat 15:49:32 manager.dispatch_started TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0974
+:TIME:         [2026-06-27 Sat 15:49:32]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx-fix/worktree
+:BRANCH:       fix/nested-decisions-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions-fix/nested-decisions-fix-brief.md
+:STARTED_AT:   [2026-06-27 Sat 15:49:32]
+:LIVENESS:     423b267857bd22590fea18eb7ab81336e6838a27
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:REASON_INITIAL: Fix reviewer findings #1 (nested button) + #3 (stale NodeModal cache)
+:END:
+
+* TX 2026-06-27 Sat 15:49:32 run.created TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0975
+:TIME:         [2026-06-27 Sat 15:49:32]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2DFTX.6-implementer-20260627T154932.jsonl
+:REASON:       Fix reviewer findings #1 (nested button) + #3 (stale NodeModal cache)
+:RUN_ID:       run-20260627T154932-bc6f3a8387144fd5ba0da7d801b9d04e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx-fix/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions-fix/nested-decisions-fix-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/nested-decisions-fix/nested-decisions-fix-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/nested-decisions-fix/nested-decisions-fix-stdout.log
+:PID:          74591
+:DISPATCH_TX:  tx-20260627-orgasmic-0974
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-06-27 Sat 16:02:04 implementer.done TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0976
+:TIME:         [2026-06-27 Sat 16:02:04]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:REASON:       fix findings #1/#3 verified (UI build + diff review); folded into feat/nested-decisions
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:WORKER_COMMIT: 25910bc
+:MERGE_SHA:    25910bc
+:BRANCH:       fix/nested-decisions-review
+:CLOSED_TX:    tx-20260627-orgasmic-0974
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-06-27 Sat 16:02:04 task.state_transitioned TASK-2DFTX.6
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0977
+:TIME:         [2026-06-27 Sat 16:02:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX.6
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2DFTX.6 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-06-27 Sat 16:03:01 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0978
+:TIME:         [2026-06-27 Sat 16:03:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fixes for reviewer findings #1/#2/#3 landed (feat @ 25910bc); ready for re-review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-06-27 Sat 16:03:01 manager.dispatch_started TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0979
+:TIME:         [2026-06-27 Sat 16:03:01]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:
+:KIND:         reviewer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx-review/worktree
+:BRANCH:       review/nested-decisions-2
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions-rereview/nested-decisions-rereview-brief.md
+:STARTED_AT:   [2026-06-27 Sat 16:03:01]
+:LIVENESS:     25910bc8cd0ccaa1d0396affed42ff3cb3e33aa9
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:REASON_INITIAL: Re-review after fixes
+:END:
+
+* TX 2026-06-27 Sat 16:03:01 run.created TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0980
+:TIME:         [2026-06-27 Sat 16:03:01]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2DFTX-reviewer-20260627T160301.jsonl
+:REASON:       Re-review after fixes
+:RUN_ID:       run-20260627T160301-6671d26c8aea4cbea8e4bc48860a34af
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-acp
+:KIND:         reviewer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2dftx-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/nested-decisions-rereview/nested-decisions-rereview-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/nested-decisions-rereview/nested-decisions-rereview-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/nested-decisions-rereview/nested-decisions-rereview-stdout.log
+:PID:          55706
+:DISPATCH_TX:  tx-20260627-orgasmic-0979
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-06-27 Sat 16:12:27 reviewer.done TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0981
+:TIME:         [2026-06-27 Sat 16:12:27]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:REASON:       re-review: #1/#3 confirmed resolved; sole REQUEST-CHANGES finding (#2 live vocab) is a worktree false-negative — fix is live in main .orgasmic (daemon writes uncommitted, invisible to feature worktree). Verified contributing.org + dec_HJENQ carry :PARENT:.
+:MODEL:        gpt-5.5
+:EFFORT:       xhigh
+:CLOSED_TX:    tx-20260627-orgasmic-0979
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-06-27 Sat 16:12:27 task.state_transitioned TASK-2DFTX
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0982
+:TIME:         [2026-06-27 Sat 16:12:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2DFTX
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2DFTX to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:

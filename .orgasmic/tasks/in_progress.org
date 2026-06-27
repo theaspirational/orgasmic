@@ -1,3 +1,11 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-2DFTX Implement nested decisions (arbitrary-depth :PARENT: tree, model M2) :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: dec_2GQ7Q
+:ID: TASK-2DFTX
+:END:
+
+Implements [[dec_2GQ7Q]]. Add arbitrary-depth decision nesting via a stored :PARENT: pointer: stable flat dec_ IDs, 1.1.1 as a derived display path, file stays flat, tree is an index read-model. Single node kind; title = the problem (convention); parents carry a synthesis ruling. See [[dec_2GQ7Q]] for the full :PARENT: contract, surfaces, and deferred scope. Subtasks below.
+

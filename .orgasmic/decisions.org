@@ -138,6 +138,7 @@ The board stays small and conflict-light while project data remains in each repo
 :GLOSSARY_REFS: term_KH8TX term_KCGEH term_RG690
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Runtime
+:RELATES_TO:    dec_QWC9V
 :END:
 ** Context
 Worker execution should reuse proven HAR concepts without importing HAR product boundaries. Shelling out per provider gives quick initial runs but inconsistent event capture and lifecycle control; supporting one provider only fails orgasmic's multi-agent host goal.
@@ -481,6 +482,7 @@ The UI preserves manager narration where an LLM is required and avoids token was
 :GLOSSARY_REFS: term_RG690
 :DECIDED_AT:    [2026-05-23 Sat 15:08]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:RELATES_TO:    dec_2GQ7Q
 :END:
 ** Context
 The ClickUp reference shows first-class subtasks, but tasks today are flat with no parent/child schema. Nested headings in the org file conflict with the =** Description= / =** Acceptance Criteria= section convention; flat continuous IDs plus a parent property hide the parent and are harder to scan in logs.
@@ -1089,6 +1091,7 @@ TASK-2C3WZ implements: core =TASK_FILE_NAMES=/scaffold lists, daemon index + cre
 :ID:            dec_HJENQ
 :DECIDED_AT:    [2026-06-12 Fri]
 :SOURCE:        TASK-55DH1 implementer session 2026-06-12
+:RELATES_TO:    dec_2GQ7Q
 :END:
 ** Context
 A census of 396 property drawers across all org node classes (2026-06-12) surfaced four
@@ -1292,6 +1295,7 @@ supervision and lands as a single tagged commit.
 dec_X72P5 alignment: migration lands as ONE tagged commit; the migrated repo reads as
 greenfield (no =:RENAMED_FROM:= drawers, no legacy-detection standing rules beyond the
 existing malformed-ID lint TASK-QRD3Y).
+Update (per [[dec_2GQ7Q]]): =:PARENT:= joins the canonical edge vocabulary as the single-value, same-class hierarchy edge for arbitrary-depth decision nesting — the child stores the pointer; the inverse =children=, =depth=, and the =1.1.1= path are index-derived (no new stored fields beyond =:PARENT:=).
 
 *** Follow-up implementation tasks (for manager filing at integration)
 **** TASK-PROP-MIGRATION: Execute the property schema migration
@@ -1560,3 +1564,123 @@ stable app has the OLD `apps` tag baked in (Rust map + Android manifest + tauri.
 fallback), so after `apps` is deleted its update check 404s -> a one-time manual
 reinstall per stable-app device (self-heals on the next update). Nightly apps and the
 runtime line are untouched.
+
+* dec_2GQ7Q Flat decisions don't scale: how should decisions nest and name the problem they solve?
+:PROPERTIES:
+:DECIDED_AT: [2026-06-27 Sat]
+:ID: dec_2GQ7Q
+:RELATES_TO: dec_JW11K dec_HJENQ dec_KTF04 dec_X6Q0S dec_PA23Y
+:END:
+
+** Context
+Decisions are a flat list of level-1 =dec_*= headings. As the design tree deepens — a
+complex program accrues many layers of progressively more specific rulings — a flat list
+stops scaling: there is no way to express that one ruling refines or decomposes another.
+Tags already give topical grouping and =:SUPERSEDES:= already gives evolution/replacement,
+but neither expresses logical refinement (a sub-ruling only meaningful given its parent)
+nor decomposition (a broad question split into decided sub-questions). Decision titles and
+bodies also duplicate intent. We want hierarchy that is future-proof and reusable for other
+node classes (tasks) later.
+** Decision
+Add an arbitrary-depth decision tree under one uniform model.
+
+- /Single node kind/. No separate topic/question class; umbrella nodes are ordinary
+  decisions. (Rejected a distinct container class: it would fork the schema, the
+  accepted/superseded read-model, and the graph.)
+- /Title = the problem/. The heading title states the problem the decision settles; the
+  =** Decision= body states the answer. Removes title/body duplication and preserves the
+  originating question. Convention only, not machine-enforced (placeholder + authoring
+  guidance).
+- /Every node rules/ (no empty containers). A parent's =** Decision= is a synthesis of its
+  subtree — the executive summary. =accepted = present and not superseded= is unchanged
+  (see [[dec_KTF04]]).
+- /Identity is the stable flat random =dec_XXXXX=, never a path/. The tree is a stored
+  =:PARENT:= pointer on the child. The =1.1.1= outline is a DERIVED display label (full
+  numeric path; a root's number is its 1-based index among roots in document order), never
+  an identity. Chosen (model M2) over path-as-identity (=dec_X.1.1=) so re-parenting is one
+  property edit and never breaks the dense inbound reference web (=:SUPERSEDES:=, arch
+  =:MOTIVATED_BY:=, prose); path-as-identity would force re-minting a whole subtree and
+  rewriting every reference on each move.
+- /File stays physically flat/: =*=-level headings + =:PARENT:=. Decisions cannot nest as
+  org subheadings because =**= is taken by the Context/Decision/Consequences sections. The
+  tree is a pure index read-model (parent, ordered children, depth, derived path), mirroring
+  the task =subtasks= index. No new stored fields beyond =:PARENT:=.
+- /Sibling order = document order/; new children append at EOF to start. (=:ORDER:= rank
+  deferred unless reordering becomes frequent.)
+- /Supersession does not cascade and does not auto-rehome/. Edges are independent;
+  re-parenting is the explicit tool (cheap under M2); the supersede workflow merely OFFERS
+  to re-home children; a superseded parent with live children renders as a faded ghost node.
+- /=:PARENT:= edge contract/: generic key =:PARENT:= (reusable across classes); same-class
+  only; no cycles and no self-parent (rejected at write); create-time existence required;
+  orphan-from-deletion surfaced as a ParseError (mirrors task orphan handling); same
+  =decisions.org= scope; deletion of a parent that still has children is blocked.
+- /Depth is unbounded, no lint/.
+- /Reusable mechanism/: extract a generic path/tree helper (validate =:PARENT:=, derive
+  parent/ancestors, cycle check) in =orgasmic-core= so tasks can migrate onto it later (see
+  [[dec_JW11K]]) and arch could relax its one-level cap.
+
+Surfaces.
+- /API/ rides existing endpoints: create-child = =POST /decisions= with =properties:{PARENT}=;
+  re-parent = =POST /decisions/:id= updating =:PARENT:=; add the contract validation in the
+  create/update/delete handlers; tag =:PARENT:=-changing updates as =reparent= in tx;
+  re-home = N sequential calls (no batch endpoint).
+- /CLI/ viewer gains the outline: =decision list= / =decision get= show path, parent, and
+  children.
+- /UI/: tree-primary =DecisionsView= (collapsible, path numbers, ghost superseded,
+  ancestor-context when tag-filtering); =NodeModal= gains a parent breadcrumb, an ordered
+  children list, and a single-value =PARENT= link-chip; =descriptor.ts= gains a =PARENT=
+  field; an "Add sub-decision" action prefills the parent (see [[dec_PA23Y]]).
+** Consequences
+- =:PARENT:= must be added to the canonical edge vocabulary ([[dec_HJENQ]]), which currently
+  forbids inventing new edge keys.
+- Existing decision titles must be rewritten to problem-form for consistency (no-migration-
+  scars value); tracked as a separate grilling task, not part of the mechanism work.
+- The index gains a decision-tree read-model alongside the task subtask index (see
+  [[dec_X6Q0S]]).
+- Architecture nodes for the new path/tree helper and decision-tree index are authored when
+  the code lands (living-model rule: keep nodes true), not ahead of implementation.
+- Deferred: drag-and-drop reorder/re-parent; Graph-page intra-layer =:PARENT:= edges;
+  =:ORDER:= rank; DFS-adjacent file writes (readability polish); soft depth lint; migrating
+  tasks onto the shared helper; relaxing arch's one-level cap.
+- Produced by a grilling session on [2026-06-27 Sat].
+
+* dec_QWC9V Should silently-simulating acp-ws codex workers ship as selectable defaults?
+:PROPERTIES:
+:ID: dec_QWC9V
+:RELATES_TO: dec_ASB1A
+:END:
+
+** Context
+The codex harness has two transports among shipped workers: =acp-stdio= (spawns a real
+=codex app-server= subprocess when =codex= is on PATH) and =acp-ws= (connects to a running
+codex app-server over a configured =ws://= endpoint). Per [[dec_ASB1A]], =acp-ws= keeps a
+simulated-mode escape hatch: when no endpoint is configured it emits Ready + RunComplete and
+writes nothing — intended for supervisor-lease / JSONL CI tests. Two shipped workers used the
+=acp-ws=/codex pair with no endpoint and no sandbox permissions: =implementer-codex-appserver=
+and the default =reviewer=. Dispatching either out-of-the-box silently no-ops. A simulated
+*reviewer* is the worse failure: it can rubber-stamp a change without actually reviewing it.
+
+** Decision
+Do not ship =acp-ws=/codex workers as selectable defaults.
+- Remove =implementer-codex-appserver=. It is redundant: three real codex implementers already
+  ship — =implementer-codex-acp= (acp-stdio), =implementer-codex-rmux=, =implementer-codex-tmux=.
+- Repoint the default =reviewer= from =acp-ws= to =acp-stdio= and give it the standard sandbox
+  permissions, so a =--kind reviewer= dispatch runs codex for real (matching
+  =reviewer-codex-acp=).
+- Keep the =acp-ws= driver and adapter in the codebase: it is a real transport for anyone who
+  configures a =ws://= endpoint, and the CI tests that build their own =acp-ws= fixture workers
+  to exercise simulated mode are unaffected (they write their own worker .org; they do not read
+  =shipped/=).
+- Update the =parses_every_shipped_worker= fixture count (19 -> 18).
+
+The deeper root cause — =acp-ws= silently simulating instead of failing loudly when no endpoint
+is configured — is left as a gated follow-up in the adapter, not done here.
+
+** Consequences
+- =orgasmic worker list= keeps showing the old set until the runtime is reinstalled/published
+  from this source; the change takes effect on next install.
+- No shipped worker uses the =acp-ws=/codex pair anymore; =is_supported_worker_pair= still lists
+  it as valid, so the driver and its tests stay green.
+- The footgun where a selected worker silently does nothing is closed for the default surfaces.
+- Recorded in the same session that hit the simulated appserver run on TASK-2DFTX and filed
+  [[TASK-KNENN]] (route work through orgasmic workers, not raw provider CLIs).
