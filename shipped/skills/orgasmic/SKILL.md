@@ -1,6 +1,7 @@
 ---
 name: orgasmic
 description: 'Manage an orgasmic project. Use for /orgasmic, /orgasmic install, /orgasmic update, /orgasmic init, /orgasmic recall, /orgasmic resume, /recall, /resume, installing or updating orgasmic, scaffolding .orgasmic, or resuming project state.'
+triggers: ["/orgasmic", "/orgasmic install", "/orgasmic update", "/orgasmic init", "/orgasmic recall", "/orgasmic resume", "/recall", "/resume"]
 ---
 
 # orgasmic

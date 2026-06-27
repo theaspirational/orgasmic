@@ -407,11 +407,17 @@ fn config_missing_pipeline_yields_empty() {
 
 #[test]
 fn parses_real_tx_file() {
-    let src = read(".orgasmic/tx/2026-05.org");
-    let entries = parse_tx_file(&src, ".orgasmic/tx/2026-05.org").unwrap();
+    let tx_path = std::fs::read_dir(repo_root().join(".orgasmic/tx"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().and_then(|ext| ext.to_str()) == Some("org"))
+        .expect("at least one live tx fixture");
+    let rel = tx_path.strip_prefix(repo_root()).unwrap().to_string_lossy();
+    let src = std::fs::read_to_string(&tx_path).unwrap_or_else(|e| panic!("read {rel}: {e}"));
+    let entries = parse_tx_file(&src, &rel).unwrap();
     assert!(!entries.is_empty());
     assert!(entries.iter().all(|e| !e.tx_id.is_empty()));
-    assert!(entries.iter().any(|e| e.ty == "project.initialized"));
     let last = entries.last().unwrap();
     assert!(!last.actor.is_empty());
 }

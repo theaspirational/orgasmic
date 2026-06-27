@@ -193,7 +193,7 @@ fn collect_dangling_reference_tokens(
         let Some(owner) = owner else {
             continue;
         };
-        for key in ["RELATES_TO", "GLOSSARY_REFS"] {
+        for key in ["RELATES_TO", "GLOSSARY_REFS", "PARENT"] {
             for token in tokenize_property(heading.property(key)) {
                 out.push((
                     token,
@@ -241,7 +241,7 @@ pub fn collect_identity_occurrences(project_root: &Path) -> Vec<IdentityOccurren
     out
 }
 
-/// Collect `:RELATES_TO:` / `:GLOSSARY_REFS:` / task drawer reference tokens.
+/// Collect `:RELATES_TO:` / `:GLOSSARY_REFS:` / `:PARENT:` / task drawer reference tokens.
 pub fn collect_reference_occurrences(
     project_root: &Path,
 ) -> Vec<(String, PathBuf, Option<usize>, String)> {

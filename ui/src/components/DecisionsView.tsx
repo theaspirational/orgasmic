@@ -1,18 +1,19 @@
 // @arch arch_MK2Q2.7
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useRefreshToken } from '@/hooks/useRefreshBus';
-import { fetchDecisions } from '@/lib/api';
+import { useRefreshBump, useRefreshToken } from '@/hooks/useRefreshBus';
+import { createDecision, fetchDecisions } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, type AppSearch } from '@/lib/searchState';
 import type { DecisionSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
+import { cn } from '@/lib/utils';
 
 import { CopyIdBadge } from './CopyIdBadge';
 import { ErrorPanel, PageHeader } from './Primitives';
-import { NodeListView } from './node-views/NodeListView';
 import { NodeModal } from './node-views/NodeModal';
 import { TagFilterInput } from './node-views/TagFilterInput';
 import { firstSentence } from './node-views/orgNodes';
@@ -27,29 +28,126 @@ function tagOptions(items: DecisionSummary[]): string[] {
   return Array.from(new Set(items.flatMap((item) => item.tags ?? []))).sort();
 }
 
+type DecisionTreeRow = {
+  decision: DecisionSummary;
+  depth: number;
+  context: boolean;
+  ghost: boolean;
+};
+
+function pathKey(decision: DecisionSummary): number[] {
+  return (decision.path ?? '')
+    .split('.')
+    .map((part) => Number.parseInt(part, 10))
+    .filter((part) => Number.isFinite(part));
+}
+
+function compareDecisionPath(a: DecisionSummary, b: DecisionSummary): number {
+  const aa = pathKey(a);
+  const bb = pathKey(b);
+  const len = Math.max(aa.length, bb.length);
+  for (let i = 0; i < len; i += 1) {
+    const av = aa[i] ?? 0;
+    const bv = bb[i] ?? 0;
+    if (av !== bv) return av - bv;
+  }
+  return a.id.localeCompare(b.id);
+}
+
+function buildDecisionTreeRows(
+  decisions: DecisionSummary[],
+  selectedTags: string[],
+  showSuperseded: boolean,
+  collapsed: Set<string>,
+): DecisionTreeRow[] {
+  const byId = new Map(decisions.map((decision) => [decision.id, decision]));
+  const children = new Map<string, DecisionSummary[]>();
+  const roots: DecisionSummary[] = [];
+  for (const decision of decisions) {
+    const parent = decision.parent ?? null;
+    if (parent && byId.has(parent)) {
+      const bucket = children.get(parent) ?? [];
+      bucket.push(decision);
+      children.set(parent, bucket);
+    } else {
+      roots.push(decision);
+    }
+  }
+  for (const bucket of children.values()) bucket.sort(compareDecisionPath);
+  roots.sort(compareDecisionPath);
+  const tagFilterActive = selectedTags.length > 0;
+  const tagMatches = (decision: DecisionSummary) =>
+    !tagFilterActive || (decision.tags ?? []).some((tag) => selectedTags.includes(tag));
+  const visibleRows: DecisionTreeRow[] = [];
+
+  function visit(decision: DecisionSummary, depth: number): boolean {
+    const kids = children.get(decision.id) ?? [];
+    const childMatches = kids.map((child) => visit(child, depth + 1));
+    const descendantVisible = childMatches.some(Boolean);
+    const ownVisible = tagMatches(decision) && (showSuperseded || !decision.superseded);
+    const visible = ownVisible || descendantVisible;
+    if (!visible) return false;
+
+    const row: DecisionTreeRow = {
+      decision,
+      depth,
+      context: !ownVisible && descendantVisible,
+      ghost: Boolean(decision.superseded && descendantVisible && !showSuperseded),
+    };
+    const insertAt = visibleRows.findIndex((candidate) => {
+      const candidatePath = candidate.decision.path ?? '';
+      const path = decision.path ?? '';
+      return candidatePath.startsWith(`${path}.`);
+    });
+    if (insertAt >= 0) visibleRows.splice(insertAt, 0, row);
+    else visibleRows.push(row);
+    if (collapsed.has(decision.id)) {
+      let i = visibleRows.length - 1;
+      while (i >= 0) {
+        const candidate = visibleRows[i];
+        if (candidate.decision.id === decision.id) break;
+        if ((candidate.decision.path ?? '').startsWith(`${decision.path ?? ''}.`)) {
+          visibleRows.splice(i, 1);
+        }
+        i -= 1;
+      }
+    }
+    return true;
+  }
+
+  for (const root of roots) visit(root, 0);
+  visibleRows.sort((a, b) => compareDecisionPath(a.decision, b.decision));
+  return visibleRows.filter((row) => {
+    const path = row.decision.path ?? '';
+    return ![...collapsed].some((id) => {
+      const parent = byId.get(id);
+      const parentPath = parent?.path;
+      return parentPath && path.startsWith(`${parentPath}.`);
+    });
+  });
+}
+
 export function DecisionsView({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as DecisionsSearch;
   const refresh = useRefreshToken();
+  const refreshBump = useRefreshBump();
   const decisions = useResource(`decisions:${projectId}:${refresh}`, () => fetchDecisions(projectId));
   const tags = useMemo(() => tagOptions(decisions.data ?? []), [decisions.data]);
   const selectedTags = useMemo(() => searchList(search.tag), [search.tag]);
   const [showSuperseded, setShowSuperseded] = useState(false);
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [creatingUnder, setCreatingUnder] = useState<string | null>(null);
 
   const supersededCount = useMemo(
     () => (decisions.data ?? []).filter((d) => d.superseded).length,
     [decisions.data],
   );
 
-  const filtered = useMemo(() => {
-    return [...(decisions.data ?? [])]
-      .sort((a, b) => parseInt(a.id.slice(4), 10) - parseInt(b.id.slice(4), 10))
-      .filter((decision) => {
-        if (!showSuperseded && decision.superseded) return false;
-        if (selectedTags.length === 0) return true;
-        return (decision.tags ?? []).some((tag) => selectedTags.includes(tag));
-      });
-  }, [decisions.data, selectedTags, showSuperseded]);
+  const rows = useMemo(
+    () => buildDecisionTreeRows(decisions.data ?? [], selectedTags, showSuperseded, collapsed),
+    [collapsed, decisions.data, selectedTags, showSuperseded],
+  );
 
   function setSelectedTags(next: string[]) {
     void navigate({
@@ -66,23 +164,46 @@ export function DecisionsView({ projectId }: { projectId: string }) {
     });
   }
 
+  function toggleCollapsed(id: string) {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function addSubDecision(parentId: string) {
+    setCreatingUnder(parentId);
+    try {
+      const result = await createDecision({
+        project: projectId,
+        title: 'New sub-decision',
+        properties: { PARENT: parentId },
+        body: '** Context\n\n** Decision\n\n** Consequences\n',
+      });
+      refreshBump();
+      openNode(result.id);
+    } catch (error) {
+      // Keep the tree surface usable; the daemon returns validation details in
+      // the console for now rather than adding a broad create-dialog state.
+      console.error('Failed to create sub-decision', error);
+    } finally {
+      setCreatingUnder(null);
+    }
+  }
+
   if (decisions.error) return <ErrorPanel error={decisions.error} />;
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Decisions"
-        count={filtered.length}
+        count={rows.length}
         description={`Decision records for ${projectId}.`}
       />
-      <NodeListView
-        ariaLabel="Decisions"
-        items={filtered}
-        getId={(item) => item.id}
-        onSelect={openNode}
-        loading={decisions.loading}
-        listId={DECISIONS_LIST_ID}
-        filters={
+      <section className="rounded-xl border bg-card" aria-label="Decisions">
+        <div className="border-b p-3">
           <div className="flex flex-wrap items-center gap-2">
             <TagFilterInput
               options={tags}
@@ -103,31 +224,75 @@ export function DecisionsView({ projectId }: { projectId: string }) {
               </Button>
             )}
           </div>
-        }
-        renderRow={(decision) => {
-          const decisionTags = decision.tags ?? [];
-          const decisionText = firstSentence(decision.preview) || decision.title || decision.id;
-          return (
-            <div className="grid w-full gap-2 md:grid-cols-[1fr_auto] md:items-center">
-              <div className="min-w-0">
-                <CopyIdBadge
-                  value={decision.id}
-                  className="h-4 w-fit origin-top-left scale-[0.65] rounded-sm px-1 text-[10px] leading-none"
-                />
-                <div className="flex min-w-0 items-start gap-2">
-                  <p className="text-sm font-medium leading-5 text-pretty break-words">{decisionText}</p>
+        </div>
+        <div id={DECISIONS_LIST_ID} className="divide-y" aria-busy={decisions.loading}>
+          {decisions.loading && rows.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">Loading decisions…</div>
+          ) : rows.length === 0 ? (
+            <div className="p-4 text-sm text-muted-foreground">No decisions match the current filters.</div>
+          ) : (
+            rows.map((row) => {
+              const decision = row.decision;
+              const decisionTags = decision.tags ?? [];
+              const decisionText = firstSentence(decision.preview) || decision.title || decision.id;
+              const hasChildren = (decision.children ?? []).length > 0;
+              const isCollapsed = collapsed.has(decision.id);
+              return (
+                <div
+                  key={decision.id}
+                  className={cn(
+                    'grid w-full gap-2 px-3 py-3 md:grid-cols-[1fr_auto] md:items-center',
+                    row.ghost && 'bg-muted/20 opacity-70',
+                    row.context && 'bg-muted/10',
+                  )}
+                  style={{ paddingLeft: `${0.75 + row.depth * 1.25}rem` }}
+                >
+                  <div className="flex min-w-0 items-start gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      className={cn('mt-0.5 shrink-0', !hasChildren && 'invisible')}
+                      aria-label={isCollapsed ? `Expand ${decision.id}` : `Collapse ${decision.id}`}
+                      onClick={() => toggleCollapsed(decision.id)}
+                    >
+                      {isCollapsed ? <ChevronRight /> : <ChevronDown />}
+                    </Button>
+                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openNode(decision.id)}>
+                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                        <Badge variant="outline" className="font-mono">{decision.path ?? '—'}</Badge>
+                        <CopyIdBadge
+                          value={decision.id}
+                          className="h-4 w-fit origin-top-left rounded-sm px-1 text-[10px] leading-none"
+                        />
+                        {row.context ? <Badge variant="secondary">ancestor context</Badge> : null}
+                        {decision.superseded ? <Badge variant="outline">superseded</Badge> : null}
+                      </div>
+                      <p className="text-sm font-medium leading-5 text-pretty break-words">{decisionText}</p>
+                      <p className="text-xs text-muted-foreground">{decision.title || decision.id}</p>
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 md:justify-end">
+                    {decisionTags.map((tag) => (
+                      <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">{tag}</Badge>
+                    ))}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={creatingUnder === decision.id}
+                      onClick={() => void addSubDecision(decision.id)}
+                    >
+                      <Plus />
+                      Add sub-decision
+                    </Button>
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground">{decision.title || decision.id}</p>
-              </div>
-              <div className="flex flex-wrap gap-1.5 md:justify-end">
-                {decisionTags.map((tag) => (
-                  <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">{tag}</Badge>
-                ))}
-              </div>
-            </div>
-          );
-        }}
-      />
+              );
+            })
+          )}
+        </div>
+      </section>
       <NodeModal
         projectId={projectId}
         nodeKind="decision"

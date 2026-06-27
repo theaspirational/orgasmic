@@ -6,7 +6,9 @@
 //! Downstream crates use these for daemon projection, manager prompts, and
 //! graph operations.
 
-use crate::id::{derive_task_parent_id, is_arch_id, is_valid_task_path_id};
+use crate::id::{
+    derive_task_parent_id, is_arch_id, is_valid_task_path_id, parse_parent_value, NodeIdClass,
+};
 
 use std::fmt;
 use std::str::FromStr;
@@ -330,6 +332,7 @@ pub struct DecisionNode<'a> {
     pub id: &'a str,
     pub title: &'a str,
     pub tags: &'a [String],
+    pub parent: Option<String>,
     pub glossary_refs: Vec<&'a str>,
     pub decided_at: Option<&'a str>,
     pub source: Option<&'a str>,
@@ -356,6 +359,13 @@ impl<'a> DecisionNode<'a> {
             id,
             title,
             tags: &heading.tags,
+            parent: parse_parent_value(NodeIdClass::Decision, id, heading.property("PARENT"))
+                .map_err(|e| SchemaError::InvalidPropertyValue {
+                    file: display.into(),
+                    heading: id.into(),
+                    key: "PARENT".into(),
+                    detail: e.to_string(),
+                })?,
             glossary_refs: tokenize(heading.property("GLOSSARY_REFS")),
             decided_at: heading.property("DECIDED_AT"),
             source: heading.property("SOURCE"),

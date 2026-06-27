@@ -57,6 +57,21 @@ function nodeTitle(kind: NodeKind, id: string, data: DetailData): string {
   return data.glossary.find((t) => t.id === id)?.canonical || id;
 }
 
+function decisionParentTrail(id: string, decisions: DecisionSummary[]): DecisionSummary[] {
+  const byId = new Map(decisions.map((decision) => [decision.id, decision]));
+  const out: DecisionSummary[] = [];
+  const seen = new Set<string>();
+  let current = byId.get(id)?.parent ?? null;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const parent = byId.get(current);
+    if (!parent) break;
+    out.push(parent);
+    current = parent.parent ?? null;
+  }
+  return out.reverse();
+}
+
 function buildDirectory(data: DetailData | null): NodeDirectory {
   const decisions = data?.decisions ?? [];
   const architecture = data?.architecture ?? [];
@@ -229,6 +244,7 @@ function NodeModalContent({
   if (!activeId || !data) return null;
   const title = nodeTitle(activeKind, activeId, data);
   const hiddenStackCount = Math.max(0, breadcrumbs.length - 1);
+  const parentTrail = activeKind === 'decision' ? decisionParentTrail(activeId, data.decisions) : [];
 
   return (
     <>
@@ -270,6 +286,25 @@ function NodeModalContent({
           {activeKind !== 'glossary' && activeId ? (
             <CopyIdBadge value={activeId} className="h-4 px-1.5 text-[9px]" />
           ) : null}
+          {parentTrail.length > 0 ? (
+            <nav className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground" aria-label="Decision parent breadcrumb">
+              <span>Parent</span>
+              {parentTrail.map((decision, index) => (
+                <span key={decision.id} className="inline-flex items-center gap-1">
+                  <span aria-hidden="true">{index === 0 ? ':' : '>'}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-xs text-muted-foreground"
+                    onClick={() => onOpenNode(decision.id)}
+                  >
+                    {decision.path ? `${decision.path} ` : ''}{decision.title || decision.id}
+                  </Button>
+                </span>
+              ))}
+            </nav>
+          ) : null}
           <h2 className="mt-1 text-base font-semibold leading-snug">{title}</h2>
         </div>
         <Button
@@ -300,7 +335,7 @@ function NodeModalContent({
               mode={mode}
             />
           </div>
-          <Aside id={activeId} kind={activeKind} data={data} />
+          <Aside id={activeId} kind={activeKind} data={data} onOpenNode={onOpenNode} />
         </div>
       </ScrollArea>
     </>
@@ -311,12 +346,20 @@ function Aside({
   id,
   kind,
   data,
+  onOpenNode,
 }: {
   id: string;
   kind: NodeKind;
   data: DetailData;
+  onOpenNode: (id: string) => void;
 }) {
   const archNode = kind === 'architecture' ? data.architecture.find((item) => item.id === id) : undefined;
+  const decision = kind === 'decision' ? data.decisions.find((item) => item.id === id) : undefined;
+  const decisionChildren = decision
+    ? (decision.children ?? [])
+        .map((childId) => data.decisions.find((item) => item.id === childId))
+        .filter((item): item is DecisionSummary => Boolean(item))
+    : [];
   const source = kind === 'decision'
     ? data.decisions.find((item) => item.id === id)?.source_file
     : kind === 'architecture'
@@ -333,6 +376,38 @@ function Aside({
         </dd>
       </div>
       <Separator />
+      {decision ? (
+        <>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Decision path</dt>
+            <dd className="mt-1 font-mono text-xs">{decision.path ?? '—'}</dd>
+          </div>
+          <Separator />
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Children{decisionChildren.length ? ` (${decisionChildren.length})` : ''}
+            </dt>
+            <dd className="mt-1 flex flex-col gap-1">
+              {decisionChildren.length === 0 ? (
+                <span className="text-xs text-muted-foreground">No child decisions.</span>
+              ) : (
+                decisionChildren.map((child) => (
+                  <button
+                    key={child.id}
+                    type="button"
+                    className="rounded border bg-background px-2 py-1 text-left text-xs hover:border-foreground/30"
+                    onClick={() => onOpenNode(child.id)}
+                  >
+                    <span className="font-mono text-muted-foreground">{child.path ?? '—'}</span>{' '}
+                    <span>{child.title || child.id}</span>
+                  </button>
+                ))
+              )}
+            </dd>
+          </div>
+          <Separator />
+        </>
+      ) : null}
       <div>
         <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Kind</dt>
         <dd className="mt-1">

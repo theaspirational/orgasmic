@@ -252,6 +252,18 @@ export function fetchDecisions(project?: string | null): Promise<DecisionSummary
   return get<DecisionSummary[]>(`/decisions${q(project)}`);
 }
 
+export function createDecision(body: {
+  project?: string | null;
+  title?: string | null;
+  properties?: Record<string, string>;
+  body?: string | null;
+}): Promise<{ id: string; action: string; tx_id: string }> {
+  return post('/decisions', {
+    ...body,
+    request_id: requestId('decision-create'),
+  });
+}
+
 export function fetchArchitecture(project?: string | null): Promise<ArchitectureSummary[]> {
   return get<ArchitectureSummary[]>(`/architecture${q(project)}`);
 }

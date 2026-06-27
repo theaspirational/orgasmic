@@ -6607,7 +6607,7 @@ async fn post_glossary_action(
     mutate_graph_heading(&state, GraphLayer::Glossary, id, req).await
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GraphLayer {
     Decision,
     Architecture,
@@ -6740,6 +6740,11 @@ async fn create_graph_heading(
     let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
     let node_id = resolve_graph_create_id(layer, &req)?;
     let mut source = read_or_seed_graph_file(&path, layer)?;
+    if layer == GraphLayer::Decision {
+        let file = OrgFile::parse(source.clone(), path.to_string_lossy())
+            .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+        validate_decision_create_parent(&path, &file, &node_id, req.properties.get("PARENT"))?;
+    }
     let heading = render_graph_heading(layer, &req, &node_id)?;
     if !source.ends_with('\n') {
         source.push('\n');
@@ -6799,10 +6804,32 @@ async fn mutate_graph_heading(
     let file = OrgFile::parse(source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
     let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
-    let action = req.action.unwrap_or_else(|| "revise".to_string());
+    let mut action = req.action.unwrap_or_else(|| "revise".to_string());
+    if layer == GraphLayer::Decision && action == "delete" {
+        return delete_decision_heading(state, project_id, path, file, id, req.request_id).await;
+    }
+    let parent_changed = if layer == GraphLayer::Decision {
+        validate_decision_parent_property_update(&path, &file, &id, &req.properties)?
+    } else {
+        false
+    };
+    if parent_changed {
+        action = "reparent".to_string();
+    }
     for (key, value) in req.properties {
-        rw.set_property(&id, &key, &value)
-            .map_err(|e| org_rewriter_error("set property", &id, e))?;
+        if layer == GraphLayer::Decision && key == "PARENT" && value.trim().is_empty() {
+            if file
+                .find_by_id(&id)
+                .and_then(|heading| heading.property("PARENT"))
+                .is_some()
+            {
+                rw.remove_property(&id, "PARENT")
+                    .map_err(|e| org_rewriter_error("remove property", &id, e))?;
+            }
+        } else {
+            rw.upsert_property(&id, &key, &value)
+                .map_err(|e| org_rewriter_error("set property", &id, e))?;
+        }
     }
     let updated = rw.finish();
     OrgFile::parse(updated.clone(), path.to_string_lossy())
@@ -6817,6 +6844,151 @@ async fn mutate_graph_heading(
         tx_type: format!("graph.{}.{}", layer.layer_name(), action),
         node_id: id,
         action: &action,
+    })
+    .await
+}
+
+fn decision_parent_error(err: orgasmic_core::ParentTreeError) -> ApiError {
+    ApiError::bad_request(format!("invalid decision :PARENT:: {err}"))
+}
+
+fn decision_parent_from_heading(heading: &Heading, id: &str) -> Result<Option<String>, ApiError> {
+    orgasmic_core::parse_parent_value(
+        orgasmic_core::NodeIdClass::Decision,
+        id,
+        heading.property("PARENT"),
+    )
+    .map_err(decision_parent_error)
+}
+
+fn decision_parent_nodes_with_override(
+    file: &OrgFile,
+    target_id: &str,
+    override_parent: Option<Option<String>>,
+) -> Result<Vec<orgasmic_core::ParentTreeNode>, ApiError> {
+    let mut found = false;
+    let mut nodes = Vec::new();
+    for heading in &file.headings {
+        let Some(id) = heading.property("ID") else {
+            continue;
+        };
+        if !id.starts_with("dec_") {
+            continue;
+        }
+        let parent = if id == target_id {
+            found = true;
+            override_parent
+                .clone()
+                .unwrap_or(decision_parent_from_heading(heading, id)?)
+        } else {
+            decision_parent_from_heading(heading, id)?
+        };
+        nodes.push(orgasmic_core::ParentTreeNode {
+            id: id.to_string(),
+            parent,
+        });
+    }
+    if !found {
+        return Err(ApiError::not_found(format!("decision {target_id}")));
+    }
+    Ok(nodes)
+}
+
+fn validate_decision_create_parent(
+    _path: &FsPath,
+    file: &OrgFile,
+    id: &str,
+    parent_raw: Option<&String>,
+) -> Result<(), ApiError> {
+    let parent = orgasmic_core::parse_parent_value(
+        orgasmic_core::NodeIdClass::Decision,
+        id,
+        parent_raw.map(String::as_str),
+    )
+    .map_err(decision_parent_error)?;
+    let ids = file
+        .headings
+        .iter()
+        .filter_map(|heading| heading.property("ID"))
+        .filter(|candidate| candidate.starts_with("dec_"))
+        .collect::<Vec<_>>();
+    orgasmic_core::validate_parent_exists(id, parent.as_deref(), ids).map_err(decision_parent_error)
+}
+
+fn validate_decision_parent_property_update(
+    _path: &FsPath,
+    file: &OrgFile,
+    id: &str,
+    properties: &BTreeMap<String, String>,
+) -> Result<bool, ApiError> {
+    let Some(next_raw) = properties.get("PARENT") else {
+        return Ok(false);
+    };
+    let heading = file
+        .find_by_id(id)
+        .ok_or_else(|| ApiError::not_found(format!("decision {id}")))?;
+    let current = decision_parent_from_heading(heading, id)?;
+    let next = orgasmic_core::parse_parent_value(
+        orgasmic_core::NodeIdClass::Decision,
+        id,
+        Some(next_raw.as_str()),
+    )
+    .map_err(decision_parent_error)?;
+    if next == current {
+        return Ok(false);
+    }
+    let nodes = decision_parent_nodes_with_override(file, id, Some(next))?;
+    orgasmic_core::validate_parent_tree(orgasmic_core::NodeIdClass::Decision, nodes)
+        .map_err(decision_parent_error)?;
+    Ok(true)
+}
+
+fn decision_has_children(file: &OrgFile, id: &str) -> Result<bool, ApiError> {
+    for heading in &file.headings {
+        let Some(child_id) = heading.property("ID") else {
+            continue;
+        };
+        if !child_id.starts_with("dec_") || child_id == id {
+            continue;
+        }
+        if decision_parent_from_heading(heading, child_id)?.as_deref() == Some(id) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn delete_decision_heading(
+    state: &ApiState,
+    project_id: String,
+    path: PathBuf,
+    file: OrgFile,
+    id: String,
+    request_id: Option<String>,
+) -> Result<Json<GraphMutationResponse>, ApiError> {
+    file.find_by_id(&id)
+        .ok_or_else(|| ApiError::not_found(format!("decision {id}")))?;
+    if decision_has_children(&file, &id)? {
+        return Err(ApiError::bad_request(format!(
+            "decision {id} still has child decisions; re-parent or delete children first"
+        )));
+    }
+    let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
+    rw.remove_heading(&id)
+        .map_err(|e| org_rewriter_error("remove decision heading", &id, e))?;
+    let updated = rw.finish();
+    OrgFile::parse(updated.clone(), path.to_string_lossy())
+        .map_err(|e| org_parse_bad_request(&path, "decisions file", e))?;
+    write_graph_and_record(GraphWriteRequest {
+        state,
+        layer: GraphLayer::Decision,
+        project_id,
+        path,
+        source: updated,
+        request_id,
+        tx_type: "graph.decision.deleted".to_string(),
+        node_id: id,
+        action: "deleted",
     })
     .await
 }
@@ -7147,6 +7319,12 @@ async fn post_org_node_edit(
         )));
     }
 
+    let parent_changed = if layer == NodeLayer::Decision {
+        validate_decision_parent_ops(&file, &id, &req.ops)?
+    } else {
+        false
+    };
+
     let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
     let mut title_override: Option<String> = None;
     let mut tags_override: Option<Vec<String>> = None;
@@ -7205,6 +7383,7 @@ async fn post_org_node_edit(
         source: updated,
         request_id: req.request_id,
         node_id: id.clone(),
+        action: if parent_changed { "reparent" } else { "edited" },
     })
     .await?;
 
@@ -7218,6 +7397,44 @@ async fn post_org_node_edit(
     Ok(Json(org_node_doc(&file, heading, layer, source_file)))
 }
 
+fn validate_decision_parent_ops(
+    file: &OrgFile,
+    id: &str,
+    ops: &[NodeEditOp],
+) -> Result<bool, ApiError> {
+    let heading = file
+        .find_by_id(id)
+        .ok_or_else(|| ApiError::not_found(format!("decision {id}")))?;
+    let current = decision_parent_from_heading(heading, id)?;
+    let mut next = current.clone();
+    let mut touched = false;
+    for op in ops {
+        match op {
+            NodeEditOp::SetProperty { key, value } if key == "PARENT" => {
+                next = orgasmic_core::parse_parent_value(
+                    orgasmic_core::NodeIdClass::Decision,
+                    id,
+                    Some(value.as_str()),
+                )
+                .map_err(decision_parent_error)?;
+                touched = true;
+            }
+            NodeEditOp::RemoveProperty { key } if key == "PARENT" => {
+                next = None;
+                touched = true;
+            }
+            _ => {}
+        }
+    }
+    if !touched || next == current {
+        return Ok(false);
+    }
+    let nodes = decision_parent_nodes_with_override(file, id, Some(next))?;
+    orgasmic_core::validate_parent_tree(orgasmic_core::NodeIdClass::Decision, nodes)
+        .map_err(decision_parent_error)?;
+    Ok(true)
+}
+
 struct NodeEditWriteRequest<'a> {
     state: &'a ApiState,
     layer: NodeLayer,
@@ -7226,6 +7443,7 @@ struct NodeEditWriteRequest<'a> {
     source: String,
     request_id: Option<String>,
     node_id: String,
+    action: &'a str,
 }
 
 async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result<String, ApiError> {
@@ -7236,7 +7454,7 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
     let project_tx_type = if req.layer == NodeLayer::Task {
         "task.edited".to_string()
     } else {
-        format!("graph.{}.edited", req.layer.layer_name())
+        format!("graph.{}.{}", req.layer.layer_name(), req.action)
     };
     let prepared_tx = prepare_api_tx(
         req.state,
@@ -7250,7 +7468,12 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
                 None
             },
             target: Some(req.path.display().to_string()),
-            reason: format!("edited {} node {}", req.layer.layer_name(), req.node_id),
+            reason: format!(
+                "{} {} node {}",
+                req.action,
+                req.layer.layer_name(),
+                req.node_id
+            ),
             request_id: req.request_id.map(|id| format!("{id}/tx")),
             extra: vec![("NODE_ID".to_string(), req.node_id.clone())],
         },
@@ -7283,7 +7506,7 @@ async fn write_org_node_edit_and_record(req: NodeEditWriteRequest<'_>) -> Result
                 project_id: req.project_id.clone(),
                 layer: req.layer.layer_name().to_string(),
                 node_id: req.node_id.clone(),
-                action: "edited".to_string(),
+                action: req.action.to_string(),
                 tx_id: tx_id.clone(),
             },
         );
@@ -8979,6 +9202,10 @@ mod tests {
                 id: (*id).to_string(),
                 title: String::new(),
                 tags: Vec::new(),
+                parent: None,
+                children: Vec::new(),
+                depth: None,
+                path: None,
                 glossary_refs: Vec::new(),
                 decided_at: None,
                 preview: None,
@@ -10484,6 +10711,141 @@ mod tests {
         assert_eq!(payload["node_id"], "dec_001");
         assert_eq!(payload["action"], "accept");
         assert!(!payload["tx_id"].as_str().unwrap().is_empty());
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn decision_parent_contract_and_reparent_tx_are_enforced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n\
+* dec_AAAAA Root A\n\
+:PROPERTIES:\n\
+:ID:                 dec_AAAAA\n\
+:END:\n\
+\n\
+* dec_BBBBB Child B\n\
+:PROPERTIES:\n\
+:ID:                 dec_BBBBB\n\
+:PARENT:             dec_AAAAA\n\
+:END:\n\
+\n\
+* dec_CCCCC Root C\n\
+:PROPERTIES:\n\
+:ID:                 dec_CCCCC\n\
+:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let missing_parent = client
+            .post(format!("{base}/api/decisions"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "id": "dec_MISS1",
+                "title": "Missing parent",
+                "properties": { "PARENT": "dec_NOPE1" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(missing_parent.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let cross_class = client
+            .post(format!("{base}/api/decisions"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "id": "dec_XCLSS",
+                "title": "Cross class parent",
+                "properties": { "PARENT": "TASK-PRE" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cross_class.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let self_parent = client
+            .post(format!("{base}/api/decisions"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "id": "dec_SELF1",
+                "title": "Self parent",
+                "properties": { "PARENT": "dec_SELF1" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(self_parent.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let cycle = client
+            .post(format!("{base}/api/decisions/dec_AAAAA"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "properties": { "PARENT": "dec_BBBBB" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(cycle.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let reparent = client
+            .post(format!("{base}/api/decisions/dec_BBBBB"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "request_id": "decision-reparent-test",
+                "properties": { "PARENT": "dec_CCCCC" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = reparent.status();
+        let body: Value = reparent.json().await.unwrap();
+        assert!(status.is_success(), "reparent failed: {status} {body}");
+        assert_eq!(body["action"], "reparent");
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert!(
+            after.contains(":PARENT:             dec_CCCCC\n"),
+            "{after}"
+        );
+
+        let blocked_delete = client
+            .post(format!("{base}/api/decisions/dec_CCCCC"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "action": "delete"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(blocked_delete.status(), reqwest::StatusCode::BAD_REQUEST);
+
+        let mut tx_text = String::new();
+        for entry in std::fs::read_dir(project_root.join(".orgasmic/tx")).unwrap() {
+            let path = entry.unwrap().path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("org") {
+                tx_text.push_str(&std::fs::read_to_string(path).unwrap());
+            }
+        }
+        assert!(tx_text.contains("graph.decision.reparent"), "{tx_text}");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
