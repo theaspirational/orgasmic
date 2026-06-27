@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { architectureDescriptorFor, DESCRIPTORS } from '@/components/orgdoc/descriptor';
 import { NodeDocEditor, type NodeDirectory } from '@/components/orgdoc/NodeDocEditor';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchArchitecture, fetchDecisions, fetchGlossary } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, withDrawerStack, type AppSearch } from '@/lib/searchState';
 import type { ArchitectureSummary, DecisionSummary, GlossarySummary } from '@/lib/types';
@@ -42,11 +43,65 @@ type DetailSeed = Partial<{
   glossary: GlossarySummary[] | null;
 }>;
 
-async function loadDetailData(projectId: string, seed: DetailSeed = {}): Promise<DetailData> {
+function activeSeedVersion(seed: DetailSeed, activeKind: NodeKind, activeId: string | null): string {
+  if (!activeId) return 'none';
+  if (activeKind === 'decision') {
+    if (!seed.decisions) return 'fetch';
+    const decision = seed.decisions.find((item) => item.id === activeId);
+    return decision
+      ? [
+          decision.id,
+          decision.parent ?? '',
+          decision.path ?? '',
+          (decision.children ?? []).join(','),
+          decision.title,
+          decision.preview ?? '',
+        ].join(':')
+      : 'missing';
+  }
+  if (activeKind === 'architecture') {
+    if (!seed.architecture) return 'fetch';
+    const architecture = seed.architecture.find((item) => item.id === activeId);
+    return architecture
+      ? [architecture.id, architecture.parent_id ?? '', architecture.label, architecture.description ?? ''].join(':')
+      : 'missing';
+  }
+  if (!seed.glossary) return 'fetch';
+  const glossary = seed.glossary.find((item) => item.id === activeId);
+  return glossary ? [glossary.id, glossary.canonical ?? ''].join(':') : 'missing';
+}
+
+function seedHasActiveNode(seed: DetailSeed, activeKind: NodeKind, activeId: string | null): boolean {
+  if (!activeId) return true;
+  if (activeKind === 'decision') return Boolean(seed.decisions?.some((item) => item.id === activeId));
+  if (activeKind === 'architecture') return Boolean(seed.architecture?.some((item) => item.id === activeId));
+  return Boolean(seed.glossary?.some((item) => item.id === activeId));
+}
+
+function detailHasActiveNode(data: DetailData | null, activeKind: NodeKind, activeId: string | null): boolean {
+  if (!data || !activeId) return false;
+  if (activeKind === 'decision') return data.decisions.some((item) => item.id === activeId);
+  if (activeKind === 'architecture') return data.architecture.some((item) => item.id === activeId);
+  return data.glossary.some((item) => item.id === activeId);
+}
+
+async function loadDetailData(
+  projectId: string,
+  seed: DetailSeed = {},
+  activeKind: NodeKind,
+  activeId: string | null,
+): Promise<DetailData> {
+  const activeSeedIsFreshEnough = seedHasActiveNode(seed, activeKind, activeId);
   const [decisions, architecture, glossary] = await Promise.all([
-    seed.decisions ? Promise.resolve(seed.decisions) : fetchDecisions(projectId),
-    seed.architecture ? Promise.resolve(seed.architecture) : fetchArchitecture(projectId),
-    seed.glossary ? Promise.resolve(seed.glossary) : fetchGlossary(projectId),
+    seed.decisions && (activeKind !== 'decision' || activeSeedIsFreshEnough)
+      ? Promise.resolve(seed.decisions)
+      : fetchDecisions(projectId),
+    seed.architecture && (activeKind !== 'architecture' || activeSeedIsFreshEnough)
+      ? Promise.resolve(seed.architecture)
+      : fetchArchitecture(projectId),
+    seed.glossary && (activeKind !== 'glossary' || activeSeedIsFreshEnough)
+      ? Promise.resolve(seed.glossary)
+      : fetchGlossary(projectId),
   ]);
   return { decisions, architecture, glossary };
 }
@@ -102,13 +157,15 @@ export function NodeModal({
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as AppSearch & { drawer_stack?: string[] };
   const isMobile = useIsMobile();
+  const refresh = useRefreshToken();
   const stack = useMemo(() => searchList(search.drawer_stack), [search.drawer_stack]);
   const activeId = stack.at(-1) ?? null;
   const activeKind = inferNodeKind(activeId) ?? nodeKind;
   const open = stack.length > 0;
+  const seedVersion = activeSeedVersion(seed, activeKind, activeId);
   const detail = useResource(
-    `node-modal:${projectId}`,
-    () => loadDetailData(projectId, seed),
+    `node-modal:${projectId}:${activeKind}:${activeId ?? 'closed'}:${refresh}:${seedVersion}`,
+    () => loadDetailData(projectId, seed, activeKind, activeId),
     { enabled: open },
   );
   const trail = stack;
@@ -154,6 +211,9 @@ export function NodeModal({
     return nodeTitle(activeKind, activeId, detail.data);
   }, [activeId, activeKind, detail.data]);
   const description = activeKind === 'glossary' ? title : (activeId ?? 'Node');
+  const waitingForActiveSummary = Boolean(
+    activeId && detail.data && !detailHasActiveNode(detail.data, activeKind, activeId),
+  );
 
   const content = (
     <NodeModalContent
@@ -161,7 +221,7 @@ export function NodeModal({
       activeId={activeId}
       activeKind={activeKind}
       data={detail.data}
-      loading={detail.loading && !detail.data}
+      loading={detail.loading && (!detail.data || waitingForActiveSummary)}
       error={detail.error}
       breadcrumbs={trail}
       mode={mode}

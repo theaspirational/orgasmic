@@ -1,5 +1,5 @@
 // @arch arch_MK2Q2.7
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
 
@@ -164,6 +164,18 @@ export function DecisionsView({ projectId }: { projectId: string }) {
     });
   }
 
+  function openRowFromKeyboard(event: KeyboardEvent<HTMLDivElement>, id: string) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      openNode(id);
+    }
+  }
+
+  function stopRowOpen(event: { stopPropagation: () => void }) {
+    event.stopPropagation();
+  }
+
   function toggleCollapsed(id: string) {
     setCollapsed((prev) => {
       const next = new Set(prev);
@@ -240,8 +252,9 @@ export function DecisionsView({ projectId }: { projectId: string }) {
               return (
                 <div
                   key={decision.id}
+                  onClick={() => openNode(decision.id)}
                   className={cn(
-                    'grid w-full gap-2 px-3 py-3 md:grid-cols-[1fr_auto] md:items-center',
+                    'grid w-full cursor-pointer gap-2 px-3 py-3 transition-colors hover:bg-muted/30 md:grid-cols-[1fr_auto] md:items-center',
                     row.ghost && 'bg-muted/20 opacity-70',
                     row.context && 'bg-muted/10',
                   )}
@@ -254,11 +267,15 @@ export function DecisionsView({ projectId }: { projectId: string }) {
                       size="icon-sm"
                       className={cn('mt-0.5 shrink-0', !hasChildren && 'invisible')}
                       aria-label={isCollapsed ? `Expand ${decision.id}` : `Collapse ${decision.id}`}
-                      onClick={() => toggleCollapsed(decision.id)}
+                      onPointerDown={stopRowOpen}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        toggleCollapsed(decision.id);
+                      }}
                     >
                       {isCollapsed ? <ChevronRight /> : <ChevronDown />}
                     </Button>
-                    <button type="button" className="min-w-0 flex-1 text-left" onClick={() => openNode(decision.id)}>
+                    <div className="min-w-0 flex-1">
                       <div className="mb-1 flex flex-wrap items-center gap-1.5">
                         <Badge variant="outline" className="font-mono">{decision.path ?? '—'}</Badge>
                         <CopyIdBadge
@@ -268,11 +285,27 @@ export function DecisionsView({ projectId }: { projectId: string }) {
                         {row.context ? <Badge variant="secondary">ancestor context</Badge> : null}
                         {decision.superseded ? <Badge variant="outline">superseded</Badge> : null}
                       </div>
-                      <p className="text-sm font-medium leading-5 text-pretty break-words">{decisionText}</p>
-                      <p className="text-xs text-muted-foreground">{decision.title || decision.id}</p>
-                    </button>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Open ${decision.id}`}
+                        className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openNode(decision.id);
+                        }}
+                        onKeyDown={(event) => openRowFromKeyboard(event, decision.id)}
+                      >
+                        <p className="text-sm font-medium leading-5 text-pretty break-words">{decisionText}</p>
+                        <p className="text-xs text-muted-foreground">{decision.title || decision.id}</p>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-1.5 md:justify-end">
+                  <div
+                    className="flex flex-wrap items-center gap-1.5 md:justify-end"
+                    onPointerDown={stopRowOpen}
+                    onClick={stopRowOpen}
+                  >
                     {decisionTags.map((tag) => (
                       <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">{tag}</Badge>
                     ))}
