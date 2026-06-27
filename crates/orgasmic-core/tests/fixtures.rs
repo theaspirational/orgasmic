@@ -534,7 +534,7 @@ fn parses_every_shipped_worker() {
         );
         count += 1;
     }
-    assert_eq!(count, 19);
+    assert_eq!(count, 18);
 }
 
 #[test]

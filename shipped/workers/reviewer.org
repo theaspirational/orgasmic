@@ -2,7 +2,7 @@
 :PROPERTIES:
 :ID:                          reviewer
 :KIND:                        reviewer
-:DRIVER:                      acp-ws
+:DRIVER:                      acp-stdio
 :HARNESS:                     codex
 :PROVIDERS:                   openai
 :MODELS:                      gpt-5.5
@@ -14,6 +14,7 @@
 :APPLICABLE_STATES:           working, done, blocked, cancelled, approved, requested_changes
 :MAX_ITERATIONS:              10
 :CONTEXT_BUDGET:              150000
+:SANDBOX_PERMISSIONS:         allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true
 :VERSION:                     1
 :END:
 
