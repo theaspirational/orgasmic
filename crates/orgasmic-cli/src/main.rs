@@ -1572,19 +1572,21 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
-        let value: serde_json::Value = match cmd {
+        match cmd {
             DecisionCmd::List { project } => {
-                client
+                let value: serde_json::Value = client
                     .get(&path_with_project_query("/decisions", project))
-                    .await?
+                    .await?;
+                print_decision_outline(&value)
             }
             DecisionCmd::Get { id, project } => {
-                client
+                let value: serde_json::Value = client
                     .get(&path_with_project_query(
                         &format!("/decisions/{id}"),
                         project,
                     ))
-                    .await?
+                    .await?;
+                print_decision_detail(&value)
             }
             DecisionCmd::Create {
                 id,
@@ -1597,7 +1599,7 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
                 let properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
                 let id = id.filter(|id| !id.trim().is_empty());
-                client
+                let value: serde_json::Value = client
                     .post_json(
                         "/decisions",
                         &serde_json::json!({
@@ -1609,11 +1611,120 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
                             "body": body,
                         }),
                     )
-                    .await?
+                    .await?;
+                print_json(&value)
             }
-        };
-        print_json(&value)
+        }
     })
+}
+
+fn decision_path_key(value: &serde_json::Value) -> Vec<usize> {
+    value
+        .get("path")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("")
+        .split('.')
+        .filter_map(|part| part.parse::<usize>().ok())
+        .collect()
+}
+
+fn print_decision_outline(value: &serde_json::Value) -> Result<()> {
+    let mut rows = value
+        .as_array()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("daemon returned non-list decision response"))?;
+    rows.sort_by(|a, b| {
+        decision_path_key(a)
+            .cmp(&decision_path_key(b))
+            .then_with(|| {
+                a.get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .cmp(&b.get("id").and_then(serde_json::Value::as_str))
+            })
+    });
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?");
+        let title = row
+            .get("title")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let path = row
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("?");
+        let depth = row
+            .get("depth")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0) as usize;
+        let superseded = row
+            .get("superseded")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let suffix = if superseded { " [superseded]" } else { "" };
+        println!("{}{} {} {}{}", "  ".repeat(depth), path, id, title, suffix);
+    }
+    Ok(())
+}
+
+fn print_decision_detail(value: &serde_json::Value) -> Result<()> {
+    let id = value
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("?");
+    let title = value
+        .get("title")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("");
+    println!("{id} {title}");
+    println!(
+        "path: {}",
+        value
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("—")
+    );
+    println!(
+        "parent: {}",
+        value
+            .get("parent")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("—")
+    );
+    let children = value
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+    println!(
+        "children: {}",
+        if children.is_empty() {
+            "—"
+        } else {
+            children.as_str()
+        }
+    );
+    if value
+        .get("superseded")
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        println!("superseded: true");
+    }
+    if let Some(preview) = value.get("preview").and_then(serde_json::Value::as_str) {
+        if !preview.trim().is_empty() {
+            println!("\n{}", preview.trim());
+        }
+    }
+    Ok(())
 }
 
 fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {

@@ -3,6 +3,9 @@
 //! Minted ids use 5-character Crockford base32 stems with class prefixes.
 //! Legacy sequential numeric ids remain valid for reference resolution.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+
 use rand::Rng;
 
 /// Crockford base32 alphabet (uppercase; excludes I, L, O, U).
@@ -28,6 +31,239 @@ impl NodeIdClass {
             Self::Term => "term_",
         }
     }
+
+    pub fn matches_id_prefix(self, id: &str) -> bool {
+        match self {
+            Self::Task => id.starts_with("TASK-"),
+            Self::Decision => id.starts_with("dec_"),
+            Self::Architecture => id.starts_with("arch_"),
+            Self::Term => id.starts_with("term_") || id.starts_with("term:"),
+        }
+    }
+}
+
+/// Return the node class implied by an id's stable prefix. This is deliberately
+/// prefix-based (not full greenfield-id validation) so legacy/test ids such as
+/// `dec_X` can still participate in class checks.
+pub fn node_id_class_by_prefix(id: &str) -> Option<NodeIdClass> {
+    if id.starts_with("TASK-") {
+        Some(NodeIdClass::Task)
+    } else if id.starts_with("dec_") {
+        Some(NodeIdClass::Decision)
+    } else if id.starts_with("arch_") {
+        Some(NodeIdClass::Architecture)
+    } else if id.starts_with("term_") || id.starts_with("term:") {
+        Some(NodeIdClass::Term)
+    } else {
+        None
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParentTreeError {
+    MalformedParent {
+        id: String,
+        value: String,
+    },
+    WrongClass {
+        id: String,
+        parent: String,
+        expected: NodeIdClass,
+    },
+    MissingParent {
+        id: String,
+        parent: String,
+    },
+    SelfParent {
+        id: String,
+    },
+    Cycle {
+        chain: Vec<String>,
+    },
+    DuplicateId {
+        id: String,
+    },
+    UnknownId {
+        id: String,
+    },
+}
+
+impl fmt::Display for ParentTreeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MalformedParent { id, value } => {
+                write!(f, "{id} has malformed :PARENT: value {value:?}")
+            }
+            Self::WrongClass {
+                id,
+                parent,
+                expected,
+            } => write!(
+                f,
+                "{id} has parent {parent}, but :PARENT: must point at a {:?} id",
+                expected
+            ),
+            Self::MissingParent { id, parent } => {
+                write!(f, "{id} has orphan parent {parent}")
+            }
+            Self::SelfParent { id } => write!(f, "{id} cannot be its own parent"),
+            Self::Cycle { chain } => write!(f, ":PARENT: cycle detected: {}", chain.join(" -> ")),
+            Self::DuplicateId { id } => write!(f, "duplicate parent-tree id {id}"),
+            Self::UnknownId { id } => write!(f, "unknown parent-tree id {id}"),
+        }
+    }
+}
+
+impl std::error::Error for ParentTreeError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentTreeNode {
+    pub id: String,
+    pub parent: Option<String>,
+}
+
+/// Normalize and validate a single stored `:PARENT:` value. Empty/missing means
+/// no parent; otherwise the value must be exactly one same-class id and not the
+/// node itself. Existence and cycle checks require the complete node set and
+/// are handled by [`validate_parent_tree`].
+pub fn parse_parent_value(
+    class: NodeIdClass,
+    id: &str,
+    raw: Option<&str>,
+) -> Result<Option<String>, ParentTreeError> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let mut tokens = raw.split_whitespace();
+    let parent = tokens.next().unwrap_or_default();
+    if tokens.next().is_some() {
+        return Err(ParentTreeError::MalformedParent {
+            id: id.to_string(),
+            value: raw.to_string(),
+        });
+    }
+    validate_parent_pointer(class, id, parent)?;
+    Ok(Some(parent.to_string()))
+}
+
+pub fn validate_parent_pointer(
+    class: NodeIdClass,
+    id: &str,
+    parent: &str,
+) -> Result<(), ParentTreeError> {
+    if parent == id {
+        return Err(ParentTreeError::SelfParent { id: id.to_string() });
+    }
+    if !class.matches_id_prefix(parent) {
+        return Err(ParentTreeError::WrongClass {
+            id: id.to_string(),
+            parent: parent.to_string(),
+            expected: class,
+        });
+    }
+    Ok(())
+}
+
+pub fn validate_parent_exists<'a>(
+    id: &str,
+    parent: Option<&str>,
+    ids: impl IntoIterator<Item = &'a str>,
+) -> Result<(), ParentTreeError> {
+    let Some(parent) = parent else {
+        return Ok(());
+    };
+    if ids.into_iter().any(|candidate| candidate == parent) {
+        Ok(())
+    } else {
+        Err(ParentTreeError::MissingParent {
+            id: id.to_string(),
+            parent: parent.to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentTree {
+    parents: BTreeMap<String, Option<String>>,
+    children: BTreeMap<String, Vec<String>>,
+}
+
+impl ParentTree {
+    pub fn parent_of(&self, id: &str) -> Result<Option<&str>, ParentTreeError> {
+        self.parents
+            .get(id)
+            .map(|parent| parent.as_deref())
+            .ok_or_else(|| ParentTreeError::UnknownId { id: id.to_string() })
+    }
+
+    pub fn children_of(&self, id: &str) -> &[String] {
+        self.children.get(id).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    /// Ancestors from nearest parent toward the root.
+    pub fn ancestor_chain(&self, id: &str) -> Result<Vec<String>, ParentTreeError> {
+        if !self.parents.contains_key(id) {
+            return Err(ParentTreeError::UnknownId { id: id.to_string() });
+        }
+        let mut out = Vec::new();
+        let mut current = id;
+        while let Some(parent) = self.parent_of(current)? {
+            out.push(parent.to_string());
+            current = parent;
+        }
+        Ok(out)
+    }
+}
+
+/// Validate a same-class `:PARENT:` tree with create-time/file-time existence,
+/// self-parent rejection, and cycle detection. Child ordering is the caller's
+/// iteration order, so daemon read-models can pass document order through.
+pub fn validate_parent_tree<I>(class: NodeIdClass, nodes: I) -> Result<ParentTree, ParentTreeError>
+where
+    I: IntoIterator<Item = ParentTreeNode>,
+{
+    let mut parents: BTreeMap<String, Option<String>> = BTreeMap::new();
+    let mut ordered_nodes = Vec::new();
+    for node in nodes {
+        if parents.contains_key(&node.id) {
+            return Err(ParentTreeError::DuplicateId { id: node.id });
+        }
+        if let Some(parent) = node.parent.as_deref() {
+            validate_parent_pointer(class, &node.id, parent)?;
+        }
+        ordered_nodes.push(node.id.clone());
+        parents.insert(node.id, node.parent);
+    }
+    for (id, parent) in &parents {
+        if let Some(parent) = parent.as_deref() {
+            if !parents.contains_key(parent) {
+                return Err(ParentTreeError::MissingParent {
+                    id: id.clone(),
+                    parent: parent.to_string(),
+                });
+            }
+        }
+    }
+    for id in parents.keys() {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut chain = vec![id.clone()];
+        let mut current = id.as_str();
+        while let Some(parent) = parents.get(current).and_then(|parent| parent.as_deref()) {
+            if !seen.insert(parent.to_string()) {
+                chain.push(parent.to_string());
+                return Err(ParentTreeError::Cycle { chain });
+            }
+            chain.push(parent.to_string());
+            current = parent;
+        }
+    }
+    let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for id in ordered_nodes {
+        if let Some(parent) = parents.get(&id).and_then(|parent| parent.as_ref()) {
+            children.entry(parent.clone()).or_default().push(id);
+        }
+    }
+    Ok(ParentTree { parents, children })
 }
 
 /// Mint one conforming node id for `class`.
@@ -344,5 +580,85 @@ mod tests {
         assert!(!is_valid_greenfield_arch_id("arch_001"));
         assert!(is_valid_greenfield_arch_id("arch_8KX2M"));
         assert!(is_valid_greenfield_arch_id("arch_8KX2M.3"));
+    }
+
+    #[test]
+    fn parent_value_derives_optional_parent() {
+        assert_eq!(
+            parse_parent_value(NodeIdClass::Decision, "dec_CHILD", Some(" dec_PARENT "))
+                .unwrap()
+                .as_deref(),
+            Some("dec_PARENT")
+        );
+        assert_eq!(
+            parse_parent_value(NodeIdClass::Decision, "dec_CHILD", Some("   ")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn parent_tree_rejects_self_parent() {
+        let err = parse_parent_value(NodeIdClass::Decision, "dec_A", Some("dec_A")).unwrap_err();
+        assert!(matches!(err, ParentTreeError::SelfParent { id } if id == "dec_A"));
+    }
+
+    #[test]
+    fn parent_tree_rejects_cycle() {
+        let err = validate_parent_tree(
+            NodeIdClass::Decision,
+            [
+                ParentTreeNode {
+                    id: "dec_A".to_string(),
+                    parent: Some("dec_C".to_string()),
+                },
+                ParentTreeNode {
+                    id: "dec_B".to_string(),
+                    parent: Some("dec_A".to_string()),
+                },
+                ParentTreeNode {
+                    id: "dec_C".to_string(),
+                    parent: Some("dec_B".to_string()),
+                },
+            ],
+        )
+        .unwrap_err();
+        assert!(matches!(err, ParentTreeError::Cycle { .. }));
+    }
+
+    #[test]
+    fn parent_tree_derives_parent_and_ancestor_chain() {
+        let tree = validate_parent_tree(
+            NodeIdClass::Decision,
+            [
+                ParentTreeNode {
+                    id: "dec_ROOT".to_string(),
+                    parent: None,
+                },
+                ParentTreeNode {
+                    id: "dec_CHILD".to_string(),
+                    parent: Some("dec_ROOT".to_string()),
+                },
+                ParentTreeNode {
+                    id: "dec_GRAND".to_string(),
+                    parent: Some("dec_CHILD".to_string()),
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(tree.parent_of("dec_CHILD").unwrap(), Some("dec_ROOT"));
+        assert_eq!(
+            tree.ancestor_chain("dec_GRAND").unwrap(),
+            vec!["dec_CHILD".to_string(), "dec_ROOT".to_string()]
+        );
+        assert_eq!(tree.children_of("dec_ROOT"), &["dec_CHILD".to_string()]);
+    }
+
+    #[test]
+    fn parent_tree_requires_create_time_existence() {
+        let err =
+            validate_parent_exists("dec_CHILD", Some("dec_MISSING"), ["dec_CHILD"]).unwrap_err();
+        assert!(
+            matches!(err, ParentTreeError::MissingParent { id, parent } if id == "dec_CHILD" && parent == "dec_MISSING")
+        );
     }
 }

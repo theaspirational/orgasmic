@@ -218,6 +218,10 @@ export type DecisionSummary = {
   id: string;
   title: string;
   tags: string[];
+  parent?: string | null;
+  children?: string[];
+  depth?: number | null;
+  path?: string | null;
   glossary_refs: string[];
   decided_at?: string | null;
   preview?: string | null;

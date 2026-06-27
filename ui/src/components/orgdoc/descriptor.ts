@@ -35,6 +35,8 @@ export type NodeFieldDescriptor = {
   link?: boolean;
   /** Autocomplete source for chip entry. */
   suggest?: SuggestSource;
+  /** Optional cap for scalar link-chip properties such as decision PARENT. */
+  maxItems?: number;
   placeholder?: string;
   hideWhenEmpty?: boolean;
 };
@@ -55,6 +57,7 @@ export const DECISION_DESCRIPTOR: NodeDescriptor = {
   editableTitle: true,
   fields: [
     { label: 'Tags', binding: { kind: 'tags' }, editor: 'chips', placeholder: 'Add tag…' },
+    { label: 'Parent', binding: { kind: 'property', key: 'PARENT' }, editor: 'chips', separator: 'space', link: true, suggest: 'decision', maxItems: 1, placeholder: 'Link a parent decision…', hideWhenEmpty: true },
     { label: 'Context', binding: { kind: 'section', title: 'Context' }, editor: 'prose', placeholder: 'What forces are at play?' },
     { label: 'Decision', binding: { kind: 'section', title: 'Decision' }, editor: 'prose', placeholder: 'What did we decide?' },
     { label: 'Consequences', binding: { kind: 'section', title: 'Consequences' }, editor: 'prose', placeholder: 'What follows from this?' },

@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { architectureDescriptorFor, DESCRIPTORS } from '@/components/orgdoc/descriptor';
 import { NodeDocEditor, type NodeDirectory } from '@/components/orgdoc/NodeDocEditor';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchArchitecture, fetchDecisions, fetchGlossary } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, withDrawerStack, type AppSearch } from '@/lib/searchState';
 import type { ArchitectureSummary, DecisionSummary, GlossarySummary } from '@/lib/types';
@@ -42,11 +43,65 @@ type DetailSeed = Partial<{
   glossary: GlossarySummary[] | null;
 }>;
 
-async function loadDetailData(projectId: string, seed: DetailSeed = {}): Promise<DetailData> {
+function activeSeedVersion(seed: DetailSeed, activeKind: NodeKind, activeId: string | null): string {
+  if (!activeId) return 'none';
+  if (activeKind === 'decision') {
+    if (!seed.decisions) return 'fetch';
+    const decision = seed.decisions.find((item) => item.id === activeId);
+    return decision
+      ? [
+          decision.id,
+          decision.parent ?? '',
+          decision.path ?? '',
+          (decision.children ?? []).join(','),
+          decision.title,
+          decision.preview ?? '',
+        ].join(':')
+      : 'missing';
+  }
+  if (activeKind === 'architecture') {
+    if (!seed.architecture) return 'fetch';
+    const architecture = seed.architecture.find((item) => item.id === activeId);
+    return architecture
+      ? [architecture.id, architecture.parent_id ?? '', architecture.label, architecture.description ?? ''].join(':')
+      : 'missing';
+  }
+  if (!seed.glossary) return 'fetch';
+  const glossary = seed.glossary.find((item) => item.id === activeId);
+  return glossary ? [glossary.id, glossary.canonical ?? ''].join(':') : 'missing';
+}
+
+function seedHasActiveNode(seed: DetailSeed, activeKind: NodeKind, activeId: string | null): boolean {
+  if (!activeId) return true;
+  if (activeKind === 'decision') return Boolean(seed.decisions?.some((item) => item.id === activeId));
+  if (activeKind === 'architecture') return Boolean(seed.architecture?.some((item) => item.id === activeId));
+  return Boolean(seed.glossary?.some((item) => item.id === activeId));
+}
+
+function detailHasActiveNode(data: DetailData | null, activeKind: NodeKind, activeId: string | null): boolean {
+  if (!data || !activeId) return false;
+  if (activeKind === 'decision') return data.decisions.some((item) => item.id === activeId);
+  if (activeKind === 'architecture') return data.architecture.some((item) => item.id === activeId);
+  return data.glossary.some((item) => item.id === activeId);
+}
+
+async function loadDetailData(
+  projectId: string,
+  seed: DetailSeed = {},
+  activeKind: NodeKind,
+  activeId: string | null,
+): Promise<DetailData> {
+  const activeSeedIsFreshEnough = seedHasActiveNode(seed, activeKind, activeId);
   const [decisions, architecture, glossary] = await Promise.all([
-    seed.decisions ? Promise.resolve(seed.decisions) : fetchDecisions(projectId),
-    seed.architecture ? Promise.resolve(seed.architecture) : fetchArchitecture(projectId),
-    seed.glossary ? Promise.resolve(seed.glossary) : fetchGlossary(projectId),
+    seed.decisions && (activeKind !== 'decision' || activeSeedIsFreshEnough)
+      ? Promise.resolve(seed.decisions)
+      : fetchDecisions(projectId),
+    seed.architecture && (activeKind !== 'architecture' || activeSeedIsFreshEnough)
+      ? Promise.resolve(seed.architecture)
+      : fetchArchitecture(projectId),
+    seed.glossary && (activeKind !== 'glossary' || activeSeedIsFreshEnough)
+      ? Promise.resolve(seed.glossary)
+      : fetchGlossary(projectId),
   ]);
   return { decisions, architecture, glossary };
 }
@@ -55,6 +110,21 @@ function nodeTitle(kind: NodeKind, id: string, data: DetailData): string {
   if (kind === 'decision') return data.decisions.find((d) => d.id === id)?.title || id;
   if (kind === 'architecture') return data.architecture.find((a) => a.id === id)?.label || id;
   return data.glossary.find((t) => t.id === id)?.canonical || id;
+}
+
+function decisionParentTrail(id: string, decisions: DecisionSummary[]): DecisionSummary[] {
+  const byId = new Map(decisions.map((decision) => [decision.id, decision]));
+  const out: DecisionSummary[] = [];
+  const seen = new Set<string>();
+  let current = byId.get(id)?.parent ?? null;
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    const parent = byId.get(current);
+    if (!parent) break;
+    out.push(parent);
+    current = parent.parent ?? null;
+  }
+  return out.reverse();
 }
 
 function buildDirectory(data: DetailData | null): NodeDirectory {
@@ -87,13 +157,15 @@ export function NodeModal({
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as AppSearch & { drawer_stack?: string[] };
   const isMobile = useIsMobile();
+  const refresh = useRefreshToken();
   const stack = useMemo(() => searchList(search.drawer_stack), [search.drawer_stack]);
   const activeId = stack.at(-1) ?? null;
   const activeKind = inferNodeKind(activeId) ?? nodeKind;
   const open = stack.length > 0;
+  const seedVersion = activeSeedVersion(seed, activeKind, activeId);
   const detail = useResource(
-    `node-modal:${projectId}`,
-    () => loadDetailData(projectId, seed),
+    `node-modal:${projectId}:${activeKind}:${activeId ?? 'closed'}:${refresh}:${seedVersion}`,
+    () => loadDetailData(projectId, seed, activeKind, activeId),
     { enabled: open },
   );
   const trail = stack;
@@ -139,6 +211,9 @@ export function NodeModal({
     return nodeTitle(activeKind, activeId, detail.data);
   }, [activeId, activeKind, detail.data]);
   const description = activeKind === 'glossary' ? title : (activeId ?? 'Node');
+  const waitingForActiveSummary = Boolean(
+    activeId && detail.data && !detailHasActiveNode(detail.data, activeKind, activeId),
+  );
 
   const content = (
     <NodeModalContent
@@ -146,7 +221,7 @@ export function NodeModal({
       activeId={activeId}
       activeKind={activeKind}
       data={detail.data}
-      loading={detail.loading && !detail.data}
+      loading={detail.loading && (!detail.data || waitingForActiveSummary)}
       error={detail.error}
       breadcrumbs={trail}
       mode={mode}
@@ -229,6 +304,7 @@ function NodeModalContent({
   if (!activeId || !data) return null;
   const title = nodeTitle(activeKind, activeId, data);
   const hiddenStackCount = Math.max(0, breadcrumbs.length - 1);
+  const parentTrail = activeKind === 'decision' ? decisionParentTrail(activeId, data.decisions) : [];
 
   return (
     <>
@@ -270,6 +346,25 @@ function NodeModalContent({
           {activeKind !== 'glossary' && activeId ? (
             <CopyIdBadge value={activeId} className="h-4 px-1.5 text-[9px]" />
           ) : null}
+          {parentTrail.length > 0 ? (
+            <nav className="mt-2 flex flex-wrap items-center gap-1 text-xs text-muted-foreground" aria-label="Decision parent breadcrumb">
+              <span>Parent</span>
+              {parentTrail.map((decision, index) => (
+                <span key={decision.id} className="inline-flex items-center gap-1">
+                  <span aria-hidden="true">{index === 0 ? ':' : '>'}</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-1.5 text-xs text-muted-foreground"
+                    onClick={() => onOpenNode(decision.id)}
+                  >
+                    {decision.path ? `${decision.path} ` : ''}{decision.title || decision.id}
+                  </Button>
+                </span>
+              ))}
+            </nav>
+          ) : null}
           <h2 className="mt-1 text-base font-semibold leading-snug">{title}</h2>
         </div>
         <Button
@@ -300,7 +395,7 @@ function NodeModalContent({
               mode={mode}
             />
           </div>
-          <Aside id={activeId} kind={activeKind} data={data} />
+          <Aside id={activeId} kind={activeKind} data={data} onOpenNode={onOpenNode} />
         </div>
       </ScrollArea>
     </>
@@ -311,12 +406,20 @@ function Aside({
   id,
   kind,
   data,
+  onOpenNode,
 }: {
   id: string;
   kind: NodeKind;
   data: DetailData;
+  onOpenNode: (id: string) => void;
 }) {
   const archNode = kind === 'architecture' ? data.architecture.find((item) => item.id === id) : undefined;
+  const decision = kind === 'decision' ? data.decisions.find((item) => item.id === id) : undefined;
+  const decisionChildren = decision
+    ? (decision.children ?? [])
+        .map((childId) => data.decisions.find((item) => item.id === childId))
+        .filter((item): item is DecisionSummary => Boolean(item))
+    : [];
   const source = kind === 'decision'
     ? data.decisions.find((item) => item.id === id)?.source_file
     : kind === 'architecture'
@@ -333,6 +436,38 @@ function Aside({
         </dd>
       </div>
       <Separator />
+      {decision ? (
+        <>
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Decision path</dt>
+            <dd className="mt-1 font-mono text-xs">{decision.path ?? '—'}</dd>
+          </div>
+          <Separator />
+          <div>
+            <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Children{decisionChildren.length ? ` (${decisionChildren.length})` : ''}
+            </dt>
+            <dd className="mt-1 flex flex-col gap-1">
+              {decisionChildren.length === 0 ? (
+                <span className="text-xs text-muted-foreground">No child decisions.</span>
+              ) : (
+                decisionChildren.map((child) => (
+                  <button
+                    key={child.id}
+                    type="button"
+                    className="rounded border bg-background px-2 py-1 text-left text-xs hover:border-foreground/30"
+                    onClick={() => onOpenNode(child.id)}
+                  >
+                    <span className="font-mono text-muted-foreground">{child.path ?? '—'}</span>{' '}
+                    <span>{child.title || child.id}</span>
+                  </button>
+                ))
+              )}
+            </dd>
+          </div>
+          <Separator />
+        </>
+      ) : null}
       <div>
         <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Kind</dt>
         <dd className="mt-1">

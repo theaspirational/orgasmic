@@ -17,8 +17,9 @@ use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
 use orgasmic_core::{
     iter_task_file_paths, lint_arch_heading_id_token, lint_decision_heading_id_token,
     lint_project_identities, lint_task_heading_id_token, marker_node_ids_in_line,
-    should_skip_marker_path, ArchEdgeTarget, ArchitectureNode, DecisionNode, GlossaryTerm, Heading,
-    Home, LifecycleStage, OrgError, OrgFile, ProjectConfig, SandboxAllowlist, TaskHeading,
+    should_skip_marker_path, validate_parent_tree, ArchEdgeTarget, ArchitectureNode, DecisionNode,
+    GlossaryTerm, Heading, Home, LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError,
+    ParentTreeNode, ProjectConfig, SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
 use tokio::sync::RwLock;
@@ -159,6 +160,7 @@ pub enum ActivityKind {
 #[derive(Debug, Default, Clone, Serialize)]
 pub struct GraphIndex {
     pub decisions: Vec<DecisionSummary>,
+    pub decision_tree: BTreeMap<String, DecisionTreeEntry>,
     pub architecture: Vec<ArchitectureSummary>,
     pub architecture_artifacts: Vec<ArchitectureArtifactSummary>,
     pub edges: Vec<GraphEdgeSummary>,
@@ -172,6 +174,10 @@ pub struct DecisionSummary {
     pub id: String,
     pub title: String,
     pub tags: Vec<String>,
+    pub parent: Option<String>,
+    pub children: Vec<String>,
+    pub depth: Option<usize>,
+    pub path: Option<String>,
     pub glossary_refs: Vec<String>,
     pub decided_at: Option<String>,
     /// Short body excerpt (Decision, falling back to Context) for list previews,
@@ -181,6 +187,14 @@ pub struct DecisionSummary {
     /// Derived from :SUPERSEDES: backrefs across all present decisions (dec_KTF04).
     /// True iff some other present decision's :SUPERSEDES: names this id.
     pub superseded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct DecisionTreeEntry {
+    pub parent: Option<String>,
+    pub children: Vec<String>,
+    pub depth: usize,
+    pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -615,6 +629,7 @@ impl Index {
                         &file,
                         &decisions_path,
                         &mut project.graph,
+                        snap,
                     ));
                 }
                 Err(err) => push_parse_error(snap, decisions_path, err),
@@ -623,6 +638,7 @@ impl Index {
         // Apply the superseded flag across the whole decision set from the
         // project-wide set of :SUPERSEDES: targets (dec_KTF04).
         apply_superseded_flags(&mut project.graph, &all_superseded);
+        build_decision_tree_index(&mut project.graph, &board_entry.path, snap);
 
         let architecture = orgasmic_dir.join("architecture.org");
         if architecture.exists() {
@@ -655,7 +671,12 @@ impl Index {
 }
 
 // orgasmic:dec_KTF04
-fn load_decisions(file: &OrgFile, source: &Path, graph: &mut GraphIndex) -> HashSet<String> {
+fn load_decisions(
+    file: &OrgFile,
+    source: &Path,
+    graph: &mut GraphIndex,
+    snap: &mut IndexSnapshot,
+) -> HashSet<String> {
     // Collect every id named by any decision's :SUPERSEDES: (whitespace- or
     // comma-separated, matching :TAGS: tolerance; a decision cannot supersede
     // itself). The flag itself is applied project-wide by apply_superseded_flags
@@ -682,8 +703,12 @@ fn load_decisions(file: &OrgFile, source: &Path, graph: &mut GraphIndex) -> Hash
         if !heading.title.starts_with("dec_") {
             continue;
         }
-        let Ok(node) = DecisionNode::from_heading(file, heading, &source.to_string_lossy()) else {
-            continue;
+        let node = match DecisionNode::from_heading(file, heading, &source.to_string_lossy()) {
+            Ok(node) => node,
+            Err(err) => {
+                push_parse_error(snap, source.to_path_buf(), err.to_string());
+                continue;
+            }
         };
         let id = node.id.to_string();
         graph.nodes.push(GraphNodeSummary {
@@ -697,6 +722,10 @@ fn load_decisions(file: &OrgFile, source: &Path, graph: &mut GraphIndex) -> Hash
             id,
             title: node.title.to_string(),
             tags: node.tags.to_vec(),
+            parent: node.parent,
+            children: Vec::new(),
+            depth: None,
+            path: None,
             glossary_refs: own_vec(&node.glossary_refs),
             decided_at: node.decided_at.map(str::to_string),
             preview: node.decision.clone().or_else(|| node.context.clone()),
@@ -719,6 +748,138 @@ fn apply_superseded_flags(graph: &mut GraphIndex, superseded: &HashSet<String>) 
             node.superseded = superseded.contains(&node.id);
         }
     }
+}
+
+// orgasmic:TASK-2DFTX
+fn build_decision_tree_index(
+    graph: &mut GraphIndex,
+    project_root: &Path,
+    snap: &mut IndexSnapshot,
+) {
+    graph.decision_tree.clear();
+    for decision in &mut graph.decisions {
+        decision.children.clear();
+        decision.depth = None;
+        decision.path = None;
+    }
+
+    let nodes = graph
+        .decisions
+        .iter()
+        .map(|decision| ParentTreeNode {
+            id: decision.id.clone(),
+            parent: decision.parent.clone(),
+        })
+        .collect::<Vec<_>>();
+    if let Err(err) = validate_parent_tree(NodeIdClass::Decision, nodes) {
+        let (path, message) = decision_tree_parse_error(&graph.decisions, project_root, err);
+        snap.parse_errors.push(ParseError {
+            path,
+            kind: ParseErrorKind::WorkingFile,
+            message,
+            line: None,
+            at: Utc::now(),
+        });
+    }
+
+    let ids = graph
+        .decisions
+        .iter()
+        .map(|decision| decision.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut children: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for decision in &graph.decisions {
+        let Some(parent) = decision.parent.as_deref() else {
+            continue;
+        };
+        if ids.contains(parent) && parent != decision.id {
+            children
+                .entry(parent.to_string())
+                .or_default()
+                .push(decision.id.clone());
+        }
+    }
+
+    let mut assigned: BTreeMap<String, (usize, String)> = BTreeMap::new();
+    let roots = graph
+        .decisions
+        .iter()
+        .filter(|decision| {
+            decision
+                .parent
+                .as_deref()
+                .is_none_or(|parent| !ids.contains(parent) || parent == decision.id)
+        })
+        .map(|decision| decision.id.clone())
+        .collect::<Vec<_>>();
+    for (index, root) in roots.iter().enumerate() {
+        assign_decision_tree_paths(root, &children, 0, &(index + 1).to_string(), &mut assigned);
+    }
+
+    for decision in &mut graph.decisions {
+        let entry_children = children.remove(&decision.id).unwrap_or_default();
+        if let Some((depth, path)) = assigned.get(&decision.id).cloned() {
+            decision.depth = Some(depth);
+            decision.path = Some(path.clone());
+            decision.children = entry_children.clone();
+            graph.decision_tree.insert(
+                decision.id.clone(),
+                DecisionTreeEntry {
+                    parent: decision.parent.clone(),
+                    children: entry_children,
+                    depth,
+                    path,
+                },
+            );
+        } else {
+            // Cycle-corrupt nodes are left visible but without a derived path.
+            decision.children = entry_children;
+        }
+    }
+}
+
+fn assign_decision_tree_paths(
+    id: &str,
+    children: &BTreeMap<String, Vec<String>>,
+    depth: usize,
+    path: &str,
+    out: &mut BTreeMap<String, (usize, String)>,
+) {
+    if out.contains_key(id) {
+        return;
+    }
+    out.insert(id.to_string(), (depth, path.to_string()));
+    if let Some(kids) = children.get(id) {
+        for (index, child) in kids.iter().enumerate() {
+            let child_path = format!("{path}.{}", index + 1);
+            assign_decision_tree_paths(child, children, depth + 1, &child_path, out);
+        }
+    }
+}
+
+fn decision_tree_parse_error(
+    decisions: &[DecisionSummary],
+    project_root: &Path,
+    err: ParentTreeError,
+) -> (PathBuf, String) {
+    let id_for_path = match &err {
+        ParentTreeError::MalformedParent { id, .. }
+        | ParentTreeError::WrongClass { id, .. }
+        | ParentTreeError::MissingParent { id, .. }
+        | ParentTreeError::SelfParent { id }
+        | ParentTreeError::DuplicateId { id }
+        | ParentTreeError::UnknownId { id } => Some(id.as_str()),
+        ParentTreeError::Cycle { chain } => chain.first().map(String::as_str),
+    };
+    let path = id_for_path
+        .and_then(|id| {
+            decisions
+                .iter()
+                .find(|decision| decision.id == id)
+                .map(|decision| decision.source_file.clone())
+        })
+        .unwrap_or_else(|| project_root.join(".orgasmic/decisions.org"));
+    (path, format!("decision tree :PARENT: error: {err}"))
 }
 
 fn load_architecture(
@@ -2157,6 +2318,132 @@ The following criteria must hold before close.
             .parse_errors
             .iter()
             .any(|error| error.message.contains("orphan derived parent TASK-999")));
+    }
+
+    #[tokio::test]
+    async fn decision_tree_derives_paths_depth_and_ordering() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/decisions.org"),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n\
+* dec_AAAAA First root\n\
+:PROPERTIES:\n\
+:ID:                 dec_AAAAA\n\
+:END:\n\
+\n\
+* dec_BBBBB Second root\n\
+:PROPERTIES:\n\
+:ID:                 dec_BBBBB\n\
+:END:\n\
+\n\
+* dec_CCCCC Child one\n\
+:PROPERTIES:\n\
+:ID:                 dec_CCCCC\n\
+:PARENT:             dec_BBBBB\n\
+:END:\n\
+\n\
+* dec_DDDDD Child two\n\
+:PROPERTIES:\n\
+:ID:                 dec_DDDDD\n\
+:PARENT:             dec_BBBBB\n\
+:END:\n\
+\n\
+* dec_EEEEE Grandchild\n\
+:PROPERTIES:\n\
+:ID:                 dec_EEEEE\n\
+:PARENT:             dec_DDDDD\n\
+:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        assert!(
+            snap.parse_errors
+                .iter()
+                .all(|error| !error.message.contains(":PARENT:")),
+            "{:?}",
+            snap.parse_errors
+        );
+        let graph = &snap.project("proj-x").unwrap().graph;
+        let root_b = graph.decision_tree.get("dec_BBBBB").unwrap();
+        assert_eq!(root_b.path, "2");
+        assert_eq!(root_b.depth, 0);
+        assert_eq!(root_b.children, vec!["dec_CCCCC", "dec_DDDDD"]);
+        assert_eq!(graph.decision_tree.get("dec_CCCCC").unwrap().path, "2.1");
+        assert_eq!(graph.decision_tree.get("dec_DDDDD").unwrap().path, "2.2");
+        assert_eq!(graph.decision_tree.get("dec_EEEEE").unwrap().path, "2.2.1");
+        assert_eq!(graph.decision_tree.get("dec_EEEEE").unwrap().depth, 2);
+    }
+
+    #[tokio::test]
+    async fn decision_tree_orphan_parent_is_reported_as_parse_error() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/decisions.org"),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n\
+* dec_RPHN1 Orphan child\n\
+:PROPERTIES:\n\
+:ID:                 dec_RPHN1\n\
+:PARENT:             dec_GHST1\n\
+:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        assert!(snap.parse_errors.iter().any(|error| {
+            error
+                .message
+                .contains("decision tree :PARENT: error: dec_RPHN1 has orphan parent dec_GHST1")
+        }));
+    }
+
+    #[tokio::test]
+    async fn superseded_decision_parent_with_live_children_stays_in_tree() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/decisions.org"),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n\
+* dec_AAAAA Parent now superseded\n\
+:PROPERTIES:\n\
+:ID:                 dec_AAAAA\n\
+:END:\n\
+\n\
+* dec_BBBBB Replacement\n\
+:PROPERTIES:\n\
+:ID:                 dec_BBBBB\n\
+:SUPERSEDES:         dec_AAAAA\n\
+:END:\n\
+\n\
+* dec_CCCCC Live child\n\
+:PROPERTIES:\n\
+:ID:                 dec_CCCCC\n\
+:PARENT:             dec_AAAAA\n\
+:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let graph = &snap.project("proj-x").unwrap().graph;
+        let old = graph
+            .decisions
+            .iter()
+            .find(|decision| decision.id == "dec_AAAAA")
+            .unwrap();
+        assert!(old.superseded);
+        assert_eq!(old.children, vec!["dec_CCCCC"]);
+        assert_eq!(graph.decision_tree.get("dec_CCCCC").unwrap().path, "1.1");
     }
 
     // orgasmic:dec_KTF04

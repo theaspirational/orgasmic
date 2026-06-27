@@ -344,6 +344,7 @@ export function NodeDocEditor({
                     labelFor={field.link ? directory.labelFor : undefined}
                     onOpen={field.link ? onOpenNode : undefined}
                     suggestions={field.suggest ? directory.suggestionsFor(field.suggest) : undefined}
+                    maxItems={field.maxItems}
                   />
                 ) : (
                   <ChipsValue
@@ -461,6 +462,7 @@ function ChipsField({
   labelFor,
   onOpen,
   suggestions,
+  maxItems,
 }: {
   values: string[];
   onChange: (next: string[]) => void;
@@ -468,6 +470,7 @@ function ChipsField({
   labelFor?: (value: string) => string;
   onOpen?: (value: string) => void;
   suggestions?: { value: string; label: string }[];
+  maxItems?: number;
 }) {
   const [text, setText] = useState('');
   const [focused, setFocused] = useState(false);
@@ -488,7 +491,9 @@ function ChipsField({
 
   function commit(raw: string) {
     const token = raw.trim();
-    if (token && !values.includes(token)) onChange([...values, token]);
+    if (token && !values.includes(token)) {
+      onChange(maxItems === 1 ? [token] : [...values, token].slice(0, maxItems ?? undefined));
+    }
     setText('');
   }
   function remove(token: string) {
@@ -572,7 +577,7 @@ function ChipsField({
               className="flex w-full flex-col items-start gap-0.5 rounded-md px-2 py-1.5 text-left hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
               onMouseDown={(event) => {
                 event.preventDefault();
-                onChange([...values, option.value]);
+                onChange(maxItems === 1 ? [option.value] : [...values, option.value].slice(0, maxItems ?? undefined));
                 setText('');
                 setFocused(false);
               }}
