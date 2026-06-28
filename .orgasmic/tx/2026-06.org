@@ -15585,3 +15585,1751 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-06-27 Sat 16:38:57 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0992
+:TIME:         [2026-06-27 Sat 16:38:57]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_K1DR7
+:NODE_ID:      dec_K1DR7
+:END:
+
+* TX 2026-06-27 Sat 16:38:57 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0993
+:TIME:         [2026-06-27 Sat 16:38:57]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_XSV21
+:NODE_ID:      dec_XSV21
+:END:
+
+* TX 2026-06-27 Sat 16:38:58 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0994
+:TIME:         [2026-06-27 Sat 16:38:58]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_G38EC
+:NODE_ID:      dec_G38EC
+:END:
+
+* TX 2026-06-27 Sat 16:38:58 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0995
+:TIME:         [2026-06-27 Sat 16:38:58]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QWZB2
+:NODE_ID:      dec_QWZB2
+:END:
+
+* TX 2026-06-27 Sat 16:38:58 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0996
+:TIME:         [2026-06-27 Sat 16:38:58]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WH9PD
+:NODE_ID:      dec_WH9PD
+:END:
+
+* TX 2026-06-27 Sat 16:38:58 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0997
+:TIME:         [2026-06-27 Sat 16:38:58]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_R75SW
+:NODE_ID:      dec_R75SW
+:END:
+
+* TX 2026-06-27 Sat 16:38:58 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0998
+:TIME:         [2026-06-27 Sat 16:38:58]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_GRDFB
+:NODE_ID:      dec_GRDFB
+:END:
+
+* TX 2026-06-27 Sat 16:38:59 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-0999
+:TIME:         [2026-06-27 Sat 16:38:59]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_P24WF
+:NODE_ID:      dec_P24WF
+:END:
+
+* TX 2026-06-27 Sat 16:38:59 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1000
+:TIME:         [2026-06-27 Sat 16:38:59]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_W58VM
+:NODE_ID:      dec_W58VM
+:END:
+
+* TX 2026-06-27 Sat 16:38:59 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1001
+:TIME:         [2026-06-27 Sat 16:38:59]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ASB1A
+:NODE_ID:      dec_ASB1A
+:END:
+
+* TX 2026-06-27 Sat 16:38:59 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1002
+:TIME:         [2026-06-27 Sat 16:38:59]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_DK7AZ
+:NODE_ID:      dec_DK7AZ
+:END:
+
+* TX 2026-06-27 Sat 16:38:59 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1003
+:TIME:         [2026-06-27 Sat 16:38:59]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MMW2R
+:NODE_ID:      dec_MMW2R
+:END:
+
+* TX 2026-06-27 Sat 16:39:00 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1004
+:TIME:         [2026-06-27 Sat 16:39:00]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_XV9AK
+:NODE_ID:      dec_XV9AK
+:END:
+
+* TX 2026-06-27 Sat 16:39:00 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1005
+:TIME:         [2026-06-27 Sat 16:39:00]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_A8Z8H
+:NODE_ID:      dec_A8Z8H
+:END:
+
+* TX 2026-06-27 Sat 16:39:00 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1006
+:TIME:         [2026-06-27 Sat 16:39:00]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_KH07K
+:NODE_ID:      dec_KH07K
+:END:
+
+* TX 2026-06-27 Sat 16:39:00 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1007
+:TIME:         [2026-06-27 Sat 16:39:00]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_X6Q0S
+:NODE_ID:      dec_X6Q0S
+:END:
+
+* TX 2026-06-27 Sat 16:39:01 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1008
+:TIME:         [2026-06-27 Sat 16:39:01]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_TEKEB
+:NODE_ID:      dec_TEKEB
+:END:
+
+* TX 2026-06-27 Sat 16:39:01 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1009
+:TIME:         [2026-06-27 Sat 16:39:01]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_BP4NH
+:NODE_ID:      dec_BP4NH
+:END:
+
+* TX 2026-06-27 Sat 16:39:01 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1010
+:TIME:         [2026-06-27 Sat 16:39:01]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_N17XX
+:NODE_ID:      dec_N17XX
+:END:
+
+* TX 2026-06-27 Sat 16:39:01 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1011
+:TIME:         [2026-06-27 Sat 16:39:01]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_YYMSK
+:NODE_ID:      dec_YYMSK
+:END:
+
+* TX 2026-06-27 Sat 16:39:02 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1012
+:TIME:         [2026-06-27 Sat 16:39:02]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_XQ3F8
+:NODE_ID:      dec_XQ3F8
+:END:
+
+* TX 2026-06-27 Sat 16:39:02 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1013
+:TIME:         [2026-06-27 Sat 16:39:02]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CSKBD
+:NODE_ID:      dec_CSKBD
+:END:
+
+* TX 2026-06-27 Sat 16:39:02 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1014
+:TIME:         [2026-06-27 Sat 16:39:02]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CGVRW
+:NODE_ID:      dec_CGVRW
+:END:
+
+* TX 2026-06-27 Sat 16:39:02 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1015
+:TIME:         [2026-06-27 Sat 16:39:02]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HYD58
+:NODE_ID:      dec_HYD58
+:END:
+
+* TX 2026-06-27 Sat 16:39:02 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1016
+:TIME:         [2026-06-27 Sat 16:39:02]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_H9P38
+:NODE_ID:      dec_H9P38
+:END:
+
+* TX 2026-06-27 Sat 16:39:03 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1017
+:TIME:         [2026-06-27 Sat 16:39:03]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_DTJPD
+:NODE_ID:      dec_DTJPD
+:END:
+
+* TX 2026-06-27 Sat 16:39:03 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1018
+:TIME:         [2026-06-27 Sat 16:39:03]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HY3E0
+:NODE_ID:      dec_HY3E0
+:END:
+
+* TX 2026-06-27 Sat 16:39:03 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1019
+:TIME:         [2026-06-27 Sat 16:39:03]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JZDKT
+:NODE_ID:      dec_JZDKT
+:END:
+
+* TX 2026-06-27 Sat 16:39:03 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1020
+:TIME:         [2026-06-27 Sat 16:39:03]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MKC0A
+:NODE_ID:      dec_MKC0A
+:END:
+
+* TX 2026-06-27 Sat 16:39:03 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1021
+:TIME:         [2026-06-27 Sat 16:39:03]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_RECYG
+:NODE_ID:      dec_RECYG
+:END:
+
+* TX 2026-06-27 Sat 16:39:04 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1022
+:TIME:         [2026-06-27 Sat 16:39:04]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CX17K
+:NODE_ID:      dec_CX17K
+:END:
+
+* TX 2026-06-27 Sat 16:39:04 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1023
+:TIME:         [2026-06-27 Sat 16:39:04]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JW9TJ
+:NODE_ID:      dec_JW9TJ
+:END:
+
+* TX 2026-06-27 Sat 16:39:04 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1024
+:TIME:         [2026-06-27 Sat 16:39:04]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_A4V2N
+:NODE_ID:      dec_A4V2N
+:END:
+
+* TX 2026-06-27 Sat 16:39:04 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1025
+:TIME:         [2026-06-27 Sat 16:39:04]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_C6510
+:NODE_ID:      dec_C6510
+:END:
+
+* TX 2026-06-27 Sat 16:39:04 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1026
+:TIME:         [2026-06-27 Sat 16:39:04]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JW11K
+:NODE_ID:      dec_JW11K
+:END:
+
+* TX 2026-06-27 Sat 16:39:05 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1027
+:TIME:         [2026-06-27 Sat 16:39:05]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_R3RE4
+:NODE_ID:      dec_R3RE4
+:END:
+
+* TX 2026-06-27 Sat 16:39:05 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1028
+:TIME:         [2026-06-27 Sat 16:39:05]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_P2X0Y
+:NODE_ID:      dec_P2X0Y
+:END:
+
+* TX 2026-06-27 Sat 16:39:05 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1029
+:TIME:         [2026-06-27 Sat 16:39:05]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CXYVV
+:NODE_ID:      dec_CXYVV
+:END:
+
+* TX 2026-06-27 Sat 16:39:05 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1030
+:TIME:         [2026-06-27 Sat 16:39:05]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QWEQ8
+:NODE_ID:      dec_QWEQ8
+:END:
+
+* TX 2026-06-27 Sat 16:39:06 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1031
+:TIME:         [2026-06-27 Sat 16:39:06]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PA23Y
+:NODE_ID:      dec_PA23Y
+:END:
+
+* TX 2026-06-27 Sat 16:39:06 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1032
+:TIME:         [2026-06-27 Sat 16:39:06]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_E394G
+:NODE_ID:      dec_E394G
+:END:
+
+* TX 2026-06-27 Sat 16:39:06 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1033
+:TIME:         [2026-06-27 Sat 16:39:06]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JSX48
+:NODE_ID:      dec_JSX48
+:END:
+
+* TX 2026-06-27 Sat 16:39:06 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1034
+:TIME:         [2026-06-27 Sat 16:39:06]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_NZ9PS
+:NODE_ID:      dec_NZ9PS
+:END:
+
+* TX 2026-06-27 Sat 16:39:06 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1035
+:TIME:         [2026-06-27 Sat 16:39:06]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_R6G0A
+:NODE_ID:      dec_R6G0A
+:END:
+
+* TX 2026-06-27 Sat 16:39:07 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1036
+:TIME:         [2026-06-27 Sat 16:39:07]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_F2WRW
+:NODE_ID:      dec_F2WRW
+:END:
+
+* TX 2026-06-27 Sat 16:39:07 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1037
+:TIME:         [2026-06-27 Sat 16:39:07]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_V5Y7G
+:NODE_ID:      dec_V5Y7G
+:END:
+
+* TX 2026-06-27 Sat 16:39:07 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1038
+:TIME:         [2026-06-27 Sat 16:39:07]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QVSM0
+:NODE_ID:      dec_QVSM0
+:END:
+
+* TX 2026-06-27 Sat 16:39:07 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1039
+:TIME:         [2026-06-27 Sat 16:39:07]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_FD6M7
+:NODE_ID:      dec_FD6M7
+:END:
+
+* TX 2026-06-27 Sat 16:39:08 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1040
+:TIME:         [2026-06-27 Sat 16:39:08]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_GDEXE
+:NODE_ID:      dec_GDEXE
+:END:
+
+* TX 2026-06-27 Sat 16:39:08 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1041
+:TIME:         [2026-06-27 Sat 16:39:08]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_FBBT2
+:NODE_ID:      dec_FBBT2
+:END:
+
+* TX 2026-06-27 Sat 16:39:08 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1042
+:TIME:         [2026-06-27 Sat 16:39:08]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_J4FYS
+:NODE_ID:      dec_J4FYS
+:END:
+
+* TX 2026-06-27 Sat 16:39:08 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1043
+:TIME:         [2026-06-27 Sat 16:39:08]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_A10RB
+:NODE_ID:      dec_A10RB
+:END:
+
+* TX 2026-06-27 Sat 16:39:08 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1044
+:TIME:         [2026-06-27 Sat 16:39:08]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ACD08
+:NODE_ID:      dec_ACD08
+:END:
+
+* TX 2026-06-27 Sat 16:39:09 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1045
+:TIME:         [2026-06-27 Sat 16:39:09]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_RX4DF
+:NODE_ID:      dec_RX4DF
+:END:
+
+* TX 2026-06-27 Sat 16:39:09 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1046
+:TIME:         [2026-06-27 Sat 16:39:09]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_GG6B9
+:NODE_ID:      dec_GG6B9
+:END:
+
+* TX 2026-06-27 Sat 16:39:09 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1047
+:TIME:         [2026-06-27 Sat 16:39:09]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_A6CXY
+:NODE_ID:      dec_A6CXY
+:END:
+
+* TX 2026-06-27 Sat 16:39:09 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1048
+:TIME:         [2026-06-27 Sat 16:39:09]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HR8D8
+:NODE_ID:      dec_HR8D8
+:END:
+
+* TX 2026-06-27 Sat 16:39:09 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1049
+:TIME:         [2026-06-27 Sat 16:39:09]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WTM5Y
+:NODE_ID:      dec_WTM5Y
+:END:
+
+* TX 2026-06-27 Sat 16:39:10 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1050
+:TIME:         [2026-06-27 Sat 16:39:10]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HG7NB
+:NODE_ID:      dec_HG7NB
+:END:
+
+* TX 2026-06-27 Sat 16:39:10 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1051
+:TIME:         [2026-06-27 Sat 16:39:10]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_SCVKG
+:NODE_ID:      dec_SCVKG
+:END:
+
+* TX 2026-06-27 Sat 16:39:10 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1052
+:TIME:         [2026-06-27 Sat 16:39:10]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PVDP3
+:NODE_ID:      dec_PVDP3
+:END:
+
+* TX 2026-06-27 Sat 16:39:10 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1053
+:TIME:         [2026-06-27 Sat 16:39:10]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_J2YM8
+:NODE_ID:      dec_J2YM8
+:END:
+
+* TX 2026-06-27 Sat 16:39:10 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1054
+:TIME:         [2026-06-27 Sat 16:39:10]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ZKRQW
+:NODE_ID:      dec_ZKRQW
+:END:
+
+* TX 2026-06-27 Sat 16:39:11 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1055
+:TIME:         [2026-06-27 Sat 16:39:11]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WV1ZH
+:NODE_ID:      dec_WV1ZH
+:END:
+
+* TX 2026-06-27 Sat 16:39:11 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1056
+:TIME:         [2026-06-27 Sat 16:39:11]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_P7EY8
+:NODE_ID:      dec_P7EY8
+:END:
+
+* TX 2026-06-27 Sat 16:39:11 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1057
+:TIME:         [2026-06-27 Sat 16:39:11]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_DEH2T
+:NODE_ID:      dec_DEH2T
+:END:
+
+* TX 2026-06-27 Sat 16:39:11 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1058
+:TIME:         [2026-06-27 Sat 16:39:11]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MX9RM
+:NODE_ID:      dec_MX9RM
+:END:
+
+* TX 2026-06-27 Sat 16:39:12 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1059
+:TIME:         [2026-06-27 Sat 16:39:12]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_SSJVD
+:NODE_ID:      dec_SSJVD
+:END:
+
+* TX 2026-06-27 Sat 16:39:12 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1060
+:TIME:         [2026-06-27 Sat 16:39:12]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MK7AH
+:NODE_ID:      dec_MK7AH
+:END:
+
+* TX 2026-06-27 Sat 16:39:12 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1061
+:TIME:         [2026-06-27 Sat 16:39:12]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_X72P5
+:NODE_ID:      dec_X72P5
+:END:
+
+* TX 2026-06-27 Sat 16:39:12 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1062
+:TIME:         [2026-06-27 Sat 16:39:12]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ZQJPA
+:NODE_ID:      dec_ZQJPA
+:END:
+
+* TX 2026-06-27 Sat 16:39:12 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1063
+:TIME:         [2026-06-27 Sat 16:39:12]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QQYXM
+:NODE_ID:      dec_QQYXM
+:END:
+
+* TX 2026-06-27 Sat 16:39:13 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1064
+:TIME:         [2026-06-27 Sat 16:39:13]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HJENQ
+:NODE_ID:      dec_HJENQ
+:END:
+
+* TX 2026-06-27 Sat 16:39:13 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1065
+:TIME:         [2026-06-27 Sat 16:39:13]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WC1PW
+:NODE_ID:      dec_WC1PW
+:END:
+
+* TX 2026-06-27 Sat 16:39:13 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1066
+:TIME:         [2026-06-27 Sat 16:39:13]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_035A0
+:NODE_ID:      dec_035A0
+:END:
+
+* TX 2026-06-27 Sat 16:39:13 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1067
+:TIME:         [2026-06-27 Sat 16:39:13]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_YKFZX
+:NODE_ID:      dec_YKFZX
+:END:
+
+* TX 2026-06-27 Sat 16:39:13 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1068
+:TIME:         [2026-06-27 Sat 16:39:13]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WWAHT
+:NODE_ID:      dec_WWAHT
+:END:
+
+* TX 2026-06-27 Sat 16:39:14 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1069
+:TIME:         [2026-06-27 Sat 16:39:14]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_KTF04
+:NODE_ID:      dec_KTF04
+:END:
+
+* TX 2026-06-27 Sat 16:39:14 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1070
+:TIME:         [2026-06-27 Sat 16:39:14]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_2D5BC
+:NODE_ID:      dec_2D5BC
+:END:
+
+* TX 2026-06-27 Sat 16:39:14 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1071
+:TIME:         [2026-06-27 Sat 16:39:14]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CKMW3
+:NODE_ID:      dec_CKMW3
+:END:
+
+* TX 2026-06-27 Sat 16:39:14 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1072
+:TIME:         [2026-06-27 Sat 16:39:14]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_BXBNW
+:NODE_ID:      dec_BXBNW
+:END:
+
+* TX 2026-06-27 Sat 16:39:15 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1073
+:TIME:         [2026-06-27 Sat 16:39:15]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_B4147
+:NODE_ID:      dec_B4147
+:END:
+
+* TX 2026-06-27 Sat 16:40:19 task.state_transitioned TASK-KZ0VF
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1074
+:TIME:         [2026-06-27 Sat 16:40:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KZ0VF
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Retitled all 82 legacy decision titles to problem-form via daemon org-node set_title (per dec_2GQ7Q); 0 parse errors, surgical title-line-only diff.
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-06-27 Sat 16:40:20 task.state_transitioned TASK-KZ0VF
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1075
+:TIME:         [2026-06-27 Sat 16:40:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KZ0VF
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Retitled all 82 legacy decision titles to problem-form via daemon org-node set_title (per dec_2GQ7Q); 0 parse errors, surgical title-line-only diff.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-06-27 Sat 16:40:20 task.state_transitioned TASK-KZ0VF
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1076
+:TIME:         [2026-06-27 Sat 16:40:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KZ0VF
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Retitled all 82 legacy decision titles to problem-form via daemon org-node set_title (per dec_2GQ7Q); 0 parse errors, surgical title-line-only diff.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-06-27 Sat 18:02:30 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1077
+:TIME:         [2026-06-27 Sat 18:02:30]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QVSM0
+:NODE_ID:      dec_QVSM0
+:END:
+
+* TX 2026-06-27 Sat 18:02:30 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1078
+:TIME:         [2026-06-27 Sat 18:02:30]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_FD6M7
+:NODE_ID:      dec_FD6M7
+:END:
+
+* TX 2026-06-27 Sat 18:02:30 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1079
+:TIME:         [2026-06-27 Sat 18:02:30]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_SSJVD
+:NODE_ID:      dec_SSJVD
+:END:
+
+* TX 2026-06-27 Sat 18:02:31 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1080
+:TIME:         [2026-06-27 Sat 18:02:31]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_X72P5
+:NODE_ID:      dec_X72P5
+:END:
+
+* TX 2026-06-27 Sat 18:02:31 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1081
+:TIME:         [2026-06-27 Sat 18:02:31]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MK7AH
+:NODE_ID:      dec_MK7AH
+:END:
+
+* TX 2026-06-27 Sat 18:02:31 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1082
+:TIME:         [2026-06-27 Sat 18:02:31]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ZQJPA
+:NODE_ID:      dec_ZQJPA
+:END:
+
+* TX 2026-06-27 Sat 18:02:31 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1083
+:TIME:         [2026-06-27 Sat 18:02:31]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_A4V2N
+:NODE_ID:      dec_A4V2N
+:END:
+
+* TX 2026-06-27 Sat 18:02:32 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1084
+:TIME:         [2026-06-27 Sat 18:02:32]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_W58VM
+:NODE_ID:      dec_W58VM
+:END:
+
+* TX 2026-06-27 Sat 18:02:32 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1085
+:TIME:         [2026-06-27 Sat 18:02:32]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QWC9V
+:NODE_ID:      dec_QWC9V
+:END:
+
+* TX 2026-06-27 Sat 18:02:32 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1086
+:TIME:         [2026-06-27 Sat 18:02:32]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_J4FYS
+:NODE_ID:      dec_J4FYS
+:END:
+
+* TX 2026-06-27 Sat 18:02:32 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1087
+:TIME:         [2026-06-27 Sat 18:02:32]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WC1PW
+:NODE_ID:      dec_WC1PW
+:END:
+
+* TX 2026-06-27 Sat 18:02:32 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1088
+:TIME:         [2026-06-27 Sat 18:02:32]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_035A0
+:NODE_ID:      dec_035A0
+:END:
+
+* TX 2026-06-27 Sat 18:02:33 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1089
+:TIME:         [2026-06-27 Sat 18:02:33]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MMW2R
+:NODE_ID:      dec_MMW2R
+:END:
+
+* TX 2026-06-27 Sat 18:02:33 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1090
+:TIME:         [2026-06-27 Sat 18:02:33]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WTM5Y
+:NODE_ID:      dec_WTM5Y
+:END:
+
+* TX 2026-06-27 Sat 18:02:33 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1091
+:TIME:         [2026-06-27 Sat 18:02:33]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ZKRQW
+:NODE_ID:      dec_ZKRQW
+:END:
+
+* TX 2026-06-27 Sat 18:02:33 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1092
+:TIME:         [2026-06-27 Sat 18:02:33]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_C6510
+:NODE_ID:      dec_C6510
+:END:
+
+* TX 2026-06-27 Sat 18:02:33 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1093
+:TIME:         [2026-06-27 Sat 18:02:33]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PVDP3
+:NODE_ID:      dec_PVDP3
+:END:
+
+* TX 2026-06-27 Sat 18:02:34 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1094
+:TIME:         [2026-06-27 Sat 18:02:34]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_SCVKG
+:NODE_ID:      dec_SCVKG
+:END:
+
+* TX 2026-06-27 Sat 18:02:34 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1095
+:TIME:         [2026-06-27 Sat 18:02:34]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_2D5BC
+:NODE_ID:      dec_2D5BC
+:END:
+
+* TX 2026-06-27 Sat 18:02:34 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1096
+:TIME:         [2026-06-27 Sat 18:02:34]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HYD58
+:NODE_ID:      dec_HYD58
+:END:
+
+* TX 2026-06-27 Sat 18:02:34 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1097
+:TIME:         [2026-06-27 Sat 18:02:34]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_R6G0A
+:NODE_ID:      dec_R6G0A
+:END:
+
+* TX 2026-06-27 Sat 18:02:35 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1098
+:TIME:         [2026-06-27 Sat 18:02:35]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JZDKT
+:NODE_ID:      dec_JZDKT
+:END:
+
+* TX 2026-06-27 Sat 18:02:35 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1099
+:TIME:         [2026-06-27 Sat 18:02:35]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HY3E0
+:NODE_ID:      dec_HY3E0
+:END:
+
+* TX 2026-06-27 Sat 18:02:35 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1100
+:TIME:         [2026-06-27 Sat 18:02:35]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_FBBT2
+:NODE_ID:      dec_FBBT2
+:END:
+
+* TX 2026-06-27 Sat 18:02:35 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1101
+:TIME:         [2026-06-27 Sat 18:02:35]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_JW11K
+:NODE_ID:      dec_JW11K
+:END:
+
+* TX 2026-06-27 Sat 18:02:35 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1102
+:TIME:         [2026-06-27 Sat 18:02:35]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_MKC0A
+:NODE_ID:      dec_MKC0A
+:END:
+
+* TX 2026-06-27 Sat 18:02:36 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1103
+:TIME:         [2026-06-27 Sat 18:02:36]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CX17K
+:NODE_ID:      dec_CX17K
+:END:
+
+* TX 2026-06-27 Sat 18:02:36 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1104
+:TIME:         [2026-06-27 Sat 18:02:36]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_QQYXM
+:NODE_ID:      dec_QQYXM
+:END:
+
+* TX 2026-06-27 Sat 18:02:36 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1105
+:TIME:         [2026-06-27 Sat 18:02:36]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_WV1ZH
+:NODE_ID:      dec_WV1ZH
+:END:
+
+* TX 2026-06-27 Sat 18:02:36 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1106
+:TIME:         [2026-06-27 Sat 18:02:36]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_RECYG
+:NODE_ID:      dec_RECYG
+:END:
+
+* TX 2026-06-27 Sat 18:02:37 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1107
+:TIME:         [2026-06-27 Sat 18:02:37]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_P7EY8
+:NODE_ID:      dec_P7EY8
+:END:
+
+* TX 2026-06-27 Sat 18:02:37 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1108
+:TIME:         [2026-06-27 Sat 18:02:37]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_DEH2T
+:NODE_ID:      dec_DEH2T
+:END:
+
+* TX 2026-06-27 Sat 18:02:37 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1109
+:TIME:         [2026-06-27 Sat 18:02:37]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_P2X0Y
+:NODE_ID:      dec_P2X0Y
+:END:
+
+* TX 2026-06-27 Sat 18:02:37 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1110
+:TIME:         [2026-06-27 Sat 18:02:37]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CXYVV
+:NODE_ID:      dec_CXYVV
+:END:
+
+* TX 2026-06-27 Sat 18:02:37 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1111
+:TIME:         [2026-06-27 Sat 18:02:37]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_TEKEB
+:NODE_ID:      dec_TEKEB
+:END:
+
+* TX 2026-06-27 Sat 18:02:38 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1112
+:TIME:         [2026-06-27 Sat 18:02:38]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_BP4NH
+:NODE_ID:      dec_BP4NH
+:END:
+
+* TX 2026-06-27 Sat 18:02:38 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1113
+:TIME:         [2026-06-27 Sat 18:02:38]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_XQ3F8
+:NODE_ID:      dec_XQ3F8
+:END:
+
+* TX 2026-06-27 Sat 18:02:38 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1114
+:TIME:         [2026-06-27 Sat 18:02:38]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_GDEXE
+:NODE_ID:      dec_GDEXE
+:END:
+
+* TX 2026-06-27 Sat 18:02:38 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1115
+:TIME:         [2026-06-27 Sat 18:02:38]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_GG6B9
+:NODE_ID:      dec_GG6B9
+:END:
+
+* TX 2026-06-27 Sat 18:02:39 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1116
+:TIME:         [2026-06-27 Sat 18:02:39]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_A6CXY
+:NODE_ID:      dec_A6CXY
+:END:
+
+* TX 2026-06-27 Sat 18:02:39 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1117
+:TIME:         [2026-06-27 Sat 18:02:39]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HR8D8
+:NODE_ID:      dec_HR8D8
+:END:
+
+* TX 2026-06-27 Sat 18:02:39 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1118
+:TIME:         [2026-06-27 Sat 18:02:39]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_J2YM8
+:NODE_ID:      dec_J2YM8
+:END:
+
+* TX 2026-06-27 Sat 18:02:39 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1119
+:TIME:         [2026-06-27 Sat 18:02:39]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ACD08
+:NODE_ID:      dec_ACD08
+:END:
+
+* TX 2026-06-27 Sat 18:02:40 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1120
+:TIME:         [2026-06-27 Sat 18:02:40]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HG7NB
+:NODE_ID:      dec_HG7NB
+:END:
+
+* TX 2026-06-27 Sat 18:02:40 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1121
+:TIME:         [2026-06-27 Sat 18:02:40]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_CKMW3
+:NODE_ID:      dec_CKMW3
+:END:
+
+* TX 2026-06-27 Sat 18:02:40 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1122
+:TIME:         [2026-06-27 Sat 18:02:40]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_B4147
+:NODE_ID:      dec_B4147
+:END:
+
+* TX 2026-06-27 Sat 18:02:40 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1123
+:TIME:         [2026-06-27 Sat 18:02:40]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_ASB1A
+:NODE_ID:      dec_ASB1A
+:END:
+
+* TX 2026-06-27 Sat 18:02:40 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1124
+:TIME:         [2026-06-27 Sat 18:02:40]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_HJENQ
+:NODE_ID:      dec_HJENQ
+:END:
+
+* TX 2026-06-27 Sat 18:02:41 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260627-orgasmic-1125
+:TIME:         [2026-06-27 Sat 18:02:41]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_2GQ7Q
+:NODE_ID:      dec_2GQ7Q
+:END:

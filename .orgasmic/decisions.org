@@ -6,7 +6,7 @@
 #+grilling_session: grill-20260521-spec-to-decisions
 #+status: decided
 
-* dec_K1DR7 Product boundary    :product-scope:
+* dec_K1DR7 Is orgasmic a standalone product, a HAR migration, or a hosted SaaS?    :product-scope:
 :PROPERTIES:
 :ID:            dec_K1DR7
 :GLOSSARY_REFS: term_XJM14 term_X4JGJ term_CEQFS
@@ -20,7 +20,7 @@ Orgasmic is a standalone local developer coordination app. It owns its own app m
 ** Consequences
 The daemon, CLI, UI, home layout, and graph model are all owned by orgasmic. HAR remains a source of implementation patterns, not a product boundary.
 
-* dec_XSV21 Home and install layout    :install-distribution:
+* dec_XSV21 How should the install and home layout separate shipped code from user data?    :install-distribution:
 :PROPERTIES:
 :ID:            dec_XSV21
 :GLOSSARY_REFS: term_CJ2R4 term_WQMJJ term_DVSS2 term_TDNG3
@@ -34,7 +34,7 @@ Use a two-layer local boundary. The installed app provides shipped code and defa
 ** Consequences
 Install and update code must preserve the home directory while refreshing app binaries, shipped content, and source checkouts. The day-one user package is macOS-first: a prebuilt Tauri desktop distribution bundling workbench, local daemon sidecar, CLI sidecar, and shipped content; the source checkout under =$ORGASMIC_HOME/orgasmic= becomes contributor-mode fallback (README leads with the desktop app, fork/source setup moves to CONTRIBUTING). App and daemon are separate runtime roles: for Mac-local projects the app supervises a bundled local daemon, while for remote Linux projects the daemon is installed and supervised on that server (owning the server-side =$ORGASMIC_HOME=, managing remote repos, running workers there) with the macOS app connecting as a client profile. Without a paid Apple Developer Program account the v0.0.1 track is an Apple-Silicon-only, ad-hoc-signed tester DMG with documented Gatekeeper approval; the primary install path is a terminal installer that downloads the DMG with =curl=, copies =orgasmic.app= into an Applications directory (defaulting to =~/Applications=), verifies the ad-hoc signature, and opens the app, normally avoiding browser-applied =com.apple.quarantine= metadata. The desktop app uses Tauri updater artifacts signed with an off-repo key; an update installs only after daemon recovery status confirms no live runs are in flight. Update channels are modeled as GitHub release tags (=stable= and =nightly= via =/releases/download/<channel>/latest.json=), keeping the Tauri updater target as the platform key.
 
-* dec_G38EC Project opt-in and board model    :project-model:
+* dec_G38EC How do projects register with orgasmic without auto-discovery or a central database?    :project-model:
 :PROPERTIES:
 :ID:            dec_G38EC
 :GLOSSARY_REFS: term_CEQFS term_FM60Y
@@ -48,7 +48,7 @@ Project add/init is explicit. Each repo opts in with repo-local =.orgasmic/= sta
 ** Consequences
 Aggregation is derived from the index rather than stored on the board. There is no auto-scan and no surprise project registration.
 
-* dec_QWZB2 Canonical file substrate    :file-substrate:
+* dec_QWZB2 What is the canonical file substrate for project state?    :file-substrate:
 :PROPERTIES:
 :ID:            dec_QWZB2
 :GLOSSARY_REFS: term_XJM14 term_YC32J term_RG690 term_P94BF
@@ -62,7 +62,7 @@ The canonical substrate is an app-owned Org profile. Org-style files are orgasmi
 ** Consequences
 The parser, writer, schema, and UI editor are orgasmic responsibilities. Org compatibility is useful only where it supports inspectable project memory.
 
-* dec_WH9PD Write authority and concurrency    :file-substrate:
+* dec_WH9PD Who may write each file, and how are concurrent writes arbitrated?    :file-substrate:
 :PROPERTIES:
 :ID:            dec_WH9PD
 :GLOSSARY_REFS: term_N5SJT term_YC32J term_P94BF term_H5YHC
@@ -76,7 +76,7 @@ Use role-based write authority. The daemon serializes tx, sessions, graph files,
 ** Consequences
 Graph and audit integrity have one writer, but task bodies and user-authored content stay ergonomic. Daemon-owned artifacts are RPC-only; other working files use advisory flock.
 
-* dec_R75SW Audit and transcript formats    :audit-tx:
+* dec_R75SW What formats should audit logs and run transcripts use?    :audit-tx:
 :PROPERTIES:
 :ID:            dec_R75SW
 :GLOSSARY_REFS: term_YC32J term_KCGEH term_N5SJT
@@ -90,7 +90,7 @@ Tx files are property-drawer-only Org and sessions are append-only JSONL. Audit 
 ** Consequences
 The audit and transcript surfaces stay Git-native and inspectable without an external database.
 
-* dec_GRDFB Customization and shipped content    :shipped-content:
+* dec_GRDFB How should shipped, optional, and user content be layered and overridden?    :shipped-content:
 :PROPERTIES:
 :ID:            dec_GRDFB
 :GLOSSARY_REFS: term_WQMJJ term_CJ2R4 term_KH8TX
@@ -104,7 +104,7 @@ Use a three-tier content model: defaults ship with orgasmic, optional content is
 ** Consequences
 Discovery stays curated and customization stays predictable through a single override rule.
 
-* dec_P24WF Task model    :task-model:
+* dec_P24WF How should work items be represented so workers can claim and humans review them?    :task-model:
 :PROPERTIES:
 :ID:            dec_P24WF
 :GLOSSARY_REFS: term_RG690 term_CEQFS term_3YTBK
@@ -118,12 +118,13 @@ Work is organized as Org task headings across sprint, backlog, and archive files
 ** Consequences
 Tasks are reviewable in Git and claimable by workers while staying editable as plain Org.
 
-* dec_W58VM Board storage    :project-model:
+* dec_W58VM How should the cross-project board store data without owning project state?    :project-model:
 :PROPERTIES:
 :ID:            dec_W58VM
 :GLOSSARY_REFS: term_FM60Y term_CJ2R4 term_CEQFS
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Board (Q10)
+:PARENT:        dec_G38EC
 :END:
 ** Context
 The board must support project aggregation without becoming the source of project data. A denormalized board duplicates state and invites merge conflicts; a runtime-only board loses project registration across restarts.
@@ -132,13 +133,12 @@ The board must support project aggregation without becoming the source of projec
 ** Consequences
 The board stays small and conflict-light while project data remains in each repo's =.orgasmic/=.
 
-* dec_ASB1A Runtime driver and supervisor    :runtime-drivers:
+* dec_ASB1A How should orgasmic execute workers across multiple agent providers?    :runtime-drivers:
 :PROPERTIES:
 :ID:            dec_ASB1A
 :GLOSSARY_REFS: term_KH8TX term_KCGEH term_RG690
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Runtime
-:RELATES_TO:    dec_QWC9V
 :END:
 ** Context
 Worker execution should reuse proven HAR concepts without importing HAR product boundaries. Shelling out per provider gives quick initial runs but inconsistent event capture and lifecycle control; supporting one provider only fails orgasmic's multi-agent host goal.
@@ -147,7 +147,7 @@ Lift HAR's typed =WorkerDriver= trait and supervisor pattern. Four drivers (clau
 ** Consequences
 Provider-specific behavior is isolated behind drivers; supervisor invariants, event capture, and worker tools are implemented once and reused across runtimes.
 
-* dec_DK7AZ Manager runtime model    :manager:
+* dec_DK7AZ Is the manager an always-on brain, daemon-embedded, or launched on demand?    :manager:
 :PROPERTIES:
 :ID:            dec_DK7AZ
 :GLOSSARY_REFS: term_X4JGJ term_KH8TX term_FM60Y term_465BG
@@ -161,12 +161,13 @@ The manager is a fresh agent launched on demand through a driver (tmux / acp / �
 ** Consequences
 Manager behavior stays outside daemon state integrity. The Manager UI attaches to live sessions and shows recent manager actions; hidden long-lived model state is never treated as source of truth. Because the manager reconstructs its own context via the skill, the daemon needs only to acquire/open a session — no manager prompt compilation lives in the daemon.
 
-* dec_MMW2R Manager permissions and oversight    :manager:
+* dec_MMW2R Should v0.0.1 add manager permission tiers and approval queues?    :manager:
 :PROPERTIES:
 :ID:            dec_MMW2R
 :GLOSSARY_REFS: term_X4JGJ term_YC32J
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Oversight (12e)
+:PARENT:        dec_DK7AZ
 :END:
 ** Context
 The project must decide whether v0.0.1 includes approval queues, permission tiers, or tool whitelists for the manager. An approval queue makes changes safer but greatly enlarges the v0.0.1 surface; a tool whitelist duplicates host-agent permission systems.
@@ -175,7 +176,7 @@ No orgasmic permission tiers in v0.0.1. Oversight comes from prompt discipline, 
 ** Consequences
 Safety is explicit auditability and review, not a partial sandbox duplicated inside orgasmic.
 
-* dec_XV9AK Daemon, CLI, and UI surfaces    :surfaces:
+* dec_XV9AK What surfaces (daemon, CLI, UI) should orgasmic expose, and how do they relate?    :surfaces:
 :PROPERTIES:
 :ID:            dec_XV9AK
 :GLOSSARY_REFS: term_N5SJT term_X4JGJ term_FM60Y
@@ -189,7 +190,7 @@ Orgasmic ships as a local daemon, a complete CLI, and a HAR-derived React UI. Th
 ** Consequences
 The manager can operate from a shell, users get a browser workbench, and the daemon remains the single coordination process. API design must keep CLI, UI, and manager flows equivalent.
 
-* dec_A8Z8H Collaboration and git boundary    :collaboration:
+* dec_A8Z8H Should collaboration run through orgasmic's own service or through git?    :collaboration:
 :PROPERTIES:
 :ID:            dec_A8Z8H
 :GLOSSARY_REFS: term_CEQFS term_FM60Y term_YC32J
@@ -203,7 +204,7 @@ Collaboration is per-developer and Git-native. Each developer runs their own ins
 ** Consequences
 There is no multi-tenant identity model and no team manager in v0.0.1. Pull, commit, push, and merge-conflict resolution are operator responsibilities.
 
-* dec_KH07K v0.0.1 product scope    :product-scope:
+* dec_KH07K What belongs in v0.0.1 scope, and what waits for the design-graph phase?    :product-scope:
 :PROPERTIES:
 :ID:            dec_KH07K
 :GLOSSARY_REFS: term_XJM14 term_P94BF term_X4JGJ
@@ -217,7 +218,7 @@ v0.0.1 ships core coordination — install, projects, tasks, runs, drivers, mana
 ** Consequences
 The first release proves coordination before the heavier graph machinery lands.
 
-* dec_X6Q0S Design graph model    :design-graph:
+* dec_X6Q0S How should the design graph link decisions, architecture, tasks, and code?    :design-graph:
 :PROPERTIES:
 :ID:            dec_X6Q0S
 :GLOSSARY_REFS: term_P94BF term_H5YHC term_RG690 term_HQJWT
@@ -231,12 +232,13 @@ The design graph is decisions → architecture → tasks → code, with glossary
 ** Consequences
 Orgasmic can reason over design impact without claiming ownership of source files; reconciliation starts from graph edges and uses advisory markers only as hints. The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed: the architecture graph survives as an authored, materialized, React-Flow-visualized graph; the glossary as a plain authored doc; and decisions as ADR records.
 
-* dec_TEKEB Grilling-to-architecture pipeline    :design-graph:
+* dec_TEKEB How should design flow from user answers through architecture to implementation?    :design-graph:
 :PROPERTIES:
 :ID:            dec_TEKEB
 :GLOSSARY_REFS: term_X4JGJ term_P94BF term_H5YHC term_RG690
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Pipeline: griller -> architector -> planner -> implementer
+:PARENT:        dec_X6Q0S
 :END:
 ** Context
 Orgasmic needs a durable handoff from user answers to architecture and implementation. A single universal design agent reduces orchestration but blurs file ownership and produces premature downstream proposals; manual human conversion gives clear control but no autonomous architecture pipeline.
@@ -245,12 +247,13 @@ Use one agent per graph layer: griller owns decisions, architector owns architec
 ** Consequences
 File ownership stays clear and token use stays bounded; mid-grilling answer changes do not waste work on downstream architecture that should not exist yet. Architector composes architecture via mechanism-split decomposition — each subsystem yields 2–6 functional-component leaves whose nodes are stable contracts (a trait, a REST endpoint group, a watcher loop, a hook, a parser) rather than features or pages — guided by ten encoded principles (stable contract per leaf; verb-namable; mechanism not feature; 1–10 source paths; 2–6 children per parent; no mechanism-as-mechanism or cross-cutting-concern leaves; tests/build scripts/fixtures excluded from =:SOURCE_PATHS:=; bootstrap from existing module boundaries; target/planned nodes kept visually separate and excluded from drift enforcement). The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed; the architecture graph survives as an authored, materialized, React-Flow-visualized graph, the glossary as a plain authored doc, and decisions as ADR records.
 
-* dec_BP4NH Code linkage policy    :code-markers:
+* dec_BP4NH How should the graph link to code without the daemon mutating source files?    :code-markers:
 :PROPERTIES:
 :ID:            dec_BP4NH
 :GLOSSARY_REFS: term_HQJWT term_RG690 term_N5SJT
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Advisory code markers
+:PARENT:        dec_X6Q0S
 :END:
 ** Context
 Orgasmic needs traceability to source code without mutating source files behind the developer's back. Daemon-managed pragmas give stronger traceability but unsafe source mutation and a language-adapter burden; no code markers gives cleaner files but weaker reconciliation discovery.
@@ -259,7 +262,7 @@ Task =:PRODUCES:= edges are the authoritative design-to-code link; in-code marke
 ** Consequences
 Agents may leave useful grep hints, but source ownership stays with implementers and humans. Inline markers gain a second role for architecture-component leaves: the file-level marker =// arch: arch_NNN.M= (or =// @arch arch_NNN.M= in TypeScript) at file top is the authoritative back-edge between code and the architecture model, paired with =:SOURCE_PATHS:= on the leaf. A drift comparator enforces both directions on implementation-backed leaves — every path in =:SOURCE_PATHS:= must exist and carry the matching marker, and every marker found must be enumerated in its leaf. Files may carry multiple markers as a comma-list; granularity is file-level in v1 (item-level deferred). The advisory write-scope role is retained for marker-only files outside =:PRODUCES:= sets.
 
-* dec_N17XX Runtime defaults    :runtime-defaults:
+* dec_N17XX What operational defaults should v0.0.1 adopt for config, networking, and secrets?    :runtime-defaults:
 :PROPERTIES:
 :ID:            dec_N17XX
 :GLOSSARY_REFS: term_CJ2R4 term_N5SJT term_X4JGJ
@@ -273,7 +276,7 @@ Adopt local-first defaults: =config.yaml= as the config format, localhost defaul
 ** Consequences
 Configuration, auth, and runtime modules can be split against a stable, local-first baseline.
 
-* dec_YYMSK Watcher and materialized index    :daemon-index:
+* dec_YYMSK How should the daemon watch files and serve materialized reads in v0.0.1?    :daemon-index:
 :PROPERTIES:
 :ID:            dec_YYMSK
 :GLOSSARY_REFS: term_N5SJT term_CEQFS term_J5X55
@@ -287,12 +290,13 @@ Use =notify= plus explicit daemon debounce and an in-memory index. HTTP reads se
 ** Consequences
 The current dependency set is enough for v0.0.1; the index stays in memory until profiling argues otherwise.
 
-* dec_XQ3F8 Design-graph operating defaults    :design-graph:
+* dec_XQ3F8 How conservative should design-graph automation defaults be?    :design-graph:
 :PROPERTIES:
 :ID:            dec_XQ3F8
 :GLOSSARY_REFS: term_P94BF term_H5YHC term_J5X55 term_HQJWT
 :DECIDED_AT:    [2026-05-21 Thu 19:06]
 :SOURCE:        archive/21_05_26_init/spec.org::*Open questions for v0.0.1 implementation
+:PARENT:        dec_X6Q0S
 :END:
 ** Context
 The remaining design-graph open questions affect architecture shape even though the feature ships after v0.0.1. Minimal defaults have fewer moving parts but weaker safety for high-stakes global decisions and interrupted sessions; highly automated defaults are more autonomous but make too many implicit changes before users trust the graph.
@@ -301,7 +305,7 @@ Keep graph automation conservative: global grilling defaults to socratic, projec
 ** Consequences
 Graph automation stays conservative until architecture, planning, and reconciliation behavior has real project mileage. The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed; the architecture graph survives as an authored, materialized, React-Flow-visualized graph, the glossary as a plain authored doc, and decisions as ADR records.
 
-* dec_CSKBD Self-hosted daemon restart recovery    :run-recovery:
+* dec_CSKBD What happens to in-flight runs when the self-hosted daemon restarts?    :run-recovery:
 :PROPERTIES:
 :ID:            dec_CSKBD
 :GLOSSARY_REFS: term_Z672G term_N400W term_A8GT3 term_X4JGJ term_KH8TX term_N5SJT
@@ -315,7 +319,7 @@ Restart recovery is non-destructive boot reconciliation, not snapshot restore or
 ** Consequences
 Self-hosted updates can feel like a reconnect without destructive rollback. The daemon stays conservative; the manager owns continuation. ACP-style workers that die during restart continue through fresh runs seeded with durable task state, prior session JSONL, current diff, and acceptance criteria.
 
-* dec_CGVRW UI information architecture: project-scoped sidebar replaces a separate Board page    :ui-ia:
+* dec_CGVRW Should the Board be a page, or should project context move into the sidebar?    :ui-ia:
 :PROPERTIES:
 :ID:            dec_CGVRW
 :DECIDED_AT:    [2026-05-23 Sat 14:30]
@@ -328,11 +332,12 @@ Replace the separate Board page with a project selector at the top of the sideba
 ** Consequences
 Single-project users avoid a placeholder Board page while multi-project users still have management affordances; the sidebar can promote Decisions, Architecture, Tasks, and Glossary as primary work surfaces. Active project persists to =localStorage.orgasmic.active_project=; the add-project dialog accepts a path, uses =.orgasmic/project.org :ID:= when present, otherwise derives the project ID from the final path segment, and reads repository URL from =git config remote.origin.url=.
 
-* dec_HYD58 Sidebar primary nav structure: 4 visible pages + spoiler section    :ui-ia:
+* dec_HYD58 How should the sidebar primary navigation be structured?    :ui-ia:
 :PROPERTIES:
 :ID:            dec_HYD58
 :DECIDED_AT:    [2026-05-23 Sat 14:32]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_CGVRW
 :END:
 ** Context
 With Board demoted to a switcher, the primary nav needs a new ordering. The user requested four primary items — Decisions, Architecture, Tasks, Glossary — with the rest behind a spoiler, and explicitly wanted Manager off the nav.
@@ -341,7 +346,7 @@ Sidebar shows the project selector, then Decisions / Architecture / Tasks / Glos
 ** Consequences
 The nav stays focused on the four primary work surfaces and is easy to extend through the spoiler.
 
-* dec_H9P38 Top header layout: LED + bell + theme toggle + gear    :ui-ia:
+* dec_H9P38 What should the top header contain?    :ui-ia:
 :PROPERTIES:
 :ID:            dec_H9P38
 :DECIDED_AT:    [2026-05-23 Sat 14:34]
@@ -354,7 +359,7 @@ The right side of the header carries four icons: a connection LED (replacing the
 ** Consequences
 Status and Settings become ambient header affordances and the LED doubles as the Status entry point.
 
-* dec_DTJPD Manager UI: permanent bottom popover with two-tier expand    :ui-manager:
+* dec_DTJPD How should the manager surface be presented in the UI?    :ui-manager:
 :PROPERTIES:
 :ID:            dec_DTJPD
 :GLOSSARY_REFS: term_X4JGJ
@@ -368,11 +373,12 @@ Use a permanent bottom popover with two-tier expand: peek (~80px handle showing 
 ** Consequences
 The manager becomes an always-available operator surface while preserving page context. Tick-manager and needs-you live inside the expanded surface, not on the peek bar. Mobile heights are peek 70px / workbench 80vh / focus 100vh with a 44px touch target on the handle; the implementation must handle drag resizing and transcript rendering in a persistent shell-level component.
 
-* dec_HY3E0 Manager popover content: driver-adaptive (tmux pane vs chat)    :ui-manager:
+* dec_HY3E0 Should the manager popover render uniformly or adapt to each driver's medium?    :ui-manager:
 :PROPERTIES:
 :ID:            dec_HY3E0
 :DECIDED_AT:    [2026-05-23 Sat 14:38]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_DTJPD
 :END:
 ** Context
 The manager runs under one of four drivers, and the popover must decide between uniform rendering and adapting to each driver's native medium. Always-chat loses terminal fidelity for the default driver; a chat/terminal toggle adds UI surface.
@@ -381,11 +387,12 @@ Render adaptively: a live tmux pane via xterm.js through a daemon WS bridge for 
 ** Consequences
 The default driver keeps terminal fidelity while ACP-family drivers render as chat. xterm.js is added in the model refactor; the daemon =/ws/tmux/:run_id= bridge proxies the tmux session.
 
-* dec_JZDKT Notification bell scope and popover layout    :ui-ia:
+* dec_JZDKT What should the notification bell's scope and layout be?    :ui-ia:
 :PROPERTIES:
 :ID:            dec_JZDKT
 :DECIDED_AT:    [2026-05-23 Sat 14:40]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_H9P38
 :END:
 ** Context
 The bell surfaces "needs you" items since those moved out of the manager popover, and needs a defined scope and layout. A wide-scope tabbed bell risks becoming a second TODO list; a flat chronological list is harder to scan across parallel categories.
@@ -394,12 +401,13 @@ Keep a tight scope — only items that block progress without the user — group
 ** Consequences
 The bell stays scannable and action-oriented; the badge count is the sum of unread items across sections.
 
-* dec_MKC0A Task lifecycle realign: 6 stages, kind no longer drives kanban columns    :task-model:
+* dec_MKC0A Should kanban columns reflect work lifecycle or agent kind?    :task-model:
 :PROPERTIES:
 :ID:            dec_MKC0A
 :GLOSSARY_REFS: term_RG690 term_9B3V8
 :DECIDED_AT:    [2026-05-23 Sat 14:50]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_P24WF
 :END:
 ** Context
 The current task model puts each agent's internal workflow on the task heading, conflating two layers — what column a card belongs in (human-facing lifecycle) and what the agent is doing internally (engine-facing run sub-state). This mismatches standard issue-tracker convention, producing kanban columns that reflect agent kind rather than work status. Deriving a coarse UI bucket leaves the model lie in code; keeping the current model rejects the standard mental model.
@@ -408,12 +416,13 @@ Realign to one human-facing lifecycle for every task kind: the task heading TODO
 ** Consequences
 Kanban and list views can use standard issue-tracker stages. "ship" is the post-review stage (PR/CI/deploy/publish); each stage hosts any kind, and stage-to-agent mapping (dec_JW9TJ) picks the default agent on transition (e.g. EXPLORE may carry agent.grilling, agent.exploring, or human.answering). The migration touches =state-machine.org=, the =schema.rs= TaskState enum, the =TODO_KEYWORDS= allowlist, and all existing sprint headings in one coherent refactor.
 
-* dec_RECYG Run state namespace: agent. / human. / ci. (moved off the task heading)    :task-model:
+* dec_RECYG How should run state signal who is acting on a task right now?    :task-model:
 :PROPERTIES:
 :ID:            dec_RECYG
 :GLOSSARY_REFS: term_3YTBK
 :DECIDED_AT:    [2026-05-23 Sat 14:52]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_MKC0A
 :END:
 ** Context
 A single lifecycle stage can host multiple legitimate run states depending on the active agent, so the model needs a vocabulary that signals "who is acting now." A flat verb vocabulary loses the at-a-glance "is the manager waiting on me" signal.
@@ -422,11 +431,12 @@ Run records carry a namespaced state field with three namespaces: =agent.<verb>=
 ** Consequences
 A task can have concurrent runs (babysitter + implementer); the card shows the primary while the drawer lists all.
 
-* dec_CX17K Ownership model: auto-derived; agent-owned locks the UI    :task-model:
+* dec_CX17K How is task ownership determined, and what may a user edit while an agent runs?    :task-model:
 :PROPERTIES:
 :ID:            dec_CX17K
 :DECIDED_AT:    [2026-05-23 Sat 14:55]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_P24WF
 :END:
 ** Context
 The task drawer's property strip needs an Owner field, but agent assignment is deterministic per stage (dec_JW9TJ). Manual owner selection risks the user mutating fields while an agent is mid-run; decoupling owner from runner is flexible but the user wanted ownership to follow the active worker.
@@ -435,7 +445,7 @@ Derive the owner from the active run: "human" when no run is active, "agent.<kin
 ** Consequences
 Users cannot accidentally mutate task fields while an agent is mid-run, but they can still communicate through comments. The daemon and UI must expose ownership and release semantics consistently.
 
-* dec_JW9TJ Stage-to-worker mapping in config.org    :project-model:
+* dec_JW9TJ How does the daemon pick which worker to spawn on a stage transition?    :project-model:
 :PROPERTIES:
 :ID:            dec_JW9TJ
 :DECIDED_AT:    [2026-05-23 Sat 14:57]
@@ -448,12 +458,13 @@ With ownership auto-derived (dec_CX17K) and no manual agent template per task, t
 ** Consequences
 The mapping is editable in Settings (which reads and writes =config.org=) and seeded during orgasmic project init.
 
-* dec_A4V2N Comments stored as a new tx type; activity log via materialized projection    :audit-tx:
+* dec_A4V2N How should task comments and the activity feed be stored?    :audit-tx:
 :PROPERTIES:
 :ID:            dec_A4V2N
 :GLOSSARY_REFS: term_YC32J term_H29TQ
 :DECIDED_AT:    [2026-05-23 Sat 15:00]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_R75SW
 :END:
 ** Context
 The task drawer's activity rail needs human comments, agent completion summaries, state transitions, and run lifecycle events. orgasmic has tx for system events but no comment model. Dedicated comment files per task fragment the single-writer story; inline comments in the heading body force heavy heading rewrites, big diffs, and lock contention.
@@ -462,12 +473,13 @@ Store comments as a new append-only tx type "comment" (TX_ID, TIME, ACTOR, PROJE
 ** Consequences
 Comments share the existing audit path and remain cheap to project into UI and prompts; append-only gives audit, replay, and conflict-free behavior. Findings from analyzer/explorer agents land in the parent task's =** Evidence= body, and the agent.completed comment links to it via a "View evidence" anchor.
 
-* dec_C6510 Compose-to-manager pattern: intelligent UI actions seed manager prompts    :ui-manager:
+* dec_C6510 Which UI actions should route through the manager, and which write directly?    :ui-manager:
 :PROPERTIES:
 :ID:            dec_C6510
 :GLOSSARY_REFS: term_X4JGJ
 :DECIDED_AT:    [2026-05-23 Sat 15:05]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_DK7AZ
 :END:
 ** Context
 UI actions range from deterministic daemon writes to intelligent agent work, and routing everything through the manager would spend tokens on simple data operations. Composing through the manager for most or all actions wastes tokens narrating pure data ops.
@@ -476,13 +488,13 @@ Use compose-to-manager only for intelligent operations (Start grilling, Architec
 ** Consequences
 The UI preserves manager narration where an LLM is required and avoids token waste where the daemon can act directly. Manager prompts must be templated and editable before send; e.g. the Decisions page "Start grilling…" button opens the popover with a prompt referencing the grill-me skill.
 
-* dec_JW11K Subtask data model: :PARENT_TASK: back-edge + path-style IDs    :task-model:
+* dec_JW11K How should subtasks be modeled without nesting headings in the org file?    :task-model:
 :PROPERTIES:
 :ID:            dec_JW11K
 :GLOSSARY_REFS: term_RG690
 :DECIDED_AT:    [2026-05-23 Sat 15:08]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
-:RELATES_TO:    dec_2GQ7Q
+:PARENT:        dec_P24WF
 :END:
 ** Context
 The ClickUp reference shows first-class subtasks, but tasks today are flat with no parent/child schema. Nested headings in the org file conflict with the =** Description= / =** Acceptance Criteria= section convention; flat continuous IDs plus a parent property hide the parent and are harder to scan in logs.
@@ -491,7 +503,7 @@ Represent a subtask as a normal top-level task heading in sprint/backlog/archive
 ** Consequences
 Subtasks stay compatible with the file structure and easy to scan in logs. The daemon writer validates parent existence on append and the index rejects orphan subtasks.
 
-* dec_R3RE4 Tasks page: kanban + list dual view; DnD writes a manager.action tx    :ui-tasks:
+* dec_R3RE4 How should the Tasks page offer list/kanban views and drag-and-drop transitions?    :ui-tasks:
 :PROPERTIES:
 :ID:            dec_R3RE4
 :GLOSSARY_REFS: term_RG690 term_9B3V8
@@ -505,12 +517,13 @@ Offer a List | Kanban view toggle. Kanban columns are the six lifecycle stages f
 ** Consequences
 Manual transitions are fast and the tx audit captures who-did-what.
 
-* dec_P2X0Y Task detail UI: large centered Dialog with three-column internal layout    :ui-tasks:
+* dec_P2X0Y What layout should the task detail view use?    :ui-tasks:
 :PROPERTIES:
 :ID:            dec_P2X0Y
 :GLOSSARY_REFS: term_RG690
 :DECIDED_AT:    [2026-05-23 Sat 15:13]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md ClickUp reference screenshots
+:PARENT:        dec_R3RE4
 :END:
 ** Context
 The user supplied ClickUp screenshots showing a large centered task modal with internal side rails, not a narrow side drawer or route-only page. A right-side drawer cannot host the three-column layout; a dedicated full-page route loses kanban context behind a route change.
@@ -519,11 +532,12 @@ Use a large centered shadcn Dialog (~90vw × ~90vh on desktop) with three intern
 ** Consequences
 Users keep list or kanban context behind the modal while getting room for detail, subtasks, and activity. Day-1 sections are properties · description · subtasks · activity log, with Acceptance Criteria, Evidence, and Worklog as later collapsed sections.
 
-* dec_CXYVV Task property strip and lock behavior    :ui-tasks:
+* dec_CXYVV What fields belong in the task property strip, and when do they lock?    :ui-tasks:
 :PROPERTIES:
 :ID:            dec_CXYVV
 :DECIDED_AT:    [2026-05-23 Sat 15:15]
 :SOURCE:        archive/2026-05-23_ui-redesign/grill.md
+:PARENT:        dec_P2X0Y
 :END:
 ** Context
 With ownership auto-derived (dec_CX17K), the property strip's field set differs from ClickUp's and its rows must lock when an agent owns the task. Including manual Owner and Agent-template pickers would contradict dec_CX17K/dec_JW9TJ.
@@ -532,7 +546,7 @@ The strip carries: Status (popover to valid transitions; locked when agent-owned
 ** Consequences
 The strip reflects auto-ownership and locks editable rows when agent-owned, while comments stay writable.
 
-* dec_QWEQ8 Status pill format: single combined pill with separator dot    :ui-tasks:
+* dec_QWEQ8 How should stage and run-state be shown together as a status pill?    :ui-tasks:
 :PROPERTIES:
 :ID:            dec_QWEQ8
 :DECIDED_AT:    [2026-05-23 Sat 15:18]
@@ -545,7 +559,7 @@ Use one combined pill "STAGE · run.state": with no active run it shows just the
 ** Consequences
 Stage and run-state read consistently in one compact shape across every surface.
 
-* dec_PA23Y Decisions / Architecture pages: list + modal (back-stack) + react-flow graph    :ui-graph:
+* dec_PA23Y How should the Decisions and Architecture pages present their graph-shaped data?    :ui-graph:
 :PROPERTIES:
 :ID:            dec_PA23Y
 :GLOSSARY_REFS: term_P94BF term_H5YHC
@@ -559,7 +573,7 @@ Give Decisions and Architecture mirrored list, modal, and React-Flow graph views
 ** Consequences
 Design-graph review becomes navigable from either list or graph mode, with graph positions kept local to the client rather than treated as durable state. The Architecture page graph later adopted semantic zoom (3 LOD levels) with a right-side detail panel surfacing leaf source paths, typed edges, realized decisions, producing tasks, and drift status, while the Decisions graph kept its single-level dagre layout. The design-graph's auto-consistency machinery (semantic-hash, stale propagation, finalize-validate gate, generated ADRs, snapshots) was later removed; the architecture graph survives as an authored, materialized, React-Flow-visualized graph, the glossary as a plain authored doc, and decisions as ADR records. The React-Flow graph is now Architecture-only (Decisions is de-graphed).
 
-* dec_E394G Glossary / ADR / Snapshots / Activity pages: list patterns    :ui-graph:
+* dec_E394G What list patterns should the secondary pages use?    :ui-graph:
 :PROPERTIES:
 :ID:            dec_E394G
 :GLOSSARY_REFS: term_P94BF
@@ -573,7 +587,7 @@ Use per-surface list patterns. Glossary: list + modal only, no graph, IDs hidden
 ** Consequences
 Each secondary surface gets a fit-for-purpose list pattern without redundant per-page graphs; the snapshot diff preview is deferred. The ADR and Snapshots pages were later removed (the Glossary and Activity list pages were kept).
 
-* dec_JSX48 URL routing: TanStack Router with path + query hybrid    :ui-routing:
+* dec_JSX48 What routing approach should the UI use for paths and transient state?    :ui-routing:
 :PROPERTIES:
 :ID:            dec_JSX48
 :DECIDED_AT:    [2026-05-23 Sat 15:28]
@@ -586,7 +600,7 @@ Adopt TanStack Router. Use paths for primary navigation and shared entity locati
 ** Consequences
 URLs become shareable and type-safe while browser back can close transient state before leaving the page. The route tree must encode project scope explicitly.
 
-* dec_NZ9PS Mobile behavior matrix: kanban→list <768px, modals→Sheets, manager popover via touch    :ui-mobile:
+* dec_NZ9PS How should each desktop surface behave on mobile and touch?    :ui-mobile:
 :PROPERTIES:
 :ID:            dec_NZ9PS
 :DECIDED_AT:    [2026-05-23 Sat 15:30]
@@ -599,11 +613,12 @@ Adopt a locked mobile-behavior matrix (breakpoints sm 640 / md 768 / lg 1024 / x
 ** Consequences
 Mobile keeps functional parity without forcing desktop layouts onto small screens, adopted via TanStack Router and shadcn Sheet primitives. The implementation must handle route state, Sheets, drag handles, row actions, and pull-to-refresh consistently across surfaces.
 
-* dec_R6G0A Multi-project browser-style tab header    :ui-ia:ui-routing:
+* dec_R6G0A How should the UI let an operator work across several projects at once?    :ui-ia:ui-routing:
 :PROPERTIES:
 :ID:            dec_R6G0A
 :DECIDED_AT:    [2026-06-02 Tue 14:22]
 :SOURCE:        session:2026-06-02 multi-project-tabs
+:PARENT:        dec_CGVRW
 :END:
 ** Context
 The single-project selector in the sidebar caps the UI at one project at a time, and switching projects discards where you were. Managing several projects (the common manager workflow) means constant re-selection and lost context. A browser-tab mental model fits: keep several projects open and jump between them.
@@ -612,7 +627,7 @@ Replace the sidebar project selector with a Chrome-style tab strip in the top he
 ** Consequences
 Several projects are workable at once without losing place; the sidebar selector is removed. Introduces a small dependency-free tab store (=ui/src/lib/tabsStore.ts=) + =ProjectTabs=, and =setActiveProject= / the index route now restore each project's last view. Per-project identity moves from the selector into the tab chip (=ui/src/lib/projectColor.ts=).
 
-* dec_F2WRW Product baseline: register, audience, surfaces    :design-system:product-scope:
+* dec_F2WRW Where should the product baseline (PRODUCT.md equivalent) live?    :design-system:product-scope:
 :PROPERTIES:
 :ID:            dec_F2WRW
 :DECIDED_AT:    [2026-06-02 Tue 14:22]
@@ -625,7 +640,7 @@ Record the product baseline in =.orgasmic/project.org= under =** Product Baselin
 ** Consequences
 Design work reads project.org for register, audience, brand personality, product surfaces, north star, design principles, anti-references, accessibility, and voice — the full PRODUCT.md surface. Decisions may link to that baseline but should not carry the baseline body. Visual-system specifics (tokens, type, motion, bans) live in the sibling =** Design System= section of project.org (rationale in dec_V5Y7G). The repo-root =PRODUCT.md= and =DESIGN.md= are thin pointers to project.org (=** Product Baseline= / =** Design System=), not content sources. Pairs with dec_V5Y7G (design system). impeccable's =context.mjs= can still report =NO_PRODUCT_MD= because it greps for the literal file; agents read project.org instead.
 
-* dec_V5Y7G Design system lives in project.org    :design-system:
+* dec_V5Y7G Where should the design system (DESIGN.md equivalent) live?    :design-system:
 :PROPERTIES:
 :ID:            dec_V5Y7G
 :DECIDED_AT:    [2026-06-02 Tue 14:22]
@@ -638,12 +653,13 @@ Record the design system in =.orgasmic/project.org= under =** Design System=, th
 ** Consequences
 Design pointers — DESIGN.md, future impeccable runs, new surfaces — reference =project.org → ** Design System= by stable section name, never a decision id. Token changes are made in =ui/src/styles.css= and mirrored into that section. Pairs with dec_F2WRW (product baseline).
 
-* dec_QVSM0 Editable .org node views via structured edit-ops    :file-substrate:ui-ia:
+* dec_QVSM0 How can org records be edited in-app without a second parser or lossy regeneration?    :file-substrate:ui-ia:
 :PROPERTIES:
 :ID:            dec_QVSM0
 :GLOSSARY_REFS: term_N5SJT term_YC32J term_P94BF term_H5YHC
 :DECIDED_AT:    [2026-06-02 Tue 16:45]
 :SOURCE:        session:2026-06-02 org-node-editor
+:PARENT:        dec_QWZB2
 :END:
 ** Context
 Decision, architecture, and glossary records render from =.orgasmic/*.org= but were read-only in the UI, and the detail modal double-sourced its data: daemon summaries plus a second, client-side parse of the raw =.org=. That dual parser is a correctness hazard for editing, and client-side regeneration on save would be lossy — dropping comments, ordering, and unmodeled content. We want in-app editing of these records that lands surgically back in the files, generalizes across record kinds, and gives a reusable basis for future authored surfaces.
@@ -652,11 +668,12 @@ The Rust core stays the single authority for parse and write; the UI never seria
 ** Consequences
 Decisions, architecture, and glossary are editable in-app with round-trip-stable, surgical writes: only touched byte spans change, sibling records stay byte-identical, and section edits preserve inter-node blank-line separators. Each save records a =graph.<kind>.edited= tx, so edits flow through the daemon audit path, and new editable record kinds cost only a descriptor. The editor is bound to the strict orgasmic Org profile, so constructs outside it (tables, footnotes) are not exposed as structured fields. The modal and list views now read server projections — client-side =.org= parsing is removed from the UI. Pairs with dec_QWZB2 (canonical file substrate) and dec_WH9PD (role-based write authority).
 
-* dec_FD6M7 Machine config split into config.org; project.org is identity + prose    :project-model:file-substrate:
+* dec_FD6M7 Should machine config and project identity share one file or be split apart?    :project-model:file-substrate:
 :PROPERTIES:
 :ID:            dec_FD6M7
 :DECIDED_AT:    [2026-06-03 Wed 00:22]
 :SOURCE:        session:2026-06-03 config-split-grill
+:PARENT:        dec_QWZB2
 :END:
 ** Context
 The =* PROJECT= heading in =.orgasmic/project.org= mixed two unrelated concerns: stable project identity and human prose (=:ID:=, Mission, Operating Constraints, Product Baseline per dec_F2WRW) and machine config — the stage-worker map (dec_JW9TJ) plus =TEST_CMD=/=LINT_CMD=/=BUILD_CMD=/=DEFAULT_BRANCH=. It also carried three fields read by nothing in the codebase: =DEFAULT_WORKER=, =MAX_CONCURRENT_RUNS=, and a =:ORGASMIC_VERSION:= property redundant with the =#+orgasmic_version:= file keyword. Settings UI, dispatch worker resolution, and prompt-slot defaults all reached into the one heading. Identity and machine config have different audiences and edit lifecycles, and the inert fields read like live knobs but are dead.
@@ -665,11 +682,12 @@ Split the file. =project.org= keeps only the =* PROJECT <id>= heading with =:ID:
 ** Consequences
 =project.org= is pure identity + prose, so dec_F2WRW's product baseline still lives there unchanged and design tooling reads one stable file. Machine config has a single repo-local, version-controlled home, still editable in Settings. Dead fields and legacy property names are gone. Updates dec_JW9TJ (the map's file and property name) and dec_CX17K (which references the map). Pairs with dec_F2WRW (product baseline in project.org) and dec_QWZB2 (canonical file substrate).
 
-* dec_GDEXE Run recovery is explicit, harness-aware, and reattach-first    :run-recovery:
+* dec_GDEXE How should run recovery classify and resume runs after a daemon restart?    :run-recovery:
 :PROPERTIES:
 :ID:            dec_GDEXE
 :DECIDED_AT:    [2026-06-05 Fri 00:00]
 :SOURCE:        archive/2026-06-04-run-recovery-run-dock-grill.md
+:PARENT:        dec_CSKBD
 :END:
 ** Context
 A manager run launched in the UI through tmux/Claude survived a daemon restart as a still-live tmux session, but the boot reconciler classified it =interrupted= purely because its =boot_id= predated the current boot, and the UI's =Continue= button spawned a placeholder shell (=sh -lc "echo orgasmic run continuation; exec sh"=) instead of the live session. The bug was not only missing native Claude session tracking: an older-boot tmux pane can still be alive and should be reattached before any continuation/fork path is offered. Recovery was also implicit (one =Continue= action, generic label) and not harness-aware, so it could neither resume a native Claude conversation deterministically nor explain to the user what it would do.
@@ -684,12 +702,13 @@ Recovery is an explicit, ordered, backend-owned resolution. The backend computes
 ** Consequences
 Recovery never silently spawns a placeholder shell, the user always sees the concrete action the backend will take, and a still-live older-boot tmux session is reattached rather than discarded. The session JSONL becomes the authoritative recovery record (native identity, drafts, sends), which TASK-CJWT3's Run Dock composer reuses. Pairs with arch_Z3Z3V (boot reconciliation), arch_A53QX (session event vocabulary), and dec_CSKBD (recovery classification); the Run Dock UX is recorded separately.
 
-* dec_FBBT2 Run Dock replaces the manager popover with a tabbed manager/worker surface    :ui-manager:run-dock:
+* dec_FBBT2 How should one UI surface host both manager and worker runs?    :ui-manager:run-dock:
 :PROPERTIES:
 :ID:            dec_FBBT2
 :GLOSSARY_REFS: term_N5SJT term_YC32J
 :DECIDED_AT:    [2026-06-05 Fri 00:30]
 :SOURCE:        archive/2026-06-04-run-recovery-run-dock-grill.md
+:PARENT:        dec_DTJPD
 :END:
 ** Context
 The bottom surface (=ManagerPopover= + =ManagerWorkbench=) was manager-only: it fetched =/manager/state=, showed manager runs in a single picker, and owned peek/workbench/focus sizing for that one role. Recovery (dec_GDEXE) now opens both manager and worker runs, and runs are discoverable from a Running Agents list, task badges, and run history — none of which a manager-only popover can host. We need one live transcript/terminal/composer surface that serves a manager run and an arbitrary worker run side by side, without auto-opening a tab for every active worker (which would turn the dock into noise), and that survives reload.
@@ -703,12 +722,13 @@ Replace =ManagerPopover= outright with a =RunDock= app-shell surface — no comp
 ** Consequences
 One surface serves manager and worker runs with identical renderers and one composer recording path, so recovery (dec_GDEXE), Running Agents, task badges, and run history all funnel into the dock instead of bespoke viewers. The dock is an app-shell surface, not a card; cards remain reserved for genuinely repeated items. Reload restores exactly the tabs whose runs still exist. Pairs with dec_GDEXE (explicit recovery), arch_MK2Q2 (manager UI surface), and dec_DTJPD/dec_HY3E0/dec_JZDKT.
 
-* dec_J4FYS rmux is a bounded smoke driver, not a tmux replacement    :drivers:rmux:web-share:smoke:
+* dec_J4FYS Should rmux be a production terminal driver or a bounded smoke driver?    :drivers:rmux:web-share:smoke:
 :PROPERTIES:
 :ID:            dec_J4FYS
 :GLOSSARY_REFS: term_KH8TX
 :DECIDED_AT:    [2026-06-05 Fri 08:54]
 :SOURCE:        TASK-AJZCK
+:PARENT:        dec_ASB1A
 :END:
 ** Context
 Strategy 3 of the rmux exploration asked whether =rmux= could honestly become an alternative terminal driver to the tmux+xterm path. The open question was whether the published =rmux-sdk = "0.5"= typed-control crate alone constitutes support, or whether a separately provisioned =rmux= daemon binary is still required, and whether the Web Share spectator/operator URL feature is real today. The risk was claiming a working integration on the strength of a compiling SDK dependency.
@@ -717,7 +737,7 @@ Land =rmux= as a hybrid SDK-backed mode driver in a strictly bounded smoke postu
 ** Consequences
 The tmux default and the manager terminal surface are unchanged. =rmux= appears in =SUPPORTED= as the =("rmux","codex")= smoke pair (mirrored in =orgasmic-core::SUPPORTED_WORKER_DRIVER_HARNESSES=) and ships an =implementer-codex-rmux= worker template, but nothing in the default pipeline routes to it. Live smoke on 2026-06-05 with a =cargo install rmux@0.5.0= binary (via =RMUX_SDK_DAEMON_BINARY=) created a real detached session and minted both a spectator URL and a (redacted) operator URL through the SDK; with the binary absent the same code path degraded to inert with =inert_reason=rmux_binary_missing=. Promotion to a production driver (reattach via =rmux attach-session= through the xterm bridge, supervisor wiring, tunnel/frontend config for shareable URLs) is deferred to a future task.
 
-* dec_A10RB Entry point and per-project conventions are scaffolded    :scaffold:onboarding:conventions:
+* dec_A10RB How should the entry point and per-project conventions reach new projects?    :scaffold:onboarding:conventions:
 :PROPERTIES:
 :ID:            dec_A10RB
 :GLOSSARY_REFS: term_CEQFS term_WQMJJ
@@ -731,12 +751,13 @@ Ship =entry.org= as a universal (placeholder-free) scaffold member under =shippe
 ** Consequences
 =init= now writes nine scaffold members instead of six; =init_project= creates each member's parent directory generically rather than only =tasks/=, so nested scaffold paths work. =entry.org= is genericized (no "Rust/TS workspace" wording). Doctor's =REQUIRED_SHIPPED=, the fixtures parse test, the daemon scaffold-seed helper, and the CLI shipped-seed mirror all gain the three new files. A new project's =.orgasmic/= is self-orienting on first commit without orgasmic installed.
 
-* dec_ACD08 New projects scaffold a self-bootstrapping task tree    :scaffold:onboarding:bootstrap:tasks:
+* dec_ACD08 How should a freshly-initialized project bootstrap its own .orgasmic state?    :scaffold:onboarding:bootstrap:tasks:
 :PROPERTIES:
 :ID:            dec_ACD08
 :GLOSSARY_REFS: term_CEQFS term_RG690
 :DECIDED_AT:    [2026-06-07 Sun 13:51]
 :SOURCE:        shipped/project-scaffold/tasks/sprint.org
+:PARENT:        dec_A10RB
 :END:
 ** Context
 A freshly =init=-ed project gets a populated =entry.org= + =conventions/= (dec_A10RB) but otherwise empty/template =.orgasmic/= state: no real decisions, architecture, or tx records. The hardest moment is the cold start — the first agent has no worked example of the project's own =decisions.org= / =architecture.org= / =tx/= shapes to imitate, and the daemon may not be installed, so it can't lean on the manager pipeline. A placeholder =TASK-C9V29 Example task= in the scaffold sprint taught nothing.
@@ -745,7 +766,7 @@ Ship the scaffold sprint as a self-bootstrapping task tree instead of a placehol
 ** Consequences
 Cold start becomes a guided audit-and-interview that leaves =project.org=, =decisions.org=, =architecture.org=, and =tx/= holding real, repo-specific records — the worked examples later agents (and the manager) extend by imitation, satisfying the daemon-optional contract from the entry point down. The bootstrap order (project -> decisions -> architecture) mirrors how this repo itself was seeded. A new fixtures test (=shipped_scaffold_seeds_bootstrap_task_tree=) locks the parent/subtask structure, KINDs, and dependency ordering. Operators delete TASK-C9V29 once bootstrap completes. Open follow-ups: optional =infer-glossary= / =infer-gotchas= subtasks, and a daemon-path guard so the dispatcher does not double-run the umbrella alongside its subtasks.
 
-* dec_RX4DF The /orgasmic skill carries a daemon-free init    :scaffold:onboarding:skill:distribution:
+* dec_RX4DF Can a project be scaffolded without installing the binary or daemon?    :scaffold:onboarding:skill:distribution:
 :PROPERTIES:
 :ID:            dec_RX4DF
 :GLOSSARY_REFS: term_CEQFS term_WQMJJ
@@ -759,12 +780,13 @@ Add an =init= subcommand to the shipped =/orgasmic= skill as the install-free en
 ** Consequences
 A coding agent with the skill can stand up a fully-formed =.orgasmic/= and drive the audit-and-interview bootstrap with nothing installed; the CLI/daemon become opt-in for the workbench, board, and supervised runs rather than prerequisites for onboarding. Scaffold edits happen in exactly one tree (=shipped/skills/orgasmic/scaffold/=); =doctor= and the test fixtures check that path directly, and the only remaining use of the =project-scaffold= name is the user-override directory key. The skill's "use only inside an orgasmic project" framing is relaxed: =init= is the bootstrap exception. README documents the no-install path. Open follow-up: a parallel =scripts/scaffold.sh= curl one-liner for humans/CI who are not driving an agent.
 
-* dec_GG6B9 The /orgasmic skill installs to the shared Agent Skills path    :scaffold:onboarding:skill:distribution:
+* dec_GG6B9 Where and how should the /orgasmic skill be installed?    :scaffold:onboarding:skill:distribution:
 :PROPERTIES:
 :ID:            dec_GG6B9
 :GLOSSARY_REFS: term_CEQFS term_WQMJJ
 :DECIDED_AT:    [2026-06-07 Sun 15:00]
 :SOURCE:        scripts/install.sh
+:PARENT:        dec_RX4DF
 :END:
 ** Context
 dec_RX4DF made the =/orgasmic= skill the install-free way to scaffold =.orgasmic/=, with the scaffold bundled inside the skill folder. But "the skill is installed" was left unspecified — there was no standard place to put it, and getting it there still implied knowing internal repo paths. The ecosystem has a de-facto Agent Skills convention: one folder per skill containing =SKILL.md= (plus optional =scripts/= / =references/= / =assets/=), discovered from a shared cross-agent path =~/.agents/skills/<skill>/=. The orgasmic skill already matches this shape (=SKILL.md= + a bundled =scaffold/= asset folder), so it only needs a defined install location and a frictionless way to get there.
@@ -773,12 +795,13 @@ Distribute the skill to =~/.agents/skills/orgasmic/= and provide two install rou
 ** Consequences
 A user can make =/orgasmic= available machine-wide either by running the installer or by pasting one prompt, with no daemon/CLI build required for the skill itself; symlink-by-default means a local checkout's edits and =git pull= updates are picked up live. The skill stays self-contained and standard-shaped, so it is portable to any agent honoring =~/.agents/skills=. The installer change is guarded (idempotent symlink, no-clobber) and verified by simulation. Open follow-up (from dec_RX4DF) is unchanged: an optional =scripts/scaffold.sh= curl path for users who want only the scaffold and are not driving an agent.
 
-* dec_A6CXY The /orgasmic skill is the only install surface    :scaffold:onboarding:skill:distribution:install:
+* dec_A6CXY Should orgasmic have one install front door or several?    :scaffold:onboarding:skill:distribution:install:
 :PROPERTIES:
 :ID:            dec_A6CXY
 :GLOSSARY_REFS: term_CEQFS term_WQMJJ
 :DECIDED_AT:    [2026-06-07 Sun 15:30]
 :SOURCE:        shipped/skills/orgasmic/SKILL.md
+:PARENT:        dec_RX4DF
 :END:
 ** Context
 After dec_A10RB–dec_GG6B9, orgasmic had several parallel user-facing install entry points: the macOS DMG installer (=install-macos-app.sh=), the source/contributor installer (=install.sh=), the README's per-platform curl commands, and the newly skill-bundled scaffold. That is several front doors for one product, and it leaves the user choosing an installer and a platform path before they understand the tool. The skill is already the daemon-free way to scaffold and run projects (dec_RX4DF), and a capable agent can orchestrate the existing, tested install scripts better than a static doc — picking the path, checking prerequisites, and troubleshooting.
@@ -787,12 +810,13 @@ Collapse onto a single install surface: installing the =/orgasmic= skill is the 
 ** Consequences
 "How do I install orgasmic?" has exactly one answer: install the skill, then =/orgasmic install=. Onboarding is uniform across platforms and adapts via the agent instead of branching docs. The scripts remain the tested mechanics layer (single source of truth), so the skill guidance stays thin and points at them; drift risk is limited to script flags referenced in prose. Re-running =/orgasmic install= (or =orgasmic update=) is the upgrade path. Pairs with dec_GG6B9 (installer + agent both symlink the skill into =~/.agents/skills=) and dec_RX4DF (bundled scaffold). The README "Getting Started" is reordered to the skill-first flow (start a project with =/orgasmic init=, then optional =/orgasmic install=, then the app/CLI). The non-agent install paths are removed as redundant: the README no longer carries hand-run install recipes (the =curl | bash= one-liners, manual DMG drag, =xattr= quarantine fix, =systemd= unit, SSH/profile blocks) — only the skill-first surface plus a short "what =/orgasmic install= provisions" reference remain. The proposed =scripts/scaffold.sh= non-agent curl path (dec_RX4DF) is declined for the same reason. =scripts/install.sh= and =scripts/install-macos-app.sh= stay on disk but only as the mechanics =/orgasmic install= drives, not as advertised entry points; no user-facing install path exists outside the skill.
 
-* dec_HR8D8 The /orgasmic skill uses progressive disclosure (router + reference modules)    :scaffold:onboarding:skill:dynamic-discovery:
+* dec_HR8D8 How can the /orgasmic skill avoid loading its whole body into context up front?    :scaffold:onboarding:skill:dynamic-discovery:
 :PROPERTIES:
 :ID:            dec_HR8D8
 :GLOSSARY_REFS: term_CEQFS
 :DECIDED_AT:    [2026-06-07 Sun 16:00]
 :SOURCE:        shipped/skills/orgasmic/SKILL.md
+:PARENT:        dec_RX4DF
 :END:
 ** Context
 =shipped/skills/orgasmic/SKILL.md= is orgasmic's first interactive surface and likely its most-used entry point, and its body loads into the agent's context whenever the skill triggers. After install/init/recall/resume were added it had grown to ~519 lines — a wall of text dropped up front, which directly contradicts orgasmic's core dynamic-discovery principle (read the one or two things your task needs, never load whole documents wholesale).
@@ -801,12 +825,13 @@ Apply the one-parent-skill + internal-modules pattern. =SKILL.md= becomes a thin
 ** Consequences
 Invoking =/orgasmic= now loads ~50 lines instead of ~519, and the agent pulls only the single module the requested subcommand needs — the recall/resume manager machinery no longer enters context during an install or scaffold. The reference modules travel with the skill via the symlink/copy install (the README install prompt is updated to copy the whole folder incl. =references/=). Editing one subcommand's procedure now touches one file. The scaffold drift test is unaffected (=scaffold/= path unchanged). The skill now models the same progressive-disclosure discipline it asks projects to follow (entry.org → open only what your task needs). Open follow-up: for strict Agent-Skills layout conformance, =scaffold/= could later move under =assets/= (deferred to avoid churning the drift test and the dec_RX4DF/dec_GG6B9 path references for cosmetic gain).
 
-* dec_WTM5Y Manager launches via the /orgasmic skill; the compiled tick path is removed    :manager:run-dock:skill:
+* dec_WTM5Y Should the manager launch via a compiled daemon tick or via the /orgasmic skill?    :manager:run-dock:skill:
 :PROPERTIES:
 :ID:            dec_WTM5Y
 :GLOSSARY_REFS: term_X4JGJ term_KH8TX
 :DECIDED_AT:    [2026-06-08 Mon 13:55]
 :SOURCE:        grill session 2026-06-08 (manager-surface merge)
+:PARENT:        dec_DK7AZ
 :END:
 ** Context
 Two disjoint manager entry paths had grown up: the daemon-compiled =POST /manager/tick= (which compiled =manager_orchestrator.org= + its =:USES_PARTS:= and auto-sent the result) and the =/orgasmic resume= skill (which reads =manager.org= + the manager conventions from disk). The "tick" implied an autonomous loop that was never built — nothing internal fires it, every call spawns a fresh run, and mid-session interaction already flows through the composer (=postRunInput=). Because the skill installs to the shared =~/.agents/skills= path (dec_GG6B9), any driver can reach it, so a spawned manager can bootstrap itself with no compiled prompt at all. This also dissolves the =manager.org= (skill, raw) vs =manager_orchestrator.org= (daemon, compiled) duplication.
@@ -815,12 +840,13 @@ Collapse to one skill-delivered manager. Remove =POST /manager/tick= and the =ma
 ** Consequences
 There is one manager doctrine, read from disk by the skill — the =manager.org= vs =manager_orchestrator.org= split is gone, and the daemon no longer compiles any manager prompt (it only spawns/opens sessions). UI ↔ daemon contract: =POST /manager/launch { project_id, mode, harness } → { run_id }=. Supersedes the per-tick state-injection clause of dec_DK7AZ and the "Tick default driver" affordance under dec_HY3E0/dec_FBBT2. Deferred follow-up: a manager spawned by =/orgasmic= *outside* the app self-registering with the daemon (via the CLI when a daemon is installed) so the app can show it as running-elsewhere — attachable only when it runs in tmux.
 
-* dec_HG7NB Entry point excludes one-time bootstrap commands    :scaffold:onboarding:entry:
+* dec_HG7NB Should one-time bootstrap guidance live in the always-on entry point?    :scaffold:onboarding:entry:
 :PROPERTIES:
 :ID:            dec_HG7NB
 :GLOSSARY_REFS: term_CEQFS term_RG690
 :DECIDED_AT:    [2026-06-09 Tue 13:58]
 :SOURCE:        .orgasmic/entry.org
+:PARENT:        dec_ACD08
 :END:
 ** Context
 =entry.org= is injected or read at the start of every future session for the life
@@ -840,12 +866,13 @@ they read the entry point. A newly scaffolded project still has an explicit
 bootstrap goal, sprint task tree, and seed decision, so the first agent can find
 the work without polluting every later session's context.
 
-* dec_SCVKG CLI owns local daemon lifecycle when no app is installed    :cli:daemon:lifecycle:cross-platform:
+* dec_SCVKG Who owns the local daemon lifecycle when only the CLI is installed?    :cli:daemon:lifecycle:cross-platform:
 :PROPERTIES:
 :ID:            dec_SCVKG
 :GLOSSARY_REFS: term_N5SJT term_TDNG3
 :DECIDED_AT:    [2026-06-09 Tue 14:18]
 :SOURCE:        user direction 2026-06-09 (CLI-only daemon lifecycle)
+:PARENT:        dec_XV9AK
 :END:
 ** Context
 The CLI binary already contains the daemon implementation via =orgasmic serve=,
@@ -885,12 +912,13 @@ installed/enabled. When =ORGASMIC_DAEMON_URL= is set, =start=, =stop=, and
 =restart= refuse local ownership because that target belongs to the external
 daemon owner.
 
-* dec_PVDP3 Full UI is owned by the CLI runtime; Tauri is a thin launcher    :ui:tauri:daemon:lifecycle:
+* dec_PVDP3 Should the desktop app or the CLI runtime own and serve the full UI?    :ui:tauri:daemon:lifecycle:
 :PROPERTIES:
 :ID:            dec_PVDP3
 :GLOSSARY_REFS: term_N5SJT term_TDNG3
 :DECIDED_AT:    [2026-06-09 Tue 15:10]
 :SOURCE:        user direction 2026-06-09 (thin app + daemon UI)
+:PARENT:        dec_XV9AK
 :END:
 ** Context
 The desktop app and CLI both tried to carry pieces of the same local runtime:
@@ -921,12 +949,13 @@ now requires a discoverable CLI in =$ORGASMIC_HOME/bin/orgasmic=, =PATH=, or
 daemon-backed filesystem browser; the native directory picker is only a
 convenience for the built-in local profile.
 
-* dec_J2YM8 Skill-first installation with `/orgasmic install` wizard    :install:skill:mobile:
+* dec_J2YM8 How should the skill-first install wizard route users across every platform?    :install:skill:mobile:
 :PROPERTIES:
 :ID:            dec_J2YM8
 :GLOSSARY_REFS: term_ZYE1R term_TDNG3
 :DECIDED_AT:    [2026-06-09 Tue 15:59]
 :SOURCE:        user direction 2026-06-09 (skill-first installer wizard)
+:PARENT:        dec_A6CXY
 :END:
 ** Context
 The product has multiple installable surfaces: a CLI/runtime, a supported host
@@ -950,12 +979,13 @@ users to manual installer fragments. Mobile access becomes part of the normal
 install conversation, and tunnel guidance remains tied to daemon security
 rather than exposing a raw public daemon.
 
-* dec_ZKRQW Manager-implementer mode: iterate fast, reconcile later    :manager:conventions:entry:
+* dec_ZKRQW How should one agent act as both manager and implementer without the full pipeline?    :manager:conventions:entry:
 :PROPERTIES:
 :ID:            dec_ZKRQW
 :GLOSSARY_REFS: term_X4JGJ
 :DECIDED_AT:    [2026-06-10 Wed 16:45]
 :SOURCE:        user direction 2026-06-10 (single-worker routing gap)
+:PARENT:        dec_DK7AZ
 :END:
 ** Context
 `entry.org` routes prompts to either a strict worker dispatch or the manager. When one agent is both manager and implementer (single-worker setups with no dispatch surface), arbitrary prompts fell to the manager route and were implemented with no implementer policies attached. The full staged pipeline (task heading, lifecycle transitions, pre-flight tx, dedicated REVIEW) was designed for swarm dispatch and is redundant overhead for a single agent iterating with the user.
@@ -964,12 +994,13 @@ Add a manager-implementer mode via `conventions/manager-implementer.org`, refere
 ** Consequences
 Single-worker sessions iterate at conversational speed without losing durable rationale, architecture currency, or marker hygiene. Kanban and tx fidelity becomes batch-eventual rather than per-edit in this mode; swarm-mode dispatch discipline is unchanged.
 
-* dec_WV1ZH Task lifecycle shrinks to the standard kanban set    :schema:state-machine:tasks:
+* dec_WV1ZH Should task lifecycle columns be worker phases or the standard kanban set?    :schema:state-machine:tasks:
 :PROPERTIES:
 :ID:            dec_WV1ZH
 :GLOSSARY_REFS: term_RG690 term_VV48W
 :DECIDED_AT:    [2026-06-10 Wed]
 :SOURCE:        TASK-PT2DC griller session 2026-06-10
+:PARENT:        dec_MKC0A
 :END:
 ** Context
 The v2 lifecycle (BACKLOG, EXPLORE, PLAN, IMPLEMENT, REVIEW, SHIP, DONE, BLOCKED, CANCELLED) encoded worker phases as human-facing columns. In practice SHIP was never used in sprint.org, BLOCKED duplicated the `:BLOCKED_BY:` dependency property, and the worker-phase columns (EXPLORE/PLAN/IMPLEMENT) forced a column move every time a different worker kind picked up the same task.
@@ -978,12 +1009,13 @@ The task lifecycle is the industry-standard set: Backlog, Todo, In Progress, In 
 ** Consequences
 state-machine.org needs a v3 rewrite (keywords + transition table); sprint.org headings, the heading parsers, dispatch lifecycle transitions, and the kanban columns all migrate in a follow-up IMPLEMENT task. Tasks no longer lose their position when blocked.
 
-* dec_P7EY8 Run sub-states: performer-namespaced minimal vocabulary    :schema:state-machine:run-substate:
+* dec_P7EY8 What vocabulary should run sub-states use?    :schema:state-machine:run-substate:
 :PROPERTIES:
 :ID:            dec_P7EY8
 :GLOSSARY_REFS: term_VV48W term_X4JGJ
 :DECIDED_AT:    [2026-06-10 Wed]
 :SOURCE:        TASK-PT2DC griller session 2026-06-10
+:PARENT:        dec_RECYG
 :END:
 ** Context
 TASK-PT2DC verified the six per-kind RUN-SUBSTATE blocks were dead schema: `RunRecord.sub_state` is never assigned in production, `RunSubState::new` validates only namespace shape (agent|human|ci), and the vocabularies were duplicated and asymmetric (planner/analyzer lacked `claimed`, babysitter lacked `ready`/`blocked`, griller had a stage but no vocabulary while already borrowing analyzer verbs via `:APPLICABLE_STATES:`, the manager block listed the stale tick-era `agent.ticking` after dec_WTM5Y, and `human.escalating` named the recipient, not the performer).
@@ -992,12 +1024,13 @@ A run sub-state is `<performer>.<verb>` where the performer namespace is the wor
 ** Consequences
 The vocabulary keys on worker KIND (performer), not lifecycle stage; stage/vocabulary asymmetry dissolves. `session.rs` namespace validation must accept performer kinds, and the supervisor must wire `DriverEvent::TransitionState` into `rec.sub_state` so the schema finally has a consumer. UIs render `<performer>.<verb>` directly.
 
-* dec_DEH2T Ordered worker pipeline replaces STAGE_WORKER_* mapping    :schema:config:pipeline:
+* dec_DEH2T Where should worker ordering live once stage-based columns collapse?    :schema:config:pipeline:
 :PROPERTIES:
 :ID:            dec_DEH2T
 :GLOSSARY_REFS: term_P9JK1
 :DECIDED_AT:    [2026-06-10 Wed]
 :SOURCE:        TASK-PT2DC griller session 2026-06-10
+:PARENT:        dec_JW9TJ
 :END:
 ** Context
 With EXPLORE/PLAN/IMPLEMENT collapsed into In Progress (dec_WV1ZH), config.org's per-stage `STAGE_WORKER_*` mapping loses its key axis, but the griller -> planner -> implementer -> reviewer ordering still has to live somewhere machine-readable.
@@ -1006,7 +1039,7 @@ Replace `STAGE_WORKER_*` with an ordered worker pipeline: a project default in c
 ** Consequences
 Dispatch logic reads the pipeline instead of mapping stage keywords to workers; `:WORKER:` survives as shorthand for single-phase tasks (tasks carry no `:KIND:` — kind lives only on workers; worker-less tasks default to the pipeline implementer). The config scaffold migrates in the same follow-up IMPLEMENT task as dec_WV1ZH/dec_P7EY8.
 
-* dec_MX9RM Minimal-needed-instructions for every agent surface    :prompts:skills:conventions:
+* dec_MX9RM How much instruction should each agent surface carry?    :prompts:skills:conventions:
 :PROPERTIES:
 :ID:            dec_MX9RM
 :GLOSSARY_REFS: term_GBTJS term_Z5XDF
@@ -1020,12 +1053,13 @@ Every instruction surface follows minimal-needed-instructions: each rule has exa
 ** Consequences
 Compiled worker bundles shrink 25-40% (implementer 1809 -> 1297 approx tokens) with zero rules lost; recall goes from ~10 file reads (incl. an 8.9k-line sprint.org) to three reads + three commands. Partially supersedes the dec_HR8D8-era note that dynamic_workflow_policy/verification_policy/security_policy "stay shared by every worker spec". New rules must name their single canonical home before being added to any surface; duplicating a rule into a second surface is a regression.
 
-* dec_SSJVD Identity and concurrency model: daemon-sequenced IDs, leases before tokens, OCC only where retries are cheap    :identity:concurrency:tx:architecture:
+* dec_SSJVD How should orgasmic handle node identity, locking, and write concurrency?    :identity:concurrency:tx:architecture:
 :PROPERTIES:
 :ID:            dec_SSJVD
 :GLOSSARY_REFS: term_VV48W
 :DECIDED_AT:    [2026-06-11 Thu]
 :SOURCE:        round-3 architecture critique reply (archive/org-harness-critique-round-3-reply.md) + live TASK-W43NY ID collision 2026-06-11
+:PARENT:        dec_WH9PD
 :END:
 ** Context
 An external architecture critique (rounds 1-3 archived) pressed three claims: incremental human-readable IDs (TASK-NNN, dec_NNN) are a centralized-sequencer anti-pattern versus UUIDs; optimistic concurrency burns LLM tokens on 409 retries versus pessimistic graph locks; and the CLI-absent org-write fallback is fail-open. The same day, two parallel manager sessions both allocated TASK-W43NY by max+1-by-eye — a live instance of the collision the critique predicted, resolved by hand-renumbering the uncommitted duplicate to TASK-HC7PW.
@@ -1034,11 +1068,12 @@ An external architecture critique (rounds 1-3 archived) pressed three claims: in
 ** Consequences
 TASK-GBT5W implements atomic ID allocation (daemon endpoint + CLI verb); manager doctrine for multi-manager sessions is allocate-through-CLI when the daemon is reachable, max+1 only as the single-writer fallback. TASK-HC7PW adds the write-time structural-invariance guard and the read-time phantom-heading lint. TASK-C2PQ3 closes the tx-append durability gap (fsync before ack) the critique's SEV-0 framing surfaced. Future critiques of ID/locking design get pointed at this record.
 
-* dec_MK7AH Concurrent-writer protocol: detect-and-reconcile, ownership lanes, explicit-path staging    :concurrency:manager:git:workflow:
+* dec_MK7AH How should a manager session coexist with an operator committing to the same repo?    :concurrency:manager:git:workflow:
 :PROPERTIES:
 :ID:            dec_MK7AH
 :DECIDED_AT:    [2026-06-11 Thu]
 :SOURCE:        operator question 2026-06-11 ("does orgasmic have instructions for the concurrent-writer pattern") + live operator commit 1f0cc4b landing mid-session during the TASK-ZSD0B/TASK-HC7PW/TASK-KBH4B review round
+:PARENT:        dec_SSJVD
 :END:
 ** Context
 The operator commits directly to main — code, task headings, daemon binaries, their uncommitted `shipped/` working area — while a manager session is live and also writing `.orgasmic/` state; a second manager session may also be running. dec_SSJVD supplied the mechanical layer (leases before tokens, WRITE_SCOPE rejection, daemon-sequenced IDs) but only for worker-vs-worker and manager-vs-manager ID collisions. The operator-commits-to-main case had no codified protocol: the discipline lived in ad-hoc handoff `** Divergence` notes (rewritten each session — "TWO LIVE MANAGER SURFACES", "BRANCH SWITCH UNDER THE MANAGER") and in cross-session agent memory, neither of which a fresh manager reading `.orgasmic/` inherits. Live instance the same session: commit 1f0cc4b advanced HEAD past the handoff `:LIVENESS:` mid-review-round; the manager detected it via liveness drift, confirmed it was disjoint from the in-flight work, folded it in, and dispatched onto it without collision.
@@ -1047,11 +1082,12 @@ Codify the protocol as a durable convention ([[file:conventions/concurrent-write
 ** Consequences
 New `conventions/concurrent-writer.org` is the canonical home; dec_SSJVD keeps the mechanical-locking rationale and this record keeps the human-writer protocol. Wired so it loads exactly when drift is detected: referenced from the manager prompt-spec policy list (`shipped/prompt-studio/prompt-specs/manager.org`) and from the recall/resume liveness-drift trigger (`shipped/skills/orgasmic/references/recall-resume.md`). Revisit trigger: the day a non-operator stranger runs a second manager against the same repo, where ownership lanes need enforcement, not just convention.
 
-* dec_X72P5 Identity: short-random IDs for all task/decision/arch/glossary nodes — full migration, no mixed scheme; machine classes stand    :identity:concurrency:architecture:
+* dec_X72P5 What identity scheme should node IDs use to survive multi-clone collisions?    :identity:concurrency:architecture:
 :PROPERTIES:
 :ID:            dec_X72P5
 :DECIDED_AT:    [2026-06-11 Thu]
 :SOURCE:        TASK-T2FSY — operator decision in-session after a 4-round design dialogue; revised twice same day by the operator: shape 1 → shape 3b mixed scheme → FULL MIGRATION (git holds both prior versions of this record)
+:PARENT:        dec_SSJVD
 :END:
 ** Context
 Multi-dev same-repo is an assumed topology (dec_SSJVDa, trigger pulled forward): one daemon per clone, =.orgasmic/= synced through git — multi-master, where per-clone max+1 counters collide cross-clone and cross-file filings can merge silently. Candidates weighed: (1) plain TASK-NNN + merge-time repair; (2) git-identity-derived namespace (roster-less; a checked-in actor registry was separately rejected — no people-administration state in the repo); (3a) ULID-only; (3b) short-random-only. The node-class census showed the system already practices both poles: tx/runs are timestamp+random (machine-minted, never spoken — length costs nothing), goals are date+slug, and TASK-NNN + dec_NNN are the only at-risk sequential counters. Shape 1 was chosen first; the operator reversed to 3b (mixed scheme) the same day, then escalated to FULL MIGRATION the same evening — re-key everything, no mixed scheme, extending the grammar to the arch records (17 nodes, ~897 refs) and glossary terms (40 =term:slug= entries) so one identity convention covers every ID-bearing class. Inventory at decision time: 217 task headings (incl. subtasks), 70 decisions, 17 arch records, 40 terms, ~772 dec_ refs, 8 code files with task markers.
@@ -1060,11 +1096,12 @@ Multi-dev same-repo is an assumed topology (dec_SSJVDa, trigger pulled forward):
 ** Consequences
 Execution chain: TASK-GBT5W (mint-on-create everywhere + =orgasmic id mint= verb + code-readiness audit: find and fix every ID-shape assumption — validation regexes, numeric sorting, parsing, fixtures — so all four minted classes are accepted) → TASK-YRK1V (script-driven migration execution; the first minted-ID node in this repo) → TASK-QRD3Y (standing lint: duplicate IDs, malformed mints, legacy-pattern leftovers; re-mint repair). Manager doctrine: hand-filed nodes mint via the verb or any local randomness — never max+1-by-eye again. Extends dec_SSJVD; the registry rejection and reference-profile principle stand (the profile argument is resolved by accepting 3b's costs with open eyes, not by forgetting them).
 
-* dec_ZQJPA Agents edit org state only through the daemon; install/init converges on one runtime-first path    :daemon:cli:install:onboarding:write-authority:
+* dec_ZQJPA Should agents ever hand-edit org state, or must every write go through the daemon?    :daemon:cli:install:onboarding:write-authority:
 :PROPERTIES:
 :ID:            dec_ZQJPA
 :DECIDED_AT:    [2026-06-12 Fri]
 :SOURCE:        operator directive 2026-06-12 (round-4 critique response, point 6 + P.S.)
+:PARENT:        dec_SSJVD
 :END:
 ** Context
 The write path is fail-open for agents today: entry.org's write rules fall back to "match existing Org structure" when the CLI/daemon check fails; =conventions/no-skill-installed.org= grants direct goal/handoff writes; the scaffold bootstrap task states "you do not need the daemon to run this"; =/orgasmic init= scaffolds with plain file writes. Hand-editing also remains routine for the MANAGER because half the write surface is missing: =task update --state/--property= returns 501 (citing TASK-TQQQR, long DONE — orphaned debt), there is no =task create= verb, goal lifecycle has no verb (TASK-G9KCN). The round-4 critique (§6) called the fail-open bootstrap a baseline-poisoning compromise; dec_SSJVDc rejected fail-fast with detection-over-prohibition at the time. The lints since proved both halves: the phantom-heading lint catches hand-edit drift (its first catch was our own scaffold seed), and every hand-edit burst is unaudited writer-loop bypass.
@@ -1073,11 +1110,12 @@ The write path is fail-open for agents today: entry.org's write rules fall back 
 ** Consequences
 TASK-NP5H6 completes the daemon write surface (kills the remaining 501s, adds =task create= + property/body verbs). TASK-BP5VB rewrites the instruction surfaces (entry.org write rules, no-skill-installed.org, orgasmic-tooling.org, recall-resume, manager-implementer, scaffold mirrors) and reworks install/init to the runtime-first path. TASK-G9KCN bumped P3→P2 as a dependency. dec_SSJVD clause (c) rewritten in place to point here (git holds the prior stance). The file-per-state layout (dec_QQYXM) presumes this: lifecycle file moves are daemon-executed writes.
 
-* dec_QQYXM Task file = lifecycle state: tasks/ holds one org file per kanban state; transitions move headings between files    :schema:tasks:layout:kanban:state-machine:
+* dec_QQYXM Should a task's lifecycle state be a property, a keyword, or its file location?    :schema:tasks:layout:kanban:state-machine:
 :PROPERTIES:
 :ID:            dec_QQYXM
 :DECIDED_AT:    [2026-06-12 Fri]
 :SOURCE:        operator directive 2026-06-12 (round-4 critique response, P.S.)
+:PARENT:        dec_P24WF
 :END:
 ** Context
 Tasks live in =sprint.org=/=backlog.org=/=archive.org=, and a task's state is carried redundantly: heading keyword + =:STATE:= property (221 of each in the live census, written in lockstep by =apply_task_lifecycle_transitions=), plus file membership as a third, unenforced copy — =backlog.org= holds 11 DONE headings, =archive.org= has been empty since inception because nothing ever moves a heading, and =sprint.org= has grown to ~9.7k lines mixing 194 DONE with the live queue. The redundant copies drift; the file names carry no machine meaning.
@@ -1086,12 +1124,11 @@ One org file per lifecycle state under =tasks/=: =backlog.org=, =todo.org=, =in_
 ** Consequences
 TASK-2C3WZ implements: core =TASK_FILE_NAMES=/scaffold lists, daemon index + creation defaults (new headings currently hardcode sprint.org), CLI transition rewrite becomes a cross-file move, scaffold templates, UI org-file list, prompt-spec/doc references, test fixtures (~70 sprint.org references), and the live split (23 BACKLOG / 194 DONE / 3 CANCELLED at decision time). Kanban reads become trivially file-scoped (the board never parses DONE bulk to render the backlog).
 
-* dec_HJENQ Org node property schema slim-down: per-key verdicts and edge vocabulary    :schema:architecture:design:adr:
+* dec_HJENQ Which node properties should survive, and what is the canonical edge vocabulary?    :schema:architecture:design:adr:
 :PROPERTIES:
 :ID:            dec_HJENQ
 :DECIDED_AT:    [2026-06-12 Fri]
 :SOURCE:        TASK-55DH1 implementer session 2026-06-12
-:RELATES_TO:    dec_2GQ7Q
 :END:
 ** Context
 A census of 396 property drawers across all org node classes (2026-06-12) surfaced four
@@ -1320,9 +1357,10 @@ carry defaults for =:TEST_CMD:=, =:WORKER:= (pipeline-entry default), and =:WRIT
 policy so the manager dispatch path reads from config and tasks carry only the override.
 Size: 1 implementer session (small).
 
-* dec_WC1PW Remove the task-state auto-spawn watcher; reactive logic waits for a declarative event layer    :daemon:supervisor:dispatch:adr:
+* dec_WC1PW Should the daemon auto-spawn workers on task-state transitions?    :daemon:supervisor:dispatch:adr:
 :PROPERTIES:
 :ID: dec_WC1PW
+:PARENT: dec_ASB1A
 :END:
 
 ** Context
@@ -1369,10 +1407,11 @@ implicitly. TASK-9TFBD is reshaped from race-fix to watcher removal.
 Tests asserting watcher behavior are deleted with it; the babysitter
 auto-spawn tests stand.
 
-* dec_035A0 Disable companion babysitter worker attach
+* dec_035A0 Should default workers attach a companion babysitter?
 :PROPERTIES:
 :ID: dec_035A0
 :TAGS: babysitter,workers,dispatch,policy
+:PARENT: dec_WC1PW
 :END:
 
 Context: companion babysitter attach was re-enabled experimentally after TASK-PGFPM made summary forwarding functional, but the operator direction on 2026-06-13 is to keep babysitter workers disabled rather than spend further effort making the companion path production-ready. The remaining gaps are not just template wiring: record_finding still needs task Evidence write authority, UI watcher-dot verification remains unproven in a live intervening run, and extra companion runtimes add operational capacity and authentication burden.
@@ -1381,7 +1420,7 @@ Decision: shipped worker templates must not declare :BABYSITTER_WORKER:. The bab
 
 Consequences: operators should not expect companion babysitter JSONL runs from default dispatches. Future babysitter work requires a new explicit decision that justifies the runtime/auth cost and defines the Evidence-writing and UI verification contract before re-adding :BABYSITTER_WORKER: to templates.
 
-* dec_YKFZX Regular install uses prebuilt runtime bundles; source install is contributor mode
+* dec_YKFZX Should a regular install build from source or use prebuilt runtime bundles?
 :PROPERTIES:
 :ID: dec_YKFZX
 :STATUS: accepted
@@ -1395,7 +1434,7 @@ Regular install is bundle-managed and separate from any source checkout. A contr
 
 Install/update never replaces =$ORGASMIC_HOME/user=, =state=, =sessions=, =secrets=, =logs=, =config.yaml=, auth tokens, or registered project =.orgasmic/= files. The desktop app update remains separate internally, but the app presents one visible update action that updates the app shell and then invokes/checks the runtime update.
 
-* dec_WWAHT Graph page layout is a local-first overlay with a shared baseline and reset
+* dec_WWAHT How should the Graph page persist hand-arranged layout without persisting topology?
 :PROPERTIES:
 :ID: dec_WWAHT
 :TAGS: graph,ui,layout,overlay,daemon
@@ -1407,7 +1446,7 @@ Decision: The Graph page persists only a layout overlay - per-node geometry (x,y
 
 Consequences: Reverses arch_M8JQT's localStorage-only-positions, tasks-excluded, and read-only constraints; arch_M8JQT is revised accordingly by a follow-up architector task. Routine dragging never hits git, so the committed overlay has minimal merge surface (heading-per-node). A republished baseline reaches personalized users only via the nudge/reset, by design. Relies on dec for retained superseded decisions for the gray decisions band.
 
-* dec_KTF04 Superseded decisions are retained; superseded is derived from SUPERSEDES backrefs
+* dec_KTF04 Should superseded decisions be deleted or retained, and how is that derived?
 :PROPERTIES:
 :ID: dec_KTF04
 :TAGS: decisions,graph,glossary,convention
@@ -1419,10 +1458,11 @@ Decision: Stop deleting a decision when it is superseded - keep its heading. A d
 
 Consequences: decisions.org accumulates superseded records, which is intentional history for the map. The presence = accepted rule is refined to present and not superseded. No schema change: the gray set is a pure read-model over existing :SUPERSEDES: backrefs. This is what makes the Graph page's superseded-decisions band possible (see the graph-overlay decision).
 
-* dec_2D5BC Daemon must provision tool PATH for harness and driver binaries, not inherit the service manager's minimal PATH
+* dec_2D5BC How should the daemon find harness and driver binaries under a service manager's PATH?
 :PROPERTIES:
 :ID: dec_2D5BC
 :TAGS: daemon,install,dispatch,launchd,reliability
+:PARENT: dec_SCVKG
 :END:
 
 Context: The daemon's generated service definitions set EnvironmentVariables to only ORGASMIC_HOME (crates/orgasmic-cli/src/daemon_service.rs: render_macos_launch_agent plus the systemd-unit and windows-task siblings). select_adapter_for_host keys on host platform only, so on macOS every install - regular bundle and contributor source alike - is managed by a launchd LaunchAgent. launchd then runs the daemon with PATH=/usr/bin:/bin:/usr/sbin:/sbin, so it cannot find the worker driver (tmux/rmux) or the harness (claude), and every manager dispatch comes up inert (inert_reason tmux_missing, then binary_missing:claude). This ships broken to default macOS users whose tools live in /opt/homebrew/bin, ~/.cargo/bin, ~/.local/bin, or ~/.npm-global/bin. The same minimal-PATH class affects the Linux systemd user unit and the Windows scheduled task. Editing the plist by hand does not stick: the daemon regenerates its service definition on start, and any daemon-backed orgasmic CLI call auto-starts it through the service manager.
@@ -1431,11 +1471,12 @@ Decision: The daemon-managed service definition must make the configured harness
 
 Consequences: Fixes inert dispatch on default macOS installs and the analogous systemd/windows cases. Until the fix ships, the workaround is to run the daemon manually with the login PATH (bootout the LaunchAgent, then launch serve with the zsh -l PATH). A doctor check closes the gap between install success and a working first dispatch.
 
-* dec_CKMW3 Install wires the CLI onto PATH via a managed env file; source symlink resolves target-triple builds
+* dec_CKMW3 How should install put the orgasmic CLI on the user's PATH?
 :PROPERTIES:
 :ID: dec_CKMW3
 :STATUS: accepted
 :TAGS: install,path,onboarding,update
+:PARENT: dec_YKFZX
 :END:
 
 Extends dec_YKFZX. Placing bin/orgasmic on disk is not enough for a bare `orgasmic` command — the bin dir must be on PATH, and the source-mode symlink must point at the real binary.
@@ -1448,7 +1489,7 @@ Surfaces: `orgasmic path ensure|print`, `orgasmic doctor --fix` (relink + wire),
 
 Scope: macOS and Linux (POSIX shells; also WSL/Git-Bash on Windows). Native Windows (PowerShell/cmd, %USERPROFILE%) is out of scope here and tracked separately.
 
-* dec_BXBNW Dispatch integration branch is the worktree base (HEAD at dispatch), not the DEFAULT_BRANCH config
+* dec_BXBNW Which branch should a dispatch worktree be based on and merged into?
 :PROPERTIES:
 :ID: dec_BXBNW
 :TAGS: dispatch,contribution,convention,branch
@@ -1460,12 +1501,12 @@ Decision: The operative integration branch for the dispatch loop is the base bra
 
 Consequences: Backward compatible - dispatching from main still means merge into main. Contributors can run the parallel-worktree loop on a feature branch and PR feature into theaspirational/orgasmic:main without touching tracked config. These are shipped/ + doc edits: PR candidates that change defaults for all users once released, but they take effect immediately for a daemon whose content root points at this checkout since conventions are read from disk at prompt-compile time (no rebuild needed).
 
-* dec_B4147 Release pipeline: local-first manual runtime builds, separate app line, merged per-target manifest
+* dec_B4147 How should the release pipeline build and publish the runtime and apps?
 :PROPERTIES:
 :ID: dec_B4147
 :STATUS: accepted
 :TAGS: release,install-distribution,ci,build,reliability
-:RELATES_TO: dec_YKFZX dec_2D5BC
+:PARENT:     dec_YKFZX
 :END:
 
 Context: The systemd unit generated by the daemon's Linux service adapter wrapped single-value path directives (WorkingDirectory=, StandardOutput=/StandardError=append:) in double quotes, which systemd rejects ("path is not absolute"), so on a clean Linux install the daemon never started and `orgasmic status` reported "exited before becoming ready". Fixed in crates/orgasmic-cli/src/daemon_service.rs render_linux_systemd_unit — a sibling class to dec_2D5BC, which hardened the same generated definitions' PATH. Shipping the fix exposed release-pipeline fragility: one vX.Y.Z tag fan-fired three workflows (release-runtime, release-macos, release-android) that all force-moved the rolling `stable` tag and release target, racing so the release label could show a version whose assets were not all present yet. App builds (10x-billed macOS runners, fragile signing-secret deps) ran on every CLI patch though no app is deployed (all app assets show downloadCount 0) and do not gate the runtime release (already parallel) — cost and noise, no speed. CI `runtime-*` build artifacts accumulated under 90-day retention (~300 MB) despite only handing bundles from the build matrix to the publish job. Relates to arch_WZFAX (runtime bundle + install) and dec_XSV21 (home/install layout).
@@ -1569,7 +1610,6 @@ runtime line are untouched.
 :PROPERTIES:
 :DECIDED_AT: [2026-06-27 Sat]
 :ID: dec_2GQ7Q
-:RELATES_TO: dec_JW11K dec_HJENQ dec_KTF04 dec_X6Q0S dec_PA23Y
 :END:
 
 ** Context
@@ -1647,7 +1687,7 @@ Surfaces.
 * dec_QWC9V Should silently-simulating acp-ws codex workers ship as selectable defaults?
 :PROPERTIES:
 :ID: dec_QWC9V
-:RELATES_TO: dec_ASB1A
+:PARENT:     dec_ASB1A
 :END:
 
 ** Context

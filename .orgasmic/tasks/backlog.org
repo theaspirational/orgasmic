@@ -18,14 +18,6 @@ Work required:
 
 Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specifically native PowerShell/cmd.
 
-* BACKLOG TASK-KZ0VF Rewrite existing decision titles to problem-form (no-scars pass)    :decision-model:
-:PROPERTIES:
-:DEPENDS_ON: dec_2GQ7Q
-:ID: TASK-KZ0VF
-:END:
-
-Separate from [[TASK-2DFTX]] per [[dec_2GQ7Q]] (consequence 9b). Rewrite existing decision titles from noun-phrase labels to problem/question form so title and body stop duplicating and the corpus stays consistent (no-migration-scars value). A per-decision judgment pass, best run as its own grilling/authoring session; not part of the nesting mechanism.
-
 * BACKLOG TASK-KNENN Harden default instructions: route implementation through orgasmic workers, not raw provider CLIs    :conventions:agent-dx:
 :PROPERTIES:
 :ID: TASK-KNENN

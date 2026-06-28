@@ -11246,3 +11246,11 @@ Part of [[TASK-2DFTX]]. UI (ui/src): DecisionsView becomes tree-primary (collaps
 
 Fixes two MEDIUM reviewer findings on [[TASK-2DFTX]]: #1 (tx-20260627-orgasmic-0966) invalid nested <button> in DecisionsView (CopyIdBadge button inside the row button); #3 (tx-20260627-orgasmic-0968) NodeModal stale seed cache hides a new child's summary. Finding #2 (live :PARENT: canonical vocab) handled separately via CLI on dec_HJENQ + contributing.org. UI-only; base at 423b267.
 
+* DONE TASK-KZ0VF Rewrite existing decision titles to problem-form (no-scars pass) :decision-model:
+:PROPERTIES:
+:DEPENDS_ON: dec_2GQ7Q
+:ID: TASK-KZ0VF
+:END:
+
+Separate from [[TASK-2DFTX]] per [[dec_2GQ7Q]] (consequence 9b). Rewrite existing decision titles from noun-phrase labels to problem/question form so title and body stop duplicating and the corpus stays consistent (no-migration-scars value). A per-decision judgment pass, best run as its own grilling/authoring session; not part of the nesting mechanism.
+
