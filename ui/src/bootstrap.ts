@@ -1,3 +1,5 @@
+// Match the daemon-served UI's typeface (it imports the same variable font).
+import '@fontsource-variable/geist';
 import { invoke } from '@tauri-apps/api/core';
 import {
   checkAppUpdate,
@@ -95,7 +97,19 @@ function normalizeDaemonOrigin(raw: string): string {
 
 function showUpdateBanner(update: AppUpdateMetadata): void {
   pendingUpdate = update;
-  updateMsgEl.textContent = `Update available — ${update.currentVersion} → ${update.version} (${update.channel}).`;
+  if (update.isDowngrade) {
+    // Reached only via an explicit channel switch to an older build. Say so
+    // plainly — it's a channel switch, not an upgrade — and warn that Android
+    // blocks installing a lower build over a higher one without a reinstall.
+    updateMsgEl.textContent =
+      `Switch to ${update.channel} — ${update.currentVersion} → ${update.version} ` +
+      `(older build; may need a reinstall).`;
+    downloadEl.textContent = `Switch to ${update.channel}`;
+  } else {
+    updateMsgEl.textContent =
+      `Update available — ${update.currentVersion} → ${update.version} (${update.channel}).`;
+    downloadEl.textContent = 'Download update';
+  }
   updateBarEl.hidden = false;
 }
 
@@ -107,14 +121,17 @@ function hideUpdateBanner(): void {
 /** Check for a newer app build on the saved channel. `manual` checks are
  *  unbounded and report their result; the launch check is time-boxed so it can
  *  gate auto-connect without stalling it. Returns the update, if any. */
-async function runUpdateCheck(manual: boolean): Promise<AppUpdateMetadata | null> {
+async function runUpdateCheck(manual: boolean, switched = false): Promise<AppUpdateMetadata | null> {
   if (!supportsAppUpdateChecks()) return null;
   const channel = savedUpdateChannel();
   if (manual) {
     checkEl.disabled = true;
-    detailEl.textContent = 'Checking for updates…';
+    detailEl.textContent = switched ? `Checking ${channel}…` : 'Checking for updates…';
   }
-  const probe = checkAppUpdate(channel).catch(() => null);
+  // `switched` (the user flipped the channel) lets the check offer that
+  // channel's build even when it's older than what's installed; routine checks
+  // only surface a strictly newer build.
+  const probe = checkAppUpdate(channel, { allowDowngrade: switched }).catch(() => null);
   const update = manual ? await probe : await withTimeout(probe, UPDATE_CHECK_TIMEOUT_MS);
   if (manual) checkEl.disabled = false;
 
@@ -124,7 +141,7 @@ async function runUpdateCheck(manual: boolean): Promise<AppUpdateMetadata | null
     return update;
   }
   hideUpdateBanner();
-  if (manual) detailEl.textContent = `You're on the latest ${channel} build.`;
+  if (manual) detailEl.textContent = `No newer ${channel} build available.`;
   return null;
 }
 
@@ -278,7 +295,9 @@ checkEl.addEventListener('click', () => {
 
 channelEl.addEventListener('change', () => {
   saveUpdateChannel(channelEl.value as UpdateChannel);
-  void runUpdateCheck(true);
+  // Explicit switch: offer the chosen channel's build even if it's older than
+  // what's installed (e.g. nightly → stable), surfaced as a switch, not a nag.
+  void runUpdateCheck(true, true);
 });
 
 downloadEl.addEventListener('click', async () => {
@@ -305,12 +324,49 @@ dismissEl.addEventListener('click', () => {
 void start();
 
 const style = document.createElement('style');
+// Theme tokens mirror the daemon-served UI (src/styles.css): same Geist face,
+// teal-accented shadcn palette, and radius. The bootstrap webview is a separate
+// origin from the daemon UI, so it can't read the app's saved light/dark
+// preference — instead it follows the OS like the app's default `system` mode,
+// using the identical light + dark token values so the two screens match.
 style.textContent = `
   :root {
-    color-scheme: dark light;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    background: #101214;
-    color: #f4f5f5;
+    color-scheme: light dark;
+    --background: oklch(0.99 0 0);
+    --foreground: oklch(0.18 0 0);
+    --card: oklch(1 0 0);
+    --muted-foreground: oklch(0.45 0 0);
+    --primary: oklch(0.55 0.13 200);
+    --primary-foreground: oklch(0.99 0 0);
+    --secondary: oklch(0.97 0 0);
+    --secondary-foreground: oklch(0.205 0 0);
+    --accent: oklch(0.93 0.04 200);
+    --border: oklch(0.92 0 0);
+    --ring: oklch(0.55 0.13 200);
+    --radius: 0.5rem;
+    --sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-family: var(--sans);
+    background: var(--background);
+    color: var(--foreground);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --background: oklch(0.135 0 0);
+      --foreground: oklch(0.96 0 0);
+      --card: oklch(0.175 0 0);
+      --muted-foreground: oklch(0.68 0 0);
+      --primary: oklch(0.72 0.13 200);
+      --primary-foreground: oklch(0.135 0 0);
+      --secondary: oklch(0.25 0 0);
+      --secondary-foreground: oklch(0.96 0 0);
+      --accent: oklch(0.27 0.04 200);
+      --border: oklch(0.27 0 0);
+      --ring: oklch(0.72 0.13 200);
+    }
+  }
+  * {
+    box-sizing: border-box;
   }
   body {
     margin: 0;
@@ -326,33 +382,38 @@ style.textContent = `
     width: min(30rem, calc(100vw - 3rem));
     display: grid;
     gap: 1rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: calc(var(--radius) + 0.25rem);
+    padding: 1.5rem;
   }
   .runtime-mark {
     font-size: 0.78rem;
     letter-spacing: 0;
-    color: #77d0d8;
+    color: var(--primary);
     font-weight: 600;
   }
   h1 {
     margin: 0;
     font-size: 1.35rem;
     line-height: 1.25;
+    color: var(--foreground);
   }
   p {
     margin: 0;
-    color: #b6bec2;
+    color: var(--muted-foreground);
     line-height: 1.45;
   }
   #updatebar {
     display: grid;
     gap: 0.6rem;
-    border: 1px solid #2f6f76;
-    background: #122a2e;
-    border-radius: 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    border-radius: var(--radius);
     padding: 0.85rem;
   }
   #updatemsg {
-    color: #aeeef4;
+    color: var(--foreground);
     font-size: 0.9rem;
   }
   #remote {
@@ -366,29 +427,31 @@ style.textContent = `
   .field > span {
     font-size: 0.8rem;
     font-weight: 600;
-    color: #d9dee1;
+    color: var(--foreground);
   }
   input,
   select {
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid #343a3f;
-    background: #191c1f;
-    color: #f4f5f5;
-    border-radius: 0.5rem;
+    border: 1px solid var(--border);
+    background: var(--background);
+    color: var(--foreground);
+    border-radius: var(--radius);
     padding: 0.6rem 0.7rem;
     font: 0.92rem/1.4 inherit;
   }
   input::placeholder {
-    color: #7d868b;
+    color: var(--muted-foreground);
   }
   input:focus,
   select:focus {
-    outline: none;
-    border-color: #77d0d8;
+    outline: 2px solid var(--ring);
+    outline-offset: -1px;
+    border-color: var(--ring);
   }
   .updcontrols {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: 0.6rem;
   }
@@ -400,52 +463,53 @@ style.textContent = `
   .chan > span {
     font-size: 0.8rem;
     font-weight: 600;
-    color: #d9dee1;
+    color: var(--foreground);
   }
   .updcontrols button {
     white-space: nowrap;
   }
   .hint {
     font-size: 0.78rem;
-    color: #8a9296;
+    color: var(--muted-foreground);
   }
   code {
-    font: 0.82em ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    color: #c7ccd0;
+    font: 0.82em var(--mono);
+    color: var(--foreground);
   }
   pre {
     margin: 0;
     overflow: auto;
     white-space: pre-wrap;
-    color: #d9dee1;
-    background: #191c1f;
-    border: 1px solid #343a3f;
-    border-radius: 0.5rem;
+    color: var(--muted-foreground);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
     padding: 0.85rem;
-    font: 0.82rem/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font: 0.82rem/1.45 var(--mono);
   }
   pre:empty {
     display: none;
   }
   .actions {
     display: flex;
+    flex-wrap: wrap;
     justify-content: flex-end;
     gap: 0.5rem;
   }
   button {
-    border: 1px solid #3f474c;
-    background: #20252a;
-    color: #f4f5f5;
-    border-radius: 0.45rem;
+    border: 1px solid var(--border);
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    border-radius: calc(var(--radius) - 0.125rem);
     padding: 0.55rem 0.9rem;
     font: inherit;
     cursor: pointer;
   }
   #connect,
   #download {
-    border-color: #2f6f76;
-    background: #14343a;
-    color: #aeeef4;
+    border-color: var(--primary);
+    background: var(--primary);
+    color: var(--primary-foreground);
   }
   button:disabled {
     opacity: 0.6;

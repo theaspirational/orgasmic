@@ -26,6 +26,41 @@ const UPDATE_REPO: &str = "theaspirational/orgasmic";
 
 struct PendingAppUpdate(Mutex<Option<Update>>);
 
+/// Hand the JVM + Android `Context` to `rustls-platform-verifier` before any TLS
+/// handshake runs. reqwest's rustls stack — shared by `tauri` and
+/// `tauri-plugin-updater` — validates certificates through this verifier, which
+/// aborts the whole process ("Expect rustls-platform-verifier to be initialized")
+/// if it was never given the Android runtime handles. Called from the Tauri setup
+/// hook, before the webview can invoke any networking command. Idempotent: the
+/// verifier stores the handles in a process-global `OnceCell`.
+#[cfg(target_os = "android")]
+fn init_android_cert_verifier() {
+    // tao owns the live Activity context (a JNI global ref) and the process
+    // JavaVM for the activity's lifetime — the same handles it uses for its own
+    // JNI calls. Reached directly because neither tauri nor wry re-export it.
+    let Some(ctx) = tao::platform::android::prelude::main_android_context() else {
+        eprintln!(
+            "rustls-platform-verifier: Android context unavailable at setup; \
+             HTTPS requests will abort the process"
+        );
+        return;
+    };
+
+    // SAFETY: `java_vm` is the process JavaVM pointer and `context_jobject` is a
+    // JNI global ref to the Activity, both kept alive by tao. We only read them,
+    // on the thread we attach below.
+    let vm = unsafe { jni::JavaVM::from_raw(ctx.java_vm.cast()) };
+    let init = vm.attach_current_thread(|env| {
+        let context = unsafe {
+            jni::objects::JObject::from_raw(env, ctx.context_jobject as jni::sys::jobject)
+        };
+        rustls_platform_verifier::android::init_with_env(env, context)
+    });
+    if let Err(err) = init {
+        eprintln!("rustls-platform-verifier: init failed: {err:?}");
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct LocalBackendProfile {
@@ -293,6 +328,12 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PendingAppUpdate(Mutex::new(None)))
+        .setup(|_app| {
+            // Must run before the webview triggers its first HTTPS request.
+            #[cfg(target_os = "android")]
+            init_android_cert_verifier();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             runtime_probe,
             runtime_launch_url,

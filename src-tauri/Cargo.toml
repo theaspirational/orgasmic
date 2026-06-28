@@ -30,6 +30,19 @@ url = "2"
 # used by check_android_update to fetch the sideload manifest in-process (no CORS).
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
 
+# Android: reqwest's rustls stack (shared with tauri + tauri-plugin-updater) uses
+# rustls-platform-verifier for certificate validation, which MUST be handed the
+# JVM + Activity context before the first TLS handshake or it aborts the process
+# ("Expect rustls-platform-verifier to be initialized"). We do that in run()'s
+# setup hook (see init_android_cert_verifier). These versions deliberately match
+# the already-resolved transitive versions so Cargo unifies to a single instance
+# (same verifier GLOBAL, same jni types). NOTE: `tao` is reached for its live
+# Android context accessor — keep it in lockstep with the tao that tauri pulls.
+[target.'cfg(target_os = "android")'.dependencies]
+rustls-platform-verifier = "0.7"
+jni = "0.22"
+tao = "0.35"
+
 # Size-optimized release build for the desktop app and Android lib.
 # Shrinks both the macOS .app/.dmg and the Android .so.
 [profile.release]

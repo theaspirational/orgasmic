@@ -19,3 +19,8 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# rustls-platform-verifier's Android trust-store classes are only ever reached
+# over JNI, so R8 sees them as dead code and would strip them — which breaks TLS
+# certificate validation at runtime. Keep them (and their descriptors) intact.
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

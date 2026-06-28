@@ -2300,10 +2300,13 @@ dependencies = [
 name = "orgasmic-desktop"
 version = "0.0.7"
 dependencies = [
+ "jni 0.22.4",
  "orgasmic-core",
  "reqwest",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "tao",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
