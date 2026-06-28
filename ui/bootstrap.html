@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#fcfcfc" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#1c1c1c" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f1ebdd" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#160d08" media="(prefers-color-scheme: dark)" />
     <meta name="color-scheme" content="light dark" />
     <title>orgasmic</title>
     <script type="module" src="/src/bootstrap.ts"></script>
@@ -16,12 +16,9 @@
         <h1 id="title">Opening runtime</h1>
         <p id="status">Checking for the orgasmic CLI.</p>
 
-        <div id="updatebar" hidden>
-          <p id="updatemsg"></p>
-          <div class="actions">
-            <button id="download" type="button">Download update</button>
-            <button id="dismiss" type="button">Continue</button>
-          </div>
+        <div id="recent" hidden>
+          <span class="reclabel">Recent connections</span>
+          <ul id="reclist"></ul>
         </div>
 
         <form id="remote" hidden>
@@ -47,34 +44,55 @@
               autocapitalize="off"
               autocorrect="off"
               spellcheck="false"
-              placeholder="token from ~/.orgasmic/user/auth/token"
+              placeholder="paste the daemon token"
             />
           </label>
-          <p class="hint">
-            On the host Mac: enable LAN in <code>~/.orgasmic/config.yaml</code>
-            (<code>bind_host: 0.0.0.0</code>, <code>lan_enabled: true</code>),
-            restart the daemon, and copy the token from
-            <code>~/.orgasmic/user/auth/token</code>. On another network, point
-            this at a tunnel URL (e.g. cloudflared) or a Tailscale address.
-          </p>
+          <details class="help">
+            <summary>How do I find these?</summary>
+            <div class="helpbody">
+              <p>
+                On the computer running the orgasmic daemon, enable LAN access in
+                <code>~/.orgasmic/config.yaml</code> — set
+                <code>bind_host: 0.0.0.0</code> and <code>lan_enabled: true</code>,
+                then restart the daemon.
+              </p>
+              <p>
+                Copy the bearer token from
+                <code>~/.orgasmic/user/auth/token</code> (same path on macOS,
+                Linux, and Windows).
+              </p>
+              <p>
+                Off the local network, point the URL at a tunnel (e.g.
+                cloudflared) or a Tailscale address instead of the LAN IP.
+              </p>
+            </div>
+          </details>
         </form>
 
-        <div id="updatecontrols" hidden class="updcontrols">
-          <label class="chan">
-            <span>Update channel</span>
-            <select id="channel">
-              <option value="stable">stable</option>
-              <option value="nightly">nightly</option>
-            </select>
-          </label>
-          <button id="check" type="button">Check for updates</button>
-        </div>
-
         <pre id="detail"></pre>
+
         <div class="actions">
           <button id="connect" type="button" hidden>Connect</button>
           <button id="retry" type="button">Retry</button>
         </div>
+
+        <section id="updates" class="updates" hidden>
+          <div class="updrow">
+            <label class="chan">
+              <span>Update channel</span>
+              <select id="channel">
+                <option value="stable">stable</option>
+                <option value="nightly">nightly</option>
+              </select>
+            </label>
+            <button id="check" type="button" class="ghost">Check for updates</button>
+          </div>
+          <div id="updatebar" hidden>
+            <p id="updatemsg"></p>
+            <button id="download" type="button">Download update</button>
+          </div>
+          <p id="updnote" class="updnote"></p>
+        </section>
       </section>
     </main>
   </body>

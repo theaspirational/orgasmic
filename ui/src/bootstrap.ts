@@ -22,8 +22,14 @@ type UiSessionResponse = {
   path: string;
 };
 
-const URL_KEY = 'orgasmic:remote:url';
-const TOKEN_KEY = 'orgasmic:remote:token';
+/** A remembered backend: a daemon origin and the token that reached it. */
+type Connection = { url: string; token: string };
+
+const CONNECTIONS_KEY = 'orgasmic:remote:connections';
+// Pre-history builds stored a single backend in these two keys; migrate them.
+const LEGACY_URL_KEY = 'orgasmic:remote:url';
+const LEGACY_TOKEN_KEY = 'orgasmic:remote:token';
+const MAX_CONNECTIONS = 6;
 const UPDATE_CHECK_TIMEOUT_MS = 3500;
 
 const titleEl = document.getElementById('title') as HTMLHeadingElement;
@@ -34,17 +40,21 @@ const connectEl = document.getElementById('connect') as HTMLButtonElement;
 const formEl = document.getElementById('remote') as HTMLFormElement;
 const urlEl = document.getElementById('url') as HTMLInputElement;
 const tokenEl = document.getElementById('token') as HTMLInputElement;
+const recentEl = document.getElementById('recent') as HTMLDivElement;
+const recListEl = document.getElementById('reclist') as HTMLUListElement;
+const updatesEl = document.getElementById('updates') as HTMLElement;
 const updateBarEl = document.getElementById('updatebar') as HTMLDivElement;
 const updateMsgEl = document.getElementById('updatemsg') as HTMLParagraphElement;
+const updNoteEl = document.getElementById('updnote') as HTMLParagraphElement;
 const downloadEl = document.getElementById('download') as HTMLButtonElement;
-const dismissEl = document.getElementById('dismiss') as HTMLButtonElement;
-const updateControlsEl = document.getElementById('updatecontrols') as HTMLDivElement;
 const channelEl = document.getElementById('channel') as HTMLSelectElement;
 const checkEl = document.getElementById('check') as HTMLButtonElement;
 
 let pendingUpdate: AppUpdateMetadata | null = null;
 
-function readStored(key: string): string {
+// ---- remembered backends ---------------------------------------------------
+
+function readRaw(key: string): string {
   try {
     return localStorage.getItem(key) ?? '';
   } catch {
@@ -52,12 +62,94 @@ function readStored(key: string): string {
   }
 }
 
-function writeStored(key: string, value: string): void {
+/** All remembered backends, most-recent first. Falls back to (and absorbs) the
+ *  pre-history single-slot keys so an upgrade keeps the user's last daemon. */
+function readConnections(): Connection[] {
+  let list: Connection[] = [];
   try {
-    localStorage.setItem(key, value);
+    const parsed = JSON.parse(readRaw(CONNECTIONS_KEY)) as unknown;
+    if (Array.isArray(parsed)) {
+      list = parsed
+        .filter((c): c is Connection =>
+          !!c && typeof (c as Connection).url === 'string' && typeof (c as Connection).token === 'string',
+        )
+        .map((c) => ({ url: c.url, token: c.token }));
+    }
   } catch {
-    /* private mode / storage disabled — connection still proceeds */
+    /* corrupt/empty — fall through to legacy migration */
   }
+  if (!list.length) {
+    const url = readRaw(LEGACY_URL_KEY);
+    const token = readRaw(LEGACY_TOKEN_KEY);
+    if (url && token) list = [{ url, token }];
+  }
+  return list;
+}
+
+function writeConnections(list: Connection[]): void {
+  try {
+    localStorage.setItem(CONNECTIONS_KEY, JSON.stringify(list.slice(0, MAX_CONNECTIONS)));
+  } catch {
+    /* private mode / storage disabled — connecting still works this session */
+  }
+}
+
+/** Promote a backend to the front of the list (deduped by origin). Called only
+ *  after a connection actually succeeds, so the list stays trustworthy. */
+function rememberConnection(url: string, token: string): void {
+  const next = [{ url, token }, ...readConnections().filter((c) => c.url !== url)];
+  writeConnections(next);
+}
+
+function forgetConnection(url: string): void {
+  writeConnections(readConnections().filter((c) => c.url !== url));
+}
+
+/** Compact host[:port] for a recent-connections row. */
+function displayHost(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.port ? `${u.hostname}:${u.port}` : u.hostname;
+  } catch {
+    return url;
+  }
+}
+
+function renderRecent(): void {
+  const list = readConnections();
+  recListEl.replaceChildren();
+  if (!list.length) {
+    recentEl.hidden = true;
+    return;
+  }
+  for (const conn of list) {
+    const li = document.createElement('li');
+
+    const use = document.createElement('button');
+    use.type = 'button';
+    use.className = 'recuse';
+    use.textContent = displayHost(conn.url);
+    use.addEventListener('click', () => {
+      urlEl.value = conn.url;
+      tokenEl.value = conn.token;
+      void connectRemote(conn.url, conn.token);
+    });
+
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'recdel';
+    del.setAttribute('aria-label', `Forget ${displayHost(conn.url)}`);
+    del.textContent = '×';
+    del.addEventListener('click', (event) => {
+      event.stopPropagation();
+      forgetConnection(conn.url);
+      renderRecent();
+    });
+
+    li.append(use, del);
+    recListEl.appendChild(li);
+  }
+  recentEl.hidden = false;
 }
 
 /** Resolve a promise to null if it rejects or outruns `ms` — a slow/failed
@@ -102,14 +194,15 @@ function showUpdateBanner(update: AppUpdateMetadata): void {
     // plainly — it's a channel switch, not an upgrade — and warn that Android
     // blocks installing a lower build over a higher one without a reinstall.
     updateMsgEl.textContent =
-      `Switch to ${update.channel} — ${update.currentVersion} → ${update.version} ` +
+      `Switch to ${update.channel}: ${update.currentVersion} → ${update.version} ` +
       `(older build; may need a reinstall).`;
     downloadEl.textContent = `Switch to ${update.channel}`;
   } else {
     updateMsgEl.textContent =
-      `Update available — ${update.currentVersion} → ${update.version} (${update.channel}).`;
+      `Update available: ${update.currentVersion} → ${update.version} (${update.channel}).`;
     downloadEl.textContent = 'Download update';
   }
+  updNoteEl.textContent = '';
   updateBarEl.hidden = false;
 }
 
@@ -126,7 +219,7 @@ async function runUpdateCheck(manual: boolean, switched = false): Promise<AppUpd
   const channel = savedUpdateChannel();
   if (manual) {
     checkEl.disabled = true;
-    detailEl.textContent = switched ? `Checking ${channel}…` : 'Checking for updates…';
+    updNoteEl.textContent = switched ? `Checking ${channel}…` : 'Checking for updates…';
   }
   // `switched` (the user flipped the channel) lets the check offer that
   // channel's build even when it's older than what's installed; routine checks
@@ -137,11 +230,10 @@ async function runUpdateCheck(manual: boolean, switched = false): Promise<AppUpd
 
   if (update) {
     showUpdateBanner(update);
-    if (manual) detailEl.textContent = '';
     return update;
   }
   hideUpdateBanner();
-  if (manual) detailEl.textContent = `No newer ${channel} build available.`;
+  updNoteEl.textContent = manual ? `No newer ${channel} build available.` : '';
   return null;
 }
 
@@ -165,8 +257,9 @@ function showRemoteForm(error?: string): void {
   retryEl.hidden = true;
   connectEl.disabled = false;
   detailEl.textContent = error ?? '';
+  renderRecent();
   if (supportsAppUpdateChecks()) {
-    updateControlsEl.hidden = false;
+    updatesEl.hidden = false;
     channelEl.value = savedUpdateChannel();
   }
 }
@@ -215,8 +308,7 @@ async function connectRemote(rawUrl: string, rawToken: string): Promise<void> {
   }
 
   const session = (await response.json()) as UiSessionResponse;
-  writeStored(URL_KEY, origin);
-  writeStored(TOKEN_KEY, token);
+  rememberConnection(origin, token);
   statusEl.textContent = 'Opening daemon UI.';
   window.location.assign(`${origin}${session.path}`);
 }
@@ -232,8 +324,10 @@ async function start(): Promise<void> {
   formEl.hidden = true;
   connectEl.hidden = true;
   retryEl.hidden = false;
-  updateControlsEl.hidden = true;
+  updatesEl.hidden = true;
+  recentEl.hidden = true;
   hideUpdateBanner();
+  updNoteEl.textContent = '';
   titleEl.textContent = 'Opening runtime';
   statusEl.textContent = 'Checking for the orgasmic CLI.';
   detailEl.textContent = '';
@@ -261,20 +355,23 @@ async function start(): Promise<void> {
   }
 
   // No local runtime (mobile, or a host without the CLI): connect to a remote
-  // daemon. Prefill from the last successful connection.
-  const savedUrl = readStored(URL_KEY);
-  const savedToken = readStored(TOKEN_KEY);
-  urlEl.value = savedUrl;
-  tokenEl.value = savedToken;
+  // daemon. Prefill from the most-recent backend and list the rest.
+  const connections = readConnections();
+  if (connections.length) {
+    urlEl.value = connections[0].url;
+    tokenEl.value = connections[0].token;
+  }
   showRemoteForm();
 
-  // Auto-check for an app update on launch. If one is found, surface it and let
-  // the user choose Download or Continue — do NOT auto-connect past the banner.
+  // Auto-check for an app update on launch. If one is found, surface it quietly
+  // and let the user choose Download or just Connect — don't auto-connect past it.
   const update = await runUpdateCheck(false);
   if (update) return;
 
-  if (savedUrl && savedToken) {
-    void connectRemote(savedUrl, savedToken);
+  // Fast path: one known backend → reconnect straight away. With several, show
+  // the picker and let the user choose which to open.
+  if (connections.length === 1) {
+    void connectRemote(connections[0].url, connections[0].token);
   }
 }
 
@@ -306,63 +403,58 @@ downloadEl.addEventListener('click', async () => {
   try {
     await installAppUpdate(pendingUpdate);
   } catch (err) {
-    detailEl.textContent = err instanceof Error ? err.message : String(err);
+    updNoteEl.textContent = err instanceof Error ? err.message : String(err);
   } finally {
     downloadEl.disabled = false;
-  }
-});
-
-dismissEl.addEventListener('click', () => {
-  hideUpdateBanner();
-  const url = urlEl.value;
-  const token = tokenEl.value;
-  if (normalizeDaemonOrigin(url) && token.trim()) {
-    void connectRemote(url, token);
   }
 });
 
 void start();
 
 const style = document.createElement('style');
-// Theme tokens mirror the daemon-served UI (src/styles.css): same Geist face,
-// teal-accented shadcn palette, and radius. The bootstrap webview is a separate
-// origin from the daemon UI, so it can't read the app's saved light/dark
-// preference — instead it follows the OS like the app's default `system` mode,
-// using the identical light + dark token values so the two screens match.
+// Theme tokens mirror the daemon-served UI's actual themes (src/styles.css):
+// `paper` (light) and `black-paper` (dark) — warm cream / warm dark-brown with
+// a faint grid, teal accent in light and tan accent in dark, same Geist face.
+// The bootstrap webview is a separate origin from the daemon UI, so it can't
+// read the app's saved theme preference — it follows the OS like the app's
+// default `system` mode, with the identical token values so the screens match.
 style.textContent = `
   :root {
     color-scheme: light dark;
-    --background: oklch(0.99 0 0);
-    --foreground: oklch(0.18 0 0);
-    --card: oklch(1 0 0);
-    --muted-foreground: oklch(0.45 0 0);
-    --primary: oklch(0.55 0.13 200);
-    --primary-foreground: oklch(0.99 0 0);
-    --secondary: oklch(0.97 0 0);
-    --secondary-foreground: oklch(0.205 0 0);
-    --accent: oklch(0.93 0.04 200);
-    --border: oklch(0.92 0 0);
-    --ring: oklch(0.55 0.13 200);
+    /* paper (light) — mirrors html[data-theme='paper'] */
+    --background: oklch(0.955 0.023 78);
+    --foreground: oklch(0.24 0.018 72);
+    --card: oklch(0.985 0.017 78 / 0.94);
+    --muted-foreground: oklch(0.45 0.016 76);
+    --primary: oklch(0.48 0.11 198);
+    --primary-foreground: oklch(0.99 0.014 78);
+    --secondary: oklch(0.91 0.022 78);
+    --secondary-foreground: oklch(0.27 0.018 76);
+    --accent: oklch(0.88 0.032 78);
+    --border: oklch(0.81 0.021 78);
+    --ring: oklch(0.48 0.11 198);
+    --grid-line: oklch(0.78 0.026 78 / 0.22);
     --radius: 0.5rem;
     --sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
     --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     font-family: var(--sans);
-    background: var(--background);
     color: var(--foreground);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --background: oklch(0.135 0 0);
-      --foreground: oklch(0.96 0 0);
-      --card: oklch(0.175 0 0);
-      --muted-foreground: oklch(0.68 0 0);
-      --primary: oklch(0.72 0.13 200);
-      --primary-foreground: oklch(0.135 0 0);
-      --secondary: oklch(0.25 0 0);
-      --secondary-foreground: oklch(0.96 0 0);
-      --accent: oklch(0.27 0.04 200);
-      --border: oklch(0.27 0 0);
-      --ring: oklch(0.72 0.13 200);
+      /* black-paper (dark) — mirrors html[data-theme='black-paper'] */
+      --background: #160d08;
+      --foreground: #e8dcd4;
+      --card: #21140c;
+      --muted-foreground: rgb(232 220 212 / 0.68);
+      --primary: #966d4f;
+      --primary-foreground: #160d08;
+      --secondary: #2a1a10;
+      --secondary-foreground: #e8dcd4;
+      --accent: #ba977d;
+      --border: rgb(232 220 212 / 0.18);
+      --ring: #ba977d;
+      --grid-line: rgb(186 151 125 / 0.08);
     }
   }
   * {
@@ -370,13 +462,18 @@ style.textContent = `
   }
   body {
     margin: 0;
+    background-color: var(--background);
   }
   .runtime-shell {
     min-height: 100vh;
     display: grid;
     place-items: center;
     padding: 1.5rem;
-    box-sizing: border-box;
+    background-color: var(--background);
+    background-image:
+      linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
+    background-size: 18px 18px;
   }
   .runtime-panel {
     width: min(30rem, calc(100vw - 3rem));
@@ -404,17 +501,47 @@ style.textContent = `
     color: var(--muted-foreground);
     line-height: 1.45;
   }
-  #updatebar {
+  /* recent connections — tap a row to reconnect, × to forget */
+  #recent {
     display: grid;
-    gap: 0.6rem;
-    border: 1px solid var(--border);
-    background: var(--accent);
-    border-radius: var(--radius);
-    padding: 0.85rem;
+    gap: 0.45rem;
   }
-  #updatemsg {
+  .reclabel {
+    font-size: 0.8rem;
+    font-weight: 600;
     color: var(--foreground);
-    font-size: 0.9rem;
+  }
+  #reclist {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 0.4rem;
+  }
+  #reclist li {
+    display: flex;
+    gap: 0.4rem;
+  }
+  .recuse {
+    flex: 1;
+    text-align: left;
+    font: 0.9rem/1.3 var(--mono);
+    border: 1px solid var(--border);
+    background: var(--secondary);
+    color: var(--secondary-foreground);
+    border-radius: calc(var(--radius) - 0.125rem);
+    padding: 0.55rem 0.7rem;
+    cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .recdel {
+    flex: 0 0 auto;
+    width: 2.4rem;
+    font-size: 1.1rem;
+    line-height: 1;
+    color: var(--muted-foreground);
   }
   #remote {
     display: grid;
@@ -432,7 +559,6 @@ style.textContent = `
   input,
   select {
     width: 100%;
-    box-sizing: border-box;
     border: 1px solid var(--border);
     background: var(--background);
     color: var(--foreground);
@@ -449,28 +575,38 @@ style.textContent = `
     outline-offset: -1px;
     border-color: var(--ring);
   }
-  .updcontrols {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 0.6rem;
+  /* collapsed, platform-neutral setup help */
+  .help {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--background);
   }
-  .chan {
-    display: grid;
-    gap: 0.35rem;
-    flex: 1;
-  }
-  .chan > span {
+  .help > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 0.55rem 0.7rem;
     font-size: 0.8rem;
     font-weight: 600;
     color: var(--foreground);
   }
-  .updcontrols button {
-    white-space: nowrap;
+  .help > summary::-webkit-details-marker {
+    display: none;
   }
-  .hint {
-    font-size: 0.78rem;
+  .help > summary::before {
+    content: '＋ ';
     color: var(--muted-foreground);
+  }
+  .help[open] > summary::before {
+    content: '－ ';
+  }
+  .helpbody {
+    display: grid;
+    gap: 0.5rem;
+    padding: 0 0.7rem 0.7rem;
+  }
+  .helpbody p {
+    font-size: 0.78rem;
+    line-height: 1.5;
   }
   code {
     font: 0.82em var(--mono);
@@ -514,6 +650,62 @@ style.textContent = `
   button:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+  /* updates — a quiet footer, divided off from the connect flow */
+  .updates {
+    display: grid;
+    gap: 0.6rem;
+    margin-top: 0.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .updrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.6rem;
+  }
+  .chan {
+    display: grid;
+    gap: 0.35rem;
+    flex: 1;
+  }
+  .chan > span {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--muted-foreground);
+  }
+  .ghost {
+    white-space: nowrap;
+    background: transparent;
+  }
+  #updatebar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--secondary);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.8rem;
+  }
+  #updatemsg {
+    flex: 1;
+    min-width: 12rem;
+    color: var(--foreground);
+    font-size: 0.85rem;
+  }
+  #updatebar #download {
+    padding: 0.45rem 0.8rem;
+    font-size: 0.85rem;
+  }
+  .updnote {
+    font-size: 0.78rem;
+    color: var(--muted-foreground);
+  }
+  .updnote:empty {
+    display: none;
   }
 `;
 document.head.appendChild(style);
