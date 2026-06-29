@@ -326,7 +326,18 @@ export function AppShell() {
           </SidebarFooter>
         </Sidebar>
         <SidebarInset>
-          <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b bg-background/85 px-3 backdrop-blur">
+          <header
+            className="sticky top-0 z-10 flex items-center gap-2 border-b bg-background/85 backdrop-blur"
+            style={{
+              // Edge-to-edge on Android: keep the bar clear of the status bar
+              // (and a side notch in landscape) while its background still
+              // bleeds up under the bar. No-op off-Android (insets resolve 0).
+              minHeight: 'calc(3.5rem + var(--safe-top))',
+              paddingTop: 'var(--safe-top)',
+              paddingLeft: 'calc(0.75rem + var(--safe-left))',
+              paddingRight: 'calc(0.75rem + var(--safe-right))',
+            }}
+          >
             <SidebarTrigger className="shrink-0" />
             <ProjectTabs />
             <div className="ml-auto flex shrink-0 items-center gap-1.5">

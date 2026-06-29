@@ -353,8 +353,20 @@ export function RunDock() {
       tabIndex={-1}
       className={cn(
         'fixed inset-x-0 bottom-0 z-30 overscroll-contain border-t bg-background shadow-lg transition-[height] duration-200',
+        // Edge-to-edge on Android: the safe-area padding below keeps controls
+        // clear of the navigation bar while the dock background still fills down
+        // to the screen edge. For the partial-height sizes box-content grows the
+        // panel by the inset (content stays uncropped); full-screen focus mode
+        // keeps border-box so it pads inward within the viewport. No-op off-Android.
+        size === 'focus' ? 'box-border' : 'box-content',
         heightClass(size, peekWindowed),
       )}
+      style={{
+        paddingBottom: 'var(--safe-bottom)',
+        paddingLeft: 'var(--safe-left)',
+        paddingRight: 'var(--safe-right)',
+        ...(size === 'focus' ? { paddingTop: 'var(--safe-top)' } : null),
+      }}
       role={size === 'focus' ? 'dialog' : undefined}
       aria-modal={size === 'focus' ? true : undefined}
       aria-label="Run Dock"

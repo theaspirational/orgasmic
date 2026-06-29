@@ -10,6 +10,10 @@ import {
   type AppUpdateMetadata,
   type UpdateChannel,
 } from '@/lib/appUpdate';
+import { initAndroidInsets } from '@/lib/androidInsets';
+
+// Mirror the Android shell's window insets onto --sai-* before anything renders.
+initAndroidInsets();
 
 type RuntimeProbe = {
   cliPath?: string | null;
@@ -421,6 +425,12 @@ const style = document.createElement('style');
 style.textContent = `
   :root {
     color-scheme: light dark;
+    /* Safe-area insets — see lib/androidInsets.ts. The shell webview is a
+       separate origin from the daemon UI, so it carries its own copy. */
+    --safe-top: max(env(safe-area-inset-top, 0px), var(--sai-top, 0px));
+    --safe-right: max(env(safe-area-inset-right, 0px), var(--sai-right, 0px));
+    --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--sai-bottom, 0px));
+    --safe-left: max(env(safe-area-inset-left, 0px), var(--sai-left, 0px));
     /* paper (light) — mirrors html[data-theme='paper'] */
     --background: oklch(0.955 0.023 78);
     --foreground: oklch(0.24 0.018 72);
@@ -468,7 +478,8 @@ style.textContent = `
     min-height: 100vh;
     display: grid;
     place-items: center;
-    padding: 1.5rem;
+    padding: calc(1.5rem + var(--safe-top)) calc(1.5rem + var(--safe-right))
+      calc(1.5rem + var(--safe-bottom)) calc(1.5rem + var(--safe-left));
     background-color: var(--background);
     background-image:
       linear-gradient(to right, var(--grid-line) 1px, transparent 1px),

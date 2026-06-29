@@ -59,6 +59,26 @@
   --sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
 }
 
+/* Safe-area insets. The Android shell runs the WebView edge-to-edge (it draws
+   under the status/navigation bars), so the chrome must inset itself. The
+   native shell pushes the real system-bar + display-cutout insets into
+   --sai-* (in CSS px); everywhere else they stay unset and we fall back to the
+   CSS env() values — non-zero on iOS/notched browsers, 0 on desktop. */
+:root {
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--sai-top, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--sai-right, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--sai-bottom, 0px));
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--sai-left, 0px));
+}
+
+/* The mobile sidebar is a left-edge sheet that spans the full height, so its
+   wordmark and footer would sit under the status/navigation bars. Inset it. */
+[data-slot='sidebar'][data-mobile='true'] {
+  padding-top: var(--safe-top);
+  padding-bottom: var(--safe-bottom);
+  padding-left: var(--safe-left);
+}
+
 * {
   box-sizing: border-box;
 }
