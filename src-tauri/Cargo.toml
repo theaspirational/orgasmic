@@ -29,6 +29,7 @@ url = "2"
 # Reuses the rustls stack already pulled in by tauri-plugin-updater (no native-tls);
 # used by check_android_update to fetch the sideload manifest in-process (no CORS).
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+tauri-plugin-opener = "2.5.4"
 
 # Android: reqwest's rustls stack (shared with tauri + tauri-plugin-updater) uses
 # rustls-platform-verifier for certificate validation, which MUST be handed the

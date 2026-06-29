@@ -1,6 +1,6 @@
 import { getVersion } from '@tauri-apps/api/app';
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { open } from '@tauri-apps/plugin-shell';
+import { openUrl } from '@tauri-apps/plugin-opener';
 
 export const UPDATE_CHANNELS = ['stable', 'nightly'] as const;
 export const UPDATE_CHANNEL_STORAGE_KEY = 'orgasmic:update-channel';
@@ -70,7 +70,9 @@ export async function checkAppUpdate(
 export async function installAppUpdate(update?: AppUpdateMetadata | null): Promise<void> {
   if (update?.platform === 'android-sideload') {
     if (!update.downloadUrl) throw new Error('Android update has no APK download URL');
-    await open(update.downloadUrl);
+    // Hand the signed APK URL to the system browser via an ACTION_VIEW intent
+    // (the opener plugin). It downloads the APK; the user taps it to install.
+    await openUrl(update.downloadUrl);
     return;
   }
 

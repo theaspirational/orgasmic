@@ -12,6 +12,7 @@
     "process:allow-restart",
     "updater:default",
     "shell:allow-open",
+    "opener:default",
     "allow-runtime-probe",
     "allow-runtime-launch-url",
     "allow-local-backend-profile",

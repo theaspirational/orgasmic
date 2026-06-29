@@ -326,6 +326,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
+        // Opens external URLs via the platform's default app. On Android this
+        // fires an ACTION_VIEW intent (the shell plugin's `open` instead tries
+        // to spawn a desktop opener binary and fails with ENOENT), so the
+        // sideload APK download must go through this plugin.
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(PendingAppUpdate(Mutex::new(None)))
         .setup(|_app| {
