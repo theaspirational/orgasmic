@@ -17333,3 +17333,16 @@
 :REASON:       edited decision node dec_2GQ7Q
 :NODE_ID:      dec_2GQ7Q
 :END:
+
+
+* TX 2026-06-29 Mon 19:22:45 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260629-orgasmic-1126
+:TIME:         [2026-06-29 Mon 19:22:45]
+:TYPE:         manager.action
+:ACTOR:        manager-implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Android launch: replace immediate single-remote auto-connect with a 3s cancellable countdown so the user can pick a different remote. ui/bootstrap.html adds an #autoconnect banner (msg + Cancel); ui/src/bootstrap.ts adds scheduleAutoConnect/cancelAutoConnect, cancels on Cancel/recent-row/Connect/form-edit, resets on retry, preserves the update-check gate. typecheck + build:bootstrap green.
+:files:        ui/bootstrap.html,ui/src/bootstrap.ts
+:END:

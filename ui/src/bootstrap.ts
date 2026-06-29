@@ -35,6 +35,9 @@ const LEGACY_URL_KEY = 'orgasmic:remote:url';
 const LEGACY_TOKEN_KEY = 'orgasmic:remote:token';
 const MAX_CONNECTIONS = 6;
 const UPDATE_CHECK_TIMEOUT_MS = 3500;
+// Seconds the launch screen counts down before reconnecting to the last backend.
+// Long enough to read the host and cancel; short enough not to feel like a stall.
+const AUTO_CONNECT_SECONDS = 3;
 
 const titleEl = document.getElementById('title') as HTMLHeadingElement;
 const statusEl = document.getElementById('status') as HTMLParagraphElement;
@@ -46,6 +49,9 @@ const urlEl = document.getElementById('url') as HTMLInputElement;
 const tokenEl = document.getElementById('token') as HTMLInputElement;
 const recentEl = document.getElementById('recent') as HTMLDivElement;
 const recListEl = document.getElementById('reclist') as HTMLUListElement;
+const autoconnectEl = document.getElementById('autoconnect') as HTMLDivElement;
+const autoconnectMsgEl = document.getElementById('autoconnectmsg') as HTMLParagraphElement;
+const cancelAutoEl = document.getElementById('cancelauto') as HTMLButtonElement;
 const updatesEl = document.getElementById('updates') as HTMLElement;
 const updateBarEl = document.getElementById('updatebar') as HTMLDivElement;
 const updateMsgEl = document.getElementById('updatemsg') as HTMLParagraphElement;
@@ -55,6 +61,7 @@ const channelEl = document.getElementById('channel') as HTMLSelectElement;
 const checkEl = document.getElementById('check') as HTMLButtonElement;
 
 let pendingUpdate: AppUpdateMetadata | null = null;
+let autoConnectTimer: number | null = null;
 
 // ---- remembered backends ---------------------------------------------------
 
@@ -268,7 +275,41 @@ function showRemoteForm(error?: string): void {
   }
 }
 
+/** Stop a running auto-connect countdown and clear its banner. Idempotent, so
+ *  it's safe to call from any path that supersedes the countdown. */
+function cancelAutoConnect(): void {
+  if (autoConnectTimer !== null) {
+    window.clearInterval(autoConnectTimer);
+    autoConnectTimer = null;
+  }
+  autoconnectEl.hidden = true;
+}
+
+/** Reconnect to a remembered backend after a short, cancellable countdown, so a
+ *  launch never strands the user on a remote they didn't choose. Cancel, a
+ *  recent row, Connect, or editing the form all stop it (the recent/Connect/
+ *  submit paths route through connectRemote, which cancels first). */
+function scheduleAutoConnect(conn: Connection): void {
+  let remaining = AUTO_CONNECT_SECONDS;
+  const host = displayHost(conn.url);
+  const tick = (): void => {
+    if (remaining <= 0) {
+      cancelAutoConnect();
+      void connectRemote(conn.url, conn.token);
+      return;
+    }
+    autoconnectMsgEl.textContent = `Connecting to ${host} in ${remaining}s…`;
+    remaining -= 1;
+  };
+  autoconnectEl.hidden = false;
+  tick(); // render "in 3s…" immediately, then count down once a second
+  autoConnectTimer = window.setInterval(tick, 1000);
+}
+
 async function connectRemote(rawUrl: string, rawToken: string): Promise<void> {
+  // A manual connect (recent row, Connect, form submit) supersedes any pending
+  // countdown — clear it so the two can't race into a double navigation.
+  cancelAutoConnect();
   const origin = normalizeDaemonOrigin(rawUrl);
   const token = rawToken.trim();
   if (!origin) {
@@ -330,6 +371,7 @@ async function start(): Promise<void> {
   retryEl.hidden = false;
   updatesEl.hidden = true;
   recentEl.hidden = true;
+  cancelAutoConnect();
   hideUpdateBanner();
   updNoteEl.textContent = '';
   titleEl.textContent = 'Opening runtime';
@@ -372,10 +414,11 @@ async function start(): Promise<void> {
   const update = await runUpdateCheck(false);
   if (update) return;
 
-  // Fast path: one known backend → reconnect straight away. With several, show
-  // the picker and let the user choose which to open.
+  // Fast path: one known backend → reconnect after a short, cancellable
+  // countdown so the user can intervene and pick a different remote. With
+  // several, show the picker and let them choose which to open.
   if (connections.length === 1) {
-    void connectRemote(connections[0].url, connections[0].token);
+    scheduleAutoConnect(connections[0]);
   }
 }
 
@@ -385,6 +428,12 @@ formEl.addEventListener('submit', (event) => {
 });
 
 connectEl.addEventListener('click', connectFromInputs);
+
+cancelAutoEl.addEventListener('click', cancelAutoConnect);
+
+// Editing the form means the user wants a different remote — stop the count.
+urlEl.addEventListener('input', cancelAutoConnect);
+tokenEl.addEventListener('input', cancelAutoConnect);
 
 retryEl.addEventListener('click', () => {
   void start();
@@ -511,6 +560,29 @@ style.textContent = `
     margin: 0;
     color: var(--muted-foreground);
     line-height: 1.45;
+  }
+  /* auto-connect countdown — a cancellable pre-connect to the last backend */
+  #autoconnect {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    border: 1px solid var(--border);
+    background: var(--secondary);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.8rem;
+  }
+  #autoconnectmsg {
+    flex: 1;
+    min-width: 12rem;
+    margin: 0;
+    color: var(--foreground);
+    font-size: 0.9rem;
+  }
+  #autoconnect #cancelauto {
+    padding: 0.45rem 0.9rem;
+    font-size: 0.85rem;
   }
   /* recent connections — tap a row to reconnect, × to forget */
   #recent {
