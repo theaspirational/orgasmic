@@ -2,12 +2,37 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Ship the editable cross-layer Graph page (layout overlay + retained superseded decisions) :goal:
+* GOAL Cut the Graph page; ship the artifact review loop as the framework's visual surface :goal:
+:PROPERTIES:
+:ID:               goal-20260703-cut-the-graph
+:SET_AT:           [2026-07-03 Fri]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         goal-20260615-ship-the-editable
+:END:
+
+** Statement
+Execute in order, one task in flight at a time, per the manager-dispatch convention: implementer-claude-rmux for each task, manager diff review at integration, then a reviewer-claude-rmux pass.
+
+1. TASK-M6146 - excise the Graph page viewer per dec_ZG9B9 (supersedes dec_WWAHT). Manager revises arch_M8JQT at integration via daemon verbs.
+2. TASK-ZEFEY - artifact store: schema, tx types, index projection, CLI verbs (arch_ARSPJ).
+3. TASK-2ZQSB - artifactor worker kind, prompt spec, generation launch path (arch_045Q0). After ZEFEY.
+4. TASK-T25XQ - port the plan block renderer; ArtifactView + Artifacts pages (arch_A3NSW). After 2ZQSB.
+5. TASK-DJGM5 - member identity, /login, pinned named comments (dec_N9HW0). After T25XQ.
+6. TASK-EDQPG - regeneration loop: version archive, comment consumption, lock, version browser (dec_V44E4). After DJGM5.
+
+Sequential throughout - the artifact tasks stack daemon writer/index/UI scopes. A broader first-feature cut-list audit is out of scope unless the operator adds it.
+
+** Reached When
+TASK-M6146 is DONE with gates green, arch_M8JQT revised (no graph-page claims, drift scanner clean). TASK-ZEFEY, TASK-2ZQSB, TASK-T25XQ, TASK-DJGM5, TASK-EDQPG are DONE with per-task gates and reviewer-claude-rmux passes. The TASK-EDQPG two-member smoke passes end to end: editor generates an artifact on a real node, viewer pins named comments, regenerate archives v1 with consumed comments and renders v2 clean, version switcher browses v1 with its thread, tx log tells the story in order. orgasmic status reports parse_errors 0.
+
+* SUPERSEDED Ship the editable cross-layer Graph page (layout overlay + retained superseded decisions) :goal:
 :PROPERTIES:
 :ID:               goal-20260615-ship-the-editable
 :SET_AT:           [2026-06-15 Mon]
 :SET_BY:           theaspirational
 :REPLACES:         —
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-07-03 Fri]
 :END:
 
 ** Statement

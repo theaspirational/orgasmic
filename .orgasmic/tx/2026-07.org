@@ -485,3 +485,160 @@
 :REASON:       reparent decision node dec_JBWB9
 :NODE_ID:      dec_JBWB9
 :END:
+
+* TX 2026-07-03 Fri 18:29:27 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1165
+:TIME:         [2026-07-03 Fri 18:29:27]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_ZG9B9
+:NODE_ID:      dec_ZG9B9
+:END:
+
+* TX 2026-07-03 Fri 18:29:42 task.created TASK-M6146
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1166
+:TIME:         [2026-07-03 Fri 18:29:42]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-M6146
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Operator direction 2026-07-03: cut non-essential first features, ship hardened core; Graph page replaced by the dec_GPV4G artifact surface
+:END:
+
+* TX 2026-07-03 Fri 18:29:56 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1167
+:TIME:         [2026-07-03 Fri 18:29:56]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       Operator direction 2026-07-03 after graph-goal review
+:GOAL_ID:      goal-20260703-cut-the-graph
+:REPLACES:     goal-20260615-ship-the-editable
+:END:
+
+* TX 2026-07-03 Fri 18:30:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1168
+:TIME:         [2026-07-03 Fri 18:30:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:30:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1169
+:TIME:         [2026-07-03 Fri 18:30:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:30:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1170
+:TIME:         [2026-07-03 Fri 18:30:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:30:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1171
+:TIME:         [2026-07-03 Fri 18:30:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:31:02 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1172
+:TIME:         [2026-07-03 Fri 18:31:02]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:31:02 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1173
+:TIME:         [2026-07-03 Fri 18:31:02]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:31:02 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1174
+:TIME:         [2026-07-03 Fri 18:31:02]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:31:02 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1175
+:TIME:         [2026-07-03 Fri 18:31:02]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 18:31:02 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1176
+:TIME:         [2026-07-03 Fri 18:31:02]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

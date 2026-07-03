@@ -84,3 +84,22 @@ Acceptance: two browsers, two members (one editor, one viewer) minted via CLI, b
 Close the loop end to end: Regenerate button (admin/editor) with optional extra-prompt field -> POST /artifacts/:id/regenerate archives the closing version (versions/vN.mdx + its comments marked consumed) and launches the artifactor with prior artifact + all current-version comments (authors, resolution state, anchors) + extra prompt in context; artifact regenerating state locks the comment box with a banner in every open browser (WS); on submit, the new version renders with a clean comment surface. Version switcher in ArtifactView browses archived versions together with their comment threads. artifact.regenerated tx entries complete the audit trail.
 
 Acceptance (full two-member smoke, per the feature verification): editor generates a visual-plan artifact on a task node; viewer pins comments; editor presses Regenerate with an extra prompt; commenting locks live in the viewer's browser; when the run completes, versions/v1.mdx exists with the viewer's comment archived+consumed, v2 renders clean, the version switcher shows v1 with its thread, and the tx log tells the whole story in order.
+
+* BACKLOG TASK-M6146 Excise the Graph page viewer (UI, /graph/layout, overlay, curator spec)    :ui:daemon:cleanup:
+:PROPERTIES:
+:ID: TASK-M6146
+:IMPLEMENTS: arch_M8JQT
+:MOTIVATED_BY: dec_ZG9B9
+:END:
+
+Remove the Graph page viewer per dec_ZG9B9 while keeping the graph data model whole.
+
+Remove: ui/src/components/GraphView.tsx; ui/src/components/node-views/NodeGraph.tsx; ui/src/components/__tests__/buildFlowGraph.test.ts; graphRoute + its lazy import in ui/src/app/router.tsx; the Graph nav entry and 'graph' ViewName in ui/src/components/AppShell.tsx; fetchGraphNodes/fetchGraphEdges/fetchGraphLayout/patchGraphLayout in ui/src/lib/api.ts plus any layout/flow types in ui/src/lib/types.ts that become unused; @xyflow/react from ui/package.json; get_graph_layout/patch_graph_layout handlers and the /graph/layout route in crates/orgasmic-daemon/src/api.rs; parse_graph_layout_overlay + its GraphLayoutEntry schema type in crates/orgasmic-core/src/schema.rs and the lib.rs re-export; shipped/prompt-studio/prompt-specs/graph_curator.org; the .orgasmic/graph_layout.org seed file.
+
+Keep untouched: GraphIndex and all index projections; /graph/nodes, /graph/edges, /graph/parse-errors, /graph/markers; the dec_KTF04 superseded-flag machinery and the DecisionsView show-superseded toggle; the 'graph' WS topic refresh path in AppShell.
+
+Manager at integration (not implementer scope): revise arch_M8JQT drawer/body via daemon verbs to drop graph-page INTERFACE/CONSTRAINTS claims (reference-page claims stay); confirm the drift scanner and parse-errors channel are clean.
+
+Gates: cd ui && npm run typecheck && npm test; cargo test -p orgasmic-daemon; cargo clippy --all-targets -- -D warnings; fmt clean on touched files.
+
+Acceptance: UI typechecks, tests pass, and builds with no /graph/layout caller and no React Flow dependency; daemon suite green with /graph/nodes, /graph/edges, /graph/parse-errors, /graph/markers behavior unchanged and no /graph/layout route; DecisionsView show-superseded toggle still works; orgasmic status reports parse_errors 0.

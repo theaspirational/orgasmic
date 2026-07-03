@@ -1810,3 +1810,15 @@ The artifactor worker gets *full repo read access like an implementer*, plus the
 - Spend is bounded by the role gate (admin/editor) and the human trigger, not by starving the worker of context.
 - A malformed generation cannot corrupt the store: the validation gate rejects it before the writer sees it.
 - The worker cannot exfiltrate write access: read-everything, submit-only.
+
+* dec_ZG9B9 Does the interactive Graph page belong in the hardened framework core?
+:PROPERTIES:
+:ID: dec_ZG9B9
+:SUPERSEDES: dec_WWAHT
+:END:
+
+Context: The cross-layer Graph page shipped complete under goal-20260615-ship-the-editable (GraphView + NodeGraph canvas, /graph/layout overlay endpoint, three-tier layout precedence, curation toggles, graph_curator spec). Operator review judged the interactive canvas weak on looks, UX, and utility for what it absorbs. The shared overlay never accumulated a published layout (graph_layout.org stayed at its 52-byte seed) - evidence the hand-curation loop goes unused in practice. Operator focus is now cutting non-essential first features to ship the hardened core as a framework. The artifact chain (dec_GPV4G one artifact noun, dec_N9HW0 member identity, dec_V44E4 comment/regeneration loop, dec_JBWB9 worker contract; arch_ARSPJ store, arch_045Q0 pipeline, arch_A3NSW review UI; TASK-ZEFEY/TASK-2ZQSB/TASK-T25XQ/TASK-DJGM5/TASK-EDQPG) already designs the replacement surface: agent-generated MDX visual documents over recorded node sets, with named team comments and human-triggered regeneration.
+
+Decision: Remove the Graph page viewer while keeping the graph data model whole. Excise GraphView.tsx + node-views/NodeGraph.tsx (the app's only React Flow usage) with their route, nav entry, api functions, and tests; the /graph/layout GET/PATCH endpoints; parse_graph_layout_overlay + .orgasmic/graph_layout.org; and the graph_curator prompt spec. Cross-layer visibility becomes an artifact concern per dec_GPV4G - diagram blocks over curated subgraphs, commented and regenerated, instead of a live pan-zoom canvas. Keep GraphIndex, /graph/nodes, /graph/edges, /graph/parse-errors, /graph/markers, and the dec_KTF04 superseded machinery: they serve the framework core and the artifactor's graph-neighborhood context.
+
+Consequences: dec_WWAHT (layout-overlay persistence) is superseded - moot without the page. dec_KTF04's surface note (only the Graph page surfaces superseded decisions, grayed) is amended in effect: superseded decisions surface through the DecisionsView show-superseded toggle; the retention model is untouched. No data or write-authority loss (page topology was read-only). @xyflow/react drops from ui dependencies. arch_M8JQT sheds its graph-page INTERFACE/CONSTRAINTS claims at excision so architecture drift stays clean. The one real loss is a live always-current topology view; artifacts are regenerate-on-demand snapshots - accepted for the framework core, and the page can return later without schema work since every projection it consumed remains.

@@ -5,36 +5,30 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:GOAL_ID:          goal-20260615-ship-the-editable
-:LIVENESS:         06d09568396cf31a2734e12271485fb956702cdd
-:LIVENESS_AT:      [2026-06-22 Mon]
-:UPDATED_AT:       [2026-06-22 Mon]
+:GOAL_ID:          goal-20260703-cut-the-graph
+:LIVENESS:         ad380439b69e8f53f9f55457ec316d8071d36798
+:LIVENESS_AT:      [2026-07-03 Fri]
+:UPDATED_AT:       [2026-07-03 Fri]
 :END:
 
-Manager-owned snapshot at Graph-page goal completion. Goal goal-20260615-ship-the-editable is REACHED at the code level: all 5 queued tasks DONE (+ a bonus concurrency fix), gates green, parse_errors 0. The one remaining step is operator-dependent: restart/rebuild the :4848 daemon to activate the new endpoints and visually verify the Graph page. Use task Evidence, decisions.org, tx logs, and git for detail.
+Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal goal-20260615-ship-the-editable was REACHED (operator reviewed the live Graph page 2026-07-03) and immediately superseded by operator direction: the interactive canvas is judged weak on looks/UX/utility, so cut it (dec_ZG9B9) and ship the dec_GPV4G artifact review loop as the framework's visual surface instead. Use task Evidence, decisions.org, tx logs, and git for detail.
 
 ** Done so far
-- TASK-8BRYP (1/5) DONE - superseded flag on /decisions + /graph/nodes; DecisionsView hide-by-default toggle (b9b30e6 + bf204bd).
-- TASK-AQMTA (2/5) DONE - /graph/layout overlay endpoint (0e5b21e); concurrency hardened by TASK-3VEM8 (atomic RMW in the writer + node_id validation + curation symmetry, 8-round concurrent test; 4334bbf).
-- TASK-JH9DD (3/5) DONE - cross-layer Graph page: new GraphView + generalized NodeGraph, deterministic band layout (superseded gray -> decisions -> architecture -> tasks; glossary left column), curation toggles, backbone-on/dense-off edge layers, route + sidebar nav (31c950d + 63a0bde fail-soft/anchors/toggle).
-- TASK-CKRYB (4/5) DONE - three-tier precedence (localStorage > shared overlay > default), persist-on-drag (localStorage only), publish (only write-to-shared), two-level reset, shared-map-updated nudge (d46a18f + 126c5ac int-coords/baseline/tests). 79 UI tests pass incl. 6 buildFlowGraph cases.
-- TASK-G7BCJ (5/5) DONE - graph_curator prompt-spec (overlay-scoped, topology read-only) + stripped stale architector layout-hint wording (5e0a357). prompt compile/lint clean.
-- Each implementation task: manager diff review + reviewer-claude-rmux (opus-4-8) pass; the AQMTA reviewer caught a real lost-update bug, fixed in 3VEM8.
-- dec_B4147 release pipeline (TASK-32R7Z, operator-directed outside the graph goal) DONE: split into two manual lines — runtime/CLI built locally via scripts/publish-runtime.sh to the stable release (darwin x2 signed + linux x2 zigbuild, merged manifest preserving windows), apps to a separate dispatch-only apps release; dropped all v* triggers, deleted release-runtime.yml, reverted v0.0.5 app bumps to 0.0.4. Published runtime 0.0.5 to stable at commit 06d09568. Commits 29723d5/08d2e95/06d0956.
-- TASK-38RK6 (cleanup, operator pre-authorized) DONE: deleted git tags v0.0.1-v0.0.5 (local+remote); purged all 50 runtime-* Actions artifacts (~389MB, total now 0); retention-days:1 live in runtime-bundles.yml. stable/nightly releases left intact.
+- Reconciled operator span 06d0956..ad38043 (44 commits outside manager sessions, 2026-06-22..07-01): dec_B4147 amendments 2-7 land fully local-first publishing (publish-runtime.sh + publish-apps.sh incl. --channel nightly, version-less assets, runtime retain-current+1 pruning, apps-stable tag namespace, unified Android versionCode); runtime 0.0.7 and apps 0.0.6 shipped, 0.0.8/0.0.7 dev lines open. Android remote-daemon connect + in-app update check (dec_PVDP3, 169d60f) with rustls/insets/APK-opener/countdown fixes. Nested decisions M2 :PARENT: tree merged (arch_Q1JVD, TASK-2DFTX; 423b267/dc3a8ad). CLI bearer auth for external daemons + stale-token auto-repair (b66ab8a/b6734d2). acp-ws codex appserver worker dropped, reviewer moved to acp-stdio (9d47627).
+- Goal pivot recorded [2026-07-03 Fri]: dec_ZG9B9 (excise the Graph page viewer; supersedes dec_WWAHT) created; TASK-M6146 filed (IMPLEMENTS arch_M8JQT, MOTIVATED_BY dec_ZG9B9); goal-20260703-cut-the-graph set (manager.set_goal tx-20260703-orgasmic-1167). No code changes yet.
 
 ** Next likely actions
-- Graph goal goal-20260615-ship-the-editable remains code-complete; dec_B4147 release work is also done. Await operator direction for the next goal.
-- Optional follow-ups (not started): (1) dispatch runtime-bundles.yml with only=windows-x86_64 to refresh the Windows runtime on stable via the new merge-not-clobber path; (2) remove the stale app assets (latest.json/orgasmic.app.tar.gz/dmg/apk/android-latest.json) left on the stable release by the old coupled flow now that apps target the apps release; (3) update the local daemon (currently runtime 0.0.3) to the freshly published 0.0.5.
+- Dispatch TASK-M6146 (Graph-page excision per dec_ZG9B9) via implementer-claude-rmux per manager-dispatch; manager diff review + arch_M8JQT revision via daemon verbs at integration, then reviewer-claude-rmux pass.
+- Then the artifact queue, sequential: TASK-ZEFEY -> TASK-2ZQSB -> TASK-T25XQ -> TASK-DJGM5 -> TASK-EDQPG.
+- Optional (operator to confirm scope first): broader first-feature cut-list audit beyond the Graph page.
 
 ** In flight
-- Nothing in flight. todo/in_progress/in_review empty; no open dispatch.
+- Nothing in flight. todo/in_progress/in_review empty; no open dispatch; no extra worktrees.
 
 ** Divergence / Risks
-- RESTART POLICY CHANGED (2026-06-16): the "never restart the daemon from a manager session" restriction was lifted at operator direction and TASK-E18NC landed the recovery-aware replacement. Use shipped/prompt-studio/conventions/daemon-rebuild-restart-policy.org for the correct local-source rebuild/restart flow and post-restart recovery checks.
-- PRE-EXISTING RED TEST (candidate follow-up): crates/orgasmic-daemon/tests/integration.rs:799 skill_routes_include_shipped_and_user_markdown_skills fails on clean main; out of scope for the graph goal.
-- TOOLING NIT: dispatching a reviewer (kind reviewer) on an IN_REVIEW task flips the heading to IN_PROGRESS; worked around at each close.
+- Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.
+- Prior optional release follow-ups (Windows runtime refresh, stale stable app assets) may be moot after the operator's release-pipeline overhaul; reconfirm against the live releases before acting.
+- TASK-M6146 removes code shipped by the just-reached goal. If the operator reverses the cut, stop before dispatch; after merge, restoration means reverting the excision commit (state nodes are retained either way per dec_KTF04).
+- RESTART POLICY: use shipped/prompt-studio/conventions/daemon-rebuild-restart-policy.org (restriction lifted 2026-06-16, TASK-E18NC).
+- TOOLING NIT: dispatching a reviewer on an IN_REVIEW task flips the heading to IN_PROGRESS; work around at each close.
 - Standing: dec_035A0 babysitter policy unchanged; avoid stashing/replacing live .orgasmic state while the daemon runs.
-- The drift scanner now reads shell sources and '# arch:' markers (architecture_drift.rs); arch_WZFAX.3 is the publish-pipeline leaf. Pre-existing drift remains for arch_MK2Q2.4/.5 (ProjectSelector/ManagerPopover components deleted) — unrelated UI debt, separate cleanup.
-- Pre-existing fmt drift on main in crates/orgasmic-cli/src/daemon_service.rs + path_env.rs (cargo fmt --check would flag) — not touched here.
-- Local daemon still runs the old 0.0.3 runtime; the published stable is 0.0.5.
