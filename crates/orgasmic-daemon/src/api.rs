@@ -102,19 +102,23 @@ pub struct ApiState {
 }
 
 impl ApiState {
-    /// Serialize the read-modify-write of an artifact's `reviews.org` across
-    /// the two feedback handlers.
+    /// Serialize the read-modify-write of a single artifact's on-disk state
+    /// (`reviews.org` and `artifact.org`) across every handler that mutates it.
     ///
     /// The atomic-transaction refactor (TASK-Y2ZQJ finding #4) replaced
-    /// `writer.mutate_file` — which read `reviews.org` under the writer's
-    /// exclusive flock and applied its transform there, serializing concurrent
-    /// mutations — with a read-outside-the-lock then blind `FileRewrite`. That
-    /// reintroduced a lost-update race (finding M1): two concurrent add/consume
-    /// ops on the same artifact both read the same base and the second clobbers
-    /// the first. `reviews.org` is written ONLY by `post_artifact_feedback` and
-    /// `post_artifact_feedback_consume`; both MUST hold this per-artifact lock
-    /// across their read→transaction window so those ops serialize again while
-    /// keeping finding #4's file+tx atomicity.
+    /// `writer.mutate_file` — which read the file under the writer's exclusive
+    /// flock and applied its transform there, serializing concurrent mutations
+    /// — with a read-outside-the-lock then blind `FileRewrite`. That
+    /// reintroduced a lost-update race (finding M1): two concurrent ops on the
+    /// same artifact both read the same base and the second clobbers the first.
+    ///
+    /// Every handler with a read→transaction window on the same artifact MUST
+    /// hold this per-artifact lock across that window so they serialize again
+    /// while keeping finding #4's file+tx atomicity:
+    /// - `post_artifact_feedback` / `post_artifact_feedback_consume` (reviews.org)
+    /// - `post_artifact_regenerate` (reviews.org consume + artifact.org state flip)
+    /// - `post_artifact_submit` (artifact.org version read→bump; TASK-2ZQSB M1)
+    /// - `revert_artifact_generation_state` (the release-watcher's state restore)
     fn artifact_write_lock(&self, art_dir: &FsPath) -> Arc<tokio::sync::Mutex<()>> {
         let mut map = self.artifact_write_locks.lock().unwrap();
         map.entry(art_dir.to_path_buf())
@@ -8841,6 +8845,18 @@ async fn post_artifact_submit(
     drop(snap);
 
     let art_dir = artifact_dir(&entry.path, &art_id);
+
+    // Serialize the whole submit (create or version-bump) against a concurrent
+    // submit and against feedback/consume/regenerate on the same artifact
+    // (TASK-2ZQSB reviewer M1). Without it the existing-artifact branch below
+    // reads the current version outside any lock and then blind-writes
+    // version+1, so two concurrent submits lose an update and the vN archive
+    // races; a submit could also interleave with regenerate's state read/flip.
+    // Same per-artifact lock as the feedback handlers (Y2ZQJ M1); held across
+    // the existence check so create/version-bump can't race either.
+    let write_lock = state.artifact_write_lock(&art_dir);
+    let _write_guard = write_lock.lock().await;
+
     let is_new = !art_dir.join("artifact.org").exists();
 
     if is_new {
@@ -9887,9 +9903,14 @@ async fn post_artifact_regenerate(
 
     let reviews_path = art_dir.join("reviews.org");
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
+    // Match consume_all_open_comments' own predicate exactly: it flips every
+    // heading that is NOT already (resolved && consumed), so CONSUMED_CIDS must
+    // report that same set — not just the fully-open ones (TASK-2ZQSB L1). A
+    // resolved-but-not-yet-consumed comment is consumed by the rewrite and must
+    // be listed.
     let consumed_cids: Vec<String> = artifacts::parse_comments(&current_reviews)
         .into_iter()
-        .filter(|c| !c.resolved && !c.consumed)
+        .filter(|c| !(c.resolved && c.consumed))
         .map(|c| c.cid)
         .collect();
     let new_reviews = artifacts::consume_all_open_comments(&current_reviews)
@@ -13421,6 +13442,76 @@ mod tests {
         for cid in &cids {
             assert!(got.contains(cid), "comment {cid} was lost");
         }
+    }
+
+    // Regression guard for the TASK-2ZQSB reviewer M1: post_artifact_submit's
+    // version-bump must serialize per artifact. Without the write lock, N
+    // concurrent resubmits all read the same current version and blind-write
+    // version+1, so the final version lands below 1+N (lost updates) and vN
+    // archives collide. With the lock they serialize to sequential versions.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn artifact_concurrent_resubmits_do_not_lose_version_bumps() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RESUB";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Resub".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("initial submit should succeed");
+
+        const N: u32 = 8;
+        let mut handles = Vec::new();
+        for i in 0..N {
+            let st = state.clone();
+            handles.push(tokio::spawn(async move {
+                post_artifact_submit(
+                    State(st),
+                    Path(art_id.to_string()),
+                    Query(artifact_query("test-proj")),
+                    Json(ArtifactSubmitRequest {
+                        content: format!("<RichText>resubmit {i}</RichText>\n"),
+                        title: None,
+                        subject_nodes: None,
+                        prompt: None,
+                    }),
+                )
+                .await
+                .map(|j| j.0["version"].as_u64().unwrap())
+            }));
+        }
+        let mut versions = Vec::new();
+        for h in handles {
+            versions.push(h.await.unwrap().expect("resubmit should succeed"));
+        }
+
+        // Each resubmit returned a distinct version, and the final artifact.org
+        // version is exactly 1 + N (v1 initial + N bumps, none lost).
+        let unique: std::collections::HashSet<_> = versions.iter().collect();
+        assert_eq!(
+            unique.len(),
+            N as usize,
+            "each resubmit needs a distinct version"
+        );
+        let summary = load_artifact(&artifact_dir(&project_root, art_id)).unwrap();
+        assert_eq!(
+            summary.version,
+            1 + N,
+            "all {N} resubmits must land (no lost version bumps)"
+        );
     }
 
     #[tokio::test]
