@@ -8,12 +8,18 @@
 //!     artifact.org   — single heading with :ID: :TITLE: :SUBJECT_NODES: :PROMPT: :VERSION: :STATE:
 //!     reviews.org    — append-only comment headings
 //!     versions/      — vN.mdx archives (written at regeneration, TASK-EDQPG)
+//!
+//! artifact.org and reviews.org are read through the canonical
+//! `orgasmic_core::OrgFile` parser (no hand-rolled second parser); writes
+//! that mutate an existing heading go through `OrgRewriter` or a targeted
+//! property-span splice computed from the canonical parse.
 
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use orgasmic_core::{Heading, OrgFile, OrgRewriter};
 use serde::{Deserialize, Serialize};
 
 /// All Agent-Native block types that are valid in artifact.mdx.
@@ -77,6 +83,18 @@ pub struct CommentRecord {
     pub message: String,
 }
 
+/// Why [`load_artifact_detail`] could not produce a detail view. Distinct
+/// from a generic "not found" so the API can tell "no such artifact" apart
+/// from "artifact exists but has no vN archive" (both are 404s, but with a
+/// different message).
+#[derive(Debug, thiserror::Error)]
+pub enum ArtifactLoadError {
+    #[error("artifact not found")]
+    NotFound,
+    #[error("artifact has no version {0}")]
+    VersionNotFound(u32),
+}
+
 // ── path helpers ──────────────────────────────────────────────────────────────
 
 pub fn artifacts_dir(project_root: &Path) -> PathBuf {
@@ -99,99 +117,164 @@ fn reviews_org_path(art_dir: &Path) -> PathBuf {
     art_dir.join("reviews.org")
 }
 
-fn versions_dir(art_dir: &Path) -> PathBuf {
+/// Directory holding archived `vN.mdx` snapshots. `pub` so callers folding
+/// the archive write into a `writer.transaction` (rather than a bypass
+/// `fs::copy`) can address the target path.
+pub fn versions_dir(art_dir: &Path) -> PathBuf {
     art_dir.join("versions")
 }
 
 // ── MDX block-registry validation ────────────────────────────────────────────
 
-/// Scan `content` for JSX component names (PascalCase `<Tag`) and return one
-/// error string per unknown type.  No external parser — just a byte scan.
+/// Scan a top-level component tag's header, starting at `i` (the byte
+/// position immediately after the tag name). Returns
+/// `(self_closing, index_after_closing_angle_bracket)`, or `None` if the
+/// header runs off the end of `bytes` before an unquoted `>` is found — a
+/// malformed/unclosed top-level tag.
+fn scan_tag_header(bytes: &[u8], mut i: usize) -> Option<(bool, usize)> {
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if let Some(q) = quote {
+            if b == q {
+                quote = None;
+            }
+            i += 1;
+            continue;
+        }
+        match b {
+            b'"' | b'\'' => {
+                quote = Some(b);
+                i += 1;
+            }
+            b'>' => {
+                let self_closing = i > 0 && bytes[i - 1] == b'/';
+                return Some((self_closing, i + 1));
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Validate the top-level structure of `content`.
+///
+/// The daemon has no real MDX parser, so this validates only what a byte
+/// scan can see reliably: every top-level JSX component tag (PascalCase,
+/// e.g. `<Code>`) must be a registered block type (`BLOCK_TYPES`), and must
+/// be well-formed and balanced. Once a registered block's opening tag is
+/// found, everything inside its body — up to the literal matching closing
+/// tag — is opaque and never scanned for nested tags. That is where
+/// generics (`Vec<Item>`, `f::<String>()`) and DSL-specific angle-bracket
+/// content legitimately live. Deep/nested MDX validation is out of scope
+/// (TASK-T25XQ owns the real JS/MDX parser); this is a structural gate only.
+///
+/// An artifact with zero registered top-level blocks is rejected — prose or
+/// an empty payload alone is not a valid artifact body (MANAGER RULING,
+/// TASK-Y2ZQJ). Unclosed or malformed top-level tags are rejected too.
 pub fn validate_mdx(content: &str) -> Vec<String> {
     let known: HashSet<&str> = BLOCK_TYPES.iter().copied().collect();
-    let mut seen_errors: HashSet<String> = HashSet::new();
+    let mut seen_unknown: HashSet<String> = HashSet::new();
     let mut errors: Vec<String> = Vec::new();
+    let mut found_registered_block = false;
+
     let bytes = content.as_bytes();
-    let mut i = 0;
+    let mut i = 0usize;
     while i < bytes.len() {
         if bytes[i] != b'<' {
             i += 1;
             continue;
         }
         i += 1;
-        // Skip closing tags `</`, comments `<!--`, and self-close `/>`.
+        // Skip closing tags `</`, comments `<!--`, and truncated `<` at EOF.
         if i >= bytes.len() || bytes[i] == b'/' || bytes[i] == b'!' {
             continue;
         }
         // Read component name (alphanumeric + hyphens, like MDX JSX).
-        let start = i;
+        let name_start = i;
         while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'-') {
             i += 1;
         }
-        if i == start {
+        if i == name_start {
             continue;
         }
-        let name = &content[start..i];
-        // Only PascalCase names are JSX components; lowercase = HTML tags.
+        let name = &content[name_start..i];
+        // Only PascalCase names are JSX components; lowercase = HTML tags,
+        // passed through untouched (not validated, not tracked).
         if !name.as_bytes()[0].is_ascii_uppercase() {
             continue;
         }
-        if !known.contains(name) && seen_errors.insert(name.to_string()) {
+        let Some((self_closing, header_end)) = scan_tag_header(bytes, i) else {
+            errors.push(format!("malformed or unclosed top-level tag `<{name}`"));
+            break;
+        };
+        if known.contains(name) {
+            found_registered_block = true;
+        } else if seen_unknown.insert(name.to_string()) {
             errors.push(format!("unknown block type `{name}`"));
         }
-    }
-    errors
-}
-
-// ── Org property parsing (minimal, for our predictable format) ───────────────
-
-fn parse_org_properties(content: &str) -> std::collections::HashMap<String, String> {
-    let mut props = std::collections::HashMap::new();
-    let mut in_drawer = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.eq_ignore_ascii_case(":PROPERTIES:") {
-            in_drawer = true;
+        if self_closing {
+            i = header_end;
             continue;
         }
-        if trimmed.eq_ignore_ascii_case(":END:") {
-            in_drawer = false;
-            continue;
-        }
-        if in_drawer {
-            if let Some(rest) = trimmed.strip_prefix(':') {
-                if let Some(colon_pos) = rest.find(':') {
-                    let key = rest[..colon_pos].trim().to_uppercase();
-                    let val = rest[colon_pos + 1..].trim().to_string();
-                    props.insert(key, val);
-                }
+        // Opening tag: the body is opaque until the literal matching close.
+        let closing = format!("</{name}>");
+        match content[header_end..].find(closing.as_str()) {
+            Some(rel) => i = header_end + rel + closing.len(),
+            None => {
+                errors.push(format!(
+                    "unclosed top-level tag `<{name}>` (no matching `</{name}>`)"
+                ));
+                break;
             }
         }
     }
-    props
+
+    if !found_registered_block {
+        errors.push("artifact must contain at least one registered top-level block".to_string());
+    }
+
+    errors
 }
 
-/// Extract the body text of a comment heading (everything after :END:).
-fn comment_body(content: &str) -> String {
-    let mut after_end = false;
-    let mut lines: Vec<&str> = Vec::new();
-    for line in content.lines() {
-        if line.trim().eq_ignore_ascii_case(":END:") {
-            after_end = true;
-            continue;
-        }
-        if after_end {
-            lines.push(line);
-        }
-    }
-    // Trim leading/trailing blank lines
-    while lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        lines.remove(0);
-    }
-    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
-        lines.pop();
-    }
-    lines.join("\n")
+// ── single-line property escaping ───────────────────────────────────────────
+
+/// Collapse embedded newlines so a value stays a single physical line. A
+/// value with a literal `\n` would prematurely terminate its
+/// `:KEY: value` property-drawer line and corrupt everything after it
+/// (tx.org's `:PROMPT:` contract already promises "escaped single-line";
+/// artifact.org's `:TITLE:`/`:PROMPT:` follow the same discipline).
+pub fn escape_single_line(value: &str) -> String {
+    value.replace("\r\n", " ").replace(['\n', '\r'], " ")
+}
+
+// ── comment-body leading-`*` escaping ───────────────────────────────────────
+
+/// True when `line`, after stripping any leading commas already present,
+/// begins with `*` — i.e. unescaped it would be misread by the canonical
+/// parser as a new `* heading`. Mirrors the comma-quoting convention
+/// `orgasmic_core::wrap_raw_body` uses for raw body text, scoped to `*`
+/// only: comment bodies are heading-adjacent free text, not `#+begin_`
+/// blocks, so only structural heading injection is a concern here.
+fn comment_line_needs_star_escape(line: &str) -> bool {
+    line.trim_start_matches(',').starts_with('*')
+}
+
+/// Escape a comment message so no line can be misread as a `* heading` once
+/// appended to reviews.org. Reversed by the unescape step in
+/// [`comment_record_from_heading`].
+fn escape_comment_message(message: &str) -> String {
+    message
+        .split('\n')
+        .map(|line| {
+            if comment_line_needs_star_escape(line) {
+                format!(",{line}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 // ── artifact.org read/write ──────────────────────────────────────────────────
@@ -205,6 +288,8 @@ pub fn artifact_org_content(
     version: u32,
     state: &str,
 ) -> String {
+    let title = escape_single_line(title);
+    let prompt = escape_single_line(prompt);
     let subject_str = subject_nodes.join(" ");
     format!(
         "#+title: orgasmic artifact {id}\n\
@@ -222,21 +307,21 @@ pub fn artifact_org_content(
     )
 }
 
-/// Rewrite artifact.org updating :VERSION: and :STATE: only.
+/// Rewrite artifact.org updating :VERSION: and :STATE: only, via the
+/// canonical `OrgRewriter` (touches only those two property value spans;
+/// every other byte, including drawer column alignment, is preserved).
 pub fn update_artifact_org(current: &str, new_version: u32, new_state: &str) -> Result<Vec<u8>> {
-    let mut out = String::with_capacity(current.len());
-    for line in current.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with(":VERSION:") {
-            out.push_str(&format!(":VERSION:      {new_version}\n"));
-        } else if trimmed.starts_with(":STATE:") {
-            out.push_str(&format!(":STATE:        {new_state}\n"));
-        } else {
-            out.push_str(line);
-            out.push('\n');
-        }
-    }
-    Ok(out.into_bytes())
+    let file = OrgFile::parse(current, "artifact.org").context("parse artifact.org")?;
+    let Some(id) = file.headings.first().and_then(|h| h.property("ID")) else {
+        bail!("artifact.org has no heading with an :ID:");
+    };
+    let id = id.to_string();
+    let mut rw = OrgRewriter::new(&file, "artifact.org");
+    rw.set_property(&id, "VERSION", &new_version.to_string())
+        .context("update :VERSION:")?;
+    rw.set_property(&id, "STATE", new_state)
+        .context("update :STATE:")?;
+    Ok(rw.finish().into_bytes())
 }
 
 // ── reviews.org read/write ───────────────────────────────────────────────────
@@ -249,15 +334,31 @@ pub fn reviews_org_header(art_id: &str) -> String {
     )
 }
 
-/// Org heading block for one comment, ready to append to reviews.org.
-pub fn comment_org_block(
-    cid: &str,
-    author: &str,
-    version: u32,
-    anchor: &str,
-    resolution_target: &str,
-    message: &str,
-) -> String {
+/// Fields for one new comment. Grouped into a struct (rather than passed
+/// positionally) so [`comment_org_block`] and [`append_comment`] stay under
+/// clippy's argument-count lint.
+pub struct NewComment<'a> {
+    pub cid: &'a str,
+    pub author: &'a str,
+    pub version: u32,
+    pub anchor: &'a str,
+    pub resolution_target: &'a str,
+    pub message: &'a str,
+}
+
+/// Org heading block for one comment, ready to append to reviews.org. Lines
+/// in the message that would be misread as a heading (leading `*`) are
+/// comma-escaped first.
+pub fn comment_org_block(comment: &NewComment<'_>) -> String {
+    let NewComment {
+        cid,
+        author,
+        version,
+        anchor,
+        resolution_target,
+        message,
+    } = comment;
+    let message = escape_comment_message(message);
     format!(
         "\n* {cid}\n\
          :PROPERTIES:\n\
@@ -274,122 +375,157 @@ pub fn comment_org_block(
     )
 }
 
-/// Rewrite reviews.org marking `cid` as resolved + consumed.
+/// Compute the new reviews.org content after appending one comment. Seeds
+/// the `#+title`/`#+orgasmic_version` header when `current` is empty (the
+/// file does not exist on disk yet). Pure — callers write the result
+/// through `state.writer.transaction` alongside the tx entry so the file
+/// rewrite and the tx append commit atomically.
+pub fn append_comment(current: &str, art_id: &str, comment: &NewComment<'_>) -> String {
+    let mut out = if current.is_empty() {
+        reviews_org_header(art_id)
+    } else {
+        current.to_string()
+    };
+    out.push_str(&comment_org_block(comment));
+    out
+}
+
+/// Rewrite reviews.org marking `cid` as resolved + consumed. Locates the
+/// property value spans via the canonical parser and splices only those
+/// spans, leaving every other byte (including column alignment) untouched.
 pub fn resolve_comment_in_reviews(current: &str, cid: &str) -> Result<Vec<u8>> {
-    // Find the heading for this CID and flip its RESOLVED + CONSUMED flags.
-    let mut out = String::with_capacity(current.len());
-    let mut in_target = false;
-    let mut found = false;
-    for line in current.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("* ") {
-            // Entering a new heading — check if it's the target CID.
-            in_target = trimmed.contains(cid);
-            if in_target {
-                found = true;
-            }
-            out.push_str(line);
-            out.push('\n');
-            continue;
-        }
-        if in_target {
-            if trimmed.starts_with(":RESOLVED:") {
-                out.push_str(":RESOLVED:         true\n");
-                continue;
-            }
-            if trimmed.starts_with(":CONSUMED:") {
-                out.push_str(":CONSUMED:         true\n");
-                continue;
-            }
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    if !found {
+    let file = OrgFile::parse(current, "reviews.org").context("parse reviews.org")?;
+    let Some(heading) = file
+        .headings
+        .iter()
+        .find(|h| h.property("CID") == Some(cid))
+    else {
         bail!("comment {cid} not found in reviews.org");
+    };
+
+    let mut edits: Vec<_> = heading
+        .property_entries()
+        .filter(|e| e.key == "RESOLVED" || e.key == "CONSUMED")
+        .map(|e| (e.value_span.clone(), "true"))
+        .collect();
+    edits.sort_by_key(|(range, _)| range.start);
+
+    let mut out = String::with_capacity(current.len());
+    let mut cursor = 0usize;
+    for (range, replacement) in edits {
+        out.push_str(&current[cursor..range.start]);
+        out.push_str(replacement);
+        cursor = range.end;
     }
+    out.push_str(&current[cursor..]);
     Ok(out.into_bytes())
 }
 
 // ── index projection ─────────────────────────────────────────────────────────
 
-/// Parse one CID heading block from a slice of reviews.org lines.
-fn parse_comment_block(lines: &[&str]) -> Option<CommentRecord> {
-    if lines.is_empty() {
-        return None;
-    }
-    let block = lines.join("\n");
-    let props = parse_org_properties(&block);
-    let cid = props.get("CID")?.clone();
+/// Build a [`CommentRecord`] from a parsed reviews.org heading, unescaping
+/// the leading-`*` comma escape and trimming the template's blank-line
+/// padding around the message body.
+fn comment_record_from_heading(file: &OrgFile, heading: &Heading) -> Option<CommentRecord> {
+    let cid = heading.property("CID")?.to_string();
     if cid.is_empty() {
         return None;
     }
-    let version = props
-        .get("VERSION")
+    let version = heading
+        .property("VERSION")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(1);
-    let resolved = props.get("RESOLVED").map(|v| v == "true").unwrap_or(false);
-    let consumed = props.get("CONSUMED").map(|v| v == "true").unwrap_or(false);
-    let message = comment_body(&block);
+    let resolved = heading
+        .property("RESOLVED")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let consumed = heading
+        .property("CONSUMED")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let message = trim_and_unescape_comment_body(file.slice(heading.body.clone()));
     Some(CommentRecord {
         cid,
-        author: props.get("AUTHOR").cloned().unwrap_or_default(),
+        author: heading.property("AUTHOR").unwrap_or("").to_string(),
         version,
-        anchor: props.get("ANCHOR").cloned().unwrap_or_else(|| "{}".into()),
-        resolution_target: props.get("RESOLUTION_TARGET").cloned().unwrap_or_default(),
+        anchor: heading
+            .property("ANCHOR")
+            .map(str::to_string)
+            .unwrap_or_else(|| "{}".into()),
+        resolution_target: heading
+            .property("RESOLUTION_TARGET")
+            .unwrap_or("")
+            .to_string(),
         resolved,
         consumed,
         message,
     })
 }
 
-/// Parse all comment records from reviews.org content.
-pub fn parse_comments(content: &str) -> Vec<CommentRecord> {
-    let mut records = Vec::new();
-    let mut current_block: Vec<&str> = Vec::new();
-    for line in content.lines() {
-        if line.starts_with("* ") && !current_block.is_empty() {
-            if let Some(rec) = parse_comment_block(&current_block) {
-                records.push(rec);
+/// Trim leading/trailing blank lines from a raw heading body (the template
+/// blank line right after `:END:`), then reverse the leading-`*` escape.
+fn trim_and_unescape_comment_body(raw: &str) -> String {
+    let mut lines: Vec<&str> = raw.lines().collect();
+    while lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.remove(0);
+    }
+    while lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+        lines.pop();
+    }
+    lines
+        .into_iter()
+        .map(|line| {
+            if comment_line_needs_star_escape(line) {
+                line.strip_prefix(',').unwrap_or(line).to_string()
+            } else {
+                line.to_string()
             }
-            current_block.clear();
-        }
-        current_block.push(line);
-    }
-    if !current_block.is_empty() {
-        if let Some(rec) = parse_comment_block(&current_block) {
-            records.push(rec);
-        }
-    }
-    records
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Parse all comment records from reviews.org content via the canonical Org
+/// parser. Each comment is a level-1 heading whose free body (everything
+/// after its property drawer) is the message text.
+pub fn parse_comments(content: &str) -> Vec<CommentRecord> {
+    let Ok(file) = OrgFile::parse(content, "reviews.org") else {
+        return Vec::new();
+    };
+    file.headings
+        .iter()
+        .filter_map(|heading| comment_record_from_heading(&file, heading))
+        .collect()
 }
 
 /// Load an ArtifactSummary from an ART-* directory.
 pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
     let org_path = artifact_org_path(art_dir);
     let content = fs::read_to_string(&org_path).ok()?;
-    let props = parse_org_properties(&content);
+    let file = OrgFile::parse(content, org_path.display().to_string()).ok()?;
+    let heading = file.headings.first()?;
 
-    let id = props.get("ID")?.clone();
+    let id = heading.property("ID")?.to_string();
     if id.is_empty() {
         return None;
     }
-    let title = props.get("TITLE").cloned().unwrap_or_default();
-    let subject_nodes_str = props.get("SUBJECT_NODES").cloned().unwrap_or_default();
-    let subject_nodes: Vec<String> = subject_nodes_str
+    let title = heading.property("TITLE").unwrap_or("").to_string();
+    let subject_nodes: Vec<String> = heading
+        .property("SUBJECT_NODES")
+        .unwrap_or("")
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    let version = props
-        .get("VERSION")
+    let version = heading
+        .property("VERSION")
         .and_then(|v| v.parse::<u32>().ok())
         .unwrap_or(1);
-    let state = props
-        .get("STATE")
-        .cloned()
+    let state = heading
+        .property("STATE")
+        .map(str::to_string)
         .unwrap_or_else(|| "submitted".to_string());
 
-    // Count open comments
+    // Count open comments (never resolved+consumed).
     let open_comment_count = {
         let reviews_path = reviews_org_path(art_dir);
         if let Ok(reviews_content) = fs::read_to_string(&reviews_path) {
@@ -413,31 +549,47 @@ pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
 }
 
 /// Load full artifact detail including MDX and comments.
-pub fn load_artifact_detail(art_dir: &Path, version: Option<u32>) -> Option<ArtifactDetail> {
-    let summary = load_artifact(art_dir)?;
+///
+/// `include_consumed` controls whether consumed comments are included in
+/// `comments` (current-version reads default to excluding them; archived
+/// views pass `include_consumed: true`).
+pub fn load_artifact_detail(
+    art_dir: &Path,
+    version: Option<u32>,
+    include_consumed: bool,
+) -> Result<ArtifactDetail, ArtifactLoadError> {
+    let summary = load_artifact(art_dir).ok_or(ArtifactLoadError::NotFound)?;
 
     let org_path = artifact_org_path(art_dir);
-    let org_content = fs::read_to_string(&org_path).ok()?;
-    let props = parse_org_properties(&org_content);
-    let prompt = props.get("PROMPT").cloned().unwrap_or_default();
+    let org_content = fs::read_to_string(&org_path).map_err(|_| ArtifactLoadError::NotFound)?;
+    let prompt = OrgFile::parse(org_content, org_path.display().to_string())
+        .ok()
+        .and_then(|file| {
+            file.headings
+                .first()
+                .and_then(|h| h.property("PROMPT").map(str::to_string))
+        })
+        .unwrap_or_default();
 
-    // MDX content: either current or a versioned archive
+    // MDX content: either current or a versioned archive.
     let content = if let Some(v) = version {
         let versioned = versions_dir(art_dir).join(format!("v{v}.mdx"));
-        fs::read_to_string(&versioned).ok()?
+        fs::read_to_string(&versioned).map_err(|_| ArtifactLoadError::VersionNotFound(v))?
     } else {
-        let mdx_path = artifact_mdx_path(art_dir);
-        fs::read_to_string(&mdx_path).unwrap_or_default()
+        fs::read_to_string(artifact_mdx_path(art_dir)).unwrap_or_default()
     };
 
     let reviews_path = reviews_org_path(art_dir);
-    let comments = if let Ok(reviews_content) = fs::read_to_string(&reviews_path) {
+    let mut comments = if let Ok(reviews_content) = fs::read_to_string(&reviews_path) {
         parse_comments(&reviews_content)
     } else {
         Vec::new()
     };
+    if !include_consumed {
+        comments.retain(|c| !c.consumed);
+    }
 
-    Some(ArtifactDetail {
+    Ok(ArtifactDetail {
         summary,
         prompt,
         content,
@@ -466,60 +618,6 @@ pub fn load_project_artifacts(project_root: &Path) -> Vec<ArtifactSummary> {
         }
     }
     summaries
-}
-
-// ── write helpers (called from API handlers) ──────────────────────────────────
-
-/// Initialize the artifact folder structure for a new artifact.
-/// Returns an error if the directory already exists (caller should check first).
-pub fn init_artifact_dir(art_dir: &Path) -> Result<()> {
-    fs::create_dir_all(art_dir).context("create artifact dir")?;
-    fs::create_dir_all(versions_dir(art_dir)).context("create versions dir")?;
-    Ok(())
-}
-
-/// Archive the current artifact.mdx to versions/vN.mdx before overwriting.
-/// Returns `None` if there is no current mdx to archive.
-pub fn archive_current_mdx(art_dir: &Path, current_version: u32) -> Result<()> {
-    let mdx_path = artifact_mdx_path(art_dir);
-    if !mdx_path.exists() {
-        return Ok(());
-    }
-    let archive_path = versions_dir(art_dir).join(format!("v{current_version}.mdx"));
-    fs::copy(&mdx_path, &archive_path).context("archive mdx version")?;
-    Ok(())
-}
-
-/// Build the `FileMutate` transform for appending a comment to reviews.org.
-/// Returns (new_content_bytes, needs_init) where needs_init means the header
-/// must be written first (macOS-safe: read current before deciding).
-pub fn append_comment_transform(
-    cid: String,
-    author: String,
-    version: u32,
-    anchor: String,
-    resolution_target: String,
-    message: String,
-) -> impl FnOnce(&str) -> Result<Vec<u8>> + Send + 'static {
-    move |current: &str| {
-        let mut out = if current.is_empty() {
-            // Infer art_id from context — reviews.org header is written separately
-            // when the file doesn't exist, but we handle both paths here.
-            String::new()
-        } else {
-            current.to_string()
-        };
-        let block = comment_org_block(
-            &cid,
-            &author,
-            version,
-            &anchor,
-            &resolution_target,
-            &message,
-        );
-        out.push_str(&block);
-        Ok(out.into_bytes())
-    }
 }
 
 /// Generate a short unique comment ID.
@@ -559,23 +657,57 @@ mod tests {
 
     #[test]
     fn validate_mdx_deduplicates_unknown() {
-        let mdx = "<Unknown /><Unknown /><Unknown />";
+        let mdx = "<RichText/><Unknown /><Unknown /><Unknown />";
         assert_eq!(validate_mdx(mdx).len(), 1);
     }
 
+    // ── TASK-Y2ZQJ policy corpus (reviewer probe strings, run-20260703T194200) ──
+
     #[test]
-    fn parse_org_properties_reads_drawer() {
-        let content = "* ART-ABC My Title\n:PROPERTIES:\n:ID:           ART-ABC\n:VERSION:      3\n:STATE:        submitted\n:END:\n";
-        let props = parse_org_properties(content);
-        assert_eq!(props.get("ID").map(String::as_str), Some("ART-ABC"));
-        assert_eq!(props.get("VERSION").map(String::as_str), Some("3"));
-        assert_eq!(props.get("STATE").map(String::as_str), Some("submitted"));
+    fn probe_code_block_with_generics_is_accepted() {
+        let mdx = "<Code>let v: Vec<Item> = f::<String>();</Code>";
+        assert!(
+            validate_mdx(mdx).is_empty(),
+            "generics inside a registered block body must stay opaque"
+        );
+    }
+
+    #[test]
+    fn probe_entity_relationship_body_is_opaque_and_accepted() {
+        let mdx = "<EntityRelationship>A<Order>B</EntityRelationship>";
+        assert!(
+            validate_mdx(mdx).is_empty(),
+            "nested-looking tags inside a registered block body must not be scanned"
+        );
+    }
+
+    #[test]
+    fn probe_bare_prose_is_rejected() {
+        let mdx = "This is just some prose with no registered block at all.";
+        assert!(!validate_mdx(mdx).is_empty());
+    }
+
+    #[test]
+    fn probe_empty_content_is_rejected() {
+        assert!(!validate_mdx("").is_empty());
+    }
+
+    #[test]
+    fn probe_unclosed_tag_is_rejected() {
+        assert!(!validate_mdx("<RichText").is_empty());
     }
 
     #[test]
     fn parse_comments_round_trip() {
         let header = "#+title: reviews\n#+orgasmic_version: 1\n";
-        let block = comment_org_block("CID-abc12345", "user@test.com", 1, "{}", "", "Good work.");
+        let block = comment_org_block(&NewComment {
+            cid: "CID-abc12345",
+            author: "user@test.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: "Good work.",
+        });
         let content = format!("{header}{block}");
         let records = parse_comments(&content);
         assert_eq!(records.len(), 1);
@@ -586,9 +718,67 @@ mod tests {
     }
 
     #[test]
+    fn comment_body_leading_star_escapes_and_round_trips() {
+        let header = "#+title: reviews\n#+orgasmic_version: 1\n";
+        let message = "* Bullet one\nSecond line\n* Bullet two";
+        let block = comment_org_block(&NewComment {
+            cid: "CID-star00001",
+            author: "user@test.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message,
+        });
+        let content = format!("{header}{block}");
+
+        // The stored bytes must not contain a column-0 `*` line — otherwise
+        // the canonical parser would misread it as a second heading.
+        let file = OrgFile::parse(content.clone(), "reviews.org").expect("parses cleanly");
+        assert_eq!(
+            file.headings.len(),
+            1,
+            "an escaped comment body must not fork into extra headings"
+        );
+
+        let records = parse_comments(&content);
+        assert_eq!(records.len(), 1);
+        assert_eq!(
+            records[0].message, message,
+            "leading-* escaping must round-trip losslessly"
+        );
+    }
+
+    #[test]
+    fn comment_body_preexisting_comma_star_round_trips() {
+        // A message that already starts with a literal comma before the
+        // star must still round-trip exactly (double-escape case).
+        let header = "#+title: reviews\n#+orgasmic_version: 1\n";
+        let message = ",* not actually a heading";
+        let block = comment_org_block(&NewComment {
+            cid: "CID-comma0001",
+            author: "user@test.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message,
+        });
+        let content = format!("{header}{block}");
+        let records = parse_comments(&content);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].message, message);
+    }
+
+    #[test]
     fn resolve_comment_flips_flags() {
         let header = "#+title: reviews\n";
-        let block = comment_org_block("CID-abc12345", "u@t.com", 1, "{}", "", "msg");
+        let block = comment_org_block(&NewComment {
+            cid: "CID-abc12345",
+            author: "u@t.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: "msg",
+        });
         let content = format!("{header}{block}");
         let updated =
             String::from_utf8(resolve_comment_in_reviews(&content, "CID-abc12345").unwrap())
@@ -610,9 +800,29 @@ mod tests {
         let org = artifact_org_content("ART-ABC", "My Title", &[], "prompt", 1, "submitted");
         let updated =
             String::from_utf8(update_artifact_org(&org, 2, "regenerating").unwrap()).unwrap();
-        let props = parse_org_properties(&updated);
-        assert_eq!(props.get("VERSION").map(String::as_str), Some("2"));
-        assert_eq!(props.get("STATE").map(String::as_str), Some("regenerating"));
+        let file = OrgFile::parse(updated, "artifact.org").unwrap();
+        let heading = file.headings.first().unwrap();
+        assert_eq!(heading.property("VERSION"), Some("2"));
+        assert_eq!(heading.property("STATE"), Some("regenerating"));
+    }
+
+    #[test]
+    fn artifact_org_content_escapes_multiline_title_and_prompt() {
+        let org = artifact_org_content(
+            "ART-ABC",
+            "Multi\nline title",
+            &[],
+            "Multi\r\nline\nprompt",
+            1,
+            "submitted",
+        );
+        // Escaping must produce a file the canonical parser accepts as a
+        // single well-formed heading with no injected properties.
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        assert_eq!(file.headings.len(), 1);
+        let heading = &file.headings[0];
+        assert_eq!(heading.property("TITLE"), Some("Multi line title"));
+        assert_eq!(heading.property("PROMPT"), Some("Multi line prompt"));
     }
 
     #[test]
@@ -645,5 +855,61 @@ mod tests {
         assert_eq!(summary.state, "submitted");
         assert_eq!(summary.subject_nodes, vec!["arch_ARSPJ"]);
         assert_eq!(summary.open_comment_count, 0);
+    }
+
+    #[test]
+    fn load_artifact_detail_distinguishes_missing_artifact_from_missing_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let art_dir = tmp.path().join("ART-XYZAB");
+        fs::create_dir_all(&art_dir).unwrap();
+        let org_content = artifact_org_content("ART-XYZAB", "Title", &[], "prompt", 1, "submitted");
+        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        fs::write(art_dir.join("artifact.mdx"), "<RichText>hi</RichText>\n").unwrap();
+
+        let missing_artifact = tmp.path().join("ART-NOPE");
+        assert!(matches!(
+            load_artifact_detail(&missing_artifact, None, true).unwrap_err(),
+            ArtifactLoadError::NotFound
+        ));
+
+        assert!(matches!(
+            load_artifact_detail(&art_dir, Some(7), true).unwrap_err(),
+            ArtifactLoadError::VersionNotFound(7)
+        ));
+
+        assert!(load_artifact_detail(&art_dir, None, true).is_ok());
+    }
+
+    #[test]
+    fn load_artifact_detail_excludes_consumed_comments_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let art_dir = tmp.path().join("ART-XYZAB");
+        fs::create_dir_all(&art_dir).unwrap();
+        let org_content = artifact_org_content("ART-XYZAB", "Title", &[], "prompt", 1, "submitted");
+        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        fs::write(art_dir.join("artifact.mdx"), "<RichText>hi</RichText>\n").unwrap();
+
+        let block = comment_org_block(&NewComment {
+            cid: "CID-consumed01",
+            author: "u@t.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: "old",
+        });
+        let reviews = format!("{}{}", reviews_org_header("ART-XYZAB"), block);
+        let resolved = resolve_comment_in_reviews(&reviews, "CID-consumed01").unwrap();
+        fs::write(
+            art_dir.join("reviews.org"),
+            String::from_utf8(resolved).unwrap(),
+        )
+        .unwrap();
+
+        let default_view = load_artifact_detail(&art_dir, None, false).unwrap();
+        assert!(default_view.comments.is_empty());
+
+        let full_view = load_artifact_detail(&art_dir, None, true).unwrap();
+        assert_eq!(full_view.comments.len(), 1);
+        assert!(full_view.comments[0].consumed);
     }
 }
