@@ -42,9 +42,6 @@ const DecisionsView = lazy(() =>
 const GlossaryView = lazy(() =>
   import('@/components/GlossaryView').then((module) => ({ default: module.GlossaryView })),
 );
-const GraphView = lazy(() =>
-  import('@/components/GraphView').then((module) => ({ default: module.GraphView })),
-);
 const OrgView = lazy(() =>
   import('@/components/OrgView').then((module) => ({ default: module.OrgView })),
 );
@@ -96,7 +93,6 @@ type RootSearch = { manager?: ManagerSearchSize };
 type DecisionsSearch = DrawerSearch & { tag?: string[]; q?: string };
 type ArchitectureSearch = DrawerSearch & { q?: string };
 type GlossarySearch = DrawerSearch & { q?: string };
-type GraphSearch = DrawerSearch;
 type TasksLayoutSearch = 'list' | 'kanban';
 type TasksSearch = { task?: string; layout?: TasksLayoutSearch };
 type ActivitySearch = {
@@ -173,10 +169,6 @@ function glossarySearch(raw: SearchRecord): GlossarySearch {
     ...drawerSearch(raw),
     ...(q ? { q } : {}),
   };
-}
-
-function graphSearch(raw: SearchRecord): GraphSearch {
-  return drawerSearch(raw);
 }
 
 function tasksSearch(raw: SearchRecord): TasksSearch {
@@ -395,21 +387,6 @@ const glossaryRoute = createRoute({
   },
 });
 
-const graphRoute = createRoute({
-  getParentRoute: () => projectRoute,
-  path: 'graph',
-  validateSearch: graphSearch,
-  component: function GraphRoute() {
-    const { projectId } = projectRoute.useParams();
-    rememberProject(projectId);
-    return (
-      <Suspense fallback={fallback('Loading graph...')}>
-        <GraphView projectId={projectId} />
-      </Suspense>
-    );
-  },
-});
-
 const tasksRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'tasks',
@@ -565,7 +542,6 @@ const routeTree = rootRoute.addChildren([
     decisionsRoute,
     architectureRoute,
     glossaryRoute,
-    graphRoute,
     tasksRoute,
     activityRoute,
     runsRoute,

@@ -60,9 +60,9 @@ pub use paths::{
 };
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};
 pub use schema::{
-    parse_graph_layout_overlay, ArchEdge, ArchEdgeKind, ArchEdgeTarget, ArchNode, ArchitectureNode,
-    ArtifactNode, ArtifactScheme, DecisionNode, GlossaryTerm, GraphLayoutEntry, LifecycleStage,
-    ProjectConfig, ProjectFile, SchemaError, SkillMetadata, TaskHeading, TxHeadingView, WorkerKind,
+    ArchEdge, ArchEdgeKind, ArchEdgeTarget, ArchNode, ArchitectureNode, ArtifactNode,
+    ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, ProjectConfig, ProjectFile,
+    SchemaError, SkillMetadata, TaskHeading, TxHeadingView, WorkerKind,
 };
 pub use session::{
     read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,

@@ -1,5 +1,5 @@
 // @arch arch_MK2Q2.2
-import { get, HttpError, post, transport } from './transport';
+import { get, HttpError, post } from './transport';
 import type { NodeEditOp, OrgNodeDoc } from './orgdoc/types';
 import type {
   ActivityEntry,
@@ -12,9 +12,6 @@ import type {
   FilesystemRoot,
   FilesystemValidateProjectResponse,
   GlossarySummary,
-  GraphEdgeSummary,
-  GraphLayoutEntry,
-  GraphNodeSummary,
   ManagerDriversResponse,
   ManagerLaunchResponse,
   ManagerState,
@@ -274,27 +271,6 @@ export function fetchArchitectureNodes(project?: string | null): Promise<Archite
 
 export function fetchGlossary(project?: string | null): Promise<GlossarySummary[]> {
   return get<GlossarySummary[]>(`/glossary${q(project)}`);
-}
-
-export function fetchGraphNodes(project?: string | null): Promise<GraphNodeSummary[]> {
-  return get<GraphNodeSummary[]>(`/graph/nodes${q(project)}`);
-}
-
-export function fetchGraphEdges(project?: string | null): Promise<GraphEdgeSummary[]> {
-  return get<GraphEdgeSummary[]>(`/graph/edges${q(project)}`);
-}
-
-export function fetchGraphLayout(project?: string | null): Promise<Record<string, GraphLayoutEntry>> {
-  return get<Record<string, GraphLayoutEntry>>(`/graph/layout${q(project)}`);
-}
-
-export type GraphLayoutPatchEntry = { node_id: string } & GraphLayoutEntry;
-
-export function patchGraphLayout(
-  project: string | null | undefined,
-  entry: GraphLayoutPatchEntry,
-): Promise<unknown> {
-  return transport.request(`/graph/layout${q(project)}`, { method: 'PATCH', body: entry });
 }
 
 export function fetchManagerDrivers(): Promise<ManagerDriversResponse> {

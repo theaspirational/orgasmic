@@ -731,9 +731,8 @@ mod tests {
         // Single-value path directives must be raw/unquoted — systemd rejects the
         // unit ("path is not absolute") if the value is wrapped in double quotes.
         assert!(unit.contains("WorkingDirectory=/Users/tester/src/orgasmic\n"));
-        assert!(
-            unit.contains("StandardOutput=append:/Users/tester/Orgasmic Home/logs/daemon.out.log\n")
-        );
+        assert!(unit
+            .contains("StandardOutput=append:/Users/tester/Orgasmic Home/logs/daemon.out.log\n"));
         assert!(
             unit.contains("StandardError=append:/Users/tester/Orgasmic Home/logs/daemon.err.log\n")
         );

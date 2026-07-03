@@ -81,16 +81,6 @@ export default defineConfig(({ mode }) => {
             if (id.includes('/node_modules/radix-ui/')) return 'vendor-radix';
             if (id.includes('/node_modules/lucide-react/')) return 'vendor-lucide';
             if (id.includes('/node_modules/@xterm/')) return 'vendor-xterm';
-            if (id.includes('/node_modules/reactflow/') || id.includes('/node_modules/@reactflow/')) {
-              return 'vendor-reactflow';
-            }
-            if (
-              id.includes('/node_modules/dagre/') ||
-              id.includes('/node_modules/graphlib/') ||
-              id.includes('/node_modules/lodash/')
-            ) {
-              return 'vendor-dagre';
-            }
             return undefined;
           },
         },

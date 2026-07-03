@@ -1,2 +1,0 @@
-#+title: graph layout overlay
-#+orgasmic_version: 1
