@@ -75,20 +75,6 @@ doctor::tests::daemon_staleness_warns_for_git_commits_since_boot (crates/orgasmi
 
 Acceptance: root cause identified and fixed (or the test hardened against workspace-parallel execution); cargo test --workspace green 3x consecutively from this checkout with the production daemon live.
 
-* BACKLOG TASK-B05AM rmux stall detector kills idle pane after orgasmic-eot and clobbers last.txt    :dispatch:rmux:tooling:
-:PROPERTIES:
-:ID: TASK-B05AM
-:PRIORITY: high
-:END:
-
-Evidence: TASK-ZEFEY implementer run-20260703T185733 completed fully (gates green, commit 9a5f043, printed its report and the [orgasmic-eot:run-...] marker at 22:21), yet .orgasmic/tmp/dispatch/task-ZEFEY/task-ZEFEY-last.txt contains only "stall_timeout_exceeded" and the manager had to rescue-close the dispatch. Cause: after eot the interactive pane sits idle; the rmux driver's stall detector eventually fires, kills the session, and writes the stall reason to last.txt instead of preserving the already-emitted worker report.
-
-Expected: the eot marker should finalize the run (record implementer.done, snapshot the report into last.txt) BEFORE any stall accounting; stall_timeout_exceeded must never overwrite a completed run's report. Same family as the old codex-acp stall overrides (TASK-HCFBT.4) but rmux-specific and post-completion.
-
-Acceptance: a scripted rmux dispatch that emits eot then idles past the stall window ends with implementer.done recorded, the worker report preserved in last.txt, and no stall_timeout_exceeded surfaced for the completed run.
-** Evidence
-[2026-07-03] RECURRENCE (2nd occurrence). TASK-Y2ZQJ implementer (sonnet-5, session c86523ed, run-20260703T195310) completed fully: committed ab4b5b8 with the exact required message at 23:30:19, clean worktree, all gates green (worker: daemon 201/201, cli 71/71 single-threaded, clippy+fmt clean, live HTTP probe). Yet NO report was written at all this time - neither task-Y2ZQJ-last.txt NOR task-Y2ZQJ-stdout.log exist (only the brief remains in the dispatch dir); the rmux session and process 91969 exited leaving nothing. Manager rescued the full worker report + gate results from the harness transcript (~/.claude/projects/.../c86523ed-*.jsonl). This is worse than the ZEFEY occurrence (which at least clobbered last.txt with 'stall_timeout_exceeded'); here the report path produced no file. Pattern is now reproducible: report lost on 2 of the last 3 rmux dispatches (ZEFEY, Y2ZQJ; ZEFEY-review succeeded). The manager-dispatch convention's last.txt/stdout.log contract is unreliable for rmux workers; the harness transcript is currently the only dependable report source. Raising priority to high.
-
 * BACKLOG TASK-KBHAN Harden comment-body #+begin_/#+end_ injection in reviews.org    :artifacts:daemon:hardening:
 :PROPERTIES:
 :ID: TASK-KBHAN
@@ -101,3 +87,17 @@ TASK-Y2ZQJ hardened leading-* injection in comment bodies (escape_comment_messag
 Fix direction: extend the comment-body escaper (escape_comment_message / trim_and_unescape_comment_body in crates/orgasmic-daemon/src/artifacts.rs) to also neutralize lines beginning with #+begin_ / #+end_ (comma-prefix like the leading-* handling), or validate/reject them on write. Add a round-trip unit test with a comment body containing a #+begin_src ... #+end_src block and assert later comments in the same reviews.org still parse. Keep the escape invertible.
 
 Severity LOW: requires a member to author a comment containing a bare org block marker, and only hides subsequent comments (no privilege/flag escalation).
+
+* BACKLOG TASK-567JG Respawn dispatch completion watcher on boot reattach (no last.txt after daemon restart)    :daemon:dispatch:reattach:
+:PROPERTIES:
+:ID: TASK-567JG
+:SEVERITY: medium
+:END:
+
+Distinct second failure mode discovered while fixing TASK-B05AM (the stall-clobber, fixed in ed6a6fc). When the daemon restarts MID-RUN, the run is reattached (boot reconciliation, api::reattach_live_runs_on_boot) but the dispatch completion watcher — a tokio task spawned only at dispatch time (api.rs spawn_dispatch_completion_watcher, called only from the dispatch handler ~3453) — died with the old daemon process. No watcher is respawned for the reattached run, so when it later releases, write_dispatch_completion_artifacts is never called and NEITHER last.txt NOR stdout.log is written. Observed on TASK-Y2ZQJ (session had a 'reattach' lifecycle event; 15053 assistant chunks + run_complete present, yet no last.txt).
+
+Root cause: the session's RunMeta lifecycle event carries transport/harness/project_id/worktree/driver_config but NOT last_path/stdout_path (the dispatch artifact paths, derived CLI-side from the brief filename stem). So on reattach the daemon cannot reconstruct where to write the artifacts.
+
+Fix direction: persist last_path + stdout_path (and worktree_path) in the RunMeta lifecycle event at dispatch time; on boot reattach (reattach_live_runs_on_boot), reconstruct a DispatchCompletion from RunMeta and call spawn_dispatch_completion_watcher for each reattached worker/reviewer run. Add a test: reattach a run with RunMeta artifact paths, release it, assert last.txt is written. Until then, the harness transcript remains the rescue source for restart-mid-run dispatches.
+
+Workaround already in effect: prefer in-process agent reviewers over rmux dispatches while the report path is fragile; rescue from harness transcript when a dispatch loses its report.

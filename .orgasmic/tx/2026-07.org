@@ -2160,3 +2160,97 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 22:32:28 task.created TASK-567JG
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1278
+:TIME:         [2026-07-03 Fri 22:32:28]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-567JG
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Split from TASK-B05AM: distinct failure mode (watcher not respawned on reattach), needs RunMeta schema addition.
+:END:
+
+* TX 2026-07-03 Fri 22:32:41 task.edited TASK-B05AM
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1279
+:TIME:         [2026-07-03 Fri 22:32:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-B05AM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-B05AM
+:NODE_ID:      TASK-B05AM
+:END:
+
+* TX 2026-07-03 Fri 22:32:42 task.state_transitioned TASK-B05AM
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1280
+:TIME:         [2026-07-03 Fri 22:32:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-B05AM
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Clobber acceptance met (ed6a6fc, teeth-tested). Distinct reattach-no-file mode split to TASK-567JG.
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-03 Fri 22:33:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1281
+:TIME:         [2026-07-03 Fri 22:33:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:33:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1282
+:TIME:         [2026-07-03 Fri 22:33:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:33:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1283
+:TIME:         [2026-07-03 Fri 22:33:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:33:04 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1284
+:TIME:         [2026-07-03 Fri 22:33:04]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
