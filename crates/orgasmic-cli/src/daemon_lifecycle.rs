@@ -50,16 +50,30 @@ pub enum DaemonStartOutcome {
     StillBooting(DaemonStarting),
 }
 
+#[derive(Debug, Clone)]
+pub enum AuthRepairOutcome {
+    NotNeeded,
+    Repaired(DaemonStartOutcome),
+}
+
 pub fn ensure_running(home: &Home) -> Result<()> {
     if explicit_daemon_url().is_some() {
         return Ok(());
     }
+    ensure_running_local(home, true)
+}
+
+fn ensure_running_local(home: &Home, repair_unauthorized: bool) -> Result<()> {
     match probe_local(home)? {
         LocalDaemonState::Running(_) => Ok(()),
         LocalDaemonState::Starting(_) => wait_until_running(home).map(|_| ()),
-        LocalDaemonState::Unauthorized => {
-            bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
+        LocalDaemonState::Unauthorized if repair_unauthorized => {
+            match repair_unauthorized_local_daemon(home)? {
+                AuthRepairOutcome::Repaired(_) => Ok(()),
+                AuthRepairOutcome::NotNeeded => ensure_running_local(home, false),
+            }
         }
+        LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             let spawned_pid = start_via_selected_adapter(home)?;
             wait_until_running_after_start(home, spawned_pid, START_TIMEOUT).map(|_| ())
@@ -71,12 +85,36 @@ pub async fn ensure_running_async(home: &Home) -> Result<()> {
     if explicit_daemon_url().is_some() {
         return Ok(());
     }
+    ensure_running_local_async(home, true).await
+}
+
+async fn ensure_running_local_async(home: &Home, repair_unauthorized: bool) -> Result<()> {
     match probe_local_async(home).await? {
         LocalDaemonState::Running(_) => Ok(()),
         LocalDaemonState::Starting(_) => wait_until_running_async(home).await.map(|_| ()),
-        LocalDaemonState::Unauthorized => {
-            bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
+        LocalDaemonState::Unauthorized if repair_unauthorized => {
+            match repair_unauthorized_local_daemon_async(home).await? {
+                AuthRepairOutcome::Repaired(_) => Ok(()),
+                AuthRepairOutcome::NotNeeded => {
+                    ensure_running_local_async_without_repair(home).await
+                }
+            }
         }
+        LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
+        LocalDaemonState::Down => {
+            start_via_selected_adapter(home)?;
+            wait_until_running_after_start_async(home, START_TIMEOUT)
+                .await
+                .map(|_| ())
+        }
+    }
+}
+
+async fn ensure_running_local_async_without_repair(home: &Home) -> Result<()> {
+    match probe_local_async(home).await? {
+        LocalDaemonState::Running(_) => Ok(()),
+        LocalDaemonState::Starting(_) => wait_until_running_async(home).await.map(|_| ()),
+        LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             start_via_selected_adapter(home)?;
             wait_until_running_after_start_async(home, START_TIMEOUT)
@@ -90,14 +128,26 @@ pub fn status(home: &Home) -> Result<LocalDaemonState> {
     probe_local(home)
 }
 
+pub fn local_lifecycle_externally_owned() -> bool {
+    explicit_daemon_url().is_some()
+}
+
 pub fn start(home: &Home) -> Result<DaemonStartOutcome> {
     refuse_explicit_daemon_url()?;
+    start_local(home, true)
+}
+
+fn start_local(home: &Home, repair_unauthorized: bool) -> Result<DaemonStartOutcome> {
     match probe_local(home)? {
         LocalDaemonState::Running(status) => Ok(DaemonStartOutcome::Running(status)),
         LocalDaemonState::Starting(starting) => Ok(DaemonStartOutcome::StillBooting(starting)),
-        LocalDaemonState::Unauthorized => {
-            bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
+        LocalDaemonState::Unauthorized if repair_unauthorized => {
+            match repair_unauthorized_local_daemon(home)? {
+                AuthRepairOutcome::Repaired(outcome) => Ok(outcome),
+                AuthRepairOutcome::NotNeeded => start_local(home, false),
+            }
         }
+        LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             let spawned_pid = start_via_selected_adapter(home)?;
             wait_until_running_after_start(home, spawned_pid, START_TIMEOUT)
@@ -111,7 +161,27 @@ pub fn stop_with_force(home: &Home, force: bool) -> Result<Option<DaemonStatus>>
 
 pub fn restart_with_force(home: &Home, force: bool) -> Result<DaemonStartOutcome> {
     let _ = stop_inner(home, force, false)?;
-    start(home)
+    start_local(home, false)
+}
+
+pub fn repair_unauthorized_local_daemon(home: &Home) -> Result<AuthRepairOutcome> {
+    refuse_explicit_daemon_url()?;
+    match probe_local(home)? {
+        LocalDaemonState::Unauthorized => {}
+        LocalDaemonState::Running(_) | LocalDaemonState::Starting(_) | LocalDaemonState::Down => {
+            return Ok(AuthRepairOutcome::NotNeeded);
+        }
+    }
+    let _ = stop_inner(home, true, false)?;
+    let outcome = start_local(home, false)?;
+    Ok(AuthRepairOutcome::Repaired(outcome))
+}
+
+async fn repair_unauthorized_local_daemon_async(home: &Home) -> Result<AuthRepairOutcome> {
+    let home = home.clone();
+    tokio::task::spawn_blocking(move || repair_unauthorized_local_daemon(&home))
+        .await
+        .context("join daemon auth repair task")?
 }
 
 fn stop_inner(
@@ -143,8 +213,16 @@ fn stop_inner(
             remove_pid_file(home);
             Ok(None)
         }
-        LocalDaemonState::Down | LocalDaemonState::Unauthorized => {
+        LocalDaemonState::Down => {
             daemon_service::stop(home)?;
+            remove_pid_file(home);
+            Ok(None)
+        }
+        LocalDaemonState::Unauthorized => {
+            daemon_service::stop(home)?;
+            if let Some(pid) = read_pid_file(home).filter(|pid| process_alive(*pid)) {
+                let _ = stop_pid(pid);
+            }
             remove_pid_file(home);
             Ok(None)
         }
@@ -348,9 +426,7 @@ fn wait_until_running(home: &Home) -> Result<DaemonStatus> {
         match probe_local(home)? {
             LocalDaemonState::Running(status) => return Ok(status),
             LocalDaemonState::Starting(_) => std::thread::sleep(Duration::from_millis(200)),
-            LocalDaemonState::Unauthorized => {
-                bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
-            }
+            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
             LocalDaemonState::Down => return bail_start_failed(home, START_TIMEOUT),
         }
     }
@@ -380,9 +456,7 @@ fn wait_until_running_after_start(
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
-            LocalDaemonState::Unauthorized => {
-                bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
-            }
+            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
             LocalDaemonState::Down => {
                 if let Some(pid) = spawned_pid {
                     if !process_alive(pid) {
@@ -405,9 +479,7 @@ async fn wait_until_running_async(home: &Home) -> Result<DaemonStatus> {
         match probe_local_async(home).await? {
             LocalDaemonState::Running(status) => return Ok(status),
             LocalDaemonState::Starting(_) => tokio::time::sleep(Duration::from_millis(200)).await,
-            LocalDaemonState::Unauthorized => {
-                bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
-            }
+            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
             LocalDaemonState::Down => return bail_start_failed(home, START_TIMEOUT),
         }
     }
@@ -427,11 +499,13 @@ async fn wait_until_running_after_start_async(
                 }
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
-            LocalDaemonState::Unauthorized => {
-                bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token)")
-            }
+            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
         }
     }
+}
+
+fn bail_auth_token_mismatch<T>() -> Result<T> {
+    bail!("daemon auth token mismatch (check $ORGASMIC_HOME/user/auth/token; run `orgasmic doctor --fix` to repair a stale local daemon)")
 }
 
 fn bail_start_failed<T>(home: &Home, elapsed: Duration) -> Result<T> {
@@ -677,6 +751,34 @@ fn remove_pid_file(home: &Home) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn env_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    struct ScopedEnv {
+        key: &'static str,
+        prior: Option<String>,
+    }
+
+    impl ScopedEnv {
+        fn set(key: &'static str, value: &str) -> Self {
+            let prior = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, prior }
+        }
+    }
+
+    impl Drop for ScopedEnv {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     #[cfg(unix)]
     struct ChildGuard(std::process::Child);
@@ -772,6 +874,22 @@ mod tests {
         let home = Home::at(tmp.path().join("home"));
         let status = persistence_status(&home);
         assert!(!status.adapter.is_empty());
+    }
+
+    #[test]
+    fn repair_refuses_external_daemon_url() {
+        let _guard = env_guard();
+        let _env = ScopedEnv::set("ORGASMIC_DAEMON_URL", "http://127.0.0.1:9999");
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+
+        let err = repair_unauthorized_local_daemon(&home).expect_err("external URL is not local");
+
+        assert!(
+            err.to_string()
+                .contains("local daemon lifecycle is externally owned"),
+            "unexpected error: {err:?}"
+        );
     }
 
     #[test]

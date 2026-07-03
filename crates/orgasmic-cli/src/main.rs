@@ -1038,8 +1038,8 @@ fn cmd_doctor_fix_id_collisions(home: &Home, spec: &str, project: Option<&Path>)
     Ok(())
 }
 
-/// Repair the fixable doctor findings: relink a dangling source binary symlink
-/// and wire the CLI onto PATH.
+/// Repair fixable doctor findings: relink a dangling source binary symlink,
+/// wire the CLI onto PATH, and restart a local daemon with stale auth.
 fn cmd_doctor_fix(home: &Home, no_modify_path: bool) -> Result<()> {
     if let Some(source) = source_checkout_for_repair(home) {
         match path_env::relink_source_binary(home, &source) {
@@ -1053,6 +1053,15 @@ fn cmd_doctor_fix(home: &Home, no_modify_path: bool) -> Result<()> {
     }
     let report = path_env::ensure(home, no_modify_path)?;
     print_path_report(home, &report);
+    if !daemon_lifecycle::local_lifecycle_externally_owned() {
+        match daemon_lifecycle::repair_unauthorized_local_daemon(home)? {
+            daemon_lifecycle::AuthRepairOutcome::Repaired(outcome) => {
+                println!("→ repaired daemon auth by restarting the local daemon");
+                print_start_outcome(home, &outcome);
+            }
+            daemon_lifecycle::AuthRepairOutcome::NotNeeded => {}
+        }
+    }
     Ok(())
 }
 
@@ -1244,16 +1253,12 @@ fn cmd_daemon(home: &Home, cmd: DaemonCmd) -> Result<()> {
         DaemonCmd::Status => cmd_daemon_status(home),
         DaemonCmd::Start => {
             match daemon_lifecycle::start(home)? {
-                daemon_lifecycle::DaemonStartOutcome::Running(status) => {
+                outcome @ daemon_lifecycle::DaemonStartOutcome::Running(_) => {
                     println!("✓ daemon running");
-                    print_daemon_persistence(home);
-                    println!("  pid:     {}", status.pid);
-                    println!("  boot_id: {}", status.boot_id);
+                    print_start_outcome(home, &outcome);
                 }
-                daemon_lifecycle::DaemonStartOutcome::StillBooting(starting) => {
-                    println!("daemon still booting — check `orgasmic daemon status` shortly");
-                    print_daemon_persistence(home);
-                    println!("  pid:     {}", starting.pid);
+                outcome @ daemon_lifecycle::DaemonStartOutcome::StillBooting(_) => {
+                    print_start_outcome(home, &outcome);
                 }
             }
             Ok(())
@@ -1288,6 +1293,20 @@ fn print_daemon_persistence(home: &Home) {
         Ok(Some(runtime)) => println!("  runtime_override: {}", runtime.description()),
         Ok(None) => {}
         Err(error) => println!("  runtime_override: invalid ({error})"),
+    }
+}
+
+fn print_start_outcome(home: &Home, outcome: &daemon_lifecycle::DaemonStartOutcome) {
+    print_daemon_persistence(home);
+    match outcome {
+        daemon_lifecycle::DaemonStartOutcome::Running(status) => {
+            println!("  pid:     {}", status.pid);
+            println!("  boot_id: {}", status.boot_id);
+        }
+        daemon_lifecycle::DaemonStartOutcome::StillBooting(starting) => {
+            println!("daemon still booting — check `orgasmic daemon status` shortly");
+            println!("  pid:     {}", starting.pid);
+        }
     }
 }
 
@@ -1327,16 +1346,12 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
 fn cmd_daemon_restart(home: &Home, args: DaemonRestartArgs) -> Result<()> {
     prepare_daemon_restart_runtime(home, &args)?;
     match daemon_lifecycle::restart_with_force(home, args.force)? {
-        daemon_lifecycle::DaemonStartOutcome::Running(status) => {
+        outcome @ daemon_lifecycle::DaemonStartOutcome::Running(_) => {
             println!("✓ daemon restarted");
-            print_daemon_persistence(home);
-            println!("  pid:     {}", status.pid);
-            println!("  boot_id: {}", status.boot_id);
+            print_start_outcome(home, &outcome);
         }
-        daemon_lifecycle::DaemonStartOutcome::StillBooting(starting) => {
-            println!("daemon restart still booting — check `orgasmic daemon status` shortly");
-            print_daemon_persistence(home);
-            println!("  pid:     {}", starting.pid);
+        outcome @ daemon_lifecycle::DaemonStartOutcome::StillBooting(_) => {
+            print_start_outcome(home, &outcome);
         }
     }
     Ok(())
