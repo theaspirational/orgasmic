@@ -12,6 +12,7 @@ use reqwest::StatusCode;
 use serde::Deserialize;
 
 use crate::content_lifecycle::{self, RegistryFinding};
+use crate::daemon_client;
 use crate::daemon_service;
 use crate::home::Home;
 use crate::install_state::{self, InstallMode};
@@ -310,13 +311,7 @@ async fn daemon_status_async(home: &Home) -> DaemonLiveness {
 }
 
 fn read_daemon_token(home: &Home) -> Option<String> {
-    let raw = std::fs::read_to_string(home.auth_token()).ok()?;
-    let token = raw.trim().to_string();
-    if token.is_empty() {
-        None
-    } else {
-        Some(token)
-    }
+    daemon_client::read_bearer_token(home).ok()
 }
 
 fn daemon_base_url(home: &Home) -> Option<String> {

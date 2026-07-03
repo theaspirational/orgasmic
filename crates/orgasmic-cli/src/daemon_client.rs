@@ -25,6 +25,9 @@ use crate::manager::DispatchPlan;
 /// client's default timeout and fabricates a zombie lease.
 const DEFAULT_DISPATCH_REQUEST_TIMEOUT_SECS: u64 = 30;
 const API_PREFIX: &str = "/api";
+const DAEMON_URL_ENV: &str = "ORGASMIC_DAEMON_URL";
+const DAEMON_TOKEN_ENV: &str = "ORGASMIC_DAEMON_TOKEN";
+const DAEMON_TOKEN_FILE_ENV: &str = "ORGASMIC_DAEMON_TOKEN_FILE";
 
 fn dispatch_request_timeout() -> std::time::Duration {
     std::env::var("ORGASMIC_DISPATCH_HTTP_TIMEOUT_SECS")
@@ -54,7 +57,7 @@ impl DaemonClient {
     }
 
     pub fn from_home(home: &Home) -> Result<Self> {
-        let token = read_token(home)?;
+        let token = read_bearer_token(home)?;
         let base = read_base_url(home)?;
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -237,7 +240,10 @@ async fn send_json<R: DeserializeOwned>(req: RequestBuilder) -> Result<R> {
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
         if status == StatusCode::UNAUTHORIZED {
-            bail!("unauthorized — check $ORGASMIC_HOME/user/auth/token");
+            bail!(
+                "unauthorized — check {DAEMON_TOKEN_ENV}/{DAEMON_TOKEN_FILE_ENV} \
+                 for external daemons or $ORGASMIC_HOME/user/auth/token locally"
+            );
         }
         if status == StatusCode::CONFLICT {
             bail!("conflict — node changed on disk; reload base_version and retry: {body}");
@@ -250,7 +256,38 @@ async fn send_json<R: DeserializeOwned>(req: RequestBuilder) -> Result<R> {
         .map_err(|e| anyhow!("decode daemon response: {e}"))
 }
 
-fn read_token(home: &Home) -> Result<String> {
+pub(crate) fn read_bearer_token(home: &Home) -> Result<String> {
+    if explicit_daemon_url().is_some() {
+        if let Some(token) = read_external_token()? {
+            return Ok(token);
+        }
+    }
+    read_home_token(home)
+}
+
+fn read_external_token() -> Result<Option<String>> {
+    if let Ok(raw) = std::env::var(DAEMON_TOKEN_ENV) {
+        let token = raw.trim().to_string();
+        if !token.is_empty() {
+            return Ok(Some(token));
+        }
+    }
+    if let Ok(path) = std::env::var(DAEMON_TOKEN_FILE_ENV) {
+        let path = path.trim();
+        if path.is_empty() {
+            return Ok(None);
+        }
+        let raw = std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+        let token = raw.trim().to_string();
+        if token.is_empty() {
+            bail!("bearer token at {path} is empty");
+        }
+        return Ok(Some(token));
+    }
+    Ok(None)
+}
+
+fn read_home_token(home: &Home) -> Result<String> {
     let path = home.auth_token();
     if !path.exists() {
         bail!(
@@ -267,10 +304,8 @@ fn read_token(home: &Home) -> Result<String> {
 }
 
 fn read_base_url(home: &Home) -> Result<String> {
-    if let Ok(url) = std::env::var("ORGASMIC_DAEMON_URL") {
-        if !url.is_empty() {
-            return Ok(url.trim_end_matches('/').to_string());
-        }
+    if let Some(url) = explicit_daemon_url() {
+        return Ok(url);
     }
     let (bind, port) = read_bind_port(&home.config())?;
     let host = if bind.is_unspecified() {
@@ -279,6 +314,13 @@ fn read_base_url(home: &Home) -> Result<String> {
         bind.to_string()
     };
     Ok(format!("http://{host}:{port}"))
+}
+
+fn explicit_daemon_url() -> Option<String> {
+    std::env::var(DAEMON_URL_ENV)
+        .ok()
+        .map(|url| url.trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
 }
 
 fn read_bind_port(config: &Path) -> Result<(std::net::IpAddr, u16)> {
@@ -314,9 +356,57 @@ fn read_bind_port(config: &Path) -> Result<(std::net::IpAddr, u16)> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
 
-    use super::{api_path, build_dispatch_request};
+    use super::*;
     use crate::manager::{DispatchKind, DispatchPlan};
+    use orgasmic_core::Home;
+
+    fn env_guard() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    struct ScopedEnv {
+        keys: Vec<(&'static str, Option<String>)>,
+    }
+
+    impl ScopedEnv {
+        fn set(pairs: &[(&'static str, &str)]) -> Self {
+            let keys = pairs
+                .iter()
+                .map(|(key, value)| {
+                    let prior = std::env::var(key).ok();
+                    std::env::set_var(key, value);
+                    (*key, prior)
+                })
+                .collect();
+            Self { keys }
+        }
+
+        fn clear(keys: &[&'static str]) -> Self {
+            let keys = keys
+                .iter()
+                .map(|key| {
+                    let prior = std::env::var(key).ok();
+                    std::env::remove_var(key);
+                    (*key, prior)
+                })
+                .collect();
+            Self { keys }
+        }
+    }
+
+    impl Drop for ScopedEnv {
+        fn drop(&mut self) {
+            for (key, prior) in &self.keys {
+                match prior {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
 
     fn sample_plan(worker_override: Option<String>) -> DispatchPlan {
         DispatchPlan {
@@ -355,5 +445,52 @@ mod tests {
         assert_eq!(api_path("/daemon/status"), "/api/daemon/status");
         assert_eq!(api_path("daemon/status"), "/api/daemon/status");
         assert_eq!(api_path("/api/daemon/status"), "/api/daemon/status");
+    }
+
+    #[test]
+    fn explicit_daemon_url_prefers_token_env_over_home_token() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(home.auth_token(), "home-token\n").unwrap();
+        let _env = ScopedEnv::set(&[
+            (DAEMON_URL_ENV, "http://127.0.0.1:9999"),
+            (DAEMON_TOKEN_ENV, "env-token"),
+        ]);
+        let _clear = ScopedEnv::clear(&[DAEMON_TOKEN_FILE_ENV]);
+
+        assert_eq!(read_bearer_token(&home).unwrap(), "env-token");
+    }
+
+    #[test]
+    fn explicit_daemon_url_uses_token_file_before_home_token() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(home.auth_token(), "home-token\n").unwrap();
+        let token_file = tmp.path().join("remote-token");
+        std::fs::write(&token_file, "file-token\n").unwrap();
+        let _env = ScopedEnv::set(&[
+            (DAEMON_URL_ENV, "http://127.0.0.1:9999"),
+            (DAEMON_TOKEN_FILE_ENV, token_file.to_str().unwrap()),
+        ]);
+        let _clear = ScopedEnv::clear(&[DAEMON_TOKEN_ENV]);
+
+        assert_eq!(read_bearer_token(&home).unwrap(), "file-token");
+    }
+
+    #[test]
+    fn local_daemon_ignores_external_token_env() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(home.auth_token(), "home-token\n").unwrap();
+        let _env = ScopedEnv::set(&[(DAEMON_TOKEN_ENV, "env-token")]);
+        let _clear = ScopedEnv::clear(&[DAEMON_URL_ENV, DAEMON_TOKEN_FILE_ENV]);
+
+        assert_eq!(read_bearer_token(&home).unwrap(), "home-token");
     }
 }
