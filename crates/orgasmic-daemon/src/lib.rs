@@ -304,6 +304,7 @@ impl Daemon {
             dispatch_watcher_grace: opts.dispatch_watcher_grace,
             tmux_input_ready_timeout_secs: opts.tmux_input_ready_timeout_secs,
             dispatch_response_delay: opts.dispatch_response_delay,
+            artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
 
         let app: Router = router(api_state);

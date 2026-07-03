@@ -95,6 +95,32 @@ pub struct ApiState {
     pub tmux_input_ready_timeout_secs: Option<u64>,
     /// Artificial delay before the dispatch HTTP handler returns (tests only).
     pub dispatch_response_delay: Option<std::time::Duration>,
+    /// Per-artifact locks serializing reviews.org read-modify-write across the
+    /// two feedback handlers. See [`ApiState::artifact_write_lock`].
+    pub artifact_write_locks:
+        Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
+}
+
+impl ApiState {
+    /// Serialize the read-modify-write of an artifact's `reviews.org` across
+    /// the two feedback handlers.
+    ///
+    /// The atomic-transaction refactor (TASK-Y2ZQJ finding #4) replaced
+    /// `writer.mutate_file` — which read `reviews.org` under the writer's
+    /// exclusive flock and applied its transform there, serializing concurrent
+    /// mutations — with a read-outside-the-lock then blind `FileRewrite`. That
+    /// reintroduced a lost-update race (finding M1): two concurrent add/consume
+    /// ops on the same artifact both read the same base and the second clobbers
+    /// the first. `reviews.org` is written ONLY by `post_artifact_feedback` and
+    /// `post_artifact_feedback_consume`; both MUST hold this per-artifact lock
+    /// across their read→transaction window so those ops serialize again while
+    /// keeping finding #4's file+tx atomicity.
+    fn artifact_write_lock(&self, art_dir: &FsPath) -> Arc<tokio::sync::Mutex<()>> {
+        let mut map = self.artifact_write_locks.lock().unwrap();
+        map.entry(art_dir.to_path_buf())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
 }
 
 pub fn router(state: ApiState) -> Router {
@@ -9009,33 +9035,22 @@ async fn post_artifact_feedback(
         return Err(ApiError::not_found("artifact not found"));
     }
 
-    // Refuse comments on regenerating artifacts.
-    let state_val = {
-        let org = std::fs::read_to_string(art_dir.join("artifact.org"))
-            .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
-        org.lines()
-            .find(|l| l.trim().starts_with(":STATE:"))
-            .and_then(|l| l.trim().strip_prefix(":STATE:"))
-            .map(str::trim)
-            .unwrap_or("submitted")
-            .to_string()
-    };
-    if state_val == "regenerating" {
+    // Serialize the reviews.org read→transaction window against a concurrent
+    // add/consume on the same artifact (finding M1). Held for the rest of the
+    // handler; released on return.
+    let write_lock = state.artifact_write_lock(&art_dir);
+    let _write_guard = write_lock.lock().await;
+
+    // One canonical read of artifact.org for both the regenerating guard and
+    // the current version (finding L1: was two ad-hoc line scrapers).
+    let summary = load_artifact(&art_dir)
+        .ok_or_else(|| ApiError::internal("read artifact.org: unreadable or unparseable"))?;
+    if summary.state == "regenerating" {
         return Err(ApiError::conflict(
             "artifact is regenerating; comments cannot be added now",
         ));
     }
-
-    // Read current version.
-    let version = {
-        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap_or_default();
-        org.lines()
-            .find(|l| l.trim().starts_with(":VERSION:"))
-            .and_then(|l| l.trim().strip_prefix(":VERSION:"))
-            .map(str::trim)
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(1)
-    };
+    let version = summary.version;
 
     let cid = new_cid();
     let author = body
@@ -9138,6 +9153,11 @@ async fn post_artifact_feedback_consume(
     if !art_dir.join("artifact.org").exists() {
         return Err(ApiError::not_found("artifact not found"));
     }
+
+    // Serialize the reviews.org read→transaction window against a concurrent
+    // add/consume on the same artifact (finding M1). Held until return.
+    let write_lock = state.artifact_write_lock(&art_dir);
+    let _write_guard = write_lock.lock().await;
 
     let reviews_path = art_dir.join("reviews.org");
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
@@ -9893,6 +9913,7 @@ mod tests {
             dispatch_watcher_grace: std::time::Duration::from_secs(30),
             tmux_input_ready_timeout_secs: Some(1),
             dispatch_response_delay: None,
+            artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -12500,6 +12521,92 @@ mod tests {
 
         // versions/v1.mdx should be the archive
         assert!(art_dir.join("versions/v1.mdx").exists());
+    }
+
+    // Regression guard for TASK-Y2ZQJ finding M1: concurrent comment-adds on
+    // the SAME artifact must all survive. Before the per-artifact write lock,
+    // each handler read reviews.org outside any lock and then submitted a blind
+    // full-content FileRewrite, so concurrent adds clobbered each other and only
+    // the last writer's comment survived. multi_thread + N racers makes the lost
+    // update reproducible if the serialization is ever removed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn artifact_concurrent_comment_adds_do_not_lose_writes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RACE1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>base</RichText>\n".into(),
+                title: Some("Race".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        const N: usize = 12;
+        let mut handles = Vec::new();
+        for i in 0..N {
+            let st = state.clone();
+            handles.push(tokio::spawn(async move {
+                post_artifact_feedback(
+                    State(st),
+                    Path(art_id.to_string()),
+                    Query(artifact_query("test-proj")),
+                    Json(ArtifactFeedbackRequest {
+                        message: format!("comment number {i}"),
+                        anchor: None,
+                        resolution_target: None,
+                        author: Some(format!("member-{i}")),
+                    }),
+                )
+                .await
+                .map(|j| j.0["cid"].as_str().unwrap().to_string())
+            }));
+        }
+        let mut cids = Vec::new();
+        for h in handles {
+            cids.push(
+                h.await
+                    .unwrap()
+                    .expect("concurrent feedback add should succeed"),
+            );
+        }
+
+        // Distinct CIDs, and every add durably present in the store.
+        let unique: std::collections::HashSet<_> = cids.iter().collect();
+        assert_eq!(unique.len(), N, "each add should mint a distinct CID");
+
+        let list = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+            .await
+            .expect("list");
+        assert_eq!(
+            list.0[0].open_comment_count, N,
+            "all {N} concurrent comment-adds must survive (no lost updates)"
+        );
+
+        let detail = get_artifact(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("detail");
+        assert_eq!(detail.0.comments.len(), N);
+        let got: std::collections::HashSet<_> =
+            detail.0.comments.iter().map(|c| c.cid.clone()).collect();
+        for cid in &cids {
+            assert!(got.contains(cid), "comment {cid} was lost");
+        }
     }
 
     #[tokio::test]
