@@ -2339,3 +2339,150 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 23:36:51 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1290
+:TIME:         [2026-07-03 Fri 23:36:51]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_ARSPJ
+:NODE_ID:      arch_ARSPJ
+:END:
+
+* TX 2026-07-03 Fri 23:38:42 implementer.done TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1291
+:TIME:         [2026-07-03 Fri 23:38:42]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:REASON:       Artifactor worker kind + generation pipeline. Manager diff review: lease-first ordering correct in both handlers, release-watcher reverts only-if-still-regenerating and reuses the M1 write lock, submit-only write path. Gates on merged tree: core green, daemon 216 lib + integration green, cli 100% single-threaded (parallel flake = known SJQ9V), clippy clean, drift clean, parse_errors 0. Worker self-caught+fixed a lease-ordering bug via live probe; B05AM fix validated (last.txt landed clean). artifact.generation.failed tx type added to arch_ARSPJ prose. Reviewer pass to follow.
+:WORKER_COMMIT: c37a5c0
+:MERGE_SHA:    6f8b88b
+:BRANCH:       task-2zqsb-impl
+:REVIEWED_DIFF: 9acfc6a..c37a5c0
+:CLOSED_TX:    tx-20260703-orgasmic-1286
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-03 Fri 23:38:43 task.state_transitioned TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1292
+:TIME:         [2026-07-03 Fri 23:38:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-2ZQSB to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-03 Fri 23:38:57 task.edited TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1293
+:TIME:         [2026-07-03 Fri 23:38:57]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-2ZQSB
+:NODE_ID:      TASK-2ZQSB
+:END:
+
+* TX 2026-07-03 Fri 23:39:04 manager.dispatch_started TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1294
+:TIME:         [2026-07-03 Fri 23:39:04]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:REASON:
+:KIND:         reviewer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2zqsb-review/worktree
+:BRANCH:       task-2zqsb-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2ZQSB-review/task-2ZQSB-review-brief.md
+:STARTED_AT:   [2026-07-03 Fri 23:39:04]
+:LIVENESS:     6f8b88bfd7a5b867f2cf6394c7bc502ee404ad33
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        claude-opus-4-8
+:EFFORT:       xhigh
+:REASON_INITIAL: Verify the Artifactor generation pipeline (diff 9acfc6a..c37a5c0, merged 6f8b88b): lease-first ordering, release-watcher revert safety, submit-only write path, M1 lock reuse, context assembly; hunt for new defects in +1368. opus-4-8/xhigh. B05AM fix makes the rmux report path reliable again.
+:END:
+
+* TX 2026-07-03 Fri 23:39:04 run.created TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1295
+:TIME:         [2026-07-03 Fri 23:39:04]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2ZQSB-reviewer-20260703T233904.jsonl
+:REASON:       Verify the Artifactor generation pipeline (diff 9acfc6a..c37a5c0, merged 6f8b88b): lease-first ordering, release-watcher revert safety, submit-only write path, M1 lock reuse, context assembly; hunt for new defects in +1368. opus-4-8/xhigh. B05AM fix makes the rmux report path reliable again.
+:RUN_ID:       run-20260703T233904-6e7405bf41584145a80c22e77e0bf9e8
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2zqsb-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2ZQSB-review/task-2ZQSB-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2ZQSB-review/task-2ZQSB-review-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2ZQSB-review/task-2ZQSB-review-stdout.log
+:DISPATCH_TX:  tx-20260703-orgasmic-1294
+:MODEL_OVERRIDE: claude-opus-4-8
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-07-03 Fri 23:39:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1296
+:TIME:         [2026-07-03 Fri 23:39:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 23:39:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1297
+:TIME:         [2026-07-03 Fri 23:39:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 23:39:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1298
+:TIME:         [2026-07-03 Fri 23:39:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
