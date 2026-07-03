@@ -44,6 +44,11 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::artifacts::{
+    self, append_comment_transform, archive_current_mdx, artifact_dir, artifact_org_content,
+    init_artifact_dir, load_artifact_detail, new_cid, reviews_org_header, update_artifact_org,
+    validate_mdx, ArtifactDetail, ArtifactSummary,
+};
 use crate::auth::{bearer_middleware, AuthState};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
@@ -54,7 +59,7 @@ use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
     BabysitterAutoSpawn, DiffSummarizer, Supervisor,
 };
-use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
+use crate::writer::{FileMutate, FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
 
 static UI_DIST: Dir<'_> = include_dir!("$ORGASMIC_UI_DIST_DIR");
@@ -206,6 +211,15 @@ pub fn router(state: ApiState) -> Router {
         .route("/plan", post(post_plan))
         .route("/graph/markers/:node_id", get(get_graph_markers))
         .route("/graph/nodes", get(get_graph_nodes).post(stub("TASK-008")))
+        // Artifact store (arch_ARSPJ / TASK-ZEFEY)
+        .route("/artifacts", get(get_artifacts))
+        .route("/artifacts/:id", get(get_artifact))
+        .route("/artifacts/:id/submit", post(post_artifact_submit))
+        .route("/artifacts/:id/feedback", post(post_artifact_feedback))
+        .route(
+            "/artifacts/:id/feedback/:cid/consume",
+            post(post_artifact_feedback_consume),
+        )
         .layer(axum::middleware::from_fn_with_state(
             auth_state,
             bearer_middleware,
@@ -8667,6 +8681,549 @@ fn stub(
     }
 }
 
+// ---- artifact handlers (arch_ARSPJ / TASK-ZEFEY) ---------------------------
+
+#[derive(Debug, Deserialize)]
+struct ArtifactQuery {
+    project: Option<String>,
+    version: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactSubmitRequest {
+    content: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    subject_nodes: Option<Vec<String>>,
+    #[serde(default)]
+    prompt: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactFeedbackRequest {
+    message: String,
+    #[serde(default)]
+    anchor: Option<String>,
+    #[serde(default)]
+    resolution_target: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
+}
+
+fn resolve_artifact_project<'a>(
+    snap: &'a IndexSnapshot,
+    project: Option<&str>,
+) -> Result<&'a BoardEntry, ApiError> {
+    let id = project
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .ok_or_else(|| ApiError::bad_request("missing required query param: project"))?;
+    snap.board
+        .iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| ApiError::not_found("project not found"))
+}
+
+async fn get_artifacts(
+    State(state): State<ApiState>,
+    Query(q): Query<ArtifactQuery>,
+) -> Result<Json<Vec<ArtifactSummary>>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
+    let project = snap
+        .projects
+        .get(&entry.id)
+        .ok_or_else(|| ApiError::not_found("project index unavailable"))?;
+    Ok(Json(project.artifacts.clone()))
+}
+
+async fn get_artifact(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    Query(q): Query<ArtifactQuery>,
+) -> Result<Json<ArtifactDetail>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
+    let art_dir = artifact_dir(&entry.path, &id);
+    let detail = load_artifact_detail(&art_dir, q.version)
+        .ok_or_else(|| ApiError::not_found("artifact not found"))?;
+    Ok(Json(detail))
+}
+
+async fn post_artifact_submit(
+    State(state): State<ApiState>,
+    Path(art_id): Path<String>,
+    Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactSubmitRequest>,
+) -> Result<Json<Value>, ApiError> {
+    // Validate block registry before any write.
+    let errs = validate_mdx(&body.content);
+    if !errs.is_empty() {
+        return Err(ApiError {
+            status: StatusCode::UNPROCESSABLE_ENTITY,
+            message: "MDX validation failed".into(),
+            body: Some(json!({ "error": "MDX validation failed", "block_errors": errs })),
+        });
+    }
+
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    drop(snap);
+
+    let art_dir = artifact_dir(&entry.path, &art_id);
+    let is_new = !art_dir.join("artifact.org").exists();
+
+    if is_new {
+        let title = body
+            .title
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| ApiError::bad_request("title is required for new artifact"))?;
+        let subject_nodes = body.subject_nodes.clone().unwrap_or_default();
+        let prompt = body.prompt.as_deref().unwrap_or("").to_string();
+
+        // Create folder structure.
+        init_artifact_dir(&art_dir)
+            .map_err(|e| ApiError::internal(format!("init artifact dir: {e}")))?;
+
+        // Write initial artifact.org.
+        let org_content =
+            artifact_org_content(&art_id, title, &subject_nodes, &prompt, 1, "submitted");
+
+        // Write reviews.org header.
+        let reviews_header = reviews_org_header(&art_id);
+
+        let now = Utc::now();
+        let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+        let project_date = now.format("%Y%m%d").to_string();
+        let month_str = now.format("%Y-%m").to_string();
+        let tx_path = entry
+            .path
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{month_str}.org"));
+
+        // artifact.created tx
+        let created_tx_id = format!(
+            "tx-{}-{}",
+            now.format("%Y%m%d%H%M%S"),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
+        let mut created_entry = orgasmic_core::tx::TxEntry::new(
+            &created_tx_id,
+            "artifact.created",
+            &time_str,
+            &state.actor,
+            &state.machine,
+        );
+        created_entry.project = Some(entry.id.clone());
+        created_entry.extra = vec![
+            ("ARTIFACT_ID".into(), art_id.clone()),
+            ("TITLE".into(), title.to_string()),
+            ("SUBJECT_NODES".into(), subject_nodes.join(" ")),
+            ("PROMPT".into(), prompt.clone()),
+        ];
+        state
+            .writer
+            .append_tx(
+                TxAppend {
+                    tx_path: tx_path.clone(),
+                    entry: created_entry,
+                    project_id: Some(entry.id.clone()),
+                    tx_id_policy: TxIdPolicy::ProjectSequence {
+                        project_id: entry.id.clone(),
+                        date: project_date.clone(),
+                    },
+                    request_id: None,
+                },
+                None,
+            )
+            .await
+            .map_err(|e| ApiError::internal(format!("write artifact.created tx: {e}")))?;
+
+        // Write files + artifact.submitted tx atomically.
+        let mut submitted_entry = orgasmic_core::tx::TxEntry::new(
+            "pending",
+            "artifact.submitted",
+            &time_str,
+            &state.actor,
+            &state.machine,
+        );
+        submitted_entry.project = Some(entry.id.clone());
+        submitted_entry.extra = vec![
+            ("ARTIFACT_ID".into(), art_id.clone()),
+            ("VERSION".into(), "1".into()),
+        ];
+
+        state
+            .writer
+            .transaction(
+                vec![
+                    FileRewrite {
+                        path: art_dir.join("artifact.org"),
+                        new_contents: org_content.into_bytes(),
+                    },
+                    FileRewrite {
+                        path: art_dir.join("artifact.mdx"),
+                        new_contents: body.content.clone().into_bytes(),
+                    },
+                    FileRewrite {
+                        path: art_dir.join("reviews.org"),
+                        new_contents: reviews_header.into_bytes(),
+                    },
+                ],
+                TxAppend {
+                    tx_path,
+                    entry: submitted_entry,
+                    project_id: Some(entry.id.clone()),
+                    tx_id_policy: TxIdPolicy::ProjectSequence {
+                        project_id: entry.id.clone(),
+                        date: project_date,
+                    },
+                    request_id: None,
+                },
+            )
+            .await
+            .map_err(|e| ApiError::internal(format!("write artifact files: {e}")))?;
+
+        let _ = state.index.refresh_project(&entry.id).await;
+        state.events.publish(
+            Topic::Artifact,
+            EventPayload::ArtifactChanged {
+                project_id: entry.id.clone(),
+                artifact_id: art_id.clone(),
+                state: "submitted".into(),
+            },
+        );
+        return Ok(Json(json!({ "artifact_id": art_id, "version": 1 })));
+    }
+
+    // Existing artifact: read current version, archive mdx, bump version.
+    let current_org = std::fs::read_to_string(art_dir.join("artifact.org"))
+        .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
+    let props = {
+        let mut p = std::collections::HashMap::new();
+        let mut in_drawer = false;
+        for line in current_org.lines() {
+            let t = line.trim();
+            if t.eq_ignore_ascii_case(":PROPERTIES:") {
+                in_drawer = true;
+                continue;
+            }
+            if t.eq_ignore_ascii_case(":END:") {
+                in_drawer = false;
+                continue;
+            }
+            if in_drawer {
+                if let Some(rest) = t.strip_prefix(':') {
+                    if let Some(cp) = rest.find(':') {
+                        p.insert(
+                            rest[..cp].trim().to_uppercase(),
+                            rest[cp + 1..].trim().to_string(),
+                        );
+                    }
+                }
+            }
+        }
+        p
+    };
+    let current_version = props
+        .get("VERSION")
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(1);
+    let new_version = current_version + 1;
+
+    archive_current_mdx(&art_dir, current_version)
+        .map_err(|e| ApiError::internal(format!("archive mdx: {e}")))?;
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let new_org = update_artifact_org(&current_org, new_version, "submitted")
+        .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
+
+    let mut submitted_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.submitted",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    submitted_entry.project = Some(entry.id.clone());
+    submitted_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.clone()),
+        ("VERSION".into(), new_version.to_string()),
+    ];
+
+    state
+        .writer
+        .transaction(
+            vec![
+                FileRewrite {
+                    path: art_dir.join("artifact.org"),
+                    new_contents: new_org,
+                },
+                FileRewrite {
+                    path: art_dir.join("artifact.mdx"),
+                    new_contents: body.content.into_bytes(),
+                },
+            ],
+            TxAppend {
+                tx_path,
+                entry: submitted_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: None,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("write artifact files: {e}")))?;
+
+    let _ = state.index.refresh_project(&entry.id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactChanged {
+            project_id: entry.id.clone(),
+            artifact_id: art_id.clone(),
+            state: "submitted".into(),
+        },
+    );
+    Ok(Json(
+        json!({ "artifact_id": art_id, "version": new_version }),
+    ))
+}
+
+async fn post_artifact_feedback(
+    State(state): State<ApiState>,
+    Path(art_id): Path<String>,
+    Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactFeedbackRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    let project_id = entry.id.clone();
+    let project_root = entry.path.clone();
+    drop(snap);
+
+    let art_dir = artifact_dir(&project_root, &art_id);
+    if !art_dir.join("artifact.org").exists() {
+        return Err(ApiError::not_found("artifact not found"));
+    }
+
+    // Refuse comments on regenerating artifacts.
+    let state_val = {
+        let org = std::fs::read_to_string(art_dir.join("artifact.org"))
+            .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
+        org.lines()
+            .find(|l| l.trim().starts_with(":STATE:"))
+            .and_then(|l| l.trim().strip_prefix(":STATE:"))
+            .map(str::trim)
+            .unwrap_or("submitted")
+            .to_string()
+    };
+    if state_val == "regenerating" {
+        return Err(ApiError::conflict(
+            "artifact is regenerating; comments cannot be added now",
+        ));
+    }
+
+    // Read current version.
+    let version = {
+        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap_or_default();
+        org.lines()
+            .find(|l| l.trim().starts_with(":VERSION:"))
+            .and_then(|l| l.trim().strip_prefix(":VERSION:"))
+            .map(str::trim)
+            .and_then(|v| v.parse::<u32>().ok())
+            .unwrap_or(1)
+    };
+
+    let cid = new_cid();
+    let author = body
+        .author
+        .as_deref()
+        .and_then(|s| if s.is_empty() { None } else { Some(s) })
+        .unwrap_or(&state.actor)
+        .to_string();
+    let anchor = body.anchor.unwrap_or_else(|| "{}".into());
+    let resolution_target = body.resolution_target.unwrap_or_default();
+
+    let cid_clone = cid.clone();
+    let author_clone = author.clone();
+    let anchor_clone = anchor.clone();
+    let resolution_target_clone = resolution_target.clone();
+    let message_clone = body.message.clone();
+
+    state
+        .writer
+        .mutate_file(FileMutate {
+            path: art_dir.join("reviews.org"),
+            transform: Box::new(append_comment_transform(
+                cid_clone,
+                author_clone,
+                version,
+                anchor_clone,
+                resolution_target_clone,
+                message_clone,
+            )),
+        })
+        .await
+        .map_err(|e| ApiError::internal(format!("append comment: {e}")))?;
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = project_root
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let mut tx_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.comment.added",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    tx_entry.project = Some(project_id.clone());
+    tx_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.clone()),
+        ("CID".into(), cid.clone()),
+        ("AUTHOR".into(), author),
+        ("VERSION".into(), version.to_string()),
+        ("ANCHOR".into(), anchor),
+        ("RESOLUTION_TARGET".into(), resolution_target),
+    ];
+
+    state
+        .writer
+        .append_tx(
+            TxAppend {
+                tx_path,
+                entry: tx_entry,
+                project_id: Some(project_id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: project_id.clone(),
+                    date: project_date,
+                },
+                request_id: None,
+            },
+            None,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("write comment.added tx: {e}")))?;
+
+    let _ = state.index.refresh_project(&project_id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactCommentAdded {
+            project_id,
+            artifact_id: art_id,
+            cid: cid.clone(),
+        },
+    );
+    Ok(Json(json!({ "cid": cid })))
+}
+
+async fn post_artifact_feedback_consume(
+    State(state): State<ApiState>,
+    Path((art_id, cid)): Path<(String, String)>,
+    Query(q): Query<ArtifactQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    let project_id = entry.id.clone();
+    let project_root = entry.path.clone();
+    drop(snap);
+
+    let art_dir = artifact_dir(&project_root, &art_id);
+    if !art_dir.join("artifact.org").exists() {
+        return Err(ApiError::not_found("artifact not found"));
+    }
+
+    let cid_clone = cid.clone();
+    state
+        .writer
+        .mutate_file(FileMutate {
+            path: art_dir.join("reviews.org"),
+            transform: Box::new(move |current: &str| {
+                artifacts::resolve_comment_in_reviews(current, &cid_clone)
+                    .map_err(|e| anyhow::anyhow!("{e}"))
+            }),
+        })
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::not_found(format!("comment {cid} not found"))
+            } else {
+                ApiError::internal(format!("resolve comment: {e}"))
+            }
+        })?;
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = project_root
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let mut tx_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.comment.resolved",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    tx_entry.project = Some(project_id.clone());
+    tx_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.clone()),
+        ("CID".into(), cid.clone()),
+        ("RESOLVED_BY".into(), state.actor.clone()),
+    ];
+
+    state
+        .writer
+        .append_tx(
+            TxAppend {
+                tx_path,
+                entry: tx_entry,
+                project_id: Some(project_id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: project_id.clone(),
+                    date: project_date,
+                },
+                request_id: None,
+            },
+            None,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("write comment.resolved tx: {e}")))?;
+
+    let _ = state.index.refresh_project(&project_id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactChanged {
+            project_id,
+            artifact_id: art_id,
+            state: "submitted".into(),
+        },
+    );
+    Ok(Json(json!({ "cid": cid, "resolved": true })))
+}
+
 // ---- errors ----------------------------------------------------------------
 
 /// HTTP error returned by daemon routes.
@@ -9085,6 +9642,7 @@ mod tests {
             graph,
             markers: BTreeMap::new(),
             last_loaded_at: None,
+            artifacts: Vec::new(),
         }
     }
 
@@ -11758,5 +12316,216 @@ mod tests {
         assert!(mode_binary_status("rmux").is_some());
         assert!(mode_binary_status("tmux").is_none());
         assert!(mode_binary_status("acp-stdio").is_none());
+    }
+
+    // ── artifact round-trip (TASK-ZEFEY acceptance) ───────────────────────────
+
+    #[tokio::test]
+    async fn artifact_create_submit_feedback_consume_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-TESTA";
+
+        // --- submit (create) ---
+        let submit_resp = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>Hello world</RichText>\n".into(),
+                title: Some("My Test Artifact".into()),
+                subject_nodes: Some(vec!["arch_ARSPJ".into()]),
+                prompt: Some("Generate a test artifact".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+        assert_eq!(submit_resp.0["artifact_id"], art_id);
+        assert_eq!(submit_resp.0["version"], 1);
+
+        // --- list ---
+        let list_resp = get_artifacts(
+            State(state.clone()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+        )
+        .await
+        .expect("list should succeed");
+        assert_eq!(list_resp.0.len(), 1);
+        assert_eq!(list_resp.0[0].id, art_id);
+        assert_eq!(list_resp.0[0].title, "My Test Artifact");
+        assert_eq!(list_resp.0[0].version, 1);
+        assert_eq!(list_resp.0[0].state, "submitted");
+        assert_eq!(list_resp.0[0].open_comment_count, 0);
+
+        // --- detail ---
+        let detail_resp = get_artifact(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+        )
+        .await
+        .expect("detail should succeed");
+        assert_eq!(detail_resp.0.summary.id, art_id);
+        assert!(detail_resp.0.content.contains("RichText"));
+        assert_eq!(detail_resp.0.comments.len(), 0);
+
+        // --- feedback (add comment) ---
+        let fb_resp = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+            Json(ArtifactFeedbackRequest {
+                message: "This looks good!".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+        let cid = fb_resp.0["cid"].as_str().unwrap().to_string();
+        assert!(cid.starts_with("CID-"));
+
+        // Index should reflect 1 open comment
+        let list2 = get_artifacts(
+            State(state.clone()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+        )
+        .await
+        .expect("list 2");
+        assert_eq!(list2.0[0].open_comment_count, 1);
+
+        // --- consume ---
+        let consume_resp = post_artifact_feedback_consume(
+            State(state.clone()),
+            Path((art_id.to_string(), cid.clone())),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+        )
+        .await
+        .expect("consume should succeed");
+        assert_eq!(consume_resp.0["resolved"], true);
+
+        // Verify comment is now resolved in detail
+        let detail2 = get_artifact(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+        )
+        .await
+        .expect("detail 2");
+        let comments = &detail2.0.comments;
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].cid, cid);
+        assert!(comments[0].resolved);
+        assert!(comments[0].consumed);
+
+        // Open comment count should be 0 after consume
+        let list3 = get_artifacts(
+            State(state.clone()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+        )
+        .await
+        .expect("list 3");
+        assert_eq!(list3.0[0].open_comment_count, 0);
+
+        // --- reject invalid MDX ---
+        let bad_submit = post_artifact_submit(
+            State(state.clone()),
+            Path("ART-TESTB".to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+            Json(ArtifactSubmitRequest {
+                content: "<GalacticWidget>bad block</GalacticWidget>".into(),
+                title: Some("Bad".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await;
+        assert!(bad_submit.is_err());
+        let err = bad_submit.unwrap_err();
+        assert_eq!(err.status, StatusCode::UNPROCESSABLE_ENTITY);
+
+        // --- refuse feedback on regenerating artifact ---
+        // Force state to regenerating
+        let art_dir = artifact_dir(&project_root, art_id);
+        let org_content = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let updated_org = update_artifact_org(&org_content, 1, "regenerating").unwrap();
+        std::fs::write(art_dir.join("artifact.org"), &updated_org).unwrap();
+        let fb2 = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+            Json(ArtifactFeedbackRequest {
+                message: "Should be refused".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await;
+        assert!(fb2.is_err());
+        assert_eq!(fb2.unwrap_err().status, StatusCode::CONFLICT);
+
+        // --- re-submit (version bump) ---
+        // Restore state to submitted first
+        let org_content2 = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let restored = update_artifact_org(&org_content2, 1, "submitted").unwrap();
+        std::fs::write(art_dir.join("artifact.org"), &restored).unwrap();
+
+        let resubmit = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                project: Some("test-proj".into()),
+                version: None,
+            }),
+            Json(ArtifactSubmitRequest {
+                content: "<Diagram>updated</Diagram>".into(),
+                title: None,
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("re-submit should succeed");
+        assert_eq!(resubmit.0["version"], 2);
+
+        // versions/v1.mdx should be the archive
+        assert!(art_dir.join("versions/v1.mdx").exists());
     }
 }
