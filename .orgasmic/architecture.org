@@ -826,7 +826,7 @@ Renders the sprint task board and per-task detail drawer, displaying lifecycle s
 ** arch_MK2Q2.7 node view family
 :PROPERTIES:
 :ID:                 arch_MK2Q2.7
-:SOURCE_PATHS:       ui/src/components/node-views/NodeGraph.tsx ui/src/components/node-views/NodeListView.tsx ui/src/components/node-views/NodeModal.tsx ui/src/components/ArchitectureView.tsx ui/src/components/DecisionsView.tsx
+:SOURCE_PATHS:       ui/src/components/node-views/NodeListView.tsx ui/src/components/node-views/NodeModal.tsx ui/src/components/ArchitectureView.tsx ui/src/components/DecisionsView.tsx
 :TESTS:              cd ui && npm run typecheck
 :READS:              projection:materialized-index
 :WRITES:
@@ -838,7 +838,7 @@ Renders the sprint task board and per-task detail drawer, displaying lifecycle s
 :DEPENDS_ON:
 :END:
 
-Provides reusable list, graph, and modal view components shared across architecture, decisions, glossary, and ADR pages. arch_MK2Q2 carries 7 leaves (one over principle-5's ceiling of 6) to preserve principle-3 (mechanism not feature) and principle-6 (no catch-all groupings) — the mechanism split was the lesser violation.
+Provides reusable list and modal view components shared across architecture, decisions, glossary, and ADR pages (the graph canvas member was excised per dec_ZG9B9). arch_MK2Q2 carries 7 leaves (one over principle-5's ceiling of 6) to preserve principle-3 (mechanism not feature) and principle-6 (no catch-all groupings) — the mechanism split was the lesser violation.
 
 * arch_MPAQT Design graph engine
 :PROPERTIES:
@@ -1502,41 +1502,31 @@ Task detail opens as a large centered Dialog on desktop with subtask sidebar, ma
 :ID:                 arch_M8JQT
 :KIND:               architecture
 :SEMANTIC_HASH:
-:MOTIVATED_BY:       dec_PA23Y dec_E394G dec_JSX48 dec_NZ9PS dec_WWAHT dec_KTF04
+:MOTIVATED_BY:       dec_PA23Y dec_E394G dec_JSX48 dec_NZ9PS dec_KTF04 dec_ZG9B9
 :GLOSSARY_REFS:      term_P94BF term_H5YHC
-:INTERFACE:          overlay node list graph modal back stack react flow cross layer graph topology live graph_layout.org geometry curation backbone edges top-down superseded grayed two-level reset shared map nudge glossary left column mobile sheet
-:CONSTRAINTS:        overlay only topology read-only geometry editable three-tier position resolution localStorage shared graph_layout.org baseline deterministic default active tasks included backbone edges only toggle dense edges containment nesting two-level reset shared map nudge glossary off by default left column artifacts off by default
+:INTERFACE:          node list modal back stack relation chips numeric id sort superseded hidden by default toggle decisions list mobile sheet
+:CONSTRAINTS:        list-first reference pages read-only node inspection back stack traversal superseded hidden by default toggle no per-page graph visualizations cross-layer visibility via artifacts mobile full-screen sheet
 :COMPOSES:
 :DEPENDS_ON:         arch_MPAQT arch_A1FGY arch_NAFA1
 :DECIDED_AT:         [2026-05-23 Sat 16:00]
 :V0_0_1:             target
-:V0_0_1_GAPS:        TASK-AQMTA daemon overlay endpoint graph_layout.org; TASK-JH9DD UI shell overlay-only graph; TASK-CKRYB UI position precedence and two-level reset; TASK-8BRYP superseded decision read-model
+:V0_0_1_GAPS:        none - graph-page scope excised per dec_ZG9B9 (TASK-M6146); reference pages shipped
 :V0_0_1_EVIDENCE:
 :END:
 
 ** Description
-The Graph page is an overlay-only cross-layer map: topology is live-derived from /graph/nodes and /graph/edges; only per-node geometry (x, y, w, h) and curation (hidden, pinned), keyed by node id, persist. The overlay is stored in .orgasmic/graph_layout.org (one heading per intentionally-placed node, geometry in the property drawer) and served as JSON via /graph/layout. This makes the Graph a hand-arrangeable inspection surface without coupling layout to topology mutations.
-
-Active tasks (backlog/todo/in_progress/in_review) join decisions and architecture as first-class nodes. Backbone edges (motivated_by, implements, supersedes) render top-down (decision → architecture → task). Superseded decisions (those targeted by another decision's :SUPERSEDES: property) surface grayed, per dec_KTF04; accepted decisions render normally. Dense edges and containment nesting are available as toggles.
+Reference pages are the list-first inspection surfaces over the graph data model: Decisions, Architecture, Glossary, and the node modals they open. Node lists sort by id and show compact summaries, relation chips, and links; node modals maintain a back-stack for chip traversal. The interactive cross-layer Graph page that previously shared this node was excised per dec_ZG9B9 (TASK-M6146): its viewer (GraphView/NodeGraph), /graph/layout endpoint, and graph_layout.org overlay are removed, while the graph data model (/graph/nodes, /graph/edges, parse-errors, markers, superseded flags) remains. Cross-layer visibility is an artifact concern going forward (dec_GPV4G).
 
 ** Interface
-- Overlay-only: topology fetched live from /graph/nodes + /graph/edges; per-node geometry and curation fetched from /graph/layout (backed by graph_layout.org).
 - Node lists sort by numeric ID and show compact summary, relation chips, and links.
 - Node modals maintain a back-stack when clicking dependency, decision, or glossary chips.
-- Backbone edges (motivated_by, implements, supersedes) drawn top-down (decision → architecture → task); dense edges (depends_on, dataflow, task deps) are toggle layers; containment renders as nesting.
-- Superseded decisions rendered grayed (read-model over :SUPERSEDES: backrefs; per dec_KTF04).
-- Geometry and curation editable on the page; topology read-only (no node create/delete).
-- Two-level reset: global "reset to shared" clears all localStorage overrides; per-node "snap to shared" resets one node. A quiet "shared map updated" nudge appears when the shared baseline changes for locally-overridden nodes.
-- Glossary off by default (toggle); when enabled renders as a left column. Artifacts off by default.
+- Superseded decisions are hidden by default on the Decisions list with a show-superseded toggle (read-model over :SUPERSEDES: backrefs; per dec_KTF04).
 - Mobile renders node modals as full-screen Sheets with a back-stack header control.
 
 ** Constraints
-- Position resolution is three-tier per-node: machine-local localStorage > shared graph_layout.org baseline > deterministic default band. Dragging writes localStorage only and never touches git or graph_layout.org. The shared overlay is written only deliberately (graph_curator agent or explicit publish). Viewport (pan/zoom) stays machine-local.
-- Active tasks (backlog/todo/in_progress/in_review) are included. Backbone edges (motivated_by, implements, supersedes) are on; dense edges (depends_on, dataflow, task deps) are toggle layers; containment renders as nesting.
-- Topology is read-only (no node create/delete); geometry and curation are editable. Reset is two-level: global "reset to shared" and per-node "snap to shared", with a quiet "shared map updated" nudge when the baseline changes for locally-overridden nodes.
-- Glossary is off by default (toggle), rendered as a left column when enabled. Artifacts are off by default.
-- Per-page glossary or ADR graphs are avoided; the cross-domain Graph owns that traversal.
-- Graph clicks inspect existing nodes; they do not create or revise graph topology.
+- Reference pages are read-only inspection surfaces: clicks inspect existing nodes; they do not create or revise graph topology.
+- No per-page graph visualizations; cross-layer visibility is delivered through generated artifacts (dec_ZG9B9, dec_GPV4G), not an interactive canvas.
+- Superseded decisions stay retained and reachable (dec_KTF04): hidden by default, surfaced via the show-superseded toggle.
 
 ** Depends on
 - =arch_MPAQT= for canonical graph nodes, edges, snapshots, and ADR regeneration.
@@ -1544,11 +1534,10 @@ Active tasks (backlog/todo/in_progress/in_review) join decisions and architectur
 - =arch_NAFA1= for the global Activity page feed.
 
 ** Decided by
-=dec_PA23Y= =dec_TQZTE= =dec_E394G= =dec_JSX48= =dec_NZ9PS=
+=dec_PA23Y= =dec_E394G= =dec_JSX48= =dec_NZ9PS= =dec_ZG9B9=
 
 ** Glossary gaps
 - node modal: Read-only graph-node inspection surface with back-stack traversal.
-- cross-domain graph: React Flow visualization over decisions, architecture, glossary terms, and ADRs.
 - reference page: Secondary list-first surface for glossary, ADR, snapshot, or activity records.
 
 * arch_Q1JVD Decision :PARENT: nesting tree and read-model (M2)

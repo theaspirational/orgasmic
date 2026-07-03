@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         ad380439b69e8f53f9f55457ec316d8071d36798
+:LIVENESS:         45c611614314935564ee1a19eeb009be45868a27
 :LIVENESS_AT:      [2026-07-03 Fri]
 :UPDATED_AT:       [2026-07-03 Fri]
 :END:
@@ -15,15 +15,17 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 
 ** Done so far
 - Reconciled operator span 06d0956..ad38043 (44 commits outside manager sessions, 2026-06-22..07-01): dec_B4147 amendments 2-7 land fully local-first publishing (publish-runtime.sh + publish-apps.sh incl. --channel nightly, version-less assets, runtime retain-current+1 pruning, apps-stable tag namespace, unified Android versionCode); runtime 0.0.7 and apps 0.0.6 shipped, 0.0.8/0.0.7 dev lines open. Android remote-daemon connect + in-app update check (dec_PVDP3, 169d60f) with rustls/insets/APK-opener/countdown fixes. Nested decisions M2 :PARENT: tree merged (arch_Q1JVD, TASK-2DFTX; 423b267/dc3a8ad). CLI bearer auth for external daemons + stale-token auto-repair (b66ab8a/b6734d2). acp-ws codex appserver worker dropped, reviewer moved to acp-stdio (9d47627).
-- Goal pivot recorded [2026-07-03 Fri]: dec_ZG9B9 (excise the Graph page viewer; supersedes dec_WWAHT) created; TASK-M6146 filed (IMPLEMENTS arch_M8JQT, MOTIVATED_BY dec_ZG9B9); goal-20260703-cut-the-graph set (manager.set_goal tx-20260703-orgasmic-1167). No code changes yet.
+- Goal pivot recorded [2026-07-03 Fri]: dec_ZG9B9 (excise the Graph page viewer; supersedes dec_WWAHT) created; TASK-M6146 filed (IMPLEMENTS arch_M8JQT, MOTIVATED_BY dec_ZG9B9); goal-20260703-cut-the-graph set (manager.set_goal tx-20260703-orgasmic-1167). Committed 15a7443.
+- TASK-M6146 (1/6) implemented and merged 45c6116 (worker 93529c2, implementer-claude-rmux run-20260703T183245; -2997/+43, 19 files): Graph page viewer excised — GraphView/NodeGraph/tests, graph route + nav, /graph/layout + handlers, graph_layout overlay + core parser, graph_curator spec, reactflow+dagre deps. Gates green (ui 73 tests, daemon suite, clippy, fmt). Manager integration: arch_M8JQT revised to reference-pages-only, arch_MK2Q2.7 SOURCE_PATHS pruned, drift clean, parse_errors 0. implementer.done tx-20260703-orgasmic-1192; task in_review awaiting reviewer.
+- TASK-SJQ9V filed: doctor staleness test fails only under cargo test --workspace concurrency (pre-existing latent race surfaced at integration; passes standalone parallel+serial).
 
 ** Next likely actions
-- Dispatch TASK-M6146 (Graph-page excision per dec_ZG9B9) via implementer-claude-rmux per manager-dispatch; manager diff review + arch_M8JQT revision via daemon verbs at integration, then reviewer-claude-rmux pass.
-- Then the artifact queue, sequential: TASK-ZEFEY -> TASK-2ZQSB -> TASK-T25XQ -> TASK-DJGM5 -> TASK-EDQPG.
+- Close the TASK-M6146 reviewer pass: read the report, file/triage findings (non-trivial -> fix subtask with :PARENT_TASK:), record reviewer pass in Evidence, set TASK-M6146 DONE, dispatch-close the reviewer.
+- Dispatch TASK-ZEFEY (artifact store: schema, tx types, index projection, CLI verbs; arch_ARSPJ) via implementer-claude-rmux — first task of the artifact queue; then TASK-2ZQSB -> TASK-T25XQ -> TASK-DJGM5 -> TASK-EDQPG sequentially.
 - Optional (operator to confirm scope first): broader first-feature cut-list audit beyond the Graph page.
 
 ** In flight
-- Nothing in flight. todo/in_progress/in_review empty; no open dispatch; no extra worktrees.
+- reviewer-claude-rmux on TASK-M6146 (run-20260703T185257) over merged diff 15a7443..45c6116; brief at .orgasmic/tmp/dispatch/task-M6146-review/task-M6146-review-brief.md; watcher installed in manager session.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.
