@@ -11,6 +11,7 @@
 //!   without a real listener.
 
 pub mod api;
+pub mod artifacts;
 pub mod auth;
 pub mod config;
 pub mod content;
@@ -38,6 +39,7 @@ use tracing_subscriber::EnvFilter;
 
 pub use crate::api::embedded_ui_asset_hash;
 pub use crate::api::{router, ApiState};
+pub use crate::artifacts::{ArtifactSummary, BLOCK_TYPES};
 pub use crate::auth::AuthState;
 pub use crate::config::DaemonConfig;
 pub use crate::content::{SkillView, WorkerView};

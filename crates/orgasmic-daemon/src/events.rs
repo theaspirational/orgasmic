@@ -24,16 +24,18 @@ pub enum Topic {
     Manager,
     Graph,
     Daemon,
+    Artifact,
 }
 
 impl Topic {
-    pub const ALL: [Topic; 6] = [
+    pub const ALL: [Topic; 7] = [
         Topic::Board,
         Topic::Task,
         Topic::Run,
         Topic::Manager,
         Topic::Graph,
         Topic::Daemon,
+        Topic::Artifact,
     ];
 
     pub fn parse(s: &str) -> Option<Topic> {
@@ -44,6 +46,7 @@ impl Topic {
             "manager" => Topic::Manager,
             "graph" => Topic::Graph,
             "daemon" => Topic::Daemon,
+            "artifact" => Topic::Artifact,
             _ => return None,
         })
     }
@@ -128,6 +131,16 @@ pub enum EventPayload {
     },
     DaemonRestartRequested,
     DaemonHeartbeat,
+    ArtifactChanged {
+        project_id: String,
+        artifact_id: String,
+        state: String,
+    },
+    ArtifactCommentAdded {
+        project_id: String,
+        artifact_id: String,
+        cid: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,6 +217,26 @@ mod tests {
             let s: String = serde_json::from_str(&json).unwrap();
             assert_eq!(Topic::parse(&s).unwrap(), t);
         }
+    }
+
+    #[test]
+    fn artifact_payloads_round_trip() {
+        let changed = EventPayload::ArtifactChanged {
+            project_id: "orgasmic".into(),
+            artifact_id: "ART-XYZAB".into(),
+            state: "submitted".into(),
+        };
+        let j = serde_json::to_value(&changed).unwrap();
+        assert_eq!(j["kind"], "artifact_changed");
+        assert_eq!(j["artifact_id"], "ART-XYZAB");
+
+        let added = EventPayload::ArtifactCommentAdded {
+            project_id: "orgasmic".into(),
+            artifact_id: "ART-XYZAB".into(),
+            cid: "CID-abc12345".into(),
+        };
+        let j = serde_json::to_value(&added).unwrap();
+        assert_eq!(j["kind"], "artifact_comment_added");
     }
 
     #[test]

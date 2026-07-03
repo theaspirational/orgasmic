@@ -25,6 +25,7 @@ use serde::{Serialize, Serializer};
 use tokio::sync::RwLock;
 use tracing::warn;
 
+use crate::artifacts::{load_project_artifacts, ArtifactSummary};
 use crate::events::{EventBus, EventPayload};
 
 /// One project's materialized state.
@@ -48,6 +49,7 @@ pub struct ProjectIndex {
     /// Per-file parse errors with the source path that failed and the
     /// last-good content count.
     pub last_loaded_at: Option<DateTime<Utc>>,
+    pub artifacts: Vec<ArtifactSummary>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -523,6 +525,7 @@ impl Index {
             graph: GraphIndex::default(),
             markers: BTreeMap::new(),
             last_loaded_at: Some(Utc::now()),
+            artifacts: Vec::new(),
         };
         let mut project = project;
         let config_org = board_entry.path.join(".orgasmic").join("config.org");
@@ -591,6 +594,7 @@ impl Index {
         project.subtasks = build_subtask_index(&project.tasks, &board_entry.path, snap);
         project.activity_index = build_activity_index(&board_entry.id, &snap.tx);
         project.markers = scan_project_markers(&board_entry.path);
+        project.artifacts = load_project_artifacts(&board_entry.path);
         lint_project_identity_state(&board_entry.path, &project.markers, snap);
         let prior = snap.projects.insert(board_entry.id.clone(), project);
         // Last-good fallback: if we ended up with zero tasks but the prior

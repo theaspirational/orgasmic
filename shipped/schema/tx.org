@@ -193,6 +193,46 @@ Properties in addition to the required base properties:
 - question.raised
 - question.answered
 
+*** Artifact lifecycle
+- artifact.created      (artifact folder + artifact.org written for the first time)
+- artifact.submitted    (artifact.mdx written or replaced; may follow artifact.created on the same submit)
+- artifact.comment.added (a feedback comment appended to reviews.org)
+- artifact.comment.resolved (a feedback comment marked resolved + consumed)
+- artifact.regenerated  (declared; no write path in TASK-ZEFEY — reserved for TASK-EDQPG)
+
+Properties for =artifact.created=:
+- :PROJECT:       project id
+- :ARTIFACT_ID:   ART-XXXXX
+- :TITLE:         artifact title
+- :SUBJECT_NODES: space-separated node ids (arch_XXX, dec_XXX, …)
+- :PROMPT:        escaped single-line prompt text
+
+Properties for =artifact.submitted=:
+- :PROJECT:       project id
+- :ARTIFACT_ID:   ART-XXXXX
+- :VERSION:       integer version number written
+
+Properties for =artifact.comment.added=:
+- :PROJECT:       project id
+- :ARTIFACT_ID:   ART-XXXXX
+- :CID:           CID-<hex8> unique comment id
+- :AUTHOR:        email | agent.<kind>
+- :VERSION:       artifact version the comment is anchored to
+- :ANCHOR:        JSON anchor object (default ={​}=)
+- :RESOLUTION_TARGET: optional CID this comment resolves
+
+Properties for =artifact.comment.resolved=:
+- :PROJECT:       project id
+- :ARTIFACT_ID:   ART-XXXXX
+- :CID:           CID of the resolved comment
+- :RESOLVED_BY:   actor email / agent id
+
+Properties for =artifact.regenerated= (reserved; no write path yet):
+- :PROJECT:       project id
+- :ARTIFACT_ID:   ART-XXXXX
+- :FROM_VERSION:  integer version before regeneration
+- :TO_VERSION:    integer version after regeneration
+
 ** Property registry (per type)
 [Filled out during v0.0.1 implementation from `.orgasmic/decisions.org`,
 `.orgasmic/architecture.org`, and `.orgasmic/tasks/<state>.org`.]

@@ -11,6 +11,7 @@
 //! local daemon. Later tasks promote other groups as their owners land.
 
 mod architecture_drift;
+mod artifact;
 mod content_lifecycle;
 mod daemon_client;
 mod daemon_lifecycle;
@@ -34,6 +35,7 @@ use clap::{Args, Parser, Subcommand};
 use orgasmic_core::projects;
 use orgasmic_daemon::{Daemon, DaemonOptions};
 
+use crate::artifact::{cmd_artifact, ArtifactCmd};
 use crate::content_lifecycle::{HubInstall, LifecycleEntry};
 use crate::daemon_client::DaemonClient;
 use crate::doctor::Finding;
@@ -253,6 +255,11 @@ Examples:
     Node {
         #[command(subcommand)]
         cmd: NodeCmd,
+    },
+    /// Artifact store: block vocabulary, submit, and feedback.
+    Artifact {
+        #[command(subcommand)]
+        cmd: ArtifactCmd,
     },
     /// Manager grilling stage.
     Grill {
@@ -819,6 +826,7 @@ fn main() -> Result<()> {
         Cmd::Architecture { cmd } => cmd_architecture(&home, cmd),
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
         Cmd::Node { cmd } => cmd_node(&home, cmd),
+        Cmd::Artifact { cmd } => cmd_artifact(&home, cmd),
         Cmd::Grill {
             project,
             reason,
