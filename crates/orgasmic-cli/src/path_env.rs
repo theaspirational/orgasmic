@@ -618,7 +618,10 @@ mod tests {
         let second = ensure(&home, false).unwrap();
         assert!(second.shim_linked.is_none(), "own shim must be recognised");
         assert!(second.shim_already, "own shim must report already-present");
-        assert!(second.shim_blocked.is_none(), "own shim must not look foreign");
+        assert!(
+            second.shim_blocked.is_none(),
+            "own shim must not look foreign"
+        );
         assert_eq!(shim_on_path(&home).as_deref(), Some(shim.as_path()));
     }
 
@@ -644,7 +647,10 @@ mod tests {
         assert_eq!(report.shim_blocked.as_deref(), Some(foreign.as_path()));
         // Untouched.
         assert!(!foreign.is_symlink());
-        assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "#!/bin/sh\necho not ours\n");
+        assert_eq!(
+            std::fs::read_to_string(&foreign).unwrap(),
+            "#!/bin/sh\necho not ours\n"
+        );
     }
 
     #[cfg(unix)]

@@ -290,21 +290,6 @@ export type GraphNodeSummary = {
   superseded?: boolean;
 };
 
-export type GraphEdgeSummary = {
-  kind: string;
-  from: string;
-  to: string;
-};
-
-export type GraphLayoutEntry = {
-  x?: number;
-  y?: number;
-  w?: number;
-  h?: number;
-  hidden?: boolean;
-  pinned?: boolean;
-};
-
 export type GraphIndex = {
   decisions: DecisionSummary[];
   architecture: ArchitectureSummary[];

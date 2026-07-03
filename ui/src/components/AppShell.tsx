@@ -15,7 +15,6 @@ import {
   ListChecks,
   Monitor,
   Moon,
-  Network,
   Plus,
   Settings,
   Sun,
@@ -83,7 +82,6 @@ type ProjectPage =
   | 'architecture'
   | 'tasks'
   | 'glossary'
-  | 'graph'
   | 'project'
   | 'runs'
   | 'prompts'
@@ -101,7 +99,6 @@ type NavItem = {
     | '/projects/$projectId/architecture'
     | '/projects/$projectId/tasks'
     | '/projects/$projectId/glossary'
-    | '/projects/$projectId/graph'
     | '/projects/$projectId/project'
     | '/projects/$projectId/runs'
     | '/projects/$projectId/prompts'
@@ -116,7 +113,6 @@ const PRIMARY: NavItem[] = [
   { page: 'decisions', label: 'Decisions', icon: GitCommitHorizontal, to: '/projects/$projectId/decisions' },
   { page: 'architecture', label: 'Architecture', icon: Boxes, to: '/projects/$projectId/architecture' },
   { page: 'tasks', label: 'Tasks', icon: ListChecks, to: '/projects/$projectId/tasks' },
-  { page: 'graph', label: 'Graph', icon: Network, to: '/projects/$projectId/graph' },
   { page: 'glossary', label: 'Glossary', icon: BookOpen, to: '/projects/$projectId/glossary' },
 ];
 

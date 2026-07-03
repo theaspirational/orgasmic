@@ -207,7 +207,11 @@ fn run_bundle(
         let retention = runtime_retention();
         match prune_old_runtimes(home, &final_runtime, &target, retention) {
             Ok(removed) if !removed.is_empty() => {
-                println!("  pruned {} old runtime(s): {}", removed.len(), removed.join(", "));
+                println!(
+                    "  pruned {} old runtime(s): {}",
+                    removed.len(),
+                    removed.join(", ")
+                );
             }
             Ok(_) => {}
             Err(error) => eprintln!("warning: runtime prune skipped: {error}"),
@@ -262,8 +266,8 @@ fn prune_old_runtimes(
     let current_name = keep_current.file_name().and_then(|name| name.to_str());
 
     let mut candidates: Vec<(PathBuf, String, std::time::SystemTime)> = Vec::new();
-    for entry in std::fs::read_dir(&runtimes)
-        .with_context(|| format!("read {}", runtimes.display()))?
+    for entry in
+        std::fs::read_dir(&runtimes).with_context(|| format!("read {}", runtimes.display()))?
     {
         let entry = entry?;
         if !entry.file_type()?.is_dir() {
@@ -291,7 +295,10 @@ fn prune_old_runtimes(
         match std::fs::remove_dir_all(&path) {
             Ok(()) => removed.push(name),
             Err(error) => {
-                eprintln!("warning: failed to prune old runtime {}: {error}", path.display());
+                eprintln!(
+                    "warning: failed to prune old runtime {}: {error}",
+                    path.display()
+                );
             }
         }
     }
@@ -1136,9 +1143,15 @@ mod tests {
 
         assert_eq!(removed, vec!["0.0.1-darwin-aarch64".to_string()]);
         assert!(!oldest.exists(), "oldest darwin runtime should be pruned");
-        assert!(previous.exists(), "the retained previous runtime must remain");
+        assert!(
+            previous.exists(),
+            "the retained previous runtime must remain"
+        );
         assert!(current.exists(), "the active runtime must never be pruned");
-        assert!(other_target.exists(), "other-target runtimes must be left alone");
+        assert!(
+            other_target.exists(),
+            "other-target runtimes must be left alone"
+        );
     }
 
     #[test]
@@ -1154,7 +1167,10 @@ mod tests {
 
         let removed = prune_old_runtimes(&home, &current, target, 1).unwrap();
 
-        assert!(removed.is_empty(), "one previous runtime is within retention=1");
+        assert!(
+            removed.is_empty(),
+            "one previous runtime is within retention=1"
+        );
         assert!(previous.exists());
         assert!(current.exists());
     }

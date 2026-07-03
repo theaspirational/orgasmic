@@ -11,7 +11,7 @@
 //! must exist so the CLI/manager/UI can discover them; the handlers fill
 //! in over TASK-006..TASK-010.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component, Path as FsPath, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
@@ -29,11 +29,10 @@ use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     goal_file_path, goal_file_rel, handoff_file_path, lifecycle_stage_file_name,
-    parse_graph_layout_overlay, project_sessions_dir, read_session_file, resolve_loader,
-    task_file_path, task_file_rel, DriverEvent, GraphLayoutEntry, Heading, Home, Lifecycle,
-    LifecycleStage, OrgFile, OrgRewriter, ProjectConfig, ProjectFile, ReleaseOutcome,
-    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SlotValues, Worker,
-    WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    project_sessions_dir, read_session_file, resolve_loader, task_file_path, task_file_rel,
+    DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectConfig,
+    ProjectFile, ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope,
+    SessionEventKind, SlotValues, Worker, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -55,9 +54,7 @@ use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
     BabysitterAutoSpawn, DiffSummarizer, Supervisor,
 };
-use crate::writer::{
-    FileMutate, FileMutateTransform, FileRewrite, TxAppend, TxIdPolicy, WriterHandle,
-};
+use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
 
 static UI_DIST: Dir<'_> = include_dir!("$ORGASMIC_UI_DIST_DIR");
@@ -209,10 +206,6 @@ pub fn router(state: ApiState) -> Router {
         .route("/plan", post(post_plan))
         .route("/graph/markers/:node_id", get(get_graph_markers))
         .route("/graph/nodes", get(get_graph_nodes).post(stub("TASK-008")))
-        .route(
-            "/graph/layout",
-            get(get_graph_layout).patch(patch_graph_layout),
-        )
         .layer(axum::middleware::from_fn_with_state(
             auth_state,
             bearer_middleware,
@@ -6161,192 +6154,6 @@ async fn get_graph_nodes(
     Ok(Json(
         select_graph(&snap, q.project.as_deref())?.nodes.clone(),
     ))
-}
-
-// orgasmic:dec_WWAHT
-#[derive(Debug, Deserialize)]
-struct PatchGraphLayoutRequest {
-    node_id: String,
-    #[serde(default)]
-    x: Option<i64>,
-    #[serde(default)]
-    y: Option<i64>,
-    #[serde(default)]
-    w: Option<i64>,
-    #[serde(default)]
-    h: Option<i64>,
-    #[serde(default)]
-    hidden: Option<bool>,
-    #[serde(default)]
-    pinned: Option<bool>,
-}
-
-// orgasmic:dec_WWAHT
-async fn get_graph_layout(
-    State(state): State<ApiState>,
-    Query(q): Query<GraphQuery>,
-) -> Result<Json<HashMap<String, GraphLayoutEntry>>, ApiError> {
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    let path = project.root.join(".orgasmic/graph_layout.org");
-    drop(snap);
-    let source = match std::fs::read_to_string(&path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Json(HashMap::new()));
-        }
-        Err(e) => {
-            return Err(ApiError::internal(format!(
-                "failed to read graph_layout.org: {e}"
-            )));
-        }
-    };
-    let file = OrgFile::parse(source, "graph_layout.org")
-        .map_err(|e| ApiError::internal(format!("failed to parse graph_layout.org: {e}")))?;
-    Ok(Json(parse_graph_layout_overlay(&file)))
-}
-
-// orgasmic:dec_WWAHT
-const GRAPH_LAYOUT_DEFAULT: &str = "#+title: graph layout overlay\n#+orgasmic_version: 1\n\n";
-
-// orgasmic:dec_WWAHT
-async fn patch_graph_layout(
-    State(state): State<ApiState>,
-    Query(q): Query<GraphQuery>,
-    Json(req): Json<PatchGraphLayoutRequest>,
-) -> Result<Json<Value>, ApiError> {
-    if !is_safe_node_id(&req.node_id) {
-        return Err(ApiError::bad_request(format!(
-            "invalid node_id: {:?}",
-            req.node_id
-        )));
-    }
-    let snap = state.index.snapshot().await;
-    let project = select_project(&snap, q.project.as_deref())?;
-    let path = project.root.join(".orgasmic/graph_layout.org");
-    drop(snap);
-    let req = std::sync::Arc::new(req);
-    let transform_req = std::sync::Arc::clone(&req);
-    let transform: FileMutateTransform = Box::new(move |source: &str| -> anyhow::Result<Vec<u8>> {
-        let req = &*transform_req;
-        let source = if source.is_empty() {
-            GRAPH_LAYOUT_DEFAULT.to_string()
-        } else {
-            source.to_string()
-        };
-        let file = OrgFile::parse(source.clone(), "graph_layout.org")
-            .map_err(|e| anyhow::anyhow!("failed to parse graph_layout.org: {e}"))?;
-        let updated = if file.find_by_id(&req.node_id).is_some() {
-            let mut rw = OrgRewriter::new(&file, "graph_layout.org");
-            if let Some(x) = req.x {
-                rw.upsert_property(&req.node_id, "X", &x.to_string())
-                    .map_err(|e| anyhow::anyhow!("upsert X: {e}"))?;
-            }
-            if let Some(y) = req.y {
-                rw.upsert_property(&req.node_id, "Y", &y.to_string())
-                    .map_err(|e| anyhow::anyhow!("upsert Y: {e}"))?;
-            }
-            if let Some(w) = req.w {
-                rw.upsert_property(&req.node_id, "W", &w.to_string())
-                    .map_err(|e| anyhow::anyhow!("upsert W: {e}"))?;
-            }
-            if let Some(h) = req.h {
-                rw.upsert_property(&req.node_id, "H", &h.to_string())
-                    .map_err(|e| anyhow::anyhow!("upsert H: {e}"))?;
-            }
-            if let Some(hidden) = req.hidden {
-                rw.upsert_property(&req.node_id, "HIDDEN", if hidden { "t" } else { "f" })
-                    .map_err(|e| anyhow::anyhow!("upsert HIDDEN: {e}"))?;
-            }
-            if let Some(pinned) = req.pinned {
-                rw.upsert_property(&req.node_id, "PINNED", if pinned { "t" } else { "f" })
-                    .map_err(|e| anyhow::anyhow!("upsert PINNED: {e}"))?;
-            }
-            rw.finish()
-        } else {
-            let heading = render_layout_heading(req);
-            layout_file_append(&source, &heading)
-        };
-        OrgFile::parse(updated.clone(), "graph_layout.org")
-            .map_err(|e| anyhow::anyhow!("layout overlay rewrite is not valid org: {e}"))?;
-        Ok(updated.into_bytes())
-    });
-    state
-        .writer
-        .mutate_file(FileMutate { path, transform })
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("failed to parse")
-                || msg.contains("upsert ")
-                || msg.contains("layout overlay rewrite is not valid org")
-            {
-                ApiError::internal(msg)
-            } else {
-                ApiError::internal(format!("write graph_layout.org: {msg}"))
-            }
-        })?;
-    Ok(Json(json!({})))
-}
-
-/// Permit node ids that start with a known class prefix and contain only
-/// id-grammar characters (no whitespace, colons, or newlines). This is
-/// the narrow check used before a `node_id` is interpolated into the
-/// `* LAYOUT {id}` heading — it blocks injection without coupling the
-/// layout PATCH to the full `is_valid_greenfield_*` migration grammar
-/// (which would reject the short test-fixture ids).
-fn is_safe_node_id(id: &str) -> bool {
-    let rest = ["TASK-", "dec_", "arch_", "term_"]
-        .iter()
-        .find_map(|p| id.strip_prefix(p));
-    let Some(rest) = rest else {
-        return false;
-    };
-    !rest.is_empty() && rest.chars().all(|c| c.is_ascii_alphanumeric() || c == '.')
-}
-
-fn render_layout_heading(req: &PatchGraphLayoutRequest) -> String {
-    let id = &req.node_id;
-    let mut out = format!(
-        "* LAYOUT {id}\n\
-         :PROPERTIES:\n\
-         :ID:       {id}\n"
-    );
-    if let Some(x) = req.x {
-        out.push_str(&format!(":X:        {x}\n"));
-    }
-    if let Some(y) = req.y {
-        out.push_str(&format!(":Y:        {y}\n"));
-    }
-    if let Some(w) = req.w {
-        out.push_str(&format!(":W:        {w}\n"));
-    }
-    if let Some(h) = req.h {
-        out.push_str(&format!(":H:        {h}\n"));
-    }
-    if let Some(hidden) = req.hidden {
-        out.push_str(&format!(":HIDDEN:   {}\n", if hidden { "t" } else { "f" }));
-    }
-    if let Some(pinned) = req.pinned {
-        out.push_str(&format!(":PINNED:   {}\n", if pinned { "t" } else { "f" }));
-    }
-    out.push_str(":END:\n");
-    out
-}
-
-fn layout_file_append(existing: &str, heading: &str) -> String {
-    let mut out = existing.to_string();
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    if !out.ends_with("\n\n") {
-        out.push('\n');
-    }
-    out.push_str(heading.trim_start_matches('\n'));
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out
 }
 
 async fn get_graph_edges(
