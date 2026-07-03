@@ -105,6 +105,19 @@ require_cmd() {
     fi
 }
 
+tar_supports_unknown_pax_warning_suppression() {
+    tar --warning=no-unknown-keyword --version >/dev/null 2>&1
+}
+
+extract_runtime_tarball() {
+    local bundle="$1" dest="$2"
+    if tar_supports_unknown_pax_warning_suppression; then
+        tar --warning=no-unknown-keyword -xzf "$bundle" -C "$dest"
+    else
+        tar -xzf "$bundle" -C "$dest"
+    fi
+}
+
 extract_json_string() {
     local key="$1" file="$2"
     sed -nE "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"([^\"]+)\".*/\1/p" "$file" | head -1
@@ -364,7 +377,7 @@ install_bundle_mode() {
 
     extract_dir="$work/extract"
     mkdir -p "$extract_dir"
-    tar -xzf "$bundle_file" -C "$extract_dir"
+    extract_runtime_tarball "$bundle_file" "$extract_dir"
     payload="$extract_dir"
     if [[ ! -f "$payload/bin/orgasmic" ]]; then
         local child_count child

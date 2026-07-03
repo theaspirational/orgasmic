@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
@@ -423,7 +423,11 @@ fn validate_executable(path: &Path) -> Result<()> {
 }
 
 fn unpack_tar_gz(bundle: &Path, dest: &Path) -> Result<()> {
-    let status = Command::new("tar")
+    let mut command = Command::new("tar");
+    if tar_supports_unknown_pax_warning_suppression() {
+        command.arg("--warning=no-unknown-keyword");
+    }
+    let status = command
         .arg("-xzf")
         .arg(bundle)
         .arg("-C")
@@ -438,6 +442,18 @@ fn unpack_tar_gz(bundle: &Path, dest: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn tar_supports_unknown_pax_warning_suppression() -> bool {
+    Command::new("tar")
+        .arg("--warning=no-unknown-keyword")
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn normalize_payload_dir(extract_root: &Path) -> Result<PathBuf> {

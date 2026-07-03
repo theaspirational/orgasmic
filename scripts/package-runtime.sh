@@ -76,6 +76,36 @@ else
     CARGO_PROFILE_DIR="$PROFILE"
 fi
 
+tar_supports_create_flag() {
+    local flag="$1"
+    local probe_dir probe_file
+    probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/orgasmic-tar-probe.XXXXXX")"
+    probe_file="$(mktemp "${TMPDIR:-/tmp}/orgasmic-tar-probe.XXXXXX.tar")"
+    if tar "$flag" -cf "$probe_file" -C "$probe_dir" . >/dev/null 2>&1; then
+        rm -rf "$probe_dir" "$probe_file"
+        return 0
+    fi
+    rm -rf "$probe_dir" "$probe_file"
+    return 1
+}
+
+create_runtime_tarball() {
+    local out="$1" stage="$2"
+    local tar_flags=()
+
+    # Runtime bundles are platform-neutral artifacts. When built on macOS,
+    # bsdtar can otherwise emit libarchive pax xattr keys such as
+    # LIBARCHIVE.xattr.com.apple.provenance, which GNU tar warns about on Linux.
+    if tar_supports_create_flag --no-xattrs; then
+        tar_flags+=(--no-xattrs)
+    fi
+    if tar_supports_create_flag --no-mac-metadata; then
+        tar_flags+=(--no-mac-metadata)
+    fi
+
+    COPYFILE_DISABLE=1 tar "${tar_flags[@]}" -czf "$out" -C "$stage" .
+}
+
 # orgasmic:dec_B4147 — Linux GNU targets cross-build through cargo-zigbuild with a
 # pinned glibc floor; everything else uses the native cargo target compiler. The
 # UI is reused (not rebuilt) per target when ORGASMIC_UI_PREBUILT=1 (handled in
@@ -156,7 +186,7 @@ mkdir -p "$OUT_DIR"
 # — on stable OR nightly. The rolling channel tag makes this a stable download URL.
 ASSET_TARGET="$(printf '%s' "$TARGET_KEY" | tr '-' '_')"
 OUT="$OUT_DIR/orgasmic-runtime_${ASSET_TARGET}.tar.gz"
-tar -czf "$OUT" -C "$STAGE" .
+create_runtime_tarball "$OUT" "$STAGE"
 
 if command -v shasum >/dev/null 2>&1; then
     shasum -a 256 "$OUT" | awk '{print $1}' > "$OUT.sha256"
