@@ -1,18 +1,3 @@
 #+title: In Review
 #+orgasmic_version: 1
 
-* IN_REVIEW TASK-2ZQSB Artifactor worker kind, prompt spec, and generation launch path :artifacts:supervisor:prompt-studio:
-:PROPERTIES:
-:DEPENDS_ON: TASK-ZEFEY
-:ID: TASK-2ZQSB
-:IMPLEMENTS: arch_045Q0
-:END:
-
-Add WorkerKind::Artifactor and the prompt spec shipped/prompt-studio/prompt-specs/artifact-generator.org (default generating instructions + block-vocabulary reference + slots for subject nodes, user prompt, and regen context). Implement POST /artifacts/generate {nodes, prompt} and POST /artifacts/:id/regenerate {extraPrompt?}: create/advance the artifact record, assemble context (subject node content, graph neighborhood, full repo read; on regen also prior artifact.mdx + current-version comments with authors/resolution + extra prompt), and launch through the existing dispatch machinery under the synthetic lease id artifact.generate:{artifact_id}. The lease is the per-artifact mutex; the artifact enters regenerating state for the run's duration. Worker write path is orgasmic artifact submit only.
-
-Acceptance: pressing generate on a real node (via curl) produces a validated artifact.mdx authored by an actual worker run visible in orgasmic run list, with artifact.created/.submitted tx entries; a second generate on the same artifact while one runs is refused by the lease; a deliberately invalid submit is retried by the worker, never written.
-** Notes
-[2026-07-03] UNBLOCKED. The manager hold (do not build on the artifact store until it is hardened + race-safe) is lifted: TASK-ZEFEY (store) + TASK-Y2ZQJ (8 reviewer findings) + M1 concurrency fix are all DONE and reviewer-verified (store now serializes reviews.org RMW per artifact). Cleared to start: artifactor worker kind + generation launch path (arch_045Q0).
-** Evidence
-[2026-07-03] Landed: merge 6f8b88b (worker c37a5c0, implementer-claude-rmux sonnet-5, +1368/11 files). WorkerKind::Artifactor + shipped/workers/artifactor.org + artifact-generator prompt spec + slots; POST /artifacts/generate + /:id/regenerate launch a real worker run via spawn_worker_run under the artifact.generate:{id} lease (per-artifact regen mutex, LeaseHeld->409); submit-only write path; release-watcher reverts a stuck-regenerating artifact (only-if-still-regenerating, reuses the Y2ZQJ M1 write lock) with artifact.generation.failed tx. Worker self-caught+fixed a lease-ordering bug via live probe (mutate-before-lease closed comments + spurious tx on a 409'd regenerate) -> gated on lease acquire first. Manager diff review: lease-first ordering verified in both handlers; regenerate re-reads reviews.org fresh under the M1 lock before consume+flip. Gates (merged tree): core green (126+29), daemon 216 lib + integration green, cli 100% single-threaded (parallel 1-fail = known SJQ9V flake, no cli code touched), clippy -D warnings clean, architecture drift clean, parse_errors 0. Live probe (isolated serve --port 0): artifactor run visible in run list (task_id=artifact.generate:ART-HHPSK), artifact.created tx, concurrent regenerate->409 zero mutation, invalid submit->422 no write, valid retry->validated mdx+version bump+artifact.submitted, comment closed out (CONSUMED_CIDS), force-release->watcher revert both cases. B05AM fix validated: last.txt landed clean after a 56m run (no clobber). Qualified gap: end-to-end LLM turn not driven (sandbox claude had no creds); downstream contract proven by direct submit. arch_ARSPJ prose updated with artifact.generation.failed. Reviewer pass pending.
-

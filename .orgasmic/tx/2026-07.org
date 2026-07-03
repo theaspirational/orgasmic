@@ -2486,3 +2486,180 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 23:50:58 reviewer.finding TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1299
+:TIME:         [2026-07-03 Fri 23:50:58]
+:TYPE:         reviewer.finding
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       crates/orgasmic-daemon/src/api.rs
+:REASON:       M1 MEDIUM (pre-existing, surfaced by 2ZQSB): post_artifact_submit's existing-artifact read->transaction (read version/state from artifact.org, archive vN, write version+1) is NOT under the per-artifact artifact_write_lock. Two concurrent submits race on the version (lost update), and submit races regenerate's state read/flip. The Y2ZQJ M1 lock covered feedback add/consume but not submit; 2ZQSB makes it more reachable (regenerate flips state, worker submits concurrently with possible comment activity). Fix: wrap post_artifact_submit's existing-artifact read->transaction in state.artifact_write_lock(&art_dir), matching feedback/regenerate.
+:severity:     medium
+:kind:         concurrency
+:preexisting:  true
+:run:          run-20260703T233904
+:END:
+
+* TX 2026-07-03 Fri 23:50:58 reviewer.finding TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1300
+:TIME:         [2026-07-03 Fri 23:50:58]
+:TYPE:         reviewer.finding
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       crates/orgasmic-daemon/src/api.rs
+:REASON:       L1 LOW: post_artifact_regenerate computes consumed_cids with (!resolved && !consumed) but the rewrite consume_all_open_comments consumes a different set; use the matching !(resolved && consumed) predicate so the CONSUMED_CIDS tx field reflects what was actually consumed.
+:severity:     low
+:kind:         correctness
+:run:          run-20260703T233904
+:END:
+
+* TX 2026-07-03 Fri 23:50:58 reviewer.finding TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1301
+:TIME:         [2026-07-03 Fri 23:50:58]
+:TYPE:         reviewer.finding
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       crates/orgasmic-daemon/src/api.rs
+:REASON:       L2 LOW (doc): artifact_write_lock doc comment lists only feedback add/consume as reviews.org writers; add post_artifact_regenerate (and note submit once M1 is fixed).
+:severity:     low
+:kind:         docs
+:run:          run-20260703T233904
+:END:
+
+* TX 2026-07-03 Fri 23:50:58 reviewer.done TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1302
+:TIME:         [2026-07-03 Fri 23:50:58]
+:TYPE:         reviewer.done
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:REASON:       VERDICT ship-with-fixes: lease-first ordering correct in both handlers, release-watcher revert safe (only-if-still-regenerating, M1 lock), write-path submit-only consistent with architector/reviewer/griller precedent, M1 lock reuse has no deadlock/re-entrancy (bounded, guard never held across launch), context assembly fills all slots. One MEDIUM (pre-existing: submit path lacks the per-artifact lock) + 2 LOW. Release-watcher flip-vs-instant-crash ordering same class as the TASK-567JG restart gap. last.txt landed clean (B05AM fix holding).
+:verdict:      ship-with-fixes
+:model:        claude-opus-4-8
+:effort:       xhigh
+:run:          run-20260703T233904
+:findings:     1 MEDIUM (M1 pre-existing submit-lock gap), 2 LOW (L1 predicate, L2 doc)
+:END:
+
+* TX 2026-07-03 Fri 23:55:39 task.edited TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1303
+:TIME:         [2026-07-03 Fri 23:55:39]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-2ZQSB
+:NODE_ID:      TASK-2ZQSB
+:END:
+
+* TX 2026-07-03 Fri 23:55:40 reviewer.done TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1304
+:TIME:         [2026-07-03 Fri 23:55:40]
+:TYPE:         reviewer.done
+:ACTOR:        manager
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:REASON:       All 3 ship-with-fixes findings fixed inline (510d8d9): M1 submit-lock (teeth-tested), L1 consumed_cids predicate, L2 doc. Gates green. TASK-2ZQSB done.
+:verdict:      ship-with-fixes
+:fixes_commit: 510d8d9
+:findings_addressed: M1,L1,L2
+:END:
+
+* TX 2026-07-03 Fri 23:55:40 task.state_transitioned TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1305
+:TIME:         [2026-07-03 Fri 23:55:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Artifactor + generation pipeline landed (6f8b88b) + reviewer ship-with-fixes findings fixed (510d8d9). Gates green throughout.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-03 Fri 23:56:17 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1306
+:TIME:         [2026-07-03 Fri 23:56:17]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 23:56:17 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1307
+:TIME:         [2026-07-03 Fri 23:56:17]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 23:56:17 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1308
+:TIME:         [2026-07-03 Fri 23:56:17]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 23:56:18 task.state_transitioned TASK-T25XQ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1309
+:TIME:         [2026-07-03 Fri 23:56:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T25XQ
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Artifact backend complete (store+hardening+generation, all reviewer-verified); T25XQ (renderer + Artifacts pages) cleared to start.
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-03 Fri 23:56:18 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1310
+:TIME:         [2026-07-03 Fri 23:56:18]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
