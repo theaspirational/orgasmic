@@ -83,3 +83,14 @@ Acceptance (full two-member smoke, per the feature verification): editor generat
 doctor::tests::daemon_staleness_warns_for_git_commits_since_boot (crates/orgasmic-cli/src/doctor.rs:662) fails with "expected warn, got None" (panic at doctor.rs:569) under cargo test --workspace — reproduced twice consecutively on 45c6116 — yet passes with cargo test -p orgasmic-cli (parallel AND --test-threads=1) and 3x filtered. The failure means recent_daemon_code_commits() returned no commits for a temp git repo the test itself just committed to, so the trigger is cross-binary workspace concurrency (env/CPU/git-subprocess interaction), not the test logic in isolation. Latent race, unmasked during TASK-M6146 integration whose cli diff was whitespace-only (verified by stripped-content hash); same class as the historical TASK-BRXGG parallel-safety work.
 
 Acceptance: root cause identified and fixed (or the test hardened against workspace-parallel execution); cargo test --workspace green 3x consecutively from this checkout with the production daemon live.
+
+* BACKLOG TASK-B05AM rmux stall detector kills idle pane after orgasmic-eot and clobbers last.txt    :dispatch:rmux:tooling:
+:PROPERTIES:
+:ID: TASK-B05AM
+:END:
+
+Evidence: TASK-ZEFEY implementer run-20260703T185733 completed fully (gates green, commit 9a5f043, printed its report and the [orgasmic-eot:run-...] marker at 22:21), yet .orgasmic/tmp/dispatch/task-ZEFEY/task-ZEFEY-last.txt contains only "stall_timeout_exceeded" and the manager had to rescue-close the dispatch. Cause: after eot the interactive pane sits idle; the rmux driver's stall detector eventually fires, kills the session, and writes the stall reason to last.txt instead of preserving the already-emitted worker report.
+
+Expected: the eot marker should finalize the run (record implementer.done, snapshot the report into last.txt) BEFORE any stall accounting; stall_timeout_exceeded must never overwrite a completed run's report. Same family as the old codex-acp stall overrides (TASK-HCFBT.4) but rmux-specific and post-completion.
+
+Acceptance: a scripted rmux dispatch that emits eot then idles past the stall window ends with implementer.done recorded, the worker report preserved in last.txt, and no stall_timeout_exceeded surfaced for the completed run.

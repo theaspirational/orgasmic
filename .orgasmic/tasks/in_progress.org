@@ -28,13 +28,3 @@ Acceptance: UI typechecks, tests pass, and builds with no /graph/layout caller a
 ** Reviewer pass
 REVIEWER PASS (reviewer-claude-rmux, claude-sonnet-4-6 xhigh, run-20260703T185257, ~3m): VERDICT ship, zero findings, no fix directions. Verified: no dangling symbol references (FileMutate/FileMutateTransform, transport import cleaned); route tree + AppShell unions consistent; 'graph' WS clause intentionally retained; reactflow/dagre/@types/dagre purged from package.json + lockfile (0 residue greps); schema.rs/lib.rs removals complete; GraphNodeSummary correctly retained (GraphIndex ref); tests/graph_layout.rs + graph_curator.org + graph_layout.org confirmed gone; 3 cli files independently confirmed rustfmt whitespace-only.
 
-* IN_PROGRESS TASK-ZEFEY Artifact store: schema, tx types, index projection, and CLI verbs :artifacts:daemon:cli:
-:PROPERTIES:
-:ID: TASK-ZEFEY
-:IMPLEMENTS: arch_ARSPJ
-:END:
-
-Build the on-disk artifact store and its agent surface: .orgasmic/artifacts/ART-<slug>/ with artifact.mdx (opaque), artifact.org index heading (:ID: :TITLE: :SUBJECT_NODES: :PROMPT: :VERSION: :STATE:), reviews.org comment headings (:CID: :AUTHOR: :VERSION: :ANCHOR: :RESOLUTION_TARGET: :RESOLVED: :CONSUMED:), and versions/ archives. Wire tx types (artifact.created/.submitted/.comment.added/.comment.resolved/.regenerated), writer paths, watcher coverage, index projection (list, per-node rollups, open-comment counts, state), WS topics, and REST reads (GET /artifacts, GET /artifacts/:id[?version=N]). CLI verbs: orgasmic artifact blocks (block-vocabulary reference), orgasmic artifact submit <id> --file <mdx> (validates against the block registry, rejects invalid), orgasmic artifact feedback <id> [--consume <cid>].
-
-Acceptance: on a throwaway project, create -> submit -> feedback -> consume round-trips entirely through the CLI: files and tx entries land as specified, invalid MDX is rejected without any write, the index serves the bundle with correct comment filtering (consumed excluded), and a comment appended while the artifact is in regenerating state is refused.
-

@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         09ddf5629b8c8269e537992632c5154d0bef5401
+:LIVENESS:         ddd6b566e91699fe31f5a1080970c621807fdbe9
 :LIVENESS_AT:      [2026-07-03 Fri]
 :UPDATED_AT:       [2026-07-03 Fri]
 :END:
@@ -19,6 +19,7 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - TASK-M6146 (1/6) DONE: Graph page viewer excised, merged 45c6116 (worker 93529c2, implementer-claude-rmux sonnet-4-6 high; -2997/+43). Gates green (ui 73 tests, daemon suite, clippy, fmt). Manager integration: arch_M8JQT reference-pages-only revision, arch_MK2Q2.7 SOURCE_PATHS pruned, drift clean, parse_errors 0. REVIEWER PASS (reviewer-claude-rmux sonnet-4-6 xhigh, run-20260703T185257): VERDICT ship, zero findings. implementer.done tx-1192, reviewer.done tx-1203. State commits 159496c + this one.
 - TASK-SJQ9V filed: doctor staleness test fails only under cargo test --workspace concurrency (pre-existing latent race surfaced at integration; passes standalone parallel+serial).
 - Worker templates modernized [2026-07-03 Fri]: claude-rmux implementer -> claude-sonnet-5 (high), reviewer -> claude-opus-4-8 (xhigh); MODELS allowlist now sonnet-5/opus-4-8/haiku-4-5. Applied twice: user overrides in ~/.orgasmic/user/workers/ (live daemon resolves them, verified via orgasmic worker show) + checkout shipped/workers/ for the next runtime publish. Transcript audit confirmed no silent fallback on prior runs: all M6146 turns genuinely served by claude-sonnet-4-6.
+- TASK-ZEFEY (2/6) implemented and merged ddd6b56 (worker 9a5f043, sonnet-4-6 high, ~24m; +1742, 8 files): full artifact store per arch_ARSPJ — ART-<slug>/ folders, artifact.* tx types, index projection + WS topics, GET reads, submit/feedback(+consume) writes with validate-before-write and atomic files+tx transaction, 22-type block registry, orgasmic artifact CLI verbs, CLI round-trip integration test. Worker completed but rmux stall detector clobbered last.txt post-eot (manager-rescued close tx-1215; tooling bug filed TASK-B05AM). Manager review clean; one design question (hand-rolled parse_org_properties vs canonical Org parser) carried to the reviewer.
 
 ** Next likely actions
 - Integrate TASK-ZEFEY when the worker reports: manager diff review, merge --no-ff, workspace gates, Evidence, dispatch-close, then reviewer-claude-rmux pass and DONE.
@@ -26,7 +27,7 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - Optional (operator to confirm scope first): broader first-feature cut-list audit beyond the Graph page.
 
 ** In flight
-- implementer-claude-rmux on TASK-ZEFEY (run-20260703T185733) building the artifact store per arch_ARSPJ; brief at .orgasmic/tmp/dispatch/task-ZEFEY/task-ZEFEY-brief.md; worktree .orgasmic/tmp/dispatch/task-zefey/worktree; watcher installed in manager session.
+- TASK-ZEFEY merged ddd6b56, in_review: post-merge gates (daemon+cli tests, workspace clippy) running in manager session; reviewer-claude-rmux (now opus-4-8 xhigh via user override) dispatches when gates confirm green; brief staged at .orgasmic/tmp/dispatch/task-ZEFEY-review-brief.md.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.
