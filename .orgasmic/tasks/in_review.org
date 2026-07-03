@@ -1,3 +1,25 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-Y2ZQJ Fix ZEFEY review findings: validator, canonical Org parsing, writer atomicity :artifacts:daemon:fix:
+:PROPERTIES:
+:ID: TASK-Y2ZQJ
+:IMPLEMENTS: arch_ARSPJ
+:END:
+
+One-round fix of the 8 reviewer.finding tx entries from the TASK-ZEFEY pass (run-20260703T194200). Mandatory items 1-4; LOWs 5-8 are in scope and small.
+
+1. HIGH validate_mdx (artifacts.rs:110-144): replace the flat byte-scan with top-level structural validation - the daemon validates only what it can see without a real MDX parser: top-level block tags must be registered (BLOCK_TYPES), balanced, and well-formed; everything INSIDE a registered block's body is opaque and never scanned for unknown tags (that is where generics like Vec<Item>, f::<String>(), and DSL content legitimately live). Unclosed or malformed top-level tags are rejected. Deep/nested validation defers to the TASK-T25XQ JS/MDX parser. MANAGER RULING: empty or zero-registered-block content is REJECTED (an artifact must contain at least one registered top-level block). Use the reviewer's probe strings as the unit-test corpus with expected outcomes per this policy: <Code>let v: Vec<Item> = f::<String>();</Code> accepted; <EntityRelationship>A<Order>B</EntityRelationship> accepted (body opaque); bare prose, empty string, and unclosed <RichText rejected.
+2. MEDIUM canonical parsing (artifacts.rs:148-172, 347-365): route artifact.org and reviews.org reads through orgasmic_core OrgFile::parse; delete the duplicate inline parsers. On write (comment_org_block :253-275), escape or reject comment bodies whose lines begin with * so a body can never truncate the heading structure or inject org syntax.
+3. MEDIUM writer discipline: move archive_current_mdx and directory creation onto the writer path (or fold into the submit writer.transaction).
+4. MEDIUM atomicity: comment add and consume each become a single writer.transaction bundling file rewrite + tx append, matching submit.
+5. LOW duplicate artifact.created on retry (api.rs:8828): fold creation intent into the atomic transaction or make it idempotent.
+6. LOW headerless reviews.org branch (artifacts.rs:504-511) seeds the #+title header; GET /artifacts/:id?version=N distinguishes no-such-version (404 with explicit message) from no-such-artifact.
+7. LOW escape :PROMPT:/:TITLE: to single-line on write (tx.org:206 already promises this).
+8. LOW WS events carry the artifact's actual state, not hardcoded "submitted".
+
+MANAGER RULING (reviewer open question): GET /artifacts/:id current-version comment list EXCLUDES consumed comments by default; add include_consumed=true query param (archived-version views in TASK-EDQPG will use it). Adjust the round-trip test accordingly.
+
+Gates: cargo test -p orgasmic-daemon and -p orgasmic-cli (redirect to files); cargo clippy --workspace --all-targets -- -D warnings; fmt on touched files. New unit tests for the validator corpus, leading-* escaping round-trip, and atomicity (no partial state after simulated failure where testable).
+** Evidence
+[2026-07-03] Fix landed: merge 916a159 (worker commit ab4b5b8, sonnet-5, session c86523ed). All 8 findings addressed (validator rewrite scan_tag_header opaque bodies + zero-block reject; canonical OrgFile::parse for artifact.org/reviews.org + leading-* comma-escape; writer-mediated archive/dir; atomic add/consume single writer.transaction; idempotent artifact.created; typed VersionNotFound 404; single-line TITLE/PROMPT; truthful WS state) plus both manager rulings (zero-block reject, include_consumed default-exclude). Gates: manager independently re-ran cargo test -p orgasmic-daemon on the worktree = 201 lib + all integration binaries green; cargo clippy --workspace --all-targets -D warnings on merged tree = clean; worker: cli 71/71 (--test-threads=1), fmt clean, live HTTP production-path probe on isolated ORGASMIC_HOME. rmux report path clobbered again (TASK-B05AM recurrence); report+gates rescued from harness transcript. Reviewer pass pending. Residuals: item-5 idempotency in-process-only (cross-restart needs durable state); #+begin_/#+end_ comment-body injection not hardened -> filed as follow-up.
