@@ -2005,3 +2005,158 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 22:07:32 manager.action TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1267
+:TIME:         [2026-07-03 Fri 22:07:32]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:REASON:       M1 (concurrent reviews.org lost-update) + L1 (fold state/version scrapers into load_artifact) fixed inline by manager per operator direction. Per-artifact async mutex serializes read->transaction in both feedback handlers, keeping finding-#4 atomicity. New regression test artifact_concurrent_comment_adds_do_not_lose_writes (12 concurrent adds, multi_thread) — verified fails without the lock, passes with it. Gates: daemon 202 lib + integration green, clippy -D warnings clean, fmt clean. L2 (validator literal-close-string limit) is a note only, recorded to TASK-T25XQ. Independent opus review in flight.
+:commit:       1854420
+:addresses:    M1,L1
+:l2:           noted_to_TASK-T25XQ
+:END:
+
+* TX 2026-07-03 Fri 22:07:45 task.edited TASK-T25XQ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1268
+:TIME:         [2026-07-03 Fri 22:07:45]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T25XQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-T25XQ
+:NODE_ID:      TASK-T25XQ
+:END:
+
+* TX 2026-07-03 Fri 22:07:45 task.edited TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1269
+:TIME:         [2026-07-03 Fri 22:07:45]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-Y2ZQJ
+:NODE_ID:      TASK-Y2ZQJ
+:END:
+
+* TX 2026-07-03 Fri 22:11:14 reviewer.done TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1270
+:TIME:         [2026-07-03 Fri 22:11:14]
+:TYPE:         reviewer.done
+:ACTOR:        manager-opus-agent-review
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:REASON:       Independent opus review of the M1 fix (commit 1854420), routed around the broken rmux path (TASK-B05AM). VERDICT ship, no blocking findings. Verified: per-artifact mutex serializes the full read->transaction window in both handlers keyed on identical art_dir; no deadlock/re-entrancy (writer is a separate mpsc-draining task, refresh_project never takes the lock); std Mutex never held across await; L1 load_artifact preserves regenerating->409 + version defaults; gate 29/29; teeth reconfirmed (12->1 without lock). Also verified reviews.org has no unlocked third writer: post_artifact_submit writes it only in the is_new creation branch (before any comments exist); re-submit path never touches it.
+:verdict:      ship
+:scope:        M1 fix (1854420)
+:model:        claude-opus-4-8
+:path:         in_process_agent
+:END:
+
+* TX 2026-07-03 Fri 22:11:14 task.state_transitioned TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1271
+:TIME:         [2026-07-03 Fri 22:11:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       8 ZEFEY findings fixed (merge 916a159) + reviewer M1/L1 fixed inline (1854420); independent opus review VERDICT ship. Store is race-safe. Gates green throughout.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-03 Fri 22:11:31 task.edited TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1272
+:TIME:         [2026-07-03 Fri 22:11:31]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-2ZQSB
+:NODE_ID:      TASK-2ZQSB
+:END:
+
+* TX 2026-07-03 Fri 22:11:31 task.state_transitioned TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1273
+:TIME:         [2026-07-03 Fri 22:11:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Artifact store foundation hardened + race-safe (ZEFEY + Y2ZQJ + M1 all done, reviewer-verified); 2ZQSB cleared to start.
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-03 Fri 22:11:57 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1274
+:TIME:         [2026-07-03 Fri 22:11:57]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:11:57 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1275
+:TIME:         [2026-07-03 Fri 22:11:57]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:11:58 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1276
+:TIME:         [2026-07-03 Fri 22:11:58]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:11:58 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1277
+:TIME:         [2026-07-03 Fri 22:11:58]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
