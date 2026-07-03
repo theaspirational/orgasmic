@@ -115,6 +115,7 @@ fn worker_kind_name(kind: WorkerKind) -> &'static str {
         WorkerKind::Glossarist => "glossarist",
         WorkerKind::Babysitter => "babysitter",
         WorkerKind::Manager => "manager",
+        WorkerKind::Artifactor => "artifactor",
     }
 }
 

@@ -1,3 +1,4 @@
+// arch: arch_045Q0.1
 // orgasmic:arch_ARSPJ
 //! Artifact store: on-disk layout, block registry, index projection helpers,
 //! and read/write functions called from the API handlers.
@@ -626,6 +627,67 @@ pub fn new_cid() -> String {
     format!("CID-{}", &id[..8])
 }
 
+/// Mint a fresh artifact id: `ART-` plus a 5-char Crockford base32 stem, the
+/// same minting convention `mint_node_id` uses for task/decision/architecture
+/// ids (orgasmic_core::id::NodeIdClass has no `Artifact` variant — artifacts
+/// aren't part of that parent-tree graph, so this reuses just the alphabet
+/// rather than widening that enum).
+pub fn new_artifact_id() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    loop {
+        let stem: String = (0..5)
+            .map(|_| {
+                let idx = rng.gen_range(0..orgasmic_core::CROCKFORD.len());
+                orgasmic_core::CROCKFORD.as_bytes()[idx] as char
+            })
+            .collect();
+        if stem.chars().any(|c| c.is_ascii_alphabetic()) {
+            return format!("ART-{stem}");
+        }
+    }
+}
+
+/// Rewrite reviews.org marking every currently open (neither resolved nor
+/// consumed) comment as resolved+consumed in one pass.
+///
+/// Used when a regenerate closes out the current version's comment surface
+/// (dec_V44E4: "the fresh version starts with a clean comment surface").
+/// Mirrors [`resolve_comment_in_reviews`]'s targeted property-span splice,
+/// generalized to every open heading instead of one `cid`.
+pub fn consume_all_open_comments(current: &str) -> Result<Vec<u8>> {
+    if current.trim().is_empty() {
+        return Ok(current.as_bytes().to_vec());
+    }
+    let file = OrgFile::parse(current, "reviews.org").context("parse reviews.org")?;
+
+    let mut edits: Vec<_> = Vec::new();
+    for heading in &file.headings {
+        let resolved = heading.property("RESOLVED") == Some("true");
+        let consumed = heading.property("CONSUMED") == Some("true");
+        if resolved && consumed {
+            continue;
+        }
+        edits.extend(
+            heading
+                .property_entries()
+                .filter(|e| e.key == "RESOLVED" || e.key == "CONSUMED")
+                .map(|e| (e.value_span.clone(), "true")),
+        );
+    }
+    edits.sort_by_key(|(range, _)| range.start);
+
+    let mut out = String::with_capacity(current.len());
+    let mut cursor = 0usize;
+    for (range, replacement) in edits {
+        out.push_str(&current[cursor..range.start]);
+        out.push_str(replacement);
+        cursor = range.end;
+    }
+    out.push_str(&current[cursor..]);
+    Ok(out.into_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,6 +695,34 @@ mod tests {
     #[test]
     fn block_registry_has_22_entries() {
         assert_eq!(BLOCK_TYPES.len(), 22);
+    }
+
+    /// The artifact-generator prompt spec's block-vocabulary reference is
+    /// hand-authored prose (prompt specs are static org text, not
+    /// template-injected from Rust consts), so it can silently drift from
+    /// `BLOCK_TYPES`. This test is the single-source tripwire: every
+    /// registered block name must appear in the shipped spec text.
+    #[test]
+    fn artifact_generator_spec_lists_every_block_type() {
+        let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        loop {
+            if here.join(".orgasmic").is_dir() && here.join("shipped").is_dir() {
+                break;
+            }
+            assert!(
+                here.pop(),
+                "could not locate repo root from CARGO_MANIFEST_DIR"
+            );
+        }
+        let spec_path = here.join("shipped/prompt-studio/prompt-specs/artifact-generator.org");
+        let spec = fs::read_to_string(&spec_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", spec_path.display()));
+        for block in BLOCK_TYPES {
+            assert!(
+                spec.contains(block),
+                "artifact-generator.org is missing block type {block}"
+            );
+        }
     }
 
     #[test]
@@ -793,6 +883,63 @@ mod tests {
     fn resolve_comment_errors_on_unknown_cid() {
         let content = "#+title: reviews\n";
         assert!(resolve_comment_in_reviews(content, "CID-notexist").is_err());
+    }
+
+    #[test]
+    fn new_artifact_id_is_art_prefixed_five_char_crockford_stem() {
+        for _ in 0..50 {
+            let id = new_artifact_id();
+            let stem = id.strip_prefix("ART-").expect("ART- prefix");
+            assert_eq!(stem.len(), 5, "{id}");
+            assert!(
+                stem.chars().all(|c| orgasmic_core::CROCKFORD.contains(c)),
+                "{id}"
+            );
+            assert!(stem.chars().any(|c| c.is_ascii_alphabetic()), "{id}");
+        }
+    }
+
+    #[test]
+    fn consume_all_open_comments_closes_every_open_heading_and_skips_closed_ones() {
+        let header = reviews_org_header("ART-XYZAB");
+        let open_a = comment_org_block(&NewComment {
+            cid: "CID-open0001",
+            author: "a@t.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: "one",
+        });
+        let open_b = comment_org_block(&NewComment {
+            cid: "CID-open0002",
+            author: "b@t.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: "two",
+        });
+        let content = format!("{header}{open_a}{open_b}");
+        // Pre-close one of the two via the existing single-cid path.
+        let content =
+            String::from_utf8(resolve_comment_in_reviews(&content, "CID-open0001").unwrap())
+                .unwrap();
+
+        let open_before: Vec<_> = parse_comments(&content)
+            .into_iter()
+            .filter(|c| !c.resolved && !c.consumed)
+            .map(|c| c.cid)
+            .collect();
+        assert_eq!(open_before, vec!["CID-open0002".to_string()]);
+
+        let closed = String::from_utf8(consume_all_open_comments(&content).unwrap()).unwrap();
+        let records = parse_comments(&closed);
+        assert_eq!(records.len(), 2);
+        assert!(records.iter().all(|c| c.resolved && c.consumed));
+    }
+
+    #[test]
+    fn consume_all_open_comments_is_noop_on_empty_reviews() {
+        assert_eq!(consume_all_open_comments("").unwrap(), Vec::<u8>::new());
     }
 
     #[test]

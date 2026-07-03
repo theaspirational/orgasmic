@@ -131,6 +131,7 @@ pub enum WorkerKind {
     Glossarist,
     Babysitter,
     Manager,
+    Artifactor,
 }
 
 impl FromStr for WorkerKind {
@@ -146,6 +147,7 @@ impl FromStr for WorkerKind {
             "glossarist" => Self::Glossarist,
             "babysitter" => Self::Babysitter,
             "manager" => Self::Manager,
+            "artifactor" => Self::Artifactor,
             _ => return Err(()),
         })
     }

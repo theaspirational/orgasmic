@@ -52,3 +52,8 @@
 
 *** worklog.*
 - worklog.tail              (last N worklog entries from the claimed task)
+
+*** artifact.*
+- artifact.subject_nodes    (subject nodes' Org content plus their graph neighborhood; not task-scoped, so no ={{task.*}}= slots are used by the artifact-generator spec)
+- artifact.user_prompt      (the short prompt from the Generate dialog, appended on every run including regenerations)
+- artifact.regen_context    (regenerate only: prior artifact.mdx, all current-version comments with author/resolution/anchor, and the optional extra prompt; "not set" on a first generate)
