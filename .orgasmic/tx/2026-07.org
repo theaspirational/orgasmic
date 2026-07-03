@@ -1306,3 +1306,364 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 19:42:00 manager.dispatch_started TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1222
+:TIME:         [2026-07-03 Fri 19:42:00]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:
+:KIND:         reviewer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-zefey-review/worktree
+:BRANCH:       task-zefey-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-ZEFEY-review/task-ZEFEY-review-brief.md
+:STARTED_AT:   [2026-07-03 Fri 19:42:00]
+:LIVENESS:     b6301210033d6b5b2828a58f9b5684a070376fd6
+:NEXT:         reviewer-watch-then-fix-or-close
+:REASON_INITIAL: reviewer pass over merged artifact-store diff 05cd913..ddd6b56; first dispatch on opus-4-8 override
+:END:
+
+* TX 2026-07-03 Fri 19:42:00 run.created TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1223
+:TIME:         [2026-07-03 Fri 19:42:00]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZEFEY-reviewer-20260703T194200.jsonl
+:REASON:       reviewer pass over merged artifact-store diff 05cd913..ddd6b56; first dispatch on opus-4-8 override
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-zefey-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-ZEFEY-review/task-ZEFEY-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-ZEFEY-review/task-ZEFEY-review-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-ZEFEY-review/task-ZEFEY-review-stdout.log
+:DISPATCH_TX:  tx-20260703-orgasmic-1222
+:END:
+
+* TX 2026-07-03 Fri 19:51:44 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1224
+:TIME:         [2026-07-03 Fri 19:51:44]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       validate_mdx flat byte-scan false-rejects valid Code/DataModel MDX (generics like Vec<Item>) and false-accepts prose/empty/unclosed blocks; proven by standalone rustc probe
+:SEVERITY:     HIGH
+:LOCATION:     crates/orgasmic-daemon/src/artifacts.rs:110-144
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:44 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1225
+:TIME:         [2026-07-03 Fri 19:51:44]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       hand-rolled Org parser silently truncates comment bodies with leading *; no escaping on write (flag-injection); 3+ duplicate inline parsers vs canonical OrgFile
+:SEVERITY:     MEDIUM
+:LOCATION:     artifacts.rs:148-172,347-365,253-275
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1226
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       production fs writes bypass the writer (archive_current_mdx, dir creation) - writer-discipline escape
+:SEVERITY:     MEDIUM
+:LOCATION:     crates/orgasmic-daemon/src/api.rs artifact handlers
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1227
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       comment add and consume are not atomic with their tx entries (submit uses writer.transaction; feedback paths do not)
+:SEVERITY:     MEDIUM
+:LOCATION:     crates/orgasmic-daemon/src/api.rs:9006+
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1228
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       duplicate artifact.created tx on retry: created-tx appended before the files transaction; is_new still true if process dies between
+:SEVERITY:     LOW
+:LOCATION:     api.rs:8828
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1229
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       headerless reviews.org in append_comment_transform empty branch; missing versions/vN.mdx returns 404 'artifact not found' conflating no-such-version
+:SEVERITY:     LOW
+:LOCATION:     artifacts.rs:504-511
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1230
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       unescaped :PROMPT:/:TITLE: interpolated into property drawer; newline breaks single-line drawer contract
+:SEVERITY:     LOW
+:LOCATION:     artifacts.rs:200-223
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 reviewer.finding TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1231
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         reviewer.finding
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       consume/existing-submit publish hardcoded state:'submitted' WS event regardless of actual state
+:SEVERITY:     LOW
+:LOCATION:     api.rs artifact WS payloads
+:RUN_ID:       run-20260703T194200-f5ab6180fa2647d48b1e4b0b69718e11
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 task.edited TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1232
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-ZEFEY
+:NODE_ID:      TASK-ZEFEY
+:END:
+
+* TX 2026-07-03 Fri 19:51:45 task.state_transitioned TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1233
+:TIME:         [2026-07-03 Fri 19:51:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewer ship-with-fixes; findings routed to fix subtask
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-03 Fri 19:51:46 reviewer.done TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1234
+:TIME:         [2026-07-03 Fri 19:51:46]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:REASON:       reviewer verdict ship-with-fixes; 8 findings filed; fix subtask next
+:REVIEWED_DIFF: 05cd913..ddd6b56
+:CLOSED_TX:    tx-20260703-orgasmic-1222
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-03 Fri 19:51:46 task.state_transitioned TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1235
+:TIME:         [2026-07-03 Fri 19:51:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZEFEY to in_progress
+:FROM_STATE:   done
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-03 Fri 19:52:13 task.created TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1236
+:TIME:         [2026-07-03 Fri 19:52:13]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reviewer-claude-rmux (opus-4-8) verdict ship-with-fixes on TASK-ZEFEY; foundation must be fixed before the artifact queue builds on it
+:END:
+
+* TX 2026-07-03 Fri 19:52:41 task.edited TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1237
+:TIME:         [2026-07-03 Fri 19:52:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-Y2ZQJ
+:NODE_ID:      TASK-Y2ZQJ
+:END:
+
+* TX 2026-07-03 Fri 19:53:10 task.state_transitioned TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1238
+:TIME:         [2026-07-03 Fri 19:53:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-Y2ZQJ to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-03 Fri 19:53:10 manager.dispatch_started TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1239
+:TIME:         [2026-07-03 Fri 19:53:10]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-y2zqj/worktree
+:BRANCH:       task-y2zqj-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-Y2ZQJ/task-Y2ZQJ-brief.md
+:STARTED_AT:   [2026-07-03 Fri 19:53:10]
+:LIVENESS:     b6301210033d6b5b2828a58f9b5684a070376fd6
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: one-round fix of the 8 TASK-ZEFEY reviewer findings before the artifact queue builds on the store
+:END:
+
+* TX 2026-07-03 Fri 19:53:11 run.created TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1240
+:TIME:         [2026-07-03 Fri 19:53:11]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-Y2ZQJ-implementer-20260703T195310.jsonl
+:REASON:       one-round fix of the 8 TASK-ZEFEY reviewer findings before the artifact queue builds on the store
+:RUN_ID:       run-20260703T195310-c49621208ba7440ea7ac42212052f0c9
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-y2zqj/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-Y2ZQJ/task-Y2ZQJ-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-Y2ZQJ/task-Y2ZQJ-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-Y2ZQJ/task-Y2ZQJ-stdout.log
+:DISPATCH_TX:  tx-20260703-orgasmic-1239
+:END:
+
+* TX 2026-07-03 Fri 19:53:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1241
+:TIME:         [2026-07-03 Fri 19:53:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 19:53:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1242
+:TIME:         [2026-07-03 Fri 19:53:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 19:53:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1243
+:TIME:         [2026-07-03 Fri 19:53:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 19:53:35 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1244
+:TIME:         [2026-07-03 Fri 19:53:35]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

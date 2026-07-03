@@ -28,3 +28,41 @@ Acceptance: UI typechecks, tests pass, and builds with no /graph/layout caller a
 ** Reviewer pass
 REVIEWER PASS (reviewer-claude-rmux, claude-sonnet-4-6 xhigh, run-20260703T185257, ~3m): VERDICT ship, zero findings, no fix directions. Verified: no dangling symbol references (FileMutate/FileMutateTransform, transport import cleaned); route tree + AppShell unions consistent; 'graph' WS clause intentionally retained; reactflow/dagre/@types/dagre purged from package.json + lockfile (0 residue greps); schema.rs/lib.rs removals complete; GraphNodeSummary correctly retained (GraphIndex ref); tests/graph_layout.rs + graph_curator.org + graph_layout.org confirmed gone; 3 cli files independently confirmed rustfmt whitespace-only.
 
+* IN_PROGRESS TASK-ZEFEY Artifact store: schema, tx types, index projection, and CLI verbs :artifacts:daemon:cli:
+:PROPERTIES:
+:ID: TASK-ZEFEY
+:IMPLEMENTS: arch_ARSPJ
+:END:
+
+Build the on-disk artifact store and its agent surface: .orgasmic/artifacts/ART-<slug>/ with artifact.mdx (opaque), artifact.org index heading (:ID: :TITLE: :SUBJECT_NODES: :PROMPT: :VERSION: :STATE:), reviews.org comment headings (:CID: :AUTHOR: :VERSION: :ANCHOR: :RESOLUTION_TARGET: :RESOLVED: :CONSUMED:), and versions/ archives. Wire tx types (artifact.created/.submitted/.comment.added/.comment.resolved/.regenerated), writer paths, watcher coverage, index projection (list, per-node rollups, open-comment counts, state), WS topics, and REST reads (GET /artifacts, GET /artifacts/:id[?version=N]). CLI verbs: orgasmic artifact blocks (block-vocabulary reference), orgasmic artifact submit <id> --file <mdx> (validates against the block registry, rejects invalid), orgasmic artifact feedback <id> [--consume <cid>].
+
+Acceptance: on a throwaway project, create -> submit -> feedback -> consume round-trips entirely through the CLI: files and tx entries land as specified, invalid MDX is rejected without any write, the index serves the bundle with correct comment filtering (consumed excluded), and a comment appended while the artifact is in regenerating state is refused.
+** Evidence
+- Merged ddd6b56 (worker commit 9a5f043, implementer-claude-rmux claude-sonnet-4-6 high, run-20260703T185733, ~24m): +1742 across 8 files. Store layout .orgasmic/artifacts/ART-<slug>/ (artifact.org + opaque artifact.mdx + reviews.org + versions/), artifact.* tx types in shipped/schema/tx.org (regenerated declared, no write path yet per scope boundary), ProjectIndex.artifacts projection with open-comment counts + per-node rollups, Topic::Artifact WS payloads, GET /artifacts + GET /artifacts/:id[?version=N], POST submit/feedback/feedback-consume, orgasmic artifact blocks|submit|feedback CLI verbs, 22-type block registry as shared const data.
+- Dispatch note: worker completed fully (its own gates: 301 daemon tests, clippy, fmt; committed with exact brief message; emitted orgasmic-eot marker) but the rmux stall detector killed the idle pane afterwards and last.txt captured only stall_timeout_exceeded — manager-rescued close (implementer.done tx-1215). Filed the tooling bug separately.
+- Manager diff review: validate-before-write honored (submit rejects invalid MDX with 422 + block_errors before touching disk); files + artifact.submitted tx written in one atomic writer.transaction; artifact.created via writer.append_tx; no generate/regenerate routes (scope boundary respected); regenerating-state comment refusal at api.rs with test coverage; fs writes in new code confined to #[cfg(test)] modules.
+- REVIEW QUESTION carried to reviewer: artifacts.rs uses a hand-rolled parse_org_properties() for artifact.org/reviews.org reads instead of the canonical OrgFile parser — assess second-parser drift risk (dec_QVSM0 spirit) vs pragmatism.
+- Post-merge manager gates: recorded after run (see Reviewer pass / worklog).
+** Reviewer pass
+REVIEWER PASS (reviewer-claude-rmux, claude-opus-4-8 xhigh, run-20260703T194200, ~8.5m): VERDICT ship-with-fixes, no blocker. Acceptance round-trip traced end to end (api.rs:12321 test exercises every clause); folder layout, heading properties, tx types, WS topics, index rebuild, watcher coverage all conform to arch_ARSPJ; scope boundary clean. Findings: 1 HIGH (validate_mdx byte-scan false-rejects generics-heavy Code/DataModel, false-accepts prose/empty - proven via standalone rustc probe), 3 MEDIUM (hand-rolled Org parser truncation/injection - confirms the manager-flagged second-parser risk; fs writes bypassing writer; non-atomic comment add/consume), 4 LOW (duplicate created-tx on retry, headerless reviews.org + 404 mislabel, unescaped PROMPT/TITLE drawer break, hardcoded WS state). All 8 filed as reviewer.finding tx. Fixes tracked in fix subtask; foundation not to be built on until it lands.
+
+* IN_PROGRESS TASK-Y2ZQJ Fix ZEFEY review findings: validator, canonical Org parsing, writer atomicity :artifacts:daemon:fix:
+:PROPERTIES:
+:ID: TASK-Y2ZQJ
+:IMPLEMENTS: arch_ARSPJ
+:END:
+
+One-round fix of the 8 reviewer.finding tx entries from the TASK-ZEFEY pass (run-20260703T194200). Mandatory items 1-4; LOWs 5-8 are in scope and small.
+
+1. HIGH validate_mdx (artifacts.rs:110-144): replace the flat byte-scan with top-level structural validation - the daemon validates only what it can see without a real MDX parser: top-level block tags must be registered (BLOCK_TYPES), balanced, and well-formed; everything INSIDE a registered block's body is opaque and never scanned for unknown tags (that is where generics like Vec<Item>, f::<String>(), and DSL content legitimately live). Unclosed or malformed top-level tags are rejected. Deep/nested validation defers to the TASK-T25XQ JS/MDX parser. MANAGER RULING: empty or zero-registered-block content is REJECTED (an artifact must contain at least one registered top-level block). Use the reviewer's probe strings as the unit-test corpus with expected outcomes per this policy: <Code>let v: Vec<Item> = f::<String>();</Code> accepted; <EntityRelationship>A<Order>B</EntityRelationship> accepted (body opaque); bare prose, empty string, and unclosed <RichText rejected.
+2. MEDIUM canonical parsing (artifacts.rs:148-172, 347-365): route artifact.org and reviews.org reads through orgasmic_core OrgFile::parse; delete the duplicate inline parsers. On write (comment_org_block :253-275), escape or reject comment bodies whose lines begin with * so a body can never truncate the heading structure or inject org syntax.
+3. MEDIUM writer discipline: move archive_current_mdx and directory creation onto the writer path (or fold into the submit writer.transaction).
+4. MEDIUM atomicity: comment add and consume each become a single writer.transaction bundling file rewrite + tx append, matching submit.
+5. LOW duplicate artifact.created on retry (api.rs:8828): fold creation intent into the atomic transaction or make it idempotent.
+6. LOW headerless reviews.org branch (artifacts.rs:504-511) seeds the #+title header; GET /artifacts/:id?version=N distinguishes no-such-version (404 with explicit message) from no-such-artifact.
+7. LOW escape :PROMPT:/:TITLE: to single-line on write (tx.org:206 already promises this).
+8. LOW WS events carry the artifact's actual state, not hardcoded "submitted".
+
+MANAGER RULING (reviewer open question): GET /artifacts/:id current-version comment list EXCLUDES consumed comments by default; add include_consumed=true query param (archived-version views in TASK-EDQPG will use it). Adjust the round-trip test accordingly.
+
+Gates: cargo test -p orgasmic-daemon and -p orgasmic-cli (redirect to files); cargo clippy --workspace --all-targets -- -D warnings; fmt on touched files. New unit tests for the validator corpus, leading-* escaping round-trip, and atomicity (no partial state after simulated failure where testable).

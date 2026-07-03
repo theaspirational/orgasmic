@@ -94,3 +94,4 @@ Evidence: TASK-ZEFEY implementer run-20260703T185733 completed fully (gates gree
 Expected: the eot marker should finalize the run (record implementer.done, snapshot the report into last.txt) BEFORE any stall accounting; stall_timeout_exceeded must never overwrite a completed run's report. Same family as the old codex-acp stall overrides (TASK-HCFBT.4) but rmux-specific and post-completion.
 
 Acceptance: a scripted rmux dispatch that emits eot then idles past the stall window ends with implementer.done recorded, the worker report preserved in last.txt, and no stall_timeout_exceeded surfaced for the completed run.
+

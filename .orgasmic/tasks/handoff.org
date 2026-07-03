@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         ddd6b566e91699fe31f5a1080970c621807fdbe9
+:LIVENESS:         b6301210033d6b5b2828a58f9b5684a070376fd6
 :LIVENESS_AT:      [2026-07-03 Fri]
 :UPDATED_AT:       [2026-07-03 Fri]
 :END:
@@ -20,14 +20,16 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - TASK-SJQ9V filed: doctor staleness test fails only under cargo test --workspace concurrency (pre-existing latent race surfaced at integration; passes standalone parallel+serial).
 - Worker templates modernized [2026-07-03 Fri]: claude-rmux implementer -> claude-sonnet-5 (high), reviewer -> claude-opus-4-8 (xhigh); MODELS allowlist now sonnet-5/opus-4-8/haiku-4-5. Applied twice: user overrides in ~/.orgasmic/user/workers/ (live daemon resolves them, verified via orgasmic worker show) + checkout shipped/workers/ for the next runtime publish. Transcript audit confirmed no silent fallback on prior runs: all M6146 turns genuinely served by claude-sonnet-4-6.
 - TASK-ZEFEY (2/6) implemented and merged ddd6b56 (worker 9a5f043, sonnet-4-6 high, ~24m; +1742, 8 files): full artifact store per arch_ARSPJ — ART-<slug>/ folders, artifact.* tx types, index projection + WS topics, GET reads, submit/feedback(+consume) writes with validate-before-write and atomic files+tx transaction, 22-type block registry, orgasmic artifact CLI verbs, CLI round-trip integration test. Worker completed but rmux stall detector clobbered last.txt post-eot (manager-rescued close tx-1215; tooling bug filed TASK-B05AM). Manager review clean; one design question (hand-rolled parse_org_properties vs canonical Org parser) carried to the reviewer.
+- TASK-ZEFEY reviewer pass closed (opus-4-8 xhigh first live run, ~8.5m): VERDICT ship-with-fixes — acceptance conforms to arch_ARSPJ end to end, but 1 HIGH (validate_mdx byte-scan false-rejects/false-accepts, proven via rustc probe) + 3 MEDIUM (hand-rolled Org parser truncation/injection, writer bypass, non-atomic comment writes) + 4 LOW. All 8 filed as reviewer.finding tx (tx-1226..1233 range); reviewer.done tx-1234. Substantially deeper than the sonnet-4-6 M6146 pass — model upgrade validated.
+- TASK-Y2ZQJ fix subtask filed (:PARENT_TASK: TASK-ZEFEY, :FIX_SUBTASK: t) with all findings + two manager rulings (zero-block MDX rejected; detail bundle excludes consumed by default with include_consumed param); dispatched to implementer-claude-rmux on claude-sonnet-5 (first sonnet-5 run), run-20260703T195310.
 
 ** Next likely actions
-- Integrate TASK-ZEFEY when the worker reports: manager diff review, merge --no-ff, workspace gates, Evidence, dispatch-close, then reviewer-claude-rmux pass and DONE.
-- Then TASK-2ZQSB (artifactor worker kind + generation launch path, arch_045Q0) -> TASK-T25XQ -> TASK-DJGM5 -> TASK-EDQPG, sequentially per the goal.
-- Optional (operator to confirm scope first): broader first-feature cut-list audit beyond the Graph page.
+- Integrate TASK-Y2ZQJ when the worker reports: manager diff review (verify all 8 findings addressed per the rulings), merge --no-ff, gates, Evidence, reviewer-claude-rmux pass (one-round fix still gets a review), DONE.
+- Then TASK-2ZQSB (artifactor worker kind + generation launch path, arch_045Q0) -> TASK-T25XQ -> TASK-DJGM5 -> TASK-EDQPG sequentially.
+- Watch for recurrence of the rmux stall-detector last.txt clobber (TASK-B05AM) on the Y2ZQJ run; rescue via stdout log + worktree as with ZEFEY if it fires.
 
 ** In flight
-- TASK-ZEFEY merged ddd6b56, in_review: post-merge gates (daemon+cli tests, workspace clippy) running in manager session; reviewer-claude-rmux (now opus-4-8 xhigh via user override) dispatches when gates confirm green; brief staged at .orgasmic/tmp/dispatch/task-ZEFEY-review-brief.md.
+- implementer-claude-rmux (sonnet-5 high) on TASK-Y2ZQJ fix subtask (run-20260703T195310); brief at .orgasmic/tmp/dispatch/task-Y2ZQJ/task-Y2ZQJ-brief.md; watcher installed. TASK-2ZQSB is BLOCKED behind this fix per reviewer direction (do not build on the store until it lands).
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.
