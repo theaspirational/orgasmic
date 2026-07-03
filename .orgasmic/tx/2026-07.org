@@ -1883,3 +1883,125 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 21:33:52 reviewer.finding TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1259
+:TIME:         [2026-07-03 Fri 21:33:52]
+:TYPE:         reviewer.finding
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       crates/orgasmic-daemon/src/api.rs
+:REASON:       M1 MEDIUM regression (data loss): the finding-#4 atomicity fix replaced writer.mutate_file(FileMutate{transform}) — which read reviews.org INSIDE the writer flock (serialized read-modify-write) — with read-OUTSIDE-lock (std::fs::read_to_string) -> compute append_comment -> blind FileRewrite overwrite via writer.transaction. Two concurrent comment-add/consume ops on the same artifact both read the same base and the second silently clobbers the first, losing a comment or a consume. Gained atomicity, lost serialization. Fix: add a writer transactional-RMW primitive (read-under-flock + transform + tx-append committed together) and route post_artifact_feedback / post_artifact_feedback_consume through it, or guard the read->transaction window with a per-artifact mutex. Should be fixed before the artifact queue drives concurrency onto the store.
+:severity:     medium
+:kind:         regression
+:run:          run-20260703T211936
+:locations:    api.rs:9051+9095 (feedback add); api.rs:9143+9186 (consume)
+:END:
+
+* TX 2026-07-03 Fri 21:34:08 reviewer.finding TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1260
+:TIME:         [2026-07-03 Fri 21:34:08]
+:TYPE:         reviewer.finding
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       crates/orgasmic-daemon/src/api.rs
+:REASON:       L1 LOW: two inline .state/.version scrapers at api.rs:9013-9038 should collapse to a single load_artifact(&art_dir); drop the inline scrapers. Fold into the M1 fix.
+:severity:     low
+:kind:         cleanup
+:run:          run-20260703T211936
+:locations:    api.rs:9013-9038
+:END:
+
+* TX 2026-07-03 Fri 21:34:08 reviewer.finding TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1261
+:TIME:         [2026-07-03 Fri 21:34:08]
+:TYPE:         reviewer.finding
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       crates/orgasmic-daemon/src/artifacts.rs
+:REASON:       L2 LOW (note, no code change): validate_mdx uses literal-close-string matching, so a registered block body containing its own literal </Name> terminates early; acceptable for a top-level structural validator, real nesting defers to the TASK-T25XQ JS/MDX parser. Note the limit in the T25XQ handoff.
+:severity:     low
+:kind:         note
+:run:          run-20260703T211936
+:defer_to:     TASK-T25XQ
+:END:
+
+* TX 2026-07-03 Fri 21:34:08 reviewer.done TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1262
+:TIME:         [2026-07-03 Fri 21:34:08]
+:TYPE:         reviewer.done
+:ACTOR:        reviewer-claude-rmux
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:REASON:       VERDICT ship-with-fixes: all 8 ZEFEY findings genuinely closed (8/8), both manager rulings hold, 28 targeted artifact tests pass; store materially hardened. Finding-#4 atomicity refactor introduced one new MEDIUM data-loss race on reviews.org under concurrent same-artifact writes (M1) + 2 LOW. None meet block bar (acceptance met); M1 should be fixed before the queue drives concurrency. Reviewer independently reran cargo test -p orgasmic-daemon artifact --lib (28 pass) + standalone rustc probe of validate_mdx/scan_tag_header (15 inputs per policy). Open question O1 (current version N not addressable by ?version=N) deferred to TASK-EDQPG. last.txt was scrollback-truncated; VERDICT+top findings recovered from rmux raw capture.
+:verdict:      ship-with-fixes
+:model:        claude-opus-4-8
+:effort:       xhigh
+:run:          run-20260703T211936
+:findings:     1 MEDIUM (M1 regression), 2 LOW (L1,L2)
+:prior_8:      closed
+:END:
+
+* TX 2026-07-03 Fri 21:34:24 task.edited TASK-Y2ZQJ
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1263
+:TIME:         [2026-07-03 Fri 21:34:24]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y2ZQJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-Y2ZQJ
+:NODE_ID:      TASK-Y2ZQJ
+:END:
+
+* TX 2026-07-03 Fri 21:35:00 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1264
+:TIME:         [2026-07-03 Fri 21:35:00]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 21:35:00 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1265
+:TIME:         [2026-07-03 Fri 21:35:00]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 21:35:00 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1266
+:TIME:         [2026-07-03 Fri 21:35:00]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
