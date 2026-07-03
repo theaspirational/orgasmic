@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         ed6a6fc67e25d7f438533daccafe78f2eb531066
+:LIVENESS:         9acfc6ae21d087a6813492c328069fd83b2b8896
 :LIVENESS_AT:      [2026-07-03 Fri]
 :UPDATED_AT:       [2026-07-03 Fri]
 :END:
@@ -35,7 +35,7 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - Follow-ups: TASK-567JG (reattach completion-watcher gap, MED), TASK-KBHAN (#+begin_ hardening, LOW), TASK-SJQ9V (doctor workspace flake).
 
 ** In flight
-- Starting TASK-2ZQSB (3/6): artifactor worker kind + generation launch path (arch_045Q0). The artifact store foundation is hardened + race-safe; the report-clobber (B05AM) is fixed so rmux dispatches no longer lose completed reports (restart-mid-run gap tracked as TASK-567JG).
+- implementer-claude-rmux (sonnet-5 high) on TASK-2ZQSB (run-20260703T223609-a848aaa429f3450baba0951ca3f27cf2): WorkerKind::Artifactor + artifact-generator prompt spec + POST /artifacts/generate|/:id/regenerate launching a real worker run under the artifact.generate:{id} lease (models post_manager_launch); worker write path = artifact submit only. Brief at .orgasmic/tmp/dispatch/task-2ZQSB/task-2ZQSB-brief.md. Watcher b0j360960 (last.txt should work now B05AM is fixed; transcript-rescue backstop). DO NOT rebuild/restart the daemon while this run is live (TASK-567JG reattach gap still open). Scope: backend only — no UI (T25XQ), no member/role gating (DJGM5), admin-token auth for now.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.

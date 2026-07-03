@@ -2254,3 +2254,88 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-03 Fri 22:36:09 task.state_transitioned TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1285
+:TIME:         [2026-07-03 Fri 22:36:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-2ZQSB to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-03 Fri 22:36:09 manager.dispatch_started TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1286
+:TIME:         [2026-07-03 Fri 22:36:09]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2zqsb/worktree
+:BRANCH:       task-2zqsb-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2ZQSB/task-2ZQSB-brief.md
+:STARTED_AT:   [2026-07-03 Fri 22:36:09]
+:LIVENESS:     9acfc6ae21d087a6813492c328069fd83b2b8896
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: Implement arch_045Q0: WorkerKind::Artifactor + artifact-generator prompt spec + POST /artifacts/generate|/:id/regenerate launching a real worker run under the artifact.generate:{id} lease; worker write path = artifact submit only. Store foundation hardened (ZEFEY+Y2ZQJ+M1); B05AM report clobber fixed so the dispatch report path is reliable again.
+:END:
+
+* TX 2026-07-03 Fri 22:36:09 run.created TASK-2ZQSB
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1287
+:TIME:         [2026-07-03 Fri 22:36:09]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2ZQSB
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2ZQSB-implementer-20260703T223609.jsonl
+:REASON:       Implement arch_045Q0: WorkerKind::Artifactor + artifact-generator prompt spec + POST /artifacts/generate|/:id/regenerate launching a real worker run under the artifact.generate:{id} lease; worker write path = artifact submit only. Store foundation hardened (ZEFEY+Y2ZQJ+M1); B05AM report clobber fixed so the dispatch report path is reliable again.
+:RUN_ID:       run-20260703T223609-a848aaa429f3450baba0951ca3f27cf2
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2zqsb/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2ZQSB/task-2ZQSB-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2ZQSB/task-2ZQSB-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2ZQSB/task-2ZQSB-stdout.log
+:DISPATCH_TX:  tx-20260703-orgasmic-1286
+:END:
+
+* TX 2026-07-03 Fri 22:36:55 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1288
+:TIME:         [2026-07-03 Fri 22:36:55]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-03 Fri 22:36:55 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260703-orgasmic-1289
+:TIME:         [2026-07-03 Fri 22:36:55]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

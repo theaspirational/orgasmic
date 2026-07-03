@@ -1,16 +1,3 @@
 #+title: Todo
 #+orgasmic_version: 1
 
-* TODO TASK-2ZQSB Artifactor worker kind, prompt spec, and generation launch path :artifacts:supervisor:prompt-studio:
-:PROPERTIES:
-:DEPENDS_ON: TASK-ZEFEY
-:ID: TASK-2ZQSB
-:IMPLEMENTS: arch_045Q0
-:END:
-
-Add WorkerKind::Artifactor and the prompt spec shipped/prompt-studio/prompt-specs/artifact-generator.org (default generating instructions + block-vocabulary reference + slots for subject nodes, user prompt, and regen context). Implement POST /artifacts/generate {nodes, prompt} and POST /artifacts/:id/regenerate {extraPrompt?}: create/advance the artifact record, assemble context (subject node content, graph neighborhood, full repo read; on regen also prior artifact.mdx + current-version comments with authors/resolution + extra prompt), and launch through the existing dispatch machinery under the synthetic lease id artifact.generate:{artifact_id}. The lease is the per-artifact mutex; the artifact enters regenerating state for the run's duration. Worker write path is orgasmic artifact submit only.
-
-Acceptance: pressing generate on a real node (via curl) produces a validated artifact.mdx authored by an actual worker run visible in orgasmic run list, with artifact.created/.submitted tx entries; a second generate on the same artifact while one runs is refused by the lease; a deliberately invalid submit is retried by the worker, never written.
-** Notes
-[2026-07-03] UNBLOCKED. The manager hold (do not build on the artifact store until it is hardened + race-safe) is lifted: TASK-ZEFEY (store) + TASK-Y2ZQJ (8 reviewer findings) + M1 concurrency fix are all DONE and reviewer-verified (store now serializes reviews.org RMW per artifact). Cleared to start: artifactor worker kind + generation launch path (arch_045Q0).
-
