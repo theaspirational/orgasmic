@@ -1596,6 +1596,26 @@ A new WorkerKind::Artifactor generates and regenerates artifacts. Its prompt spe
 - One live run per artifact (lease); the UI shows regenerating state and locks commenting for its duration, per dec_V44E4.
 - The worker never writes .orgasmic/ files directly and has no other write scope.
 
+** arch_045Q0.1 generation launch pipeline
+:PROPERTIES:
+:ID:                 arch_045Q0.1
+:SOURCE_PATHS:       crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/artifacts.rs
+:TESTS:              cargo test -p orgasmic-daemon
+:READS:              file:project
+:WRITES:             file:project
+:EXPOSES_REST:
+:EXPOSES_WS:
+:SUBSCRIBES_TO:
+:SPAWNS:
+:CALLS:              arch_ARSPJ arch_QXS5W.2
+:DEPENDS_ON:
+:END:
+
+POST /artifacts/generate and POST /artifacts/:id/regenerate: the generate/regenerate
+handlers, context assembly, artifact-id minting, regenerate's comment-close-out, the
+launch/revert/release-watcher safety net, and the WorkerKind::Artifactor plumbing
+they drive through.
+
 * arch_Z8CW2 Member identity and role-gated access
 :PROPERTIES:
 :DEPENDS_ON: arch_C87Z9

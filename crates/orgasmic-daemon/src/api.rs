@@ -1,4 +1,4 @@
-// arch: arch_C87Z9.1, arch_MPAQT.1, arch_MPAQT.2, arch_PCSQE.1, arch_PCSQE.2, arch_QFQTD.1, arch_QFQTD.3, arch_QXS5W.2, arch_R3EPE.1, arch_R3EPE.2, arch_Z3Z3V.2
+// arch: arch_045Q0.1, arch_C87Z9.1, arch_MPAQT.1, arch_MPAQT.2, arch_PCSQE.1, arch_PCSQE.2, arch_QFQTD.1, arch_QFQTD.3, arch_QXS5W.2, arch_R3EPE.1, arch_R3EPE.2, arch_Z3Z3V.2
 // orgasmic:arch_R3EPE, arch_C87Z9, arch_QXS5W, dec_XV9AK, dec_N17XX
 //! Axum REST routes mirroring the arch_006 inventory.
 //!
@@ -239,8 +239,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/graph/nodes", get(get_graph_nodes).post(stub("TASK-008")))
         // Artifact store (arch_ARSPJ / TASK-ZEFEY)
         .route("/artifacts", get(get_artifacts))
+        .route("/artifacts/generate", post(post_artifact_generate))
         .route("/artifacts/:id", get(get_artifact))
         .route("/artifacts/:id/submit", post(post_artifact_submit))
+        .route("/artifacts/:id/regenerate", post(post_artifact_regenerate))
         .route("/artifacts/:id/feedback", post(post_artifact_feedback))
         .route(
             "/artifacts/:id/feedback/:cid/consume",
@@ -1378,6 +1380,7 @@ fn worker_kind_name(kind: WorkerKind) -> &'static str {
         WorkerKind::Glossarist => "glossarist",
         WorkerKind::Babysitter => "babysitter",
         WorkerKind::Manager => "manager",
+        WorkerKind::Artifactor => "artifactor",
     }
 }
 
@@ -9266,6 +9269,711 @@ async fn post_artifact_feedback_consume(
     Ok(Json(json!({ "cid": cid, "resolved": true })))
 }
 
+// ---- artifact generation launch (arch_045Q0 / dec_JBWB9 / dec_V44E4) -------
+
+#[derive(Debug, Deserialize)]
+struct ArtifactGenerateRequest {
+    nodes: Vec<String>,
+    prompt: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ArtifactRegenerateRequest {
+    #[serde(default, rename = "extraPrompt")]
+    extra_prompt: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ArtifactGenerateResponse {
+    artifact_id: String,
+    run_id: String,
+}
+
+/// Truncate a free-form prompt down to a single-line default title. Generate
+/// has no dedicated title field (nodes + prompt only, per the route
+/// contract); the artifact's own :TITLE: is cosmetic index metadata, so a
+/// clipped first line of the prompt is a reasonable default.
+fn derive_artifact_title(prompt: &str) -> String {
+    const MAX_CHARS: usize = 80;
+    let collapsed: String = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() <= MAX_CHARS {
+        return collapsed;
+    }
+    let truncated: String = collapsed.chars().take(MAX_CHARS).collect();
+    format!("{}…", truncated.trim_end())
+}
+
+/// Subject nodes' Org content plus their graph neighborhood — the launch-time
+/// context every artifact-generator run receives regardless of generate vs
+/// regenerate (dec_JBWB9).
+async fn assemble_artifact_context(
+    state: &ApiState,
+    project_id: &str,
+    node_ids: &[String],
+) -> String {
+    let mut out = String::new();
+    for id in node_ids {
+        let layer = NodeLayer::for_id(id);
+        out.push_str(&format!("### {id}\n"));
+        match org_node_path(state, Some(project_id), id, layer).await {
+            Ok((_, path, source_file)) => match read_artifact(&path, layer.artifact_name()) {
+                Ok(source) => match OrgFile::parse(source, path.to_string_lossy()) {
+                    Ok(file) => match file.find_by_id(id) {
+                        Some(heading) => {
+                            let doc = org_node_doc(&file, heading, layer, source_file);
+                            out.push_str(&format!("[{}] {}\n", doc.kind, doc.title));
+                            if !doc.body.trim().is_empty() {
+                                out.push_str(doc.body.trim());
+                                out.push('\n');
+                            }
+                            for section in &doc.sections {
+                                if section.body.trim().is_empty() {
+                                    continue;
+                                }
+                                out.push_str(&format!(
+                                    "**{}**\n{}\n",
+                                    section.title,
+                                    section.body.trim()
+                                ));
+                            }
+                        }
+                        None => out.push_str(&format!("(not found in {source_file})\n")),
+                    },
+                    Err(e) => out.push_str(&format!("(parse error reading {source_file}: {e})\n")),
+                },
+                Err(_) => out.push_str(&format!("(unreadable: {source_file})\n")),
+            },
+            Err(_) => out.push_str("(node lookup failed)\n"),
+        }
+        out.push('\n');
+    }
+
+    let snap = state.index.snapshot().await;
+    if let Ok(graph) = select_graph(&snap, Some(project_id)) {
+        let mut lines: Vec<String> = graph
+            .edges
+            .iter()
+            .filter(|e| node_ids.iter().any(|id| id == &e.from || id == &e.to))
+            .map(|e| format!("- {} --{}--> {}", e.from, e.kind, e.to))
+            .collect();
+        lines.sort();
+        lines.dedup();
+        if !lines.is_empty() {
+            out.push_str("### Graph neighborhood\n");
+            out.push_str(&lines.join("\n"));
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// Regenerate-only context: the prior artifact.mdx, every current-version
+/// comment (author, resolution target, anchor) that this regenerate closes
+/// out, and the optional extra prompt from the Regenerate dialog (dec_V44E4).
+fn assemble_regen_context(
+    prior_mdx: &str,
+    comments: &[artifacts::CommentRecord],
+    extra_prompt: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str("### Prior artifact.mdx\n");
+    if prior_mdx.trim().is_empty() {
+        out.push_str("(none)\n");
+    } else {
+        out.push_str(prior_mdx.trim());
+        out.push('\n');
+    }
+    out.push_str("\n### Current-version comments (closed out by this regenerate)\n");
+    if comments.is_empty() {
+        out.push_str("(none)\n");
+    } else {
+        for c in comments {
+            let resolves = if c.resolution_target.trim().is_empty() {
+                "-"
+            } else {
+                c.resolution_target.as_str()
+            };
+            out.push_str(&format!(
+                "- [{}] {} (anchor: {}; resolves: {}): {}\n",
+                c.cid, c.author, c.anchor, resolves, c.message
+            ));
+        }
+    }
+    out.push_str("\n### Extra prompt\n");
+    out.push_str(&prompt_value_or_not_set(extra_prompt));
+    out.push('\n');
+    out
+}
+
+/// Compile the artifact-generator prompt spec into the worker's initial
+/// prompt bundle. Standalone from `compile_dispatch_prompt_bundle`: this run
+/// has no task heading, so only the `artifact.*` slot namespace is filled.
+fn compile_artifact_generate_prompt_bundle(
+    home: &Home,
+    project_id: &str,
+    art_id: &str,
+    subject_context: &str,
+    user_prompt: &str,
+    regen_context: &str,
+) -> Result<String, ApiError> {
+    let mut values = SlotValues::new();
+    values.insert(
+        "artifact.subject_nodes".to_string(),
+        prompt_value_or_not_set(subject_context),
+    );
+    values.insert(
+        "artifact.user_prompt".to_string(),
+        prompt_value_or_not_set(user_prompt),
+    );
+    values.insert(
+        "artifact.regen_context".to_string(),
+        prompt_value_or_not_set(regen_context),
+    );
+    let req = crate::prompt_compiler::PromptCompileRequest {
+        project: Some(project_id.to_string()),
+        mode: Some("artifact_generate".to_string()),
+        worker: Some("artifactor".to_string()),
+        harness: None,
+        renderer: None,
+        reason: Some(format!("artifact generation for {art_id}")),
+        context_overrides: BTreeMap::new(),
+        values,
+    };
+    let compiled = crate::prompt_compiler::compile_prompt_spec(home, "artifact-generator", req)
+        .map_err(|e| content_list_error(e, "artifact-generator prompt spec"))?;
+    if crate::prompt_compiler::has_error(&compiled.diagnostics) {
+        let messages = compiled
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.level == "error")
+            .map(|diag| diag.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(ApiError::internal(format!(
+            "artifact-generator prompt compile failed: {messages}"
+        )));
+    }
+    Ok(format!(
+        "orgasmic compiled prompt\ndispatch_kind: artifactor\nartifact: {art_id}\nworker: artifactor\nprompt_spec: {}\n\n{}\n",
+        compiled.spec.id,
+        compiled.text.trim()
+    ))
+}
+
+/// Acquire the per-artifact lease `artifact.generate:{art_id}` and launch the
+/// artifactor worker, modeled on `post_manager_launch`'s direct
+/// `supervisor.acquire` pattern (synthetic task_id, `RunKind::Worker`, no
+/// task heading) but reusing `spawn_worker_run`'s shared plumbing so the run
+/// gets a real compiled-prompt bundle, session file, and (if configured)
+/// babysitter, exactly like a CLI dispatch.
+///
+/// A second generate/regenerate on the same artifact while one runs is
+/// refused by the lease itself (`spawn_worker_run` maps
+/// `SupervisorError::LeaseHeld` to 409).
+///
+/// Performs no durable mutation and no revert on failure — every caller must
+/// either (a) mutate the artifact only *after* this returns `Ok` (regenerate:
+/// nothing to undo on failure, since nothing changed yet), or (b) already
+/// hold a durable record it is prepared to revert itself on a non-409 error
+/// (generate: a fresh record with no other caller possibly racing it). A
+/// live LLM-driven probe against a real daemon (TASK-2ZQSB) caught the
+/// opposite ordering appending a spurious `artifact.regenerated` tx entry —
+/// and silently consuming real comments — for a regenerate call that the
+/// lease went on to refuse.
+async fn launch_artifact_generation(
+    state: &ApiState,
+    entry: &BoardEntry,
+    art_id: &str,
+    art_dir: &FsPath,
+    restore_state: &'static str,
+    restore_version: u32,
+    bundle: String,
+) -> Result<String, ApiError> {
+    let worker = load_stage_worker(&state.home, "artifactor")?;
+
+    let task_id = format!("artifact.generate:{art_id}");
+    let spawn = spawn_worker_run(
+        state,
+        SpawnWorkerRequest {
+            project_id: &entry.id,
+            task_id: &task_id,
+            worker_id: "artifactor",
+            run_kind: RunKind::Worker,
+            bundle: &bundle,
+            overrides: DriverOverrides::default(),
+            project_root_path: &entry.path,
+            worktree_path: &entry.path,
+            origin: "artifact_generate",
+            dispatch_kind: Some("artifactor"),
+            preloaded_worker: Some(worker),
+            task_sandbox_permissions: None,
+        },
+    )
+    .await
+    .map_err(|failure| failure.error)?;
+
+    spawn_artifact_release_watcher(
+        state.clone(),
+        ArtifactReleaseWatch {
+            entry: entry.clone(),
+            task_id,
+            art_dir: art_dir.to_path_buf(),
+            art_id: art_id.to_string(),
+            run_id: spawn.acquire.run_id.clone(),
+            restore_state,
+            restore_version,
+        },
+    );
+    Ok(spawn.acquire.run_id)
+}
+
+/// Best-effort recovery: restore the artifact out of `regenerating` when a
+/// launch never happened or the run ended without ever calling `orgasmic
+/// artifact submit`. Only acts if the artifact is still `regenerating` —
+/// a completed submit, or a newer run already holding the lease, means
+/// someone else already resolved it, and clobbering that would be the bug
+/// this function exists to prevent.
+struct RevertArtifactState<'a> {
+    entry: &'a BoardEntry,
+    art_dir: &'a FsPath,
+    art_id: &'a str,
+    run_id: &'a str,
+    reason: &'a str,
+    restore_state: &'a str,
+    restore_version: u32,
+}
+
+async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifactState<'_>) {
+    let RevertArtifactState {
+        entry,
+        art_dir,
+        art_id,
+        run_id,
+        reason,
+        restore_state,
+        restore_version,
+    } = revert;
+    let write_lock = state.artifact_write_lock(art_dir);
+    let _guard = write_lock.lock().await;
+
+    let Ok(current_org) = std::fs::read_to_string(art_dir.join("artifact.org")) else {
+        return;
+    };
+    let Some(summary) = load_artifact(art_dir) else {
+        return;
+    };
+    if summary.state != "regenerating" {
+        return;
+    }
+    let Ok(new_org) = update_artifact_org(&current_org, restore_version, restore_state) else {
+        return;
+    };
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let mut tx_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.generation.failed",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    tx_entry.project = Some(entry.id.clone());
+    tx_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.to_string()),
+        ("RUN_ID".into(), run_id.to_string()),
+        ("RESTORED_STATE".into(), restore_state.to_string()),
+        ("REASON".into(), reason.to_string()),
+    ];
+
+    let result = state
+        .writer
+        .transaction(
+            vec![FileRewrite {
+                path: art_dir.join("artifact.org"),
+                new_contents: new_org,
+            }],
+            TxAppend {
+                tx_path,
+                entry: tx_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: None,
+            },
+        )
+        .await;
+
+    if let Err(e) = result {
+        tracing::error!(art_id, run_id, error = %e, "artifact generation-state revert failed");
+        return;
+    }
+
+    let _ = state.index.refresh_project(&entry.id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactChanged {
+            project_id: entry.id.clone(),
+            artifact_id: art_id.to_string(),
+            state: restore_state.to_string(),
+        },
+    );
+}
+
+struct ArtifactReleaseWatch {
+    entry: BoardEntry,
+    /// The supervisor lease key (`artifact.generate:{art_id}`); used to
+    /// detect whether a newer run already took over the artifact by the time
+    /// this run ends.
+    task_id: String,
+    art_dir: PathBuf,
+    art_id: String,
+    run_id: String,
+    restore_state: &'static str,
+    restore_version: u32,
+}
+
+/// Poll until the launched run leaves the supervisor's live set, then revert
+/// a still-`regenerating` artifact. Mirrors `spawn_dispatch_completion_watcher`'s
+/// polling shape; simpler, since there is no CLI-side last_path/stdout_path
+/// to flush here — only the store's own state needs a safety net.
+fn spawn_artifact_release_watcher(state: ApiState, watch: ArtifactReleaseWatch) {
+    tokio::spawn(async move {
+        let poll = std::time::Duration::from_millis(250);
+        loop {
+            let snapshot = state.supervisor.snapshot().await;
+            let still_live = snapshot.runs.iter().any(|run| run.run_id == watch.run_id);
+            if still_live {
+                tokio::time::sleep(poll).await;
+                continue;
+            }
+            // A fresh run already holds this artifact's lease (a new
+            // generate/regenerate started after this one released) — leave
+            // its regenerating state alone.
+            let superseded = snapshot.runs.iter().any(|run| run.task_id == watch.task_id);
+            if !superseded {
+                revert_artifact_generation_state(
+                    &state,
+                    RevertArtifactState {
+                        entry: &watch.entry,
+                        art_dir: &watch.art_dir,
+                        art_id: &watch.art_id,
+                        run_id: &watch.run_id,
+                        reason: "run ended without a submit",
+                        restore_state: watch.restore_state,
+                        restore_version: watch.restore_version,
+                    },
+                )
+                .await;
+            }
+            return;
+        }
+    });
+}
+
+async fn post_artifact_generate(
+    State(state): State<ApiState>,
+    Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactGenerateRequest>,
+) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
+    let nodes: Vec<String> = body
+        .nodes
+        .into_iter()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .collect();
+    if nodes.is_empty() {
+        return Err(ApiError::bad_request("nodes must be non-empty"));
+    }
+    let prompt = body.prompt.trim().to_string();
+    if prompt.is_empty() {
+        return Err(ApiError::bad_request("prompt is required"));
+    }
+
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    drop(snap);
+
+    let art_id = artifacts::new_artifact_id();
+    let art_dir = artifact_dir(&entry.path, &art_id);
+    let title = artifacts::escape_single_line(&derive_artifact_title(&prompt));
+    let prompt_escaped = artifacts::escape_single_line(&prompt);
+
+    let org_content =
+        artifact_org_content(&art_id, &title, &nodes, &prompt_escaped, 0, "regenerating");
+    let reviews_header = reviews_org_header(&art_id);
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let mut created_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.created",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    created_entry.project = Some(entry.id.clone());
+    created_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.clone()),
+        ("TITLE".into(), title.clone()),
+        ("SUBJECT_NODES".into(), nodes.join(" ")),
+        ("PROMPT".into(), prompt_escaped.clone()),
+    ];
+
+    state
+        .writer
+        .transaction(
+            vec![
+                FileRewrite {
+                    path: art_dir.join("artifact.org"),
+                    new_contents: org_content.into_bytes(),
+                },
+                FileRewrite {
+                    path: art_dir.join("reviews.org"),
+                    new_contents: reviews_header.into_bytes(),
+                },
+            ],
+            TxAppend {
+                tx_path,
+                entry: created_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: Some(format!("artifact-created-{}-{art_id}", entry.id)),
+            },
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("write artifact record: {e}")))?;
+
+    let _ = state.index.refresh_project(&entry.id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactChanged {
+            project_id: entry.id.clone(),
+            artifact_id: art_id.clone(),
+            state: "regenerating".into(),
+        },
+    );
+
+    let context = assemble_artifact_context(&state, &entry.id, &nodes).await;
+    let bundle = compile_artifact_generate_prompt_bundle(
+        &state.home,
+        &entry.id,
+        &art_id,
+        &context,
+        &prompt,
+        "",
+    )?;
+
+    // The durable record above always exists before this call and no other
+    // caller can reference this freshly minted id, so any launch failure
+    // here (there is no 409 case: the lease key is brand new) must revert it
+    // — unlike regenerate, which mutates only after a successful launch.
+    let run_id =
+        match launch_artifact_generation(&state, &entry, &art_id, &art_dir, "failed", 0, bundle)
+            .await
+        {
+            Ok(run_id) => run_id,
+            Err(error) => {
+                revert_artifact_generation_state(
+                    &state,
+                    RevertArtifactState {
+                        entry: &entry,
+                        art_dir: &art_dir,
+                        art_id: &art_id,
+                        run_id: "no-run",
+                        reason: "worker launch failed",
+                        restore_state: "failed",
+                        restore_version: 0,
+                    },
+                )
+                .await;
+                return Err(error);
+            }
+        };
+
+    Ok(Json(ArtifactGenerateResponse {
+        artifact_id: art_id,
+        run_id,
+    }))
+}
+
+async fn post_artifact_regenerate(
+    State(state): State<ApiState>,
+    Path(art_id): Path<String>,
+    Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactRegenerateRequest>,
+) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    drop(snap);
+
+    let art_dir = artifact_dir(&entry.path, &art_id);
+    if !art_dir.join("artifact.org").exists() {
+        return Err(ApiError::not_found("artifact not found"));
+    }
+
+    let extra_prompt = body.extra_prompt.unwrap_or_default();
+
+    // Read-only: feeds the launch prompt. This is NOT yet the final "what
+    // gets closed out" comment set — that is re-read and applied only after
+    // the lease is actually acquired, below, so a refused (409) call because
+    // a run is already live leaves no trace in artifact.org, reviews.org, or
+    // the tx log (a live probe against a real daemon, TASK-2ZQSB, caught the
+    // opposite ordering doing exactly that).
+    let detail = load_artifact_detail(&art_dir, None, false).map_err(|e| match e {
+        ArtifactLoadError::NotFound => ApiError::not_found("artifact not found"),
+        ArtifactLoadError::VersionNotFound(v) => {
+            ApiError::not_found(format!("artifact {art_id} has no version {v}"))
+        }
+    })?;
+    let version = detail.summary.version;
+    let nodes = detail.summary.subject_nodes.clone();
+
+    let subject_context = assemble_artifact_context(&state, &entry.id, &nodes).await;
+    let regen_context = assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
+    let bundle = compile_artifact_generate_prompt_bundle(
+        &state.home,
+        &entry.id,
+        &art_id,
+        &subject_context,
+        &detail.prompt,
+        &regen_context,
+    )?;
+
+    // Gate on the lease first: nothing durable changes until a run is
+    // actually acquired. Nothing to revert on failure here (see
+    // `launch_artifact_generation`'s doc comment) — the artifact is still
+    // exactly as it was before this request.
+    let run_id = launch_artifact_generation(
+        &state,
+        &entry,
+        &art_id,
+        &art_dir,
+        "submitted",
+        version,
+        bundle,
+    )
+    .await?;
+
+    // Lease acquired: close out the current version's open comments and flip
+    // to `regenerating` in one locked transaction (dec_V44E4), serialized
+    // against the feedback/consume handlers' own read->transaction window on
+    // reviews.org (same lock, same discipline as TASK-Y2ZQJ M1). Re-reads
+    // fresh rather than reusing `detail` above, since a comment may have
+    // landed while the launch was in flight.
+    let write_lock = state.artifact_write_lock(&art_dir);
+    let _write_guard = write_lock.lock().await;
+
+    let reviews_path = art_dir.join("reviews.org");
+    let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
+    let consumed_cids: Vec<String> = artifacts::parse_comments(&current_reviews)
+        .into_iter()
+        .filter(|c| !c.resolved && !c.consumed)
+        .map(|c| c.cid)
+        .collect();
+    let new_reviews = artifacts::consume_all_open_comments(&current_reviews)
+        .map_err(|e| ApiError::internal(format!("consume open comments: {e}")))?;
+
+    let current_org = std::fs::read_to_string(art_dir.join("artifact.org"))
+        .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
+    let new_org = update_artifact_org(&current_org, version, "regenerating")
+        .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let mut regen_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.regenerated",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    regen_entry.project = Some(entry.id.clone());
+    regen_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.clone()),
+        ("RUN_ID".into(), run_id.clone()),
+        ("VERSION".into(), version.to_string()),
+        ("CONSUMED_CIDS".into(), consumed_cids.join(" ")),
+        (
+            "EXTRA_PROMPT".into(),
+            artifacts::escape_single_line(&extra_prompt),
+        ),
+    ];
+
+    state
+        .writer
+        .transaction(
+            vec![
+                FileRewrite {
+                    path: art_dir.join("artifact.org"),
+                    new_contents: new_org,
+                },
+                FileRewrite {
+                    path: reviews_path,
+                    new_contents: new_reviews,
+                },
+            ],
+            TxAppend {
+                tx_path,
+                entry: regen_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: None,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("write regenerate state: {e}")))?;
+
+    drop(_write_guard);
+
+    let _ = state.index.refresh_project(&entry.id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactChanged {
+            project_id: entry.id.clone(),
+            artifact_id: art_id.clone(),
+            state: "regenerating".into(),
+        },
+    );
+
+    Ok(Json(ArtifactGenerateResponse {
+        artifact_id: art_id,
+        run_id,
+    }))
+}
+
 // ---- errors ----------------------------------------------------------------
 
 /// HTTP error returned by daemon routes.
@@ -12892,5 +13600,372 @@ mod tests {
             tx_before, tx_after,
             "tx log must not record a resolution that failed to write"
         );
+    }
+
+    // ── artifact generation launch (TASK-2ZQSB acceptance) ───────────────────
+
+    /// Overrides the shipped `artifactor` worker with a `tmux`/`claude` pairing
+    /// for tests: `spawn_worker_run` always drives the tmux mode through a
+    /// literal `sh -lc "echo ...; exec sh"` stub (see
+    /// `stage_driver_config_with_overrides`), never invoking a real harness
+    /// binary, so this is the same "mock driver" shape supervisor.rs's own
+    /// tests use — deterministic and free, and the run stays live (`exec sh`
+    /// never exits) until the test explicitly releases it.
+    fn seed_test_artifactor_worker(home: &Home) {
+        write(
+            home.user().join("workers/artifactor.org"),
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-2ZQSB).\n",
+        );
+    }
+
+    /// A worker record with an explicitly unsupported driver/harness pair —
+    /// `Worker::from_org` rejects it at load time, so `load_stage_worker`
+    /// fails before any run is ever acquired. Used to exercise the
+    /// launch-never-happened revert path deterministically.
+    fn seed_broken_test_artifactor_worker(home: &Home) {
+        write(
+            home.user().join("workers/artifactor.org"),
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      acp-ws\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:VERSION:                     1\n:END:\n",
+        );
+    }
+
+    #[test]
+    fn derive_artifact_title_collapses_whitespace_and_truncates() {
+        assert_eq!(derive_artifact_title("  hello   world  "), "hello world");
+        let long = "word ".repeat(40);
+        let title = derive_artifact_title(&long);
+        assert!(title.chars().count() <= 81, "{title}");
+        assert!(title.ends_with('…'), "{title}");
+    }
+
+    #[tokio::test]
+    async fn assemble_artifact_context_includes_subject_node_and_neighborhood() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        write(
+            task_file_path(&project_root, "backlog.org"),
+            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n\n* BACKLOG TASK-DEP2 Dependent task :work:\n:PROPERTIES:\n:ID:               TASK-DEP2\n:DEPENDS_ON:       TASK-PRE\n:END:\n",
+        );
+        let state = direct_stage_test_state(home.clone()).await;
+        let _ = state.index.refresh_project("test-proj").await;
+
+        let context =
+            assemble_artifact_context(&state, "test-proj", &["TASK-DEP2".to_string()]).await;
+        assert!(context.contains("TASK-DEP2"), "{context}");
+        assert!(context.contains("Dependent task"), "{context}");
+        assert!(context.contains("Graph neighborhood"), "{context}");
+        assert!(context.contains("TASK-DEP2"), "{context}");
+        assert!(context.contains("TASK-PRE"), "{context}");
+    }
+
+    #[test]
+    fn assemble_regen_context_lists_open_comments_and_extra_prompt() {
+        let comments = vec![artifacts::CommentRecord {
+            cid: "CID-abc12345".into(),
+            author: "reviewer@test.com".into(),
+            version: 1,
+            anchor: "{}".into(),
+            resolution_target: String::new(),
+            resolved: false,
+            consumed: false,
+            message: "tighten the copy".into(),
+        }];
+        let out = assemble_regen_context("<RichText>v1</RichText>", &comments, "make it punchier");
+        assert!(out.contains("<RichText>v1</RichText>"));
+        assert!(out.contains("reviewer@test.com"));
+        assert!(out.contains("tighten the copy"));
+        assert!(out.contains("make it punchier"));
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec!["TASK-PRE".to_string()],
+                prompt: "Draft a wireframe for the login flow".to_string(),
+            }),
+        )
+        .await
+        .expect("generate should succeed");
+
+        let art_id = resp.0.artifact_id.clone();
+        assert!(art_id.starts_with("ART-"), "{art_id}");
+        assert!(!resp.0.run_id.is_empty());
+
+        let art_dir = artifact_dir(&project_root, &art_id);
+        let summary = load_artifact(&art_dir).expect("artifact.org readable");
+        assert_eq!(summary.state, "regenerating");
+        assert_eq!(summary.version, 0);
+        assert_eq!(summary.subject_nodes, vec!["TASK-PRE".to_string()]);
+        assert!(art_dir.join("reviews.org").exists());
+
+        let snapshot = state.supervisor.snapshot().await;
+        assert!(snapshot.runs.iter().any(|r| r.run_id == resp.0.run_id));
+        assert!(snapshot
+            .runs
+            .iter()
+            .any(|r| r.task_id == format!("artifact.generate:{art_id}")));
+
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx = std::fs::read_to_string(&tx_path).unwrap();
+        assert!(tx.contains("artifact.created"));
+        assert!(tx.contains(&art_id));
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_refused_by_lease_while_prior_run_is_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-REGEN1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Regen test".into()),
+                subject_nodes: Some(vec!["TASK-PRE".into()]),
+                prompt: Some("Initial prompt".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let fb_resp = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "please tighten this".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+        let cid = fb_resp.0["cid"].as_str().unwrap().to_string();
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first pass".into()),
+            }),
+        )
+        .await
+        .expect("first regenerate should succeed");
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        let summary = load_artifact(&art_dir).unwrap();
+        assert_eq!(summary.state, "regenerating");
+        assert_eq!(
+            summary.version, 1,
+            "version stays at 1 until the next submit"
+        );
+
+        // dec_V44E4: regenerate closes out the current version's open comments.
+        let detail_all = load_artifact_detail(&art_dir, None, true).unwrap();
+        let comment = detail_all
+            .comments
+            .iter()
+            .find(|c| c.cid == cid)
+            .expect("comment still present in the archive view");
+        assert!(comment.resolved && comment.consumed, "{comment:?}");
+
+        // A second regenerate while the first run is live must be refused.
+        let second = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("second pass".into()),
+            }),
+        )
+        .await;
+        let err = second.expect_err("second regenerate while one runs must be refused");
+        assert_eq!(err.status, StatusCode::CONFLICT);
+
+        // Commenting is also locked while regenerating (existing guard, still
+        // correct against the real regenerating state this route now produces).
+        let fb2 = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "should be refused".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await;
+        assert_eq!(fb2.unwrap_err().status, StatusCode::CONFLICT);
+
+        // The refused second call must not have mutated state or version.
+        let summary_after = load_artifact(&art_dir).unwrap();
+        assert_eq!(summary_after.state, "regenerating");
+        assert_eq!(summary_after.version, 1);
+
+        let _ = state
+            .supervisor
+            .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_reverts_to_failed_when_worker_record_is_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_broken_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let result = post_artifact_generate(
+            State(state.clone()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec!["TASK-PRE".to_string()],
+                prompt: "test".to_string(),
+            }),
+        )
+        .await;
+        let err = result.expect_err("generate must fail when the worker record is invalid");
+        assert_ne!(err.status, StatusCode::CONFLICT);
+
+        let summaries = artifacts::load_project_artifacts(&project_root);
+        assert_eq!(summaries.len(), 1, "{summaries:?}");
+        assert_eq!(summaries[0].state, "failed");
+        assert_eq!(summaries[0].version, 0);
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_reverts_to_submitted_when_worker_record_is_invalid() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_broken_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-BADWK1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Broken worker regen".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let result = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest { extra_prompt: None }),
+        )
+        .await;
+        let err = result.expect_err("regenerate must fail when the worker record is invalid");
+        assert_ne!(err.status, StatusCode::CONFLICT);
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        let summary = load_artifact(&art_dir).unwrap();
+        assert_eq!(summary.state, "submitted");
+        assert_eq!(summary.version, 1);
+    }
+
+    #[tokio::test]
+    async fn artifact_release_watcher_reverts_regenerating_state_when_run_ends_without_submit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec!["TASK-PRE".to_string()],
+                prompt: "test".to_string(),
+            }),
+        )
+        .await
+        .expect("generate should succeed");
+        let art_id = resp.0.artifact_id.clone();
+        let art_dir = artifact_dir(&project_root, &art_id);
+
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+
+        // Simulate the run ending (crash/timeout/manual release) without ever
+        // calling `orgasmic artifact submit`.
+        state
+            .supervisor
+            .release(
+                &resp.0.run_id,
+                "test: simulate crash",
+                ReleaseOutcome::Failed,
+            )
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let summary = load_artifact(&art_dir).unwrap();
+            if summary.state == "failed" {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watcher did not revert regenerating state in time; state={}",
+                summary.state
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx = std::fs::read_to_string(&tx_path).unwrap();
+        assert!(tx.contains("artifact.generation.failed"));
     }
 }

@@ -1359,6 +1359,16 @@ mod tests {
                 .insert("project.path".to_string(), root.display().to_string());
             req.values
                 .insert("project.default_branch".to_string(), "main".to_string());
+            req.values.insert(
+                "artifact.subject_nodes".to_string(),
+                "none (spec compile check)".to_string(),
+            );
+            req.values.insert(
+                "artifact.user_prompt".to_string(),
+                "none (spec compile check)".to_string(),
+            );
+            req.values
+                .insert("artifact.regen_context".to_string(), "not set".to_string());
 
             let compiled = compile_prompt_spec(&home, &spec.id, req).unwrap();
 

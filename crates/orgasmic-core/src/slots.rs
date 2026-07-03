@@ -62,6 +62,9 @@ pub fn default_registry() -> BTreeSet<&'static str> {
         "run.previous_state",
         "evidence.so_far",
         "worklog.tail",
+        "artifact.subject_nodes",
+        "artifact.user_prompt",
+        "artifact.regen_context",
     ]
     .into_iter()
     .collect()
