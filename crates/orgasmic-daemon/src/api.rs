@@ -4249,22 +4249,54 @@ fn dispatch_last_summary_from_session(envelopes: &[SessionEnvelope]) -> String {
             _ => {}
         }
     }
-    let assistant_summary = if assistant_text.is_empty() {
-        None
-    } else {
-        Some(assistant_text)
-    };
-    let system_summary = if system_text.is_empty() {
-        None
-    } else {
-        Some(system_text)
-    };
+    // rmux/tmux `release(reason)` synthesize a `RunComplete { summary: reason }`
+    // when they tear down a run that never emitted its own terminal event — e.g.
+    // the worker printed its report and the `[orgasmic-eot]` marker but the
+    // render stream missed the marker, so the stall detector fired and released
+    // the run (TASK-B05AM). That sentinel is not a worker report: when the
+    // run_complete summary merely echoes the release reason, drop it so the
+    // actual transcript tail is preserved in last.txt instead of being shadowed
+    // by "stall_timeout_exceeded".
+    let run_complete_echoes_release = matches!(
+        (run_complete_summary.as_deref(), release_reason.as_deref()),
+        (Some(rc), Some(reason)) if rc == reason
+    );
+    if run_complete_echoes_release {
+        run_complete_summary = None;
+    }
+    let assistant_summary = tail_summary(&assistant_text);
+    let system_summary = tail_summary(&system_text);
     run_complete_summary
         .or(assistant_summary)
         .or(system_summary)
         .or(release_reason)
         .or(marker_summary)
         .unwrap_or_default()
+}
+
+/// Streaming transcripts (notably rmux, which accumulates the whole rendered
+/// scrollback here) can be large, and the worker's report is always at the
+/// tail. Cap the fallback summary to its last [`DISPATCH_SUMMARY_TAIL_BYTES`] on
+/// a char boundary so last.txt stays bounded while still carrying the report.
+const DISPATCH_SUMMARY_TAIL_BYTES: usize = 32 * 1024;
+
+fn tail_summary(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.len() <= DISPATCH_SUMMARY_TAIL_BYTES {
+        return Some(trimmed.to_string());
+    }
+    let mut start = trimmed.len() - DISPATCH_SUMMARY_TAIL_BYTES;
+    while !trimmed.is_char_boundary(start) {
+        start += 1;
+    }
+    Some(format!(
+        "[…transcript truncated to last {} KiB…]\n{}",
+        DISPATCH_SUMMARY_TAIL_BYTES / 1024,
+        &trimmed[start..]
+    ))
 }
 
 fn worktree_has_uncommitted_changes(worktree: &FsPath) -> bool {
@@ -10110,6 +10142,80 @@ mod tests {
         );
         // Missing RunMeta (pre-upgrade session) → not a candidate.
         assert!(boot_reattach_candidate(&[acquire], &path).is_none());
+    }
+
+    fn dispatch_summary_env(kind: SessionEventKind, event: serde_json::Value) -> SessionEnvelope {
+        SessionEnvelope {
+            seq: 0,
+            time: chrono::Utc::now(),
+            run_id: "run-b05am".into(),
+            runtime_id: "rt-b05am".into(),
+            boot_id: "boot".into(),
+            kind,
+            event,
+        }
+    }
+
+    #[test]
+    fn stall_release_synthetic_run_complete_does_not_shadow_worker_report() {
+        // A completed rmux run whose eot marker was missed: the worker printed
+        // its report as assistant chunks, then release("stall_timeout_exceeded")
+        // synthesized RunComplete{summary: reason} and the stall Release landed.
+        // last.txt must carry the report, not the stall sentinel (TASK-B05AM).
+        let envelopes = vec![
+            dispatch_summary_env(
+                SessionEventKind::DriverEvent,
+                json!({"type":"text_chunk","stream":"assistant","chunk":"## Report\nAll gates green; commit abc123.","seq":1}),
+            ),
+            dispatch_summary_env(
+                SessionEventKind::DriverEvent,
+                json!({"type":"run_complete","summary":"stall_timeout_exceeded"}),
+            ),
+            dispatch_summary_env(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "stall_timeout_exceeded".into(),
+                    outcome: ReleaseOutcome::Failed,
+                })
+                .unwrap(),
+            ),
+        ];
+        let summary = dispatch_last_summary_from_session(&envelopes);
+        assert!(
+            summary.contains("All gates green"),
+            "worker report must be preserved, got: {summary:?}"
+        );
+        assert!(
+            !summary.contains("stall_timeout_exceeded"),
+            "stall sentinel must not surface as the report, got: {summary:?}"
+        );
+    }
+
+    #[test]
+    fn genuine_run_complete_summary_is_still_preferred() {
+        // A clean eot completion: run_complete carries the real report tail and
+        // the release reason differs, so the run_complete summary is used as-is
+        // (the B05AM fix must not disturb the normal path).
+        let envelopes = vec![
+            dispatch_summary_env(
+                SessionEventKind::DriverEvent,
+                json!({"type":"text_chunk","stream":"assistant","chunk":"working...","seq":1}),
+            ),
+            dispatch_summary_env(
+                SessionEventKind::DriverEvent,
+                json!({"type":"run_complete","summary":"## Report\nDone: 42 tests pass."}),
+            ),
+            dispatch_summary_env(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "driver terminal event".into(),
+                    outcome: ReleaseOutcome::Completed,
+                })
+                .unwrap(),
+            ),
+        ];
+        let summary = dispatch_last_summary_from_session(&envelopes);
+        assert_eq!(summary, "## Report\nDone: 42 tests pass.");
     }
 
     #[tokio::test]
