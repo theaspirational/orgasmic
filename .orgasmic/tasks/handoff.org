@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         159496c308174f2fe46216dea6ca8e50afff1937
+:LIVENESS:         09ddf5629b8c8269e537992632c5154d0bef5401
 :LIVENESS_AT:      [2026-07-03 Fri]
 :UPDATED_AT:       [2026-07-03 Fri]
 :END:
@@ -18,6 +18,7 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - Goal pivot recorded [2026-07-03 Fri]: dec_ZG9B9 (excise the Graph page viewer; supersedes dec_WWAHT); TASK-M6146 filed; goal-20260703-cut-the-graph set (tx-20260703-orgasmic-1167). Committed 15a7443.
 - TASK-M6146 (1/6) DONE: Graph page viewer excised, merged 45c6116 (worker 93529c2, implementer-claude-rmux sonnet-4-6 high; -2997/+43). Gates green (ui 73 tests, daemon suite, clippy, fmt). Manager integration: arch_M8JQT reference-pages-only revision, arch_MK2Q2.7 SOURCE_PATHS pruned, drift clean, parse_errors 0. REVIEWER PASS (reviewer-claude-rmux sonnet-4-6 xhigh, run-20260703T185257): VERDICT ship, zero findings. implementer.done tx-1192, reviewer.done tx-1203. State commits 159496c + this one.
 - TASK-SJQ9V filed: doctor staleness test fails only under cargo test --workspace concurrency (pre-existing latent race surfaced at integration; passes standalone parallel+serial).
+- Worker templates modernized [2026-07-03 Fri]: claude-rmux implementer -> claude-sonnet-5 (high), reviewer -> claude-opus-4-8 (xhigh); MODELS allowlist now sonnet-5/opus-4-8/haiku-4-5. Applied twice: user overrides in ~/.orgasmic/user/workers/ (live daemon resolves them, verified via orgasmic worker show) + checkout shipped/workers/ for the next runtime publish. Transcript audit confirmed no silent fallback on prior runs: all M6146 turns genuinely served by claude-sonnet-4-6.
 
 ** Next likely actions
 - Integrate TASK-ZEFEY when the worker reports: manager diff review, merge --no-ff, workspace gates, Evidence, dispatch-close, then reviewer-claude-rmux pass and DONE.
@@ -34,3 +35,5 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - RESTART POLICY: use shipped/prompt-studio/conventions/daemon-rebuild-restart-policy.org (restriction lifted 2026-06-16, TASK-E18NC).
 - TOOLING NIT: dispatching a reviewer on an IN_REVIEW task flips the heading to IN_PROGRESS; work around at each close.
 - Standing: dec_035A0 babysitter policy unchanged; avoid stashing/replacing live .orgasmic state while the daemon runs.
+- ~/.orgasmic/user/workers/ overrides now SHADOW shipped claude-rmux templates: future shipped-template changes will not take effect locally until the overrides are refreshed or removed.
+- TASK-ZEFEY run-20260703T185733 continues on claude-sonnet-4-6 (launched before the template change; known quantity, no fallback). Its reviewer pass will already run opus-4-8.
