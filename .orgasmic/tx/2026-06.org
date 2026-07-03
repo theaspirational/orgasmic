@@ -17346,3 +17346,17 @@
 :REASON:       Android launch: replace immediate single-remote auto-connect with a 3s cancellable countdown so the user can pick a different remote. ui/bootstrap.html adds an #autoconnect banner (msg + Cancel); ui/src/bootstrap.ts adds scheduleAutoConnect/cancelAutoConnect, cancels on Cancel/recent-row/Connect/form-edit, resets on retry, preserves the update-check gate. typecheck + build:bootstrap green.
 :files:        ui/bootstrap.html,ui/src/bootstrap.ts
 :END:
+
+* TX 2026-06-29 Mon 19:42:56 release.published orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260629-orgasmic-1127
+:TIME:         [2026-06-29 Mon 19:42:56]
+:TYPE:         release.published
+:ACTOR:        manager-implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       apps-nightly
+:REASON:       Published apps-nightly 0.0.7-nightly.20260629.1782762005 (code 1782762086) at e9789f1 — Android APK + macOS dmg/app.tar.gz(.sig) + manifests. Carries the cancellable single-remote auto-connect countdown. Runtime nightly intentionally skipped (daemon functionally unchanged; tag stays at 8a8de27). Both dry-runs green; approved notes attached.
+:version:      0.0.7-nightly.20260629.1782762005
+:commit:       e9789f1d42a753c407f98bddd31e3d59228613b9
+:END:

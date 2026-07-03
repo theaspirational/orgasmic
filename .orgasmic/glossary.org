@@ -519,3 +519,24 @@
 :DEFINITION: The shared, deliberately-published graph_layout.org overlay that sits beneath each user's machine-local arrangement as a default. It is adopted via reset and never auto-overrides local edits; a nudge surfaces when it changes for locally-overridden nodes.
 :ID: term_FJ883
 :END:
+
+* term_S45HH Artifact document
+:PROPERTIES:
+:AVOID: visual plan (as a feature name); generated doc
+:CANONICAL: artifact
+:DEFINITION: An agent-generated MDX visual document about a recorded set of graph nodes (decisions, architecture, glossary terms, or tasks), stored under .orgasmic/artifacts/<id>/, versioned in place, and reviewed by the team through comments pinned to exact spots in the rendered document.
+:ID: term_S45HH
+:END:
+
+An artifact records its subject node-set and originating prompt at creation. Its content file (artifact.mdx) uses the Agent-Native plan block vocabulary verbatim and is treated as an opaque portable document; the Org layer around it carries only index, comments, and audit. "A visual plan for a task" is an artifact whose prompt asked for a plan, not a separate feature.
+
+* term_8CJ8G Team member
+:PROPERTIES:
+:AVOID: user account; login (as a noun)
+:CANONICAL: member
+:DEFINITION: A named identity on the daemon, minted by the single admin as a durable token with a role (admin, editor, or viewer). Members sign in from a browser by pasting the token at /login; their name stamps every comment they leave on artifacts.
+:ID: term_8CJ8G
+:RELATES_TO: term_S45HH
+:END:
+
+Roles: the one admin mints and revokes tokens and can do everything; editors generate and regenerate artifacts and comment; viewers view and comment. Member records (name, role, token hash) live host-local in $ORGASMIC_HOME/user/auth/members.org and are never committed to the repo-shared .orgasmic/ — repo files carry member names only. How a member's browser reaches the daemon (tunnel, LAN, shared host) is deployment ops, not member identity.

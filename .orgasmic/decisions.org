@@ -1724,3 +1724,89 @@ is configured — is left as a gated follow-up in the adapter, not done here.
 - The footgun where a selected worker silently does nothing is closed for the default surfaces.
 - Recorded in the same session that hit the simulated appserver run on TASK-2DFTX and filed
   [[TASK-KNENN]] (route work through orgasmic workers, not raw provider CLIs).
+
+* dec_GPV4G Should team-reviewable visual documents be a plan feature or one artifact noun over the graph?
+:PROPERTIES:
+:GLOSSARY_REFS: term_S45HH
+:ID: dec_GPV4G
+:END:
+
+** Context
+The team needs to review agent-drafted visual documents — implementation plans, architecture visualizations, decision-cluster maps — with comments pinned to exact spots (a sentence, a diagram node), and have an agent rework the document with that feedback. The Agent-Native visual-plan system (plan-host reference app) proves the loop end to end: structured MDX block documents, anchored comments with a rich anchor shape (PlanCommentAnchor: textQuote, targetNodeId, canvas coords), agent-side feedback tools, regeneration. The initial design ported it as a task-scoped "plan" feature; the review scenarios (generate from a decision page, from an architecture node, from a task) do not fit a task-only noun.
+
+** Decision
+One first-class noun: the *artifact* — an agent-generated MDX visual document about a recorded set of graph nodes. "A visual plan for TASK-X" is an artifact whose prompt asked for a plan; there is no separate plan feature. Two format bets lock the architecture:
+- Keep the Agent-Native MDX block vocabulary *verbatim*: artifact.mdx is an opaque portable document in the full plan-host format. Org is the index + audit layer only, never the block format.
+- Port the *full* plan-host block renderer (~22 block types including wireframe/canvas/prototype) into the embedded UI, rather than a curated subset. Chosen for zero format drift and wholesale reuse of the PlanCommentAnchor shape and the selection-to-pin comment-capture layer. Accepted cost: heavier UI bundle and more render dependencies.
+
+** Consequences
+- Single store, renderer, and comment system for every review scenario; artifacts remain format-compatible with plan-host exports and importable there.
+- The renderer port is the heaviest single work item in the feature.
+- Decisions/architecture/glossary/task nodes all become artifact subjects through the same three entry points (node, page, multi-select).
+
+* dec_N9HW0 How do team members get identity on the single-token daemon?
+:PROPERTIES:
+:GLOSSARY_REFS: term_8CJ8G
+:ID: dec_N9HW0
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+The daemon has exactly one bearer token, minted at first boot and stored under $ORGASMIC_HOME/user/auth/token; browser sign-in exists only as the CLI-driven one-time ticket that becomes a 12h HttpOnly cookie. Artifact review needs several named people in browsers, with comments attributable by name and generation rights not equal for everyone. Separately, how a teammate's browser reaches the daemon at all (shared host, LAN, cloudflared/tailscale tunnel) is a deployment question.
+
+** Decision
+Build an in-daemon member layer on the existing auth middleware; leave transport explicitly out of scope (ops chooses shared host or tunnel).
+- Exactly one *admin* — the daemon owner — mints and revokes named member tokens. Roles: admin (everything), *editor* (generate, regenerate, comment, resolve), *viewer* (view, comment, resolve).
+- Members sign in at a new /login page by pasting their durable token once, receiving a long-lived named session cookie; the existing session middleware is extended to carry member identity, and every comment is stamped with the member's name.
+- Member records — name, role, token *hash* — live host-local in $ORGASMIC_HOME/user/auth/members.org, never in the repo-shared .orgasmic/. Repo files carry member names only; secrets never touch git.
+- CLI surface: orgasmic member add <name> --role editor|viewer, orgasmic member revoke <name>, orgasmic member list. Revocation invalidates the token's sessions.
+
+** Consequences
+- Generation and regeneration are role-gated to admin+editor, which is also the spend gate for agent runs.
+- The single-admin assumption is baked in; promoting a second admin is a future decision, not a config flag.
+- Token distribution to members happens out-of-band; losing a token means revoke + re-mint under the same name (comment attribution is by name, so history survives re-minting).
+
+* dec_V44E4 When does the agent see review comments, and what happens to them on regeneration?
+:PROPERTIES:
+:GLOSSARY_REFS: term_S45HH term_8CJ8G
+:ID: dec_V44E4
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+The plan-host reference loop is pull-based on both edges: the browser polls the plan bundle every ~3s and the agent polls a feedback tool when it chooses. Orgasmic has stronger primitives available — WebSocket push to the UI and event-triggered manager ticks off tx entries — so an auto-launched agent run per new comment was on the table. Regeneration fully rewrites the document, which detaches essentially every comment anchor; plan-host handles this with consumed timestamps and detached-thread flags.
+
+** Decision
+The review loop is *human-triggered*: nothing happens to the artifact until a member with edit rights presses Regenerate. The button is simultaneously the review gate and the spend gate. Auto-triggering a run per comment (tx event -> manager tick) is rejected for this feature — deliberately, not as a deferral.
+- Comments are *version-scoped*. Regenerate closes version N: vN.mdx is archived together with its comments (marked consumed, browsable per version), and the fresh version starts with a clean comment surface. No anchor re-attachment across versions; the audit trail is the tx log plus the version archive.
+- The regenerating agent receives the prior artifact, every current-version comment with author names and resolution state, and an optional extra prompt from the Regenerate dialog.
+- Commenting is *locked* while a regeneration runs: the artifact enters a regenerating state pushed live over WebSocket, the comment box is disabled with a banner, and the per-artifact supervisor lease is the mutex. No comment can land unseen on a version that is being closed.
+- The browser edge is WebSocket push (as the rest of the UI already is), not polling.
+- Comment threads keep the reference implementation's two-axis state: open/resolved is people-facing and settable by any member; consumed is agent-facing and set only by regeneration.
+
+** Consequences
+- No buried feedback: every comment either reaches an agent run or is visibly archived with its version.
+- The loop is slower than auto-trigger by design; teams batch discussion, then one press produces the next version.
+- The per-artifact lease doubles as the concurrency control; two simultaneous regenerations of one artifact are impossible.
+
+* dec_JBWB9 What can the artifact-generating worker read and write?
+:PROPERTIES:
+:GLOSSARY_REFS: term_S45HH
+:ID: dec_JBWB9
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+The stress-test scenario is "create a visual plan" pressed on a task node: a useful plan must name real files, symbols, and data shapes, which requires the codebase, not just the task heading. Generation runs on the daemon host and costs real money per run. Orgasmic's write authority must stay with the daemon writer; every worker run today binds to a task heading through the supervisor lease, except the manager, which launches under a synthetic id (manager.launch:{project_id}).
+
+** Decision
+The artifactor worker gets *full repo read access like an implementer*, plus the subject nodes' Org content, their graph neighborhood, and — on regeneration — the prior artifact.mdx and all current-version comments with authors and resolution state, plus the optional extra prompt.
+- Its only write path is =orgasmic artifact submit=, which validates the MDX against the block registry before accepting; invalid output is returned to the worker to retry and is never written. The worker never touches .orgasmic/ files directly.
+- Launch rides the existing dispatch machinery under a synthetic lease id =artifact.generate:{artifact_id}= — the manager.launch pattern — so no task-heading requirement bends and the lease is the per-artifact regeneration mutex.
+- The default generating instructions live in a prompt spec (shipped/prompt-studio/prompt-specs/artifact-generator.org) with the block-vocabulary reference baked in, editable in Prompt Studio like every other worker prompt; the short user prompt from the Generate dialog is appended to it.
+
+** Consequences
+- Generated plans are grounded in the actual codebase; graph-only artifacts simply do not read the repo they were offered.
+- Spend is bounded by the role gate (admin/editor) and the human trigger, not by starving the worker of context.
+- A malformed generation cannot corrupt the store: the validation gate rejects it before the writer sees it.
+- The worker cannot exfiltrate write access: read-everything, submit-only.

@@ -31,3 +31,56 @@ Fix: add an explicit rule to `conventions/orgasmic-tooling.org` (and/or `contrib
 
 Scope: docs/conventions only; a worded rule + a short mapping table from "provider model effort" to worker id. No code. Consider whether the daemon should also surface workers more discoverably to agents.
 
+* BACKLOG TASK-ZEFEY Artifact store: schema, tx types, index projection, and CLI verbs    :artifacts:daemon:cli:
+:PROPERTIES:
+:ID: TASK-ZEFEY
+:IMPLEMENTS: arch_ARSPJ
+:END:
+
+Build the on-disk artifact store and its agent surface: .orgasmic/artifacts/ART-<slug>/ with artifact.mdx (opaque), artifact.org index heading (:ID: :TITLE: :SUBJECT_NODES: :PROMPT: :VERSION: :STATE:), reviews.org comment headings (:CID: :AUTHOR: :VERSION: :ANCHOR: :RESOLUTION_TARGET: :RESOLVED: :CONSUMED:), and versions/ archives. Wire tx types (artifact.created/.submitted/.comment.added/.comment.resolved/.regenerated), writer paths, watcher coverage, index projection (list, per-node rollups, open-comment counts, state), WS topics, and REST reads (GET /artifacts, GET /artifacts/:id[?version=N]). CLI verbs: orgasmic artifact blocks (block-vocabulary reference), orgasmic artifact submit <id> --file <mdx> (validates against the block registry, rejects invalid), orgasmic artifact feedback <id> [--consume <cid>].
+
+Acceptance: on a throwaway project, create -> submit -> feedback -> consume round-trips entirely through the CLI: files and tx entries land as specified, invalid MDX is rejected without any write, the index serves the bundle with correct comment filtering (consumed excluded), and a comment appended while the artifact is in regenerating state is refused.
+
+* BACKLOG TASK-2ZQSB Artifactor worker kind, prompt spec, and generation launch path    :artifacts:supervisor:prompt-studio:
+:PROPERTIES:
+:DEPENDS_ON: TASK-ZEFEY
+:ID: TASK-2ZQSB
+:IMPLEMENTS: arch_045Q0
+:END:
+
+Add WorkerKind::Artifactor and the prompt spec shipped/prompt-studio/prompt-specs/artifact-generator.org (default generating instructions + block-vocabulary reference + slots for subject nodes, user prompt, and regen context). Implement POST /artifacts/generate {nodes, prompt} and POST /artifacts/:id/regenerate {extraPrompt?}: create/advance the artifact record, assemble context (subject node content, graph neighborhood, full repo read; on regen also prior artifact.mdx + current-version comments with authors/resolution + extra prompt), and launch through the existing dispatch machinery under the synthetic lease id artifact.generate:{artifact_id}. The lease is the per-artifact mutex; the artifact enters regenerating state for the run's duration. Worker write path is orgasmic artifact submit only.
+
+Acceptance: pressing generate on a real node (via curl) produces a validated artifact.mdx authored by an actual worker run visible in orgasmic run list, with artifact.created/.submitted tx entries; a second generate on the same artifact while one runs is refused by the lease; a deliberately invalid submit is retried by the worker, never written.
+
+* BACKLOG TASK-T25XQ Port the plan block renderer; ArtifactView and Artifacts pages    :artifacts:ui:
+:PROPERTIES:
+:DEPENDS_ON: TASK-ZEFEY
+:ID: TASK-T25XQ
+:IMPLEMENTS: arch_A3NSW
+:END:
+
+Port the full Agent-Native plan block renderer (~22 block types incl. rich-text, diagram html/css, code/annotated-code, table, callout, checklist, file-tree, data-model, question-form, wireframe, canvas, prototype, tabs, columns) into ui/, themed with the existing token system in both light and dark. Add the ArtifactView route (renders GET /artifacts/:id bundle; version switcher over versions/) and the top-level Artifacts list page (title, subject summary, version count, open-comment count, regenerating state, WS-live). Entry points: Generate artifact button + prompt dialog in NodeModal's aside (subject = node) and in PageHeader actions on DecisionsView/ArchitectureView/GlossaryView (subject = whole section), plus the separate multi-select mode for explicit node sets.
+
+Acceptance: an artifact generated in stage 2 (or hand-submitted via CLI) renders correctly in light and dark including diagram and wireframe blocks; the Artifacts page lists it live; Generate dialogs fire the daemon routes from all three entry points. Comments are out of scope for this stage.
+
+* BACKLOG TASK-DJGM5 Member identity, /login, and pinned named comments    :artifacts:auth:ui:
+:PROPERTIES:
+:DEPENDS_ON: TASK-T25XQ
+:ID: TASK-DJGM5
+:IMPLEMENTS: arch_Z8CW2 arch_A3NSW
+:END:
+
+Build the member layer: $ORGASMIC_HOME/user/auth/members.org (name, role, token hash), orgasmic member add/revoke/list, POST /login (paste token -> long-lived named session cookie), session middleware extended to resolve member identity + role, role gates on the artifact routes (generate/regenerate admin|editor; comments any member; member mgmt admin only). Then the comment surface: selection-to-pin capture reusing the PlanCommentAnchor shape (textQuote, targetNodeId/path, canvas coords), POST /artifacts/:id/comments, threads rendered with member names in ArtifactView, live over WS. Two-axis thread state: open/resolved settable by members; consumed only via regeneration.
+
+Acceptance: two browsers, two members (one editor, one viewer) minted via CLI, both sign in at /login; the viewer pins a comment to a diagram node and it appears in the editor's browser over WS under the viewer's name without refresh; the viewer sees no Generate/Regenerate affordances and the daemon refuses those routes for the viewer session; revoking the viewer kills their session; secrets are absent from the repo tree (hash-only in members.org, host-local).
+
+* BACKLOG TASK-EDQPG Regeneration loop: version archive, comment consumption, lock, and version browser    :artifacts:daemon:ui:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2ZQSB TASK-DJGM5
+:ID: TASK-EDQPG
+:IMPLEMENTS: arch_ARSPJ arch_045Q0 arch_A3NSW
+:END:
+
+Close the loop end to end: Regenerate button (admin/editor) with optional extra-prompt field -> POST /artifacts/:id/regenerate archives the closing version (versions/vN.mdx + its comments marked consumed) and launches the artifactor with prior artifact + all current-version comments (authors, resolution state, anchors) + extra prompt in context; artifact regenerating state locks the comment box with a banner in every open browser (WS); on submit, the new version renders with a clean comment surface. Version switcher in ArtifactView browses archived versions together with their comment threads. artifact.regenerated tx entries complete the audit trail.
+
+Acceptance (full two-member smoke, per the feature verification): editor generates a visual-plan artifact on a task node; viewer pins comments; editor presses Regenerate with an extra prompt; commenting locks live in the viewer's browser; when the run completes, versions/v1.mdx exists with the viewer's comment archived+consumed, v2 renders clean, the version switcher shows v1 with its thread, and the tx log tells the whole story in order.
