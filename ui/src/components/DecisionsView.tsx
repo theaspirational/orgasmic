@@ -1,5 +1,5 @@
 // @arch arch_MK2Q2.7
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ChevronDown, ChevronRight, Plus, Sparkles } from 'lucide-react';
 
@@ -144,6 +144,17 @@ export function DecisionsView({ projectId }: { projectId: string }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateSelectionOpen, setGenerateSelectionOpen] = useState(false);
+
+  // Drop selections that no longer exist once a live refresh lands, so a
+  // stale id never rides along in a "Generate from N selected" request.
+  useEffect(() => {
+    if (!decisions.data) return;
+    const known = new Set(decisions.data.map((item) => item.id));
+    setSelected((current) => {
+      const next = new Set([...current].filter((id) => known.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [decisions.data]);
 
   const supersededCount = useMemo(
     () => (decisions.data ?? []).filter((d) => d.superseded).length,

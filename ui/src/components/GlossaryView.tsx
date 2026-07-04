@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { Sparkles } from 'lucide-react';
 
@@ -31,6 +31,18 @@ export function GlossaryView({ projectId }: { projectId: string }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateSelectionOpen, setGenerateSelectionOpen] = useState(false);
+
+  // Drop selections that no longer exist once a live refresh lands, so a
+  // stale id never rides along in a "Generate from N selected" request.
+  useEffect(() => {
+    if (!glossary.data) return;
+    const known = new Set(glossary.data.map((item) => item.id));
+    setSelected((current) => {
+      const next = new Set([...current].filter((id) => known.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [glossary.data]);
+
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
     return [...(glossary.data ?? [])]

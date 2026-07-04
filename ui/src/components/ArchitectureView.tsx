@@ -1,5 +1,5 @@
 // @arch arch_MK2Q2.7
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 
@@ -42,6 +42,18 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [generateSelectionOpen, setGenerateSelectionOpen] = useState(false);
   const architecture = useResource(`architecture:${projectId}:${refresh}`, () => fetchArchitecture(projectId));
+
+  // Drop selections that no longer exist once a live refresh lands, so a
+  // stale id never rides along in a "Generate from N selected" request.
+  useEffect(() => {
+    if (!architecture.data) return;
+    const known = new Set(architecture.data.map((item) => item.id));
+    setSelected((current) => {
+      const next = new Set([...current].filter((id) => known.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [architecture.data]);
+
   const query = search.q ?? '';
   const filteredTree = useMemo(() => {
     const q = query.trim().toLowerCase();
