@@ -9278,14 +9278,22 @@ async fn post_artifact_submit(
     ))
 }
 
-async fn post_artifact_feedback(
+/// `POST /artifacts/:id/comments` — pin a named comment (selection-to-pin
+/// capture, arch_A3NSW). A member's comment is always attributed to their own
+/// session identity; the request body's `author` field is honored only for
+/// the admin identity (backward-compatible scripting override), never for a
+/// member — closing the client-supplied-author spoofing hole the old
+/// `/feedback` route had.
+async fn post_artifact_add_comment(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(art_id): Path<String>,
     Query(q): Query<ArtifactQuery>,
-    Json(body): Json<ArtifactFeedbackRequest>,
+    Json(body): Json<ArtifactCommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
     let project_id = entry.id.clone();
     let project_root = entry.path.clone();
     drop(snap);
@@ -9313,12 +9321,15 @@ async fn post_artifact_feedback(
     let version = summary.version;
 
     let cid = new_cid();
-    let author = body
-        .author
-        .as_deref()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
-        .unwrap_or(&state.actor)
-        .to_string();
+    let author = match identity.member_name() {
+        Some(name) => name.to_string(),
+        None => body
+            .author
+            .as_deref()
+            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .unwrap_or(&state.actor)
+            .to_string(),
+    };
     let anchor = body.anchor.unwrap_or_else(|| "{}".into());
     let resolution_target = body.resolution_target.unwrap_or_default();
 
@@ -9398,13 +9409,33 @@ async fn post_artifact_feedback(
     Ok(Json(json!({ "cid": cid })))
 }
 
-async fn post_artifact_feedback_consume(
+#[derive(Debug, Deserialize)]
+struct ArtifactCommentResolveRequest {
+    /// Members toggle both ways (open<->resolved); omitted defaults to the
+    /// common "mark resolved" case.
+    #[serde(default = "default_true")]
+    resolved: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// `POST /artifacts/:id/comments/:cid/resolve` — the people-facing axis of
+/// two-axis thread state (dec_V44E4/dec_KF2MR): any member with
+/// `artifacts.comment` may open/resolve a thread. Consumed is a separate
+/// agent-facing axis, touched only by regeneration close-out
+/// ([`consume_all_open_comments`]), never by this route.
+async fn post_artifact_comment_resolve(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path((art_id, cid)): Path<(String, String)>,
     Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactCommentResolveRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
     let project_id = entry.id.clone();
     let project_root = entry.path.clone();
     drop(snap);
@@ -9421,8 +9452,8 @@ async fn post_artifact_feedback_consume(
 
     let reviews_path = art_dir.join("reviews.org");
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
-    let new_reviews =
-        artifacts::resolve_comment_in_reviews(&current_reviews, &cid).map_err(|e| {
+    let new_reviews = artifacts::set_comment_resolved(&current_reviews, &cid, body.resolved)
+        .map_err(|e| {
             if e.to_string().contains("not found") {
                 ApiError::not_found(format!("comment {cid} not found"))
             } else {
@@ -9431,7 +9462,7 @@ async fn post_artifact_feedback_consume(
         })?;
 
     // The WS event should carry the artifact's actual current state:
-    // consume only touches reviews.org, never artifact.org's :STATE:.
+    // resolving only touches reviews.org, never artifact.org's :STATE:.
     let actual_state = load_artifact(&art_dir)
         .map(|s| s.state)
         .unwrap_or_else(|| "submitted".to_string());
@@ -9445,6 +9476,7 @@ async fn post_artifact_feedback_consume(
         .join("tx")
         .join(format!("{month_str}.org"));
 
+    let resolved_by = identity.member_name().unwrap_or(&state.actor).to_string();
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
         "artifact.comment.resolved",
@@ -9456,7 +9488,8 @@ async fn post_artifact_feedback_consume(
     tx_entry.extra = vec![
         ("ARTIFACT_ID".into(), art_id.clone()),
         ("CID".into(), cid.clone()),
-        ("RESOLVED_BY".into(), state.actor.clone()),
+        ("RESOLVED".into(), body.resolved.to_string()),
+        ("RESOLVED_BY".into(), resolved_by),
     ];
 
     // Single writer.transaction bundling the reviews.org rewrite + the tx
@@ -10025,6 +10058,7 @@ fn spawn_artifact_release_watcher(state: ApiState, watch: ArtifactReleaseWatch) 
 
 async fn post_artifact_generate(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactGenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
@@ -10041,6 +10075,7 @@ async fn post_artifact_generate(
 
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
     drop(snap);
 
     let art_id = artifacts::new_artifact_id();
@@ -10159,12 +10194,14 @@ async fn post_artifact_generate(
 
 async fn post_artifact_regenerate(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(art_id): Path<String>,
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
     drop(snap);
 
     let art_dir = artifact_dir(&entry.path, &art_id);

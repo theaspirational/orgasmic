@@ -391,10 +391,14 @@ pub fn append_comment(current: &str, art_id: &str, comment: &NewComment<'_>) -> 
     out
 }
 
-/// Rewrite reviews.org marking `cid` as resolved + consumed. Locates the
-/// property value spans via the canonical parser and splices only those
-/// spans, leaving every other byte (including column alignment) untouched.
-pub fn resolve_comment_in_reviews(current: &str, cid: &str) -> Result<Vec<u8>> {
+/// Rewrite reviews.org toggling `cid`'s `RESOLVED` flag only, leaving
+/// `CONSUMED` untouched. Two-axis thread state (dec_V44E4 / dec_KF2MR):
+/// open/resolved is people-facing and settable by any member with
+/// `artifacts.comment`; consumed is agent-facing and set only by
+/// regeneration ([`consume_all_open_comments`]). Locates the property value
+/// span via the canonical parser and splices only that span, leaving every
+/// other byte (including column alignment) untouched.
+pub fn set_comment_resolved(current: &str, cid: &str, resolved: bool) -> Result<Vec<u8>> {
     let file = OrgFile::parse(current, "reviews.org").context("parse reviews.org")?;
     let Some(heading) = file
         .headings
@@ -404,21 +408,19 @@ pub fn resolve_comment_in_reviews(current: &str, cid: &str) -> Result<Vec<u8>> {
         bail!("comment {cid} not found in reviews.org");
     };
 
-    let mut edits: Vec<_> = heading
+    let Some(entry) = heading
         .property_entries()
-        .filter(|e| e.key == "RESOLVED" || e.key == "CONSUMED")
-        .map(|e| (e.value_span.clone(), "true"))
-        .collect();
-    edits.sort_by_key(|(range, _)| range.start);
+        .find(|e| e.key == "RESOLVED")
+    else {
+        bail!("comment {cid} has no RESOLVED property");
+    };
+    let range = entry.value_span.clone();
+    let replacement = if resolved { "true" } else { "false" };
 
     let mut out = String::with_capacity(current.len());
-    let mut cursor = 0usize;
-    for (range, replacement) in edits {
-        out.push_str(&current[cursor..range.start]);
-        out.push_str(replacement);
-        cursor = range.end;
-    }
-    out.push_str(&current[cursor..]);
+    out.push_str(&current[..range.start]);
+    out.push_str(replacement);
+    out.push_str(&current[range.end..]);
     Ok(out.into_bytes())
 }
 
@@ -859,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_comment_flips_flags() {
+    fn set_comment_resolved_flips_only_the_resolved_axis() {
         let header = "#+title: reviews\n";
         let block = comment_org_block(&NewComment {
             cid: "CID-abc12345",
@@ -871,18 +873,29 @@ mod tests {
         });
         let content = format!("{header}{block}");
         let updated =
-            String::from_utf8(resolve_comment_in_reviews(&content, "CID-abc12345").unwrap())
+            String::from_utf8(set_comment_resolved(&content, "CID-abc12345", true).unwrap())
                 .unwrap();
         let records = parse_comments(&updated);
         assert_eq!(records.len(), 1);
         assert!(records[0].resolved);
-        assert!(records[0].consumed);
+        assert!(
+            !records[0].consumed,
+            "resolved must not also flip consumed (two-axis thread state, dec_V44E4/dec_KF2MR)"
+        );
+
+        // Members can toggle back to open.
+        let reopened =
+            String::from_utf8(set_comment_resolved(&updated, "CID-abc12345", false).unwrap())
+                .unwrap();
+        let records = parse_comments(&reopened);
+        assert!(!records[0].resolved);
+        assert!(!records[0].consumed);
     }
 
     #[test]
-    fn resolve_comment_errors_on_unknown_cid() {
+    fn set_comment_resolved_errors_on_unknown_cid() {
         let content = "#+title: reviews\n";
-        assert!(resolve_comment_in_reviews(content, "CID-notexist").is_err());
+        assert!(set_comment_resolved(content, "CID-notexist", true).is_err());
     }
 
     #[test]
