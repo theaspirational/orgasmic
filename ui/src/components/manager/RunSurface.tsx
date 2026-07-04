@@ -7,6 +7,7 @@ import type { RunSummary } from '@/lib/types';
 import { ManagerChatTranscript } from './ManagerChatTranscript';
 import { ManagerComposer } from './ManagerComposer';
 import type { TmuxPaneConnectionState, TmuxSendKeys } from './ManagerTmuxPane';
+import { ReadOnlySessionBar } from './ReadOnlySessionBar';
 
 const ManagerTmuxPane = lazy(() =>
   import('./ManagerTmuxPane').then((module) => ({ default: module.ManagerTmuxPane })),
@@ -32,11 +33,14 @@ export function RunSurface({
   initialSource,
   initialDraft,
   onPromptSent,
+  readOnly = false,
 }: {
   run: RunSummary;
   initialSource?: string | null;
   initialDraft?: string | null;
   onPromptSent: () => void;
+  /** Members without sessions.interact watch the stream but cannot send. */
+  readOnly?: boolean;
 }) {
   if (runUsesPtyTerminal(run)) {
     return (
@@ -44,6 +48,7 @@ export function RunSurface({
         runId={run.run_id}
         initialDraft={initialDraft}
         onPromptSent={onPromptSent}
+        readOnly={readOnly}
       />
     );
   }
@@ -53,6 +58,7 @@ export function RunSurface({
       initialSource={initialSource}
       initialDraft={initialDraft}
       onPromptSent={onPromptSent}
+      readOnly={readOnly}
     />
   );
 }
@@ -62,11 +68,13 @@ function RunChatStack({
   initialSource,
   initialDraft,
   onPromptSent,
+  readOnly,
 }: {
   runId: string;
   initialSource?: string | null;
   initialDraft?: string | null;
   onPromptSent: () => void;
+  readOnly: boolean;
 }) {
   const [pendingSince, setPendingSince] = useState<string | null>(null);
 
@@ -105,15 +113,19 @@ function RunChatStack({
         />
       </div>
       <div className="min-h-[132px] border-t">
-        <ManagerComposer
-          runId={runId}
-          connectionState="open"
-          initialDraft={initialDraft}
-          placeholder="Send to agent"
-          readyLabel="Enter sends. Shift+Enter adds a line. Arrow-up recalls the last send."
-          onSend={handleSend}
-          onSent={handleSent}
-        />
+        {readOnly ? (
+          <ReadOnlySessionBar />
+        ) : (
+          <ManagerComposer
+            runId={runId}
+            connectionState="open"
+            initialDraft={initialDraft}
+            placeholder="Send to agent"
+            readyLabel="Enter sends. Shift+Enter adds a line. Arrow-up recalls the last send."
+            onSend={handleSend}
+            onSent={handleSent}
+          />
+        )}
       </div>
     </div>
   );
@@ -123,10 +135,12 @@ function RunTmuxStack({
   runId,
   initialDraft,
   onPromptSent,
+  readOnly,
 }: {
   runId: string;
   initialDraft?: string | null;
   onPromptSent: () => void;
+  readOnly: boolean;
 }) {
   const [split, setSplit] = useState(readTmuxSplit);
   const [connState, setConnState] = useState<TmuxPaneConnectionState>('connecting');
@@ -220,6 +234,7 @@ function RunTmuxStack({
             runId={runId}
             onConnectionState={setConnState}
             onSendReady={handleSendReady}
+            readOnly={readOnly}
           />
         </Suspense>
       </div>
@@ -236,16 +251,20 @@ function RunTmuxStack({
         <span className="h-1 w-10 rounded-full bg-border group-hover:bg-muted-foreground/60" />
       </button>
       <div className="min-h-[116px] flex-1">
-        <ManagerComposer
-          runId={runId}
-          connectionState={connState}
-          initialDraft={initialDraft}
-          placeholder="Send to agent"
-          readyLabel="Enter sends to the terminal. Shift+Enter adds a line. Arrow-up recalls the last send."
-          unavailableLabel="No tmux terminal attached."
-          onSend={(text) => sendRef.current?.(text) ?? false}
-          onSent={onPromptSent}
-        />
+        {readOnly ? (
+          <ReadOnlySessionBar />
+        ) : (
+          <ManagerComposer
+            runId={runId}
+            connectionState={connState}
+            initialDraft={initialDraft}
+            placeholder="Send to agent"
+            readyLabel="Enter sends to the terminal. Shift+Enter adds a line. Arrow-up recalls the last send."
+            unavailableLabel="No tmux terminal attached."
+            onSend={(text) => sendRef.current?.(text) ?? false}
+            onSent={onPromptSent}
+          />
+        )}
       </div>
     </div>
   );

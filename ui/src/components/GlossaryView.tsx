@@ -5,6 +5,7 @@ import { Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchGlossary } from '@/lib/api';
 import { appendDrawerStack, routeSearch, type AppSearch } from '@/lib/searchState';
@@ -25,6 +26,8 @@ export function GlossaryView({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as GlossarySearch;
   const refresh = useRefreshToken();
+  const { can } = useMe();
+  const canGenerate = can(projectId, 'artifacts.generate');
   const glossary = useResource(`glossary:${projectId}:${refresh}`, () => fetchGlossary(projectId));
   const query = search.q ?? '';
   const [selectMode, setSelectMode] = useState(false);
@@ -87,31 +90,33 @@ export function GlossaryView({ projectId }: { projectId: string }) {
         count={items.length}
         description="Canonical domain language. IDs stay hidden on this page."
         actions={
-          <>
-            <Button
-              type="button"
-              variant={selectMode ? 'default' : 'outline'}
-              size="sm"
-              aria-pressed={selectMode}
-              onClick={() => {
-                setSelectMode((v) => !v);
-                setSelected(new Set());
-              }}
-            >
-              {selectMode ? `${selected.size} selected` : 'Select'}
-            </Button>
-            {selectMode ? (
-              <Button type="button" size="sm" disabled={selected.size === 0} onClick={() => setGenerateSelectionOpen(true)}>
-                <Sparkles />
-                Generate from {selected.size} selected
+          canGenerate ? (
+            <>
+              <Button
+                type="button"
+                variant={selectMode ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={selectMode}
+                onClick={() => {
+                  setSelectMode((v) => !v);
+                  setSelected(new Set());
+                }}
+              >
+                {selectMode ? `${selected.size} selected` : 'Select'}
               </Button>
-            ) : (
-              <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
-                <Sparkles />
-                Generate artifact
-              </Button>
-            )}
-          </>
+              {selectMode ? (
+                <Button type="button" size="sm" disabled={selected.size === 0} onClick={() => setGenerateSelectionOpen(true)}>
+                  <Sparkles />
+                  Generate from {selected.size} selected
+                </Button>
+              ) : (
+                <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
+                  <Sparkles />
+                  Generate artifact
+                </Button>
+              )}
+            </>
+          ) : null
         }
       />
       <NodeListView<GlossarySummary>

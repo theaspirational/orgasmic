@@ -6,6 +6,7 @@ import { ChevronDown, ChevronRight, Plus, Sparkles } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useMe } from '@/hooks/useMe';
 import { useRefreshBump, useRefreshToken } from '@/hooks/useRefreshBus';
 import { createDecision, fetchDecisions } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, type AppSearch } from '@/lib/searchState';
@@ -134,6 +135,8 @@ export function DecisionsView({ projectId }: { projectId: string }) {
   const search = useSearch({ strict: false }) as DecisionsSearch;
   const refresh = useRefreshToken();
   const refreshBump = useRefreshBump();
+  const { can } = useMe();
+  const canGenerate = can(projectId, 'artifacts.generate');
   const decisions = useResource(`decisions:${projectId}:${refresh}`, () => fetchDecisions(projectId));
   const tags = useMemo(() => tagOptions(decisions.data ?? []), [decisions.data]);
   const selectedTags = useMemo(() => searchList(search.tag), [search.tag]);
@@ -245,31 +248,33 @@ export function DecisionsView({ projectId }: { projectId: string }) {
         count={rows.length}
         description={`Decision records for ${projectId}.`}
         actions={
-          <>
-            <Button
-              type="button"
-              variant={selectMode ? 'default' : 'outline'}
-              size="sm"
-              aria-pressed={selectMode}
-              onClick={() => {
-                setSelectMode((v) => !v);
-                setSelected(new Set());
-              }}
-            >
-              {selectMode ? `${selected.size} selected` : 'Select'}
-            </Button>
-            {selectMode ? (
-              <Button type="button" size="sm" disabled={selected.size === 0} onClick={() => setGenerateSelectionOpen(true)}>
-                <Sparkles />
-                Generate from {selected.size} selected
+          canGenerate ? (
+            <>
+              <Button
+                type="button"
+                variant={selectMode ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={selectMode}
+                onClick={() => {
+                  setSelectMode((v) => !v);
+                  setSelected(new Set());
+                }}
+              >
+                {selectMode ? `${selected.size} selected` : 'Select'}
               </Button>
-            ) : (
-              <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
-                <Sparkles />
-                Generate artifact
-              </Button>
-            )}
-          </>
+              {selectMode ? (
+                <Button type="button" size="sm" disabled={selected.size === 0} onClick={() => setGenerateSelectionOpen(true)}>
+                  <Sparkles />
+                  Generate from {selected.size} selected
+                </Button>
+              ) : (
+                <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
+                  <Sparkles />
+                  Generate artifact
+                </Button>
+              )}
+            </>
+          ) : null
         }
       />
       <section className="rounded-xl border bg-card" aria-label="Decisions">

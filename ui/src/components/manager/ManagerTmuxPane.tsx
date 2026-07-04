@@ -52,15 +52,21 @@ function parseTmuxPaneServerFrame(data: string): TmuxPaneServerFrame | null {
  *   backoff (1s → 2s → 4s → max 10s) up to 5 attempts.
  * - Composer seam: `onSendReady` hands the parent a sender that pastes text
  *   and presses Enter server-side (`send_keys`), independent of the keyboard.
+ * - Read-only mode (`readOnly`): for members without sessions.interact. The
+ *   live stream still renders, but nothing is wired to the socket — no
+ *   keystrokes, Shift+Enter, wheel-as-keys, or resize control frames — and the
+ *   composer sender is never handed out. A "read-only" chip marks the header.
  */
 export function ManagerTmuxPane({
   runId,
   onConnectionState,
   onSendReady,
+  readOnly = false,
 }: {
   runId: string;
   onConnectionState?: (state: TmuxPaneConnectionState) => void;
   onSendReady?: (send: TmuxSendKeys | null) => void;
+  readOnly?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -93,10 +99,11 @@ export function ManagerTmuxPane({
     } catch {
       return; /* xterm can reject fit while hidden during layout transitions. */
     }
-    if (ws && ws.readyState === WebSocket.OPEN) {
+    // Read-only viewers fit locally for display but never reshape the shared PTY.
+    if (!readOnly && ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     }
-  }, []);
+  }, [readOnly]);
 
   const debouncedResize = useCallback(() => {
     if (resizeTimerRef.current !== null) clearTimeout(resizeTimerRef.current);
@@ -121,6 +128,12 @@ export function ManagerTmuxPane({
         setConnState('open');
         setAttempt(0);
         setError(null);
+        if (readOnly) {
+          // No input channel for a read-only viewer: never reshape the PTY and
+          // never hand the parent a sender.
+          onSendReady?.(null);
+          return;
+        }
         // Reshape the PTY to our real dimensions before tmux's first frame.
         try {
           ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
@@ -184,13 +197,16 @@ export function ManagerTmuxPane({
         });
       };
 
-      const disposable = term.onData((data) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        ws.send(codec.enc.encode(data));
-      });
-      onDataRef.current = disposable;
+      // Read-only viewers never forward keystrokes/paste to the PTY.
+      if (!readOnly) {
+        const disposable = term.onData((data) => {
+          if (ws.readyState !== WebSocket.OPEN) return;
+          ws.send(codec.enc.encode(data));
+        });
+        onDataRef.current = disposable;
+      }
     },
-    [runId, codec.enc, onSendReady],
+    [runId, codec.enc, onSendReady, readOnly],
   );
 
   useEffect(() => {
@@ -251,6 +267,7 @@ export function ManagerTmuxPane({
     // as "insert newline", so map Shift+Enter to that. preventDefault keeps
     // xterm's hidden textarea from replaying a stray `\n`.
     const onShiftEnter = (e: KeyboardEvent) => {
+      if (readOnly) return true;
       if (
         e.type === 'keydown' &&
         e.key === 'Enter' &&
@@ -278,6 +295,8 @@ export function ManagerTmuxPane({
     // terminal emulators use for "alternate scroll" mode. On the normal buffer we
     // return true so xterm's native scrollback handling stays intact.
     term.attachCustomWheelEventHandler((e: WheelEvent) => {
+      // Read-only viewers don't drive alternate-scroll into the PTY.
+      if (readOnly) return true;
       if (term.buffer.active.type !== 'alternate') return true;
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return false;
@@ -340,6 +359,11 @@ export function ManagerTmuxPane({
     <div className="relative flex h-full min-h-0 flex-col bg-black">
       <div className="flex shrink-0 items-center gap-2 border-b border-white/10 px-3 py-1.5 font-mono text-xs text-white/60">
         <span className="truncate">{runId}</span>
+        {readOnly ? (
+          <span className="rounded-sm border border-white/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-white/70">
+            read-only
+          </span>
+        ) : null}
         {/* Connection STATUS, not an action — a bare uppercase "OPEN" at the
             edge of the banner reads as a clickable link. Pair it with a state
             dot so it scans as telemetry. */}

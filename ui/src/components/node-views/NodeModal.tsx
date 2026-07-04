@@ -19,6 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { architectureDescriptorFor, DESCRIPTORS } from '@/components/orgdoc/descriptor';
 import { NodeDocEditor, type NodeDirectory } from '@/components/orgdoc/NodeDocEditor';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchArchitecture, fetchDecisions, fetchGlossary } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, withDrawerStack, type AppSearch } from '@/lib/searchState';
@@ -417,6 +418,8 @@ function Aside({
   onOpenNode: (id: string) => void;
 }) {
   const [generateOpen, setGenerateOpen] = useState(false);
+  const { can } = useMe();
+  const canGenerate = can(projectId, 'artifacts.generate');
   const archNode = kind === 'architecture' ? data.architecture.find((item) => item.id === id) : undefined;
   const decision = kind === 'decision' ? data.decisions.find((item) => item.id === id) : undefined;
   const decisionChildren = decision
@@ -433,18 +436,22 @@ function Aside({
   const nodeLabel = nodeTitle(kind, id, data);
   return (
     <aside className="flex min-w-0 flex-col gap-3 rounded-md border bg-muted/20 p-3">
-      <Button type="button" variant="outline" size="sm" onClick={() => setGenerateOpen(true)}>
-        <Sparkles />
-        Generate artifact
-      </Button>
-      <GenerateArtifactDialog
-        projectId={projectId}
-        open={generateOpen}
-        onOpenChange={setGenerateOpen}
-        nodes={[id]}
-        nodeLabels={[nodeLabel]}
-      />
-      <Separator />
+      {canGenerate ? (
+        <>
+          <Button type="button" variant="outline" size="sm" onClick={() => setGenerateOpen(true)}>
+            <Sparkles />
+            Generate artifact
+          </Button>
+          <GenerateArtifactDialog
+            projectId={projectId}
+            open={generateOpen}
+            onOpenChange={setGenerateOpen}
+            nodes={[id]}
+            nodeLabels={[nodeLabel]}
+          />
+          <Separator />
+        </>
+      ) : null}
       <div>
         <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Source</dt>
         <dd className="mt-1 flex items-center gap-1 font-mono text-xs">

@@ -70,6 +70,7 @@ import { useResource } from '@/lib/useResource';
 
 import { ManagerChatTranscript } from './ManagerChatTranscript';
 import { ManagerComposer } from './ManagerComposer';
+import { ReadOnlySessionBar } from './ReadOnlySessionBar';
 import type { TmuxPaneConnectionState, TmuxSendKeys } from './ManagerTmuxPane';
 
 const ManagerTmuxPane = lazy(() =>
@@ -334,6 +335,7 @@ export function ManagerWorkbench({
   initialDraft,
   tickBusy,
   hideChrome = false,
+  readOnly = false,
   onSelectRun,
   onSetSize,
   onTickStart,
@@ -353,6 +355,8 @@ export function ManagerWorkbench({
   initialDraft?: string | null;
   tickBusy: boolean;
   hideChrome?: boolean;
+  /** Members without sessions.interact watch the manager stream read-only. */
+  readOnly?: boolean;
   onSelectRun: (runId: string) => void;
   onSetSize: (size: ManagerSize) => void;
   onTickStart: () => void;
@@ -602,6 +606,7 @@ export function ManagerWorkbench({
               runId={activeRun.run_id}
               initialDraft={activeDraft}
               onPromptSent={() => handlePromptSent(activeRun.run_id)}
+              readOnly={readOnly}
             />
           ) : (
             <ManagerAcpStack
@@ -609,8 +614,13 @@ export function ManagerWorkbench({
               initialSource={initialSource}
               initialDraft={activeDraft}
               onPromptSent={() => handlePromptSent(activeRun.run_id)}
+              readOnly={readOnly}
             />
           )
+        ) : readOnly ? (
+          <div className="flex h-full items-center justify-center p-6 text-center text-sm text-muted-foreground">
+            No live session to watch.
+          </div>
         ) : (
           <ManagerLauncher
             drivers={drivers.data?.drivers ?? []}
@@ -630,11 +640,13 @@ function ManagerAcpStack({
   initialSource,
   initialDraft,
   onPromptSent,
+  readOnly = false,
 }: {
   runId: string;
   initialSource?: string | null;
   initialDraft?: string | null;
   onPromptSent: () => void;
+  readOnly?: boolean;
 }) {
   const [pendingSince, setPendingSince] = useState<string | null>(null);
 
@@ -669,15 +681,19 @@ function ManagerAcpStack({
         />
       </div>
       <div className="min-h-[132px] border-t">
-        <ManagerComposer
-          runId={runId}
-          connectionState="open"
-          initialDraft={initialDraft}
-          placeholder="Send to agent"
-          readyLabel="Enter starts the turn. Shift+Enter adds a line. Arrow-up recalls the last send."
-          onSend={handleSend}
-          onSent={handleSent}
-        />
+        {readOnly ? (
+          <ReadOnlySessionBar />
+        ) : (
+          <ManagerComposer
+            runId={runId}
+            connectionState="open"
+            initialDraft={initialDraft}
+            placeholder="Send to agent"
+            readyLabel="Enter starts the turn. Shift+Enter adds a line. Arrow-up recalls the last send."
+            onSend={handleSend}
+            onSent={handleSent}
+          />
+        )}
       </div>
     </div>
   );
@@ -687,10 +703,12 @@ function ManagerTmuxStack({
   runId,
   initialDraft,
   onPromptSent,
+  readOnly = false,
 }: {
   runId: string;
   initialDraft?: string | null;
   onPromptSent: () => void;
+  readOnly?: boolean;
 }) {
   const [split, setSplit] = useState(readTmuxSplit);
   const [connState, setConnState] = useState<TmuxPaneConnectionState>('connecting');
@@ -784,6 +802,7 @@ function ManagerTmuxStack({
             runId={runId}
             onConnectionState={setConnState}
             onSendReady={handleSendReady}
+            readOnly={readOnly}
           />
         </Suspense>
       </div>
@@ -800,16 +819,20 @@ function ManagerTmuxStack({
         <span className="h-1 w-10 rounded-full bg-border group-hover:bg-muted-foreground/60" />
       </button>
       <div className="min-h-[116px] flex-1">
-        <ManagerComposer
-          runId={runId}
-          connectionState={connState}
-          initialDraft={initialDraft}
-          placeholder="Send to agent"
-          readyLabel="Enter sends to the terminal. Shift+Enter adds a line. Arrow-up recalls the last send."
-          unavailableLabel="No tmux terminal attached."
-          onSend={(text) => sendRef.current?.(text) ?? false}
-          onSent={onPromptSent}
-        />
+        {readOnly ? (
+          <ReadOnlySessionBar />
+        ) : (
+          <ManagerComposer
+            runId={runId}
+            connectionState={connState}
+            initialDraft={initialDraft}
+            placeholder="Send to agent"
+            readyLabel="Enter sends to the terminal. Shift+Enter adds a line. Arrow-up recalls the last send."
+            unavailableLabel="No tmux terminal attached."
+            onSend={(text) => sendRef.current?.(text) ?? false}
+            onSent={onPromptSent}
+          />
+        )}
       </div>
     </div>
   );

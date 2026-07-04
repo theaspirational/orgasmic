@@ -582,6 +582,46 @@ export type ArtifactDetail = ArtifactSummary & {
   comments: CommentRecord[];
 };
 
+export type ArtifactCommentRequest = {
+  message: string;
+  /** Optional selection anchor captured from the rendered artifact (pin). */
+  anchor?: string;
+  resolution_target?: string;
+};
+
+export type ArtifactCommentResolveResponse = {
+  cid: string;
+  resolved: boolean;
+};
+
+/** Action-name capability strings the daemon grants per member/project. */
+export type MemberCapability =
+  | 'project.read'
+  | 'graph.read'
+  | 'tasks.read'
+  | 'sessions.watch'
+  | 'sessions.interact'
+  | 'artifacts.read'
+  | 'artifacts.comment'
+  | 'artifacts.generate'
+  | 'members.manage';
+
+export type MeIdentity = 'admin' | 'member';
+
+export type MeProject = {
+  projectId: string;
+  role: string;
+  capabilities: string[];
+};
+
+/** GET /me capability snapshot. Admin lists every project with every
+ * capability; a member lists only their granted projects. */
+export type Me = {
+  identity: MeIdentity;
+  name: string | null;
+  projects: MeProject[];
+};
+
 export type ArtifactGenerateRequest = {
   nodes: string[];
   prompt: string;
