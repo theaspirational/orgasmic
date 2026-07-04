@@ -3383,3 +3383,82 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-04 Sat 18:15:58 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1356
+:TIME:         [2026-07-04 Sat 18:15:58]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_KF2MR
+:NODE_ID:      dec_KF2MR
+:END:
+
+* TX 2026-07-04 Sat 18:16:36 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1357
+:TIME:         [2026-07-04 Sat 18:16:36]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_Z8CW2
+:NODE_ID:      arch_Z8CW2
+:END:
+
+* TX 2026-07-04 Sat 18:16:36 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1358
+:TIME:         [2026-07-04 Sat 18:16:36]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_Z8CW2
+:NODE_ID:      arch_Z8CW2
+:END:
+
+* TX 2026-07-04 Sat 18:16:37 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1359
+:TIME:         [2026-07-04 Sat 18:16:37]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_Z8CW2
+:NODE_ID:      arch_Z8CW2
+:END:
+
+* TX 2026-07-04 Sat 18:16:37 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1360
+:TIME:         [2026-07-04 Sat 18:16:37]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_Z8CW2
+:NODE_ID:      arch_Z8CW2
+:END:
+
+* TX 2026-07-04 Sat 18:16:37 task.edited TASK-DJGM5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1361
+:TIME:         [2026-07-04 Sat 18:16:37]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJGM5
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-DJGM5
+:NODE_ID:      TASK-DJGM5
+:END:

@@ -1621,20 +1621,24 @@ they drive through.
 :DEPENDS_ON: arch_C87Z9
 :GLOSSARY_REFS: term_8CJ8G
 :ID: arch_Z8CW2
-:MOTIVATED_BY: dec_N9HW0
+:MOTIVATED_BY: dec_N9HW0 dec_KF2MR
 :END:
 
 ** Description
-A member layer over the daemon's existing bearer/session middleware. The single admin mints named tokens with a role (editor or viewer); records — name, role, token hash — live host-local in $ORGASMIC_HOME/user/auth/members.org, never in the repo. A new /login page accepts a pasted token and sets a long-lived named session cookie; the session check is extended to resolve member identity and role on every request. Comments and tx entries triggered by a member carry the member name.
+A member layer over the daemon's existing bearer/session middleware, gating the daemon's whole HTTP+WS surface -- not just artifact routes. The single admin mints named tokens; each member record -- name, grants, token hash -- lives host-local in $ORGASMIC_HOME/user/auth/members.org, never in the repo. Access is per-project grants naming capability-set roles (dec_KF2MR): =:GRANTS: <project-or-*>=<role> ...=, exact project match beats =*=, no matching grant means no access (403, and the project is absent from that member's UI project list). A role names a capability set over a namespaced action vocabulary -- =graph.read=, =tasks.read=, =sessions.watch=, =sessions.interact=, =artifacts.read=, =artifacts.comment=, =artifacts.generate=, =members.manage= -- resolved through one static table in v1: =viewer= (graph.read, tasks.read, sessions.watch, artifacts.read, artifacts.comment), =editor= (viewer + artifacts.generate), =artifacts= (artifacts.read + artifacts.comment only). A new /login page accepts a pasted token and sets a long-lived named session cookie; the session check resolves member identity and grants on every request. Comments and tx entries triggered by a member carry the member name.
 
 ** Interface
-- CLI: orgasmic member add <name> --role editor|viewer (prints the token once); orgasmic member revoke <name>; orgasmic member list.
-- HTTP: POST /login {token} -> named session cookie; all /artifacts/* routes read identity from the session.
-- Role gates: POST /artifacts/generate and /:id/regenerate require admin|editor; POST /:id/comments requires any member; member management requires admin (the original daemon token).
+- CLI: orgasmic member add <name> --role editor|viewer|artifacts (mints =*=<role>=; prints the token once); repeatable --grant <project>=<role> for scoped/mixed mints (with --grant and no --role, access covers only the granted projects); orgasmic member revoke <name>; orgasmic member list (shows grants).
+- HTTP: POST /login {token} -> named session cookie; GET /me -> member name + resolved capabilities per project (the UI renders nav and affordances from this snapshot); every project-scoped route resolves through one seam -- require(session, project, action) via a route->action map. Route code never tests role names.
+- WS: stream and event subscriptions gated by =sessions.watch= / the read capabilities, with a coarse event-kind -> capability filter (an =artifacts= member's socket receives only artifact.* events); the input direction requires =sessions.interact=.
+- Gate outcomes v1: artifact generate/regenerate/answer-submit require admin|editor (=artifacts.generate=); commenting requires =artifacts.comment=; live rmux streams render read-only for members (xterm without input wiring; server rejects input lacking =sessions.interact=); member management and non-artifact mutations require admin (the original daemon token).
 
 ** Constraints
 - Tokens are stored hashed; the plaintext is shown exactly once at mint time and distributed out-of-band.
 - Revocation invalidates all sessions minted from that token; re-minting under the same name preserves comment attribution (attribution is by name).
+- The server is the sole gate: UI hiding (nav, buttons, xterm input wiring) is convenience, never security; every enforcement point is daemon-side, on both the HTTP and WS directions.
+- =sessions.interact= is admin-only in v1: typing into a live TUI is arbitrary command execution on the host. Loosening it later is a capability-table edit, not new plumbing.
+- Deferred by dec_KF2MR, all reachable through the same require() seam without schema change: custom role definitions (data-driven table, e.g. a roles.org), grant-edit CLI verbs (re-mint or hand-edit the host-local members.org for now), per-event fine-grained WS filtering, multiple roles per project (set union), groups, per-artifact ACLs. The role token in GRANTS is a free string on purpose.
 - Transport (tunnel, LAN, shared host) is deployment ops and out of scope, per dec_N9HW0.
 - The pre-existing single daemon token remains the admin credential and the CLI's auth; member tokens are browser-facing only.
 

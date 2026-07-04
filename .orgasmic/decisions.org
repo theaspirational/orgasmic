@@ -1856,3 +1856,23 @@ POST /artifacts/generate rejects an empty nodes list today ("nodes must be non-e
 
 ** Decision
 Subject nodes are optional; prompt-only generation is first-class. :SUBJECT_NODES: may be empty. Context assembly degrades gracefully — user prompt + repo-read instruction, no subject-Org/graph-neighborhood section. Per-node artifact rollups simply do not list node-less artifacts; they remain reachable from the artifact list and linkable to nodes later, once the grilled outcome lands as a decision. The grilling button on the decisions page is the first consumer (button/UI scope stays with arch_A3NSW).
+
+* dec_KF2MR How are member permissions modeled: a global role column or per-project grants naming capability-set roles?
+:PROPERTIES:
+:ID: dec_KF2MR
+:PARENT: dec_N9HW0
+:END:
+
+** Context
+arch_Z8CW2 as first drafted stored one global role (editor|viewer) per member and gated only /artifacts/* routes by testing role names. Operator scoping [2026-07-04 Sat] surfaced three futures that shape would cramp: admins restricting which projects a member can access; different roles per project for the same member (viewer in A, editor in B); and access shapes that are not ranks -- e.g. an external stakeholder allowed to see only the artifact surface, never decisions/tasks/live sessions. The gate also belongs on the daemon's whole HTTP+WS surface, not just artifact routes: members may watch live rmux streams read-only, and typing into a live TUI is effectively arbitrary command execution on the host.
+
+** Decision
+Grants, not a role column; actions, not role checks.
+- The member record carries =:GRANTS: <project-or-*>=<role> ...= -- exact project match beats =*=; no matching grant means no access at all (403, and the project is absent from that member's UI project list).
+- A role names a capability set over a small namespaced action vocabulary spanning the whole surface: =graph.read=, =tasks.read=, =sessions.watch=, =sessions.interact=, =artifacts.read=, =artifacts.comment=, =artifacts.generate= (covers regenerate + answer submission), =members.manage=.
+- v1 built-in roles live in one static table: =viewer= (graph.read, tasks.read, sessions.watch, artifacts.read, artifacts.comment); =editor= (viewer + artifacts.generate); =artifacts= (artifacts.read, artifacts.comment only -- the artifacts-only grant); admin = the daemon token = everything.
+- Routes and WS handlers never test role names; every authorization question goes through one seam: require(session, project, action). The WS enforces both directions -- =sessions.watch= / read actions on stream + event subscription (coarse event-kind -> capability filter, e.g. an =artifacts= member's socket only receives artifact.* events), =sessions.interact= on the input direction. UI affordances (nav, buttons, xterm input wiring) render from a /me capability snapshot but are convenience only; the server is the gate.
+- Two conscious v1 rulings encoded in the table, each a one-line edit to loosen later: =sessions.interact= is admin-only (TUI input is command execution on the host); non-artifact mutation routes stay admin-only (editor means "drives the artifact loop", not "rewrites the graph").
+- Deferred but cheap later through the same seam: custom role definitions (data-driven capability table, e.g. a roles.org), grant-edit CLI verbs (re-mint or hand-edit the host-local members.org for now), per-event fine-grained WS filtering, multiple roles per project (set union; the schema already tolerates it), groups/teams, per-artifact ACLs.
+
+Rejected: a global role scalar (cannot express per-project access at all); a rank ladder viewer<editor<admin (cannot express artifacts-only -- access shapes are sets, not ranks); gating only /artifacts/* (leaves the rest of the UI either open or needing a second mechanism later).
