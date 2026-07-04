@@ -3138,3 +3138,79 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-04 Sat 15:12:02 task.state_transitioned TASK-ZEFEY
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1340
+:TIME:         [2026-07-04 Sat 15:12:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZEFEY
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Stale-state correction: work merged ddd6b56 (worker commit 9a5f043) and manager-reviewed per task evidence; verified ddd6b56 IS in main and the store (GET /artifacts, GET /artifacts/:id, ArtifactSummary/Detail, 22-type BLOCK_TYPES, submit/feedback CLI verbs) is in production use by done downstream tasks 2ZQSB/Y2ZQJ/RH4M5. Lifecycle never advanced past in_progress because the rmux stall detector killed the idle pane post-completion (manager-rescued close, implementer.done tx-1215).
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-04 Sat 15:39:53 task.state_transitioned TASK-T25XQ
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1341
+:TIME:         [2026-07-04 Sat 15:39:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T25XQ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-T25XQ to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-04 Sat 15:39:54 manager.dispatch_started TASK-T25XQ
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1342
+:TIME:         [2026-07-04 Sat 15:39:54]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T25XQ
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-t25xq/worktree
+:BRANCH:       task-t25xq-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-T25XQ/task-T25XQ-brief.md
+:STARTED_AT:   [2026-07-04 Sat 15:39:54]
+:LIVENESS:     21a65c1c04818f63e4c3a50bb9eb48b99cbf422e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-sonnet-5
+:REASON_INITIAL: Agent-Native block renderer + ArtifactView + Artifacts page + Generate entry points (arch_A3NSW); full scope, standard render stack per owner
+:END:
+
+* TX 2026-07-04 Sat 15:39:54 run.created TASK-T25XQ
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1343
+:TIME:         [2026-07-04 Sat 15:39:54]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-T25XQ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-T25XQ-implementer-20260704T153954.jsonl
+:REASON:       Agent-Native block renderer + ArtifactView + Artifacts page + Generate entry points (arch_A3NSW); full scope, standard render stack per owner
+:RUN_ID:       run-20260704T153954-71eba0ce49aa42c490af21cdd9c65eb1
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-t25xq/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-T25XQ/task-T25XQ-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-T25XQ/task-T25XQ-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-T25XQ/task-T25XQ-stdout.log
+:DISPATCH_TX:  tx-20260704-orgasmic-1342
+:MODEL_OVERRIDE: claude-sonnet-5
+:END:

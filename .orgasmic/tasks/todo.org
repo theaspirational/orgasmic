@@ -1,16 +1,3 @@
 #+title: Todo
 #+orgasmic_version: 1
 
-* TODO TASK-T25XQ Port the plan block renderer; ArtifactView and Artifacts pages :artifacts:ui:
-:PROPERTIES:
-:DEPENDS_ON: TASK-ZEFEY
-:ID: TASK-T25XQ
-:IMPLEMENTS: arch_A3NSW
-:END:
-
-Port the full Agent-Native plan block renderer (~22 block types incl. rich-text, diagram html/css, code/annotated-code, table, callout, checklist, file-tree, data-model, question-form, wireframe, canvas, prototype, tabs, columns) into ui/, themed with the existing token system in both light and dark. Add the ArtifactView route (renders GET /artifacts/:id bundle; version switcher over versions/) and the top-level Artifacts list page (title, subject summary, version count, open-comment count, regenerating state, WS-live). Entry points: Generate artifact button + prompt dialog in NodeModal's aside (subject = node) and in PageHeader actions on DecisionsView/ArchitectureView/GlossaryView (subject = whole section), plus the separate multi-select mode for explicit node sets.
-
-Acceptance: an artifact generated in stage 2 (or hand-submitted via CLI) renders correctly in light and dark including diagram and wireframe blocks; the Artifacts page lists it live; Generate dialogs fire the daemon routes from all three entry points. Comments are out of scope for this stage.
-** Notes
-[2026-07-03] Carried from the TASK-Y2ZQJ reviewer pass (finding L2): the daemon-side validate_mdx is a TOP-LEVEL STRUCTURAL validator only — it locates a registered block's body by its literal matching </Name> close string and treats the body as opaque. Consequence: a block body containing its own literal </Name> terminates the scan early, and nested same-name blocks are not tracked. This is by design (dec_GPV4G: MDX is opaque to the daemon). The real MDX/JSX parser lives HERE in T25XQ (the block renderer): it must handle nesting, literal-close-string-in-body, and deep validation. Do not assume the daemon validated block internals.
-
