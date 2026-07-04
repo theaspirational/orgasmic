@@ -122,3 +122,19 @@ Deferred D3 from TASK-RH4M5 (hot-session was landed without it; explicit POST /r
 Add a config-defaulted idle timeout to a persistent artifactor rmux session: if no followup (send_input) arrives for the configured duration, release the run (free the artifact.generate:{id} lease, tear down the pane). The timer RESETS on each accepted send_input — unlike the existing stall/ceiling timeouts (resolve_timeout_secs / is_interactive_manager_task at supervisor.rs), which are not reset-on-input. This is the one part of arch_045Q0.2's session-lifetime clause not yet shipped.
 
 Likely needs new supervisor machinery: a per-run last-input instant updated in supervisor.send_input on ack.accepted, plus a sweep (reuse release_first_timed_out_run's shape) that releases persistent runs idle past the threshold. Config default alongside the other timeout knobs. Acceptance: a persistent artifactor run with no followup for the idle window is released (lease freed, next regenerate cold-spawns); a run receiving periodic followups is never idle-released.
+
+* BACKLOG TASK-A22TB Artifact renderer fidelity polish (deferred from TASK-T25XQ)    :artifacts:ui:
+:PROPERTIES:
+:DEPENDS_ON: TASK-T25XQ
+:ID: TASK-A22TB
+:IMPLEMENTS: arch_A3NSW
+:PRIORITY: low
+:END:
+
+Fidelity simplifications the T25XQ renderer shipped with (all documented inline; functional but below the visual-plan quality bar). Raise to full fidelity:
+- Canvas: currently a labeled gallery of Screen artboards; port the full spatial x/y-lane board with connectors + anchored annotations (canvas.md).
+- Wireframe icons: replace the hand-authored minimal SVG stand-in set with the full Tabler/Feather set the wireframe.md contract names.
+- AnnotatedCode: render line-range notes as inline margin bubbles anchored to the code lines, not the current below-code legend + background tint.
+- Mermaid: drive diagram colors from the app --* tokens in both themes instead of mermaid's built-in default/dark themes.
+- rough.js: the sketch overlay is implemented and defensively wrapped but unexercised — add data-rough coverage to the fixture and verify the overlay renders in both themes.
+NOT here: Prototype cross-screen data-goto and QuestionForm answering (TASK-EDQPG); comments (TASK-DJGM5).
