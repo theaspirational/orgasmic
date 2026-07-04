@@ -22,6 +22,7 @@ mod goal;
 mod home;
 mod install_state;
 mod manager;
+mod member;
 mod node;
 mod path_env;
 mod update;
@@ -42,6 +43,7 @@ use crate::doctor::Finding;
 use crate::goal::{cmd_goal, GoalCmd};
 use crate::home::Home;
 use crate::manager::{DispatchArgs, DispatchCloseArgs, DispatchStatusArgs};
+use crate::member::{cmd_member, MemberCmd};
 use crate::node::{cmd_node, NodeCmd};
 
 #[derive(Parser, Debug)]
@@ -260,6 +262,11 @@ Examples:
     Artifact {
         #[command(subcommand)]
         cmd: ArtifactCmd,
+    },
+    /// Host-local member management (add / revoke / list). No daemon required.
+    Member {
+        #[command(subcommand)]
+        cmd: MemberCmd,
     },
     /// Manager grilling stage.
     Grill {
@@ -827,6 +834,7 @@ fn main() -> Result<()> {
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
         Cmd::Node { cmd } => cmd_node(&home, cmd),
         Cmd::Artifact { cmd } => cmd_artifact(&home, cmd),
+        Cmd::Member { cmd } => cmd_member(&home, cmd),
         Cmd::Grill {
             project,
             reason,

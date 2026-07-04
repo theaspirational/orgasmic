@@ -10,8 +10,9 @@ use std::collections::HashSet;
 use std::process::Stdio;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, Query, State};
-use axum::response::Response;
+use axum::extract::{Extension, Path, Query, State};
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -20,6 +21,7 @@ use tokio::time::{interval, Duration};
 use tracing::debug;
 
 use crate::api::ApiState;
+use crate::authz::{self, Action, Identity};
 use crate::events::Topic;
 
 #[derive(Debug, Deserialize, Default)]
@@ -31,6 +33,7 @@ pub struct WsQuery {
 pub async fn handler(
     ws: WebSocketUpgrade,
     Query(q): Query<WsQuery>,
+    Extension(identity): Extension<Identity>,
     State(state): State<ApiState>,
 ) -> Response {
     let topics: HashSet<Topic> = match q.topic.as_deref() {
@@ -44,42 +47,75 @@ pub async fn handler(
     };
     let bus = state.events.clone();
     let shutdown = state.shutdown.clone();
-    ws.on_upgrade(move |socket| serve_socket(socket, bus, topics, shutdown))
+    ws.on_upgrade(move |socket| serve_socket(socket, bus, topics, identity, shutdown))
+}
+
+/// Whether `identity` may send input into a live session. `sessions.interact`
+/// is admin-only in v1 (dec_KF2MR): every member gets a strictly read-only
+/// stream, so their composer/keystroke frames are dropped.
+fn tmux_input_allowed(identity: &Identity) -> bool {
+    matches!(identity, Identity::Admin)
+}
+
+/// Whether `identity` may stream a run's terminal. Admin always may; a member
+/// must hold `SessionsWatch` on the run's project. A run we cannot map to a
+/// project (orphan mux session, project-less system run, forced mock) is
+/// unwatchable by a member and denied — we never fall back to a coarse allow.
+fn tmux_stream_allowed(identity: &Identity, run_project: Option<&str>) -> bool {
+    match run_project {
+        Some(project) => authz::require(identity, Some(project), Action::SessionsWatch).is_ok(),
+        None => matches!(identity, Identity::Admin),
+    }
 }
 
 pub async fn tmux_handler(
     ws: WebSocketUpgrade,
     Path(run_id): Path<String>,
+    Extension(identity): Extension<Identity>,
     State(state): State<ApiState>,
 ) -> Response {
     let force_mock = std::env::var("ORGASMIC_TMUX_WS_MOCK")
         .map(|value| value == "1")
         .unwrap_or(false);
-    // Resolve which multiplexer backs this run. tmux is the default; runs whose
-    // driver transport is `rmux` (TASK-104) attach through the same PTY bridge
-    // with `rmux attach-session`, against the rmux session the driver created.
+
+    // Resolve which multiplexer backs this run *and* the run's project, from a
+    // single supervisor snapshot. tmux is the default; runs whose driver
+    // transport is `rmux` (TASK-104) attach through the same PTY bridge with
+    // `rmux attach-session`, against the rmux session the driver created.
+    let snapshot = state.supervisor.snapshot().await;
+    let run_record = snapshot.runs.iter().find(|run| run.run_id == run_id);
+    let run_project = run_record.and_then(|run| run.project_id.clone());
+
+    // STREAM gate (dec_KF2MR): a member needs SessionsWatch on the run's
+    // project; admin is unaffected. Reject before upgrading so the client sees
+    // a clean 403 rather than a socket that opens then immediately closes.
+    if !tmux_stream_allowed(&identity, run_project.as_deref()) {
+        return (
+            StatusCode::FORBIDDEN,
+            "forbidden: sessions.watch is required to stream this run",
+        )
+            .into_response();
+    }
+    // INPUT gate: members stream read-only; only admin may write to the PTY.
+    let allow_input = tmux_input_allowed(&identity);
+
     let target = if force_mock {
         None
     } else {
-        let snapshot = state.supervisor.snapshot().await;
-        snapshot
-            .runs
-            .iter()
-            .find(|run| run.run_id == run_id)
-            .map(|run| match MuxKind::from_transport(&run.driver) {
-                MuxKind::Rmux => (
-                    MuxKind::Rmux,
-                    orgasmic_drivers::probe_rmux_binary()
-                        .path
-                        .unwrap_or_else(|| "rmux".to_string()),
-                    orgasmic_drivers::modes::rmux::rmux_session_name(&run.identity),
-                ),
-                MuxKind::Tmux => (
-                    MuxKind::Tmux,
-                    "tmux".to_string(),
-                    orgasmic_drivers::modes::tmux::tmux_session_name(&run.identity),
-                ),
-            })
+        run_record.map(|run| match MuxKind::from_transport(&run.driver) {
+            MuxKind::Rmux => (
+                MuxKind::Rmux,
+                orgasmic_drivers::probe_rmux_binary()
+                    .path
+                    .unwrap_or_else(|| "rmux".to_string()),
+                orgasmic_drivers::modes::rmux::rmux_session_name(&run.identity),
+            ),
+            MuxKind::Tmux => (
+                MuxKind::Tmux,
+                "tmux".to_string(),
+                orgasmic_drivers::modes::tmux::tmux_session_name(&run.identity),
+            ),
+        })
     };
 
     // Defense-in-depth (1c): the supervisor has no record for this run, but a
@@ -99,10 +135,12 @@ pub async fn tmux_handler(
     ws.on_upgrade(move |socket| async move {
         match (target, force_mock) {
             (Some((kind, bin, session)), _) => {
-                serve_mux_session_socket(socket, kind, bin, session, run_id, supervisor, shutdown)
-                    .await
+                serve_mux_session_socket(
+                    socket, kind, bin, session, run_id, allow_input, supervisor, shutdown,
+                )
+                .await
             }
-            (None, true) => serve_mock_tmux_socket(socket, run_id, shutdown).await,
+            (None, true) => serve_mock_tmux_socket(socket, run_id, allow_input, shutdown).await,
             // No live run record AND no surviving mux session: say so honestly
             // instead of serving a mock terminal that looks like a real attach.
             // Flagged `recoverable: false` so the UI distinguishes a truly gone
@@ -128,6 +166,7 @@ async fn serve_socket(
     socket: WebSocket,
     bus: crate::events::EventBus,
     topics: HashSet<Topic>,
+    identity: Identity,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let (mut sender, mut receiver) = socket.split();
@@ -137,6 +176,12 @@ async fn serve_socket(
             match rx.recv().await {
                 Ok(event) => {
                     if !topics.is_empty() && !topics.contains(&event.topic) {
+                        continue;
+                    }
+                    // Authorization (dec_KF2MR): admin sees everything; a member
+                    // only receives events whose topic + project their grants
+                    // permit. Skip anything they may not see.
+                    if !authz::event_visible(&identity, event.topic, &event.payload) {
                         continue;
                     }
                     let payload = match serde_json::to_string(&event) {
@@ -201,6 +246,7 @@ enum TmuxClientFrame {
 async fn serve_mock_tmux_socket(
     mut socket: WebSocket,
     run_id: String,
+    allow_input: bool,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
     let mut seq: u64 = 0;
@@ -227,7 +273,9 @@ async fn serve_mock_tmux_socket(
                 let Some(msg) = msg else { break };
                 let Ok(msg) = msg else { break };
                 match msg {
-                    Message::Text(text) => {
+                    // Read-only viewers (any non-admin) have input dropped; only
+                    // admin composer sends are echoed.
+                    Message::Text(text) if allow_input => {
                         if let Ok(TmuxClientFrame::SendKeys { text }) = serde_json::from_str::<TmuxClientFrame>(&text) {
                             let echo = format!("[mock tmux] send_keys: {text}\r\n");
                             if send_pane_frame(&mut socket, TmuxPaneFrame::Delta(echo)).await.is_err() {
@@ -236,7 +284,7 @@ async fn serve_mock_tmux_socket(
                         }
                     }
                     Message::Close(_) => break,
-                    Message::Ping(_) | Message::Pong(_) | Message::Binary(_) => {}
+                    Message::Text(_) | Message::Ping(_) | Message::Pong(_) | Message::Binary(_) => {}
                 }
             }
         }
@@ -332,12 +380,14 @@ async fn find_orphan_mux_session(run_id: &str) -> Option<(MuxKind, String, Strin
 /// resizes all flow through, instead of the old 1s `capture-pane` polling. The
 /// same machinery serves both tmux and rmux (TASK-104); `kind`/`bin` select the
 /// multiplexer.
+#[allow(clippy::too_many_arguments)]
 async fn serve_mux_session_socket(
     socket: WebSocket,
     kind: MuxKind,
     bin: String,
     session: String,
     run_id: String,
+    allow_input: bool,
     supervisor: crate::supervisor::Supervisor,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) {
@@ -462,13 +512,17 @@ async fn serve_mux_session_socket(
             msg = receiver.next() => {
                 let Some(Ok(msg)) = msg else { break };
                 match msg {
+                    // Raw keystroke bytes: written to the PTY only for admin.
+                    // A read-only viewer's keystrokes are silently dropped
+                    // (sessions.interact is admin-only, dec_KF2MR).
                     Message::Binary(data) => {
-                        if input_tx.send(data).is_err() {
+                        if allow_input && input_tx.send(data).is_err() {
                             break;
                         }
                     }
                     Message::Text(text) => match serde_json::from_str::<TmuxClientFrame>(&text) {
-                        Ok(TmuxClientFrame::SendKeys { text }) => {
+                        // Composer send: admin-only. Dropped for read-only viewers.
+                        Ok(TmuxClientFrame::SendKeys { text }) if allow_input => {
                             if let Err(err) = paste_text_and_enter(&bin, &session, &text).await {
                                 fail(&mut sender, "send_keys", err).await;
                                 break;
@@ -482,7 +536,11 @@ async fn serve_mux_session_socket(
                                 debug!(error = %err, run_id = %run_id, "tmux composer_send recording failed");
                             }
                         }
-                        Ok(TmuxClientFrame::Resize { cols, rows }) => {
+                        // Resize mutates the shared tmux geometry (a session
+                        // sizes to its smallest attached client), so a read-only
+                        // viewer could shrink the admin's pane. Admin-only, same
+                        // as the other input frames (sessions.interact, dec_KF2MR).
+                        Ok(TmuxClientFrame::Resize { cols, rows }) if allow_input => {
                             if let Ok(master) = master_for_resize.lock() {
                                 let _ = master.resize(PtySize {
                                     rows,
@@ -507,10 +565,15 @@ async fn serve_mux_session_socket(
                         Ok(TmuxClientFrame::Detach) => {
                             // Graceful detach: Ctrl-b d so tmux sees a clean
                             // client disconnect; the session stays alive.
+                            // A detach is a client-side disconnect, honored for
+                            // anyone (including read-only viewers).
                             let _ = input_tx.send(vec![0x02, b'd']);
                             break;
                         }
-                        Err(_) => { /* Unknown control frame — ignore. */ }
+                        // A send_keys or resize from a read-only viewer (guard
+                        // above failed) lands here and is dropped, as does any
+                        // unknown control frame.
+                        Ok(_) | Err(_) => { /* read-only or unknown frame — ignore. */ }
                     },
                     Message::Close(_) => break,
                     Message::Ping(_) | Message::Pong(_) => {}
@@ -677,5 +740,58 @@ mod tests {
             serde_json::from_str::<TmuxClientFrame>(r#"{"type":"detach"}"#),
             Ok(TmuxClientFrame::Detach)
         ));
+    }
+
+    fn member(grants: &[(&str, &str)]) -> Identity {
+        Identity::Member {
+            name: "alice".into(),
+            grants: grants
+                .iter()
+                .map(|(p, r)| (p.to_string(), r.to_string()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn tmux_input_is_admin_only() {
+        // sessions.interact is admin-only in v1: every member is read-only,
+        // regardless of role (even an editor with SessionsWatch).
+        assert!(tmux_input_allowed(&Identity::Admin));
+        assert!(!tmux_input_allowed(&member(&[("proj-a", "editor")])));
+        assert!(!tmux_input_allowed(&member(&[("proj-a", "viewer")])));
+        assert!(!tmux_input_allowed(&member(&[("*", "artifacts")])));
+    }
+
+    #[test]
+    fn tmux_stream_requires_sessions_watch_on_the_runs_project() {
+        // Admin streams anything, including a run with no resolvable project.
+        assert!(tmux_stream_allowed(&Identity::Admin, Some("proj-a")));
+        assert!(tmux_stream_allowed(&Identity::Admin, None));
+
+        // viewer/editor hold SessionsWatch on their granted project.
+        assert!(tmux_stream_allowed(
+            &member(&[("proj-a", "viewer")]),
+            Some("proj-a")
+        ));
+        assert!(tmux_stream_allowed(
+            &member(&[("proj-a", "editor")]),
+            Some("proj-a")
+        ));
+
+        // A member is denied a project they hold no grant for.
+        assert!(!tmux_stream_allowed(
+            &member(&[("proj-a", "viewer")]),
+            Some("proj-b")
+        ));
+
+        // An artifacts-role member lacks SessionsWatch entirely.
+        assert!(!tmux_stream_allowed(
+            &member(&[("proj-a", "artifacts")]),
+            Some("proj-a")
+        ));
+
+        // A run with no resolvable project is unwatchable by any member (fail
+        // closed — no coarse bypass).
+        assert!(!tmux_stream_allowed(&member(&[("*", "viewer")]), None));
     }
 }

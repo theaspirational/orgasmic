@@ -365,7 +365,16 @@ pub async fn identity_middleware(
     };
 
     if matches!(identity, Identity::Member { .. }) {
-        let pattern = matched_path.as_ref().map(|m| m.as_str()).unwrap_or(&path);
+        // `MatchedPath` reports the route template *including* the `/api` nest
+        // prefix (e.g. `/api/ws`, `/api/projects/:id`), while
+        // `MEMBER_ALLOWED_ROUTES` lists app-relative templates (`/ws`). Strip
+        // the prefix so the coarse allow-list matches — otherwise every member
+        // request is rejected here before the per-capability gate ever runs.
+        let raw = matched_path.as_ref().map(|m| m.as_str()).unwrap_or(&path);
+        let pattern = raw
+            .strip_prefix("/api")
+            .filter(|rest| rest.starts_with('/'))
+            .unwrap_or(raw);
         if !member_route_allowed(request.method(), pattern) {
             return ApiError {
                 status: StatusCode::FORBIDDEN,
@@ -651,17 +660,43 @@ fn collect_ui_files<'a>(dir: &'a Dir<'a>, out: &mut Vec<(String, &'a [u8])>) {
     }
 }
 
-async fn get_board(State(state): State<ApiState>) -> Json<Vec<crate::index::BoardEntry>> {
+async fn get_board(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<Vec<crate::index::BoardEntry>> {
     let snap = state.index.snapshot().await;
-    Json(snap.board)
+    // Cross-project list: never 403 — filter to the projects this identity may
+    // see (admin sees all; a member sees only granted projects). Mirrors `get_me`.
+    let visible: std::collections::HashSet<String> =
+        authz::visible_project_ids(&identity, snap.board.iter().map(|e| e.id.as_str()))
+            .into_iter()
+            .map(String::from)
+            .collect();
+    Json(
+        snap.board
+            .into_iter()
+            .filter(|e| visible.contains(&e.id))
+            .collect(),
+    )
 }
 
-async fn get_projects(State(state): State<ApiState>) -> Json<Vec<crate::index::ProjectIndex>> {
+async fn get_projects(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<Vec<crate::index::ProjectIndex>> {
     let snap = state.index.snapshot().await;
     let supervisor = state.supervisor.snapshot().await;
+    // Cross-project list: filter to visible projects rather than 403 (admin
+    // sees all; a member sees only granted projects).
+    let visible: std::collections::HashSet<String> =
+        authz::visible_project_ids(&identity, snap.projects.keys().map(String::as_str))
+            .into_iter()
+            .map(String::from)
+            .collect();
     Json(
         snap.projects
             .into_values()
+            .filter(|project| visible.contains(&project.project_id))
             .map(|project| apply_task_owners(project, &supervisor.runs))
             .collect(),
     )
@@ -1199,30 +1234,38 @@ fn is_project_input_error(message: &str) -> bool {
 
 async fn get_project(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<crate::index::ProjectIndex>, ApiError> {
     let snap = state.index.snapshot().await;
     let supervisor = state.supervisor.snapshot().await;
-    snap.project(&id)
+    // Resolve existence first (404), then gate the capability (403) — mirrors
+    // the artifact-handler pattern (`resolve_artifact_project` + `require`).
+    let project = snap
+        .project(&id)
         .cloned()
-        .map(|project| apply_task_owners(project, &supervisor.runs))
-        .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("project {id}")))
+        .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
+    authz::require(&identity, Some(&id), Action::ProjectRead)?;
+    Ok(Json(apply_task_owners(project, &supervisor.runs)))
 }
 
 async fn get_project_tasks(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::index::TaskSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
     let supervisor = state.supervisor.snapshot().await;
-    snap.project(&id)
-        .map(|p| Json(apply_task_owners(p.clone(), &supervisor.runs).tasks))
-        .ok_or_else(|| ApiError::not_found(format!("project {id}")))
+    let project = snap
+        .project(&id)
+        .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
+    authz::require(&identity, Some(&id), Action::TasksRead)?;
+    Ok(Json(apply_task_owners(project.clone(), &supervisor.runs).tasks))
 }
 
 async fn get_task(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path((project_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<crate::index::TaskDetail>, ApiError> {
     let snap = state.index.snapshot().await;
@@ -1230,6 +1273,7 @@ async fn get_task(
         tracing::warn!(project_id = %project_id, "project not found");
         ApiError::not_found("project not found")
     })?;
+    authz::require(&identity, Some(&project_id), Action::TasksRead)?;
     if !project.tasks.iter().any(|task| task.id == task_id) {
         tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
         return Err(ApiError::not_found("task not found"));
@@ -1364,10 +1408,12 @@ async fn post_task_comment(
 
 async fn get_task_activity(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(task_id): Path<String>,
 ) -> Result<Json<Vec<crate::index::ActivityEntry>>, ApiError> {
     let snap = state.index.snapshot().await;
     let located = locate_task(&snap, &task_id)?;
+    authz::require(&identity, Some(&located.project_id), Action::TasksRead)?;
     let entries = snap
         .projects
         .get(&located.project_id)
@@ -6427,20 +6473,24 @@ fn org_file_artifact_label(relative_path: &FsPath) -> &'static str {
 
 async fn get_graph_nodes(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::GraphNodeSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.nodes.clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.nodes.clone()))
 }
 
 async fn get_graph_edges(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphEdgesQuery>,
 ) -> Result<Json<Vec<crate::index::GraphEdgeSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    let graph = select_graph(&snap, q.project.as_deref())?;
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let graph = &project.graph;
     let (relation_kind, dir_from_relation) = graph_relation_filter(q.relation.as_deref())?;
     // A relation alias already fixes both kind and direction; reject a
     // conflicting explicit kind/dir rather than silently overriding the
@@ -6525,21 +6575,26 @@ async fn get_graph_markers(
 
 async fn get_decisions(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::DecisionSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.decisions.clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.decisions.clone()))
 }
 
 async fn get_decision(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::DecisionSummary>, ApiError> {
     let snap = state.index.snapshot().await;
-    select_graph(&snap, q.project.as_deref())?
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    project
+        .graph
         .decisions
         .iter()
         .find(|node| node.id == id)
@@ -6550,33 +6605,37 @@ async fn get_decision(
 
 async fn get_architecture(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::ArchitectureSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?
-            .architecture
-            .clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.architecture.clone()))
 }
 
 async fn get_architecture_nodes(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::ArchitectureNodesResponse>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.architecture_nodes_response(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.architecture_nodes_response()))
 }
 
 async fn get_architecture_node(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::ArchitectureSummary>, ApiError> {
     let snap = state.index.snapshot().await;
-    select_graph(&snap, q.project.as_deref())?
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    project
+        .graph
         .architecture
         .iter()
         .find(|node| node.id == id)
@@ -6587,21 +6646,26 @@ async fn get_architecture_node(
 
 async fn get_glossary(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::GlossarySummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.glossary.clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.glossary.clone()))
 }
 
 async fn get_glossary_term(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::GlossarySummary>, ApiError> {
     let snap = state.index.snapshot().await;
-    select_graph(&snap, q.project.as_deref())?
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    project
+        .graph
         .glossary
         .iter()
         .find(|term| term.id == id)
@@ -12065,6 +12129,7 @@ mod tests {
 
         let Json(detail) = get_task(
             State(state),
+            Extension(Identity::Admin),
             Path(("orgasmic".to_string(), "TASK-PRE".to_string())),
         )
         .await
@@ -15179,5 +15244,364 @@ mod tests {
             .join(format!("{}.org", Utc::now().format("%Y-%m")));
         let tx = std::fs::read_to_string(&tx_path).unwrap();
         assert!(tx.contains("artifact.generation.failed"));
+    }
+
+    // ---- authorization wiring (arch_Z8CW2 / dec_KF2MR) ---------------------
+
+    fn member(grants: &[(&str, &str)]) -> Identity {
+        Identity::Member {
+            name: "alice".into(),
+            grants: grants
+                .iter()
+                .map(|(p, r)| (p.to_string(), r.to_string()))
+                .collect(),
+        }
+    }
+
+    fn graph_query(project: &str) -> GraphQuery {
+        GraphQuery {
+            project: Some(project.into()),
+        }
+    }
+
+    fn seed_two_projects(home: &Home, root_a: &FsPath, root_b: &FsPath) {
+        symlink_repo_source(home);
+        for (root, id) in [(root_a, "proj-a"), (root_b, "proj-b")] {
+            write(
+                root.join(".orgasmic/project.org"),
+                &format!(
+                    "#+title: {id}\n#+orgasmic_version: 1\n\n* PROJECT {id}\n:PROPERTIES:\n:ID:               {id}\n:END:\n"
+                ),
+            );
+            write(
+                task_file_path(root, "backlog.org"),
+                "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
+            );
+        }
+        write(
+            home.board(),
+            &format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj-a\n:PROPERTIES:\n:ID:               proj-a\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n\n* PROJECT proj-b\n:PROPERTIES:\n:ID:               proj-b\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                root_a.display(),
+                root_b.display(),
+            ),
+        );
+    }
+
+    /// An `artifacts`-role member reaches artifact + project-detail reads but is
+    /// 403'd on the tasks and graph surfaces (they lack TasksRead/GraphRead).
+    #[tokio::test]
+    async fn authz_artifacts_member_gated_on_tasks_and_graph_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        seed_minimal_graph(&project_root);
+        let state = direct_stage_test_state(home).await;
+
+        let id = member(&[("proj-a", "artifacts")]);
+
+        // ProjectRead + ArtifactsRead: allowed.
+        assert!(
+            get_project(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
+                .await
+                .is_ok(),
+            "artifacts role carries ProjectRead"
+        );
+        assert!(
+            get_artifacts(
+                State(state.clone()),
+                Extension(id.clone()),
+                Query(artifact_query("proj-a"))
+            )
+            .await
+            .is_ok(),
+            "artifacts role carries ArtifactsRead"
+        );
+
+        // TasksRead: denied.
+        let tasks =
+            get_project_tasks(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
+                .await;
+        assert_eq!(tasks.err().map(|e| e.status), Some(StatusCode::FORBIDDEN));
+
+        // GraphRead: denied.
+        let decisions = get_decisions(
+            State(state.clone()),
+            Extension(id.clone()),
+            Query(graph_query("proj-a")),
+        )
+        .await;
+        assert_eq!(decisions.err().map(|e| e.status), Some(StatusCode::FORBIDDEN));
+    }
+
+    /// A `viewer` member reads tasks and the graph/decisions surfaces (200).
+    #[tokio::test]
+    async fn authz_viewer_member_reads_tasks_and_graph() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        seed_minimal_graph(&project_root);
+        let state = direct_stage_test_state(home).await;
+
+        let id = member(&[("proj-a", "viewer")]);
+
+        assert!(
+            get_project_tasks(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
+                .await
+                .is_ok()
+        );
+        assert!(
+            get_graph_nodes(
+                State(state.clone()),
+                Extension(id.clone()),
+                Query(graph_query("proj-a"))
+            )
+            .await
+            .is_ok()
+        );
+        assert!(
+            get_decisions(
+                State(state.clone()),
+                Extension(id.clone()),
+                Query(graph_query("proj-a"))
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    /// The cross-project list endpoints never 403 a member — they filter to the
+    /// member's granted projects (admin sees all).
+    #[tokio::test]
+    async fn authz_board_and_projects_lists_filtered_to_member_grants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        let state = direct_stage_test_state(home).await;
+
+        // Admin sees both.
+        assert_eq!(
+            get_board(State(state.clone()), Extension(Identity::Admin))
+                .await
+                .0
+                .len(),
+            2
+        );
+        assert_eq!(
+            get_projects(State(state.clone()), Extension(Identity::Admin))
+                .await
+                .0
+                .len(),
+            2
+        );
+
+        // A member granted only proj-a sees only proj-a in both lists.
+        let id = member(&[("proj-a", "viewer")]);
+        let board = get_board(State(state.clone()), Extension(id.clone())).await;
+        assert_eq!(
+            board.0.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["proj-a"]
+        );
+        let projects = get_projects(State(state.clone()), Extension(id.clone())).await;
+        assert_eq!(
+            projects
+                .0
+                .iter()
+                .map(|p| p.project_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["proj-a"]
+        );
+    }
+
+    // ---- WebSocket authorization wiring -----------------------------------
+
+    /// Mint a member session cookie via `POST /login` (the same flow the UI
+    /// uses), returning the `name=value` pair to send on later requests.
+    async fn member_session_cookie(addr: std::net::SocketAddr, member_token: &str) -> String {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/api/login"))
+            .json(&serde_json::json!({ "token": member_token }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "member login failed: {}",
+            resp.status()
+        );
+        let raw = resp
+            .headers()
+            .get("set-cookie")
+            .expect("login must set a session cookie")
+            .to_str()
+            .unwrap();
+        raw.split(';').next().unwrap().to_string()
+    }
+
+    async fn connect_ws_cookie(addr: std::net::SocketAddr, cookie: &str, topic: &str) -> TestWs {
+        let url = format!("ws://{addr}/api/ws?topic={topic}");
+        let mut req = url.into_client_request().unwrap();
+        req.headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
+        ws
+    }
+
+    async fn connect_tmux_ws_cookie(
+        addr: std::net::SocketAddr,
+        cookie: &str,
+        run_id: &str,
+    ) -> Result<TestWs, tokio_tungstenite::tungstenite::Error> {
+        let url = format!("ws://{addr}/api/ws/tmux/{run_id}");
+        let mut req = url.into_client_request().unwrap();
+        req.headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        tokio_tungstenite::connect_async(req).await.map(|(ws, _)| ws)
+    }
+
+    /// The next event-bus message delivered to a socket, decoded.
+    async fn next_ws_event(ws: &mut TestWs) -> Value {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match ws.next().await.unwrap().unwrap() {
+                    Message::Text(text) => return serde_json::from_str::<Value>(&text).unwrap(),
+                    Message::Close(frame) => panic!("websocket closed early: {frame:?}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for a ws event")
+    }
+
+    /// An artifacts-only member's `/ws` receives artifact events but not the
+    /// graph/task events their role can't see; admin receives everything.
+    #[tokio::test]
+    async fn ws_event_stream_filters_by_member_capability() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let member_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "artifacts".to_string())],
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let cookie = member_session_cookie(running.addr, &member_token).await;
+
+        // Both sockets subscribe to every topic; filtering is per-identity.
+        let mut member_ws = connect_ws_cookie(running.addr, &cookie, "").await;
+        let mut admin_ws = connect_ws(running.addr, &token, "").await;
+
+        let client = reqwest::Client::new();
+
+        // (1) A graph event — visible to admin, filtered out for an artifacts member.
+        let graph = client
+            .post(format!("http://{}/api/architecture", running.addr))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "proj-a",
+                "request_id": "ws-authz-graph",
+                "title": "WS authz architecture node"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(graph.status().is_success(), "create arch: {}", graph.status());
+
+        // (2) An artifact event — visible to both.
+        let artifact = client
+            .post(format!(
+                "http://{}/api/artifacts/ART-WSXYZ/submit?project=proj-a",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "content": "<RichText>hello</RichText>\n",
+                "title": "WS gate artifact",
+                "subject_nodes": ["arch_ARSPJ"],
+                "prompt": "test"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            artifact.status().is_success(),
+            "submit artifact: {}",
+            artifact.status()
+        );
+
+        // Admin sees the graph event (and later the artifact event).
+        let admin_graph = next_event_kind(&mut admin_ws, "graph_node_created").await;
+        assert_eq!(admin_graph["payload"]["project_id"], "proj-a");
+        let admin_artifact = next_event_kind(&mut admin_ws, "artifact_changed").await;
+        assert_eq!(admin_artifact["payload"]["project_id"], "proj-a");
+
+        // The member's FIRST delivered event is the artifact event: the graph
+        // event (published first) was filtered out by the topic gate.
+        let member_first = next_ws_event(&mut member_ws).await;
+        assert_eq!(
+            member_first["payload"]["kind"], "artifact_changed",
+            "artifacts member must not receive graph events"
+        );
+        assert_eq!(member_first["payload"]["project_id"], "proj-a");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// A member is denied streaming a run they can't watch (the handshake is
+    /// rejected before upgrade); admin is unaffected by the stream gate.
+    #[tokio::test]
+    async fn tmux_ws_member_denied_stream_admin_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let member_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let cookie = member_session_cookie(running.addr, &member_token).await;
+
+        // 'missing-run' has no supervisor record → no resolvable project → a
+        // member cannot be authorized, so the WS handshake is rejected (403).
+        let member_attempt = connect_tmux_ws_cookie(running.addr, &cookie, "missing-run").await;
+        assert!(
+            member_attempt.is_err(),
+            "member must be denied streaming a run they can't watch"
+        );
+
+        // Admin is unaffected: the socket upgrades and the daemon returns the
+        // honest 'no live run' error frame rather than a 403.
+        let mut admin_ws = connect_tmux_ws(running.addr, &token, "missing-run").await;
+        let err = next_ws_text_containing(&mut admin_ws, "no live run").await;
+        assert!(err.contains("missing-run"));
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 }
