@@ -36,6 +36,12 @@ const ActivityView = lazy(() =>
 const ArchitectureView = lazy(() =>
   import('@/components/ArchitectureView').then((module) => ({ default: module.ArchitectureView })),
 );
+const ArtifactsView = lazy(() =>
+  import('@/components/ArtifactsView').then((module) => ({ default: module.ArtifactsView })),
+);
+const ArtifactView = lazy(() =>
+  import('@/components/ArtifactView').then((module) => ({ default: module.ArtifactView })),
+);
 const DecisionsView = lazy(() =>
   import('@/components/DecisionsView').then((module) => ({ default: module.DecisionsView })),
 );
@@ -169,6 +175,13 @@ function glossarySearch(raw: SearchRecord): GlossarySearch {
     ...drawerSearch(raw),
     ...(q ? { q } : {}),
   };
+}
+
+type ArtifactViewSearch = { version?: number };
+
+function artifactViewSearch(raw: SearchRecord): ArtifactViewSearch {
+  const version = Number(raw.version);
+  return Number.isFinite(version) && version > 0 ? { version } : {};
 }
 
 function tasksSearch(raw: SearchRecord): TasksSearch {
@@ -387,6 +400,35 @@ const glossaryRoute = createRoute({
   },
 });
 
+const artifactsRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'artifacts',
+  component: function ArtifactsRoute() {
+    const { projectId } = projectRoute.useParams();
+    rememberProject(projectId);
+    return (
+      <Suspense fallback={fallback('Loading artifacts...')}>
+        <ArtifactsView projectId={projectId} />
+      </Suspense>
+    );
+  },
+});
+
+const artifactViewRoute = createRoute({
+  getParentRoute: () => projectRoute,
+  path: 'artifacts/$artifactId',
+  validateSearch: artifactViewSearch,
+  component: function ArtifactViewRoute() {
+    const { projectId } = projectRoute.useParams();
+    rememberProject(projectId);
+    return (
+      <Suspense fallback={fallback('Loading artifact...')}>
+        <ArtifactView projectId={projectId} />
+      </Suspense>
+    );
+  },
+});
+
 const tasksRoute = createRoute({
   getParentRoute: () => projectRoute,
   path: 'tasks',
@@ -542,6 +584,8 @@ const routeTree = rootRoute.addChildren([
     decisionsRoute,
     architectureRoute,
     glossaryRoute,
+    artifactsRoute,
+    artifactViewRoute,
     tasksRoute,
     activityRoute,
     runsRoute,

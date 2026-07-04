@@ -1,10 +1,11 @@
 // @arch arch_MK2Q2.7
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { ChevronDown, ChevronRight, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchArchitecture } from '@/lib/api';
 import { appendDrawerStack, routeSearch, type AppSearch } from '@/lib/searchState';
@@ -12,6 +13,7 @@ import type { ArchitectureSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
 import { CopyIdBadge } from './CopyIdBadge';
+import { GenerateArtifactDialog } from './GenerateArtifactDialog';
 import { ErrorPanel, PageHeader } from './Primitives';
 import { NodeListView } from './node-views/NodeListView';
 import { NodeModal } from './node-views/NodeModal';
@@ -35,6 +37,10 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
   const search = useSearch({ strict: false }) as ArchitectureSearch;
   const refresh = useRefreshToken();
   const [collapsedRoots, setCollapsedRoots] = useState<Set<string>>(() => new Set());
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateSelectionOpen, setGenerateSelectionOpen] = useState(false);
   const architecture = useResource(`architecture:${projectId}:${refresh}`, () => fetchArchitecture(projectId));
   const query = search.q ?? '';
   const filteredTree = useMemo(() => {
@@ -100,6 +106,15 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
     });
   }
 
+  function toggleSelected(id: string) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   if (architecture.error) return <ErrorPanel error={architecture.error} />;
 
   return (
@@ -108,6 +123,33 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
         title="Architecture"
         count={filteredTree.length}
         description={`Org-sourced mechanism model for ${projectId}.`}
+        actions={
+          <>
+            <Button
+              type="button"
+              variant={selectMode ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={selectMode}
+              onClick={() => {
+                setSelectMode((v) => !v);
+                setSelected(new Set());
+              }}
+            >
+              {selectMode ? `${selected.size} selected` : 'Select'}
+            </Button>
+            {selectMode ? (
+              <Button type="button" size="sm" disabled={selected.size === 0} onClick={() => setGenerateSelectionOpen(true)}>
+                <Sparkles />
+                Generate from {selected.size} selected
+              </Button>
+            ) : (
+              <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
+                <Sparkles />
+                Generate artifact
+              </Button>
+            )}
+          </>
+        }
       />
       <NodeListView
         ariaLabel="Architecture"
@@ -115,7 +157,7 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
         getId={(row) => row.item.id}
         search={query}
         onSearchChange={setQuery}
-        onSelect={openNode}
+        onSelect={selectMode ? toggleSelected : openNode}
         loading={architecture.loading}
         listId={ARCHITECTURE_LIST_ID}
         renderRow={(row) => {
@@ -163,9 +205,37 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
           );
         }}
         renderActionZone={(row) => (
-          row.item.motivated_by[0] ? (
-            <CopyIdBadge value={row.item.motivated_by[0]} className="hidden h-4 origin-center scale-[0.85] rounded-sm px-1 text-[10px] leading-none sm:inline-flex" />
-          ) : null
+          <div className="flex items-center gap-1.5">
+            {row.item.motivated_by[0] ? (
+              <CopyIdBadge value={row.item.motivated_by[0]} className="hidden h-4 origin-center scale-[0.85] rounded-sm px-1 text-[10px] leading-none sm:inline-flex" />
+            ) : null}
+            {selectMode ? (
+              <Checkbox
+                checked={selected.has(row.item.id)}
+                onCheckedChange={() => toggleSelected(row.item.id)}
+                aria-label={`Select ${row.item.label || row.item.id}`}
+              />
+            ) : null}
+          </div>
+        )}
+      />
+      <GenerateArtifactDialog
+        projectId={projectId}
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        nodes={(architecture.data ?? []).map((item) => item.id)}
+        nodeLabels={(architecture.data ?? []).map((item) => item.label || item.id)}
+      />
+      <GenerateArtifactDialog
+        projectId={projectId}
+        open={generateSelectionOpen}
+        onOpenChange={(next) => {
+          setGenerateSelectionOpen(next);
+          if (!next) setSelectMode(false);
+        }}
+        nodes={[...selected]}
+        nodeLabels={[...selected].map(
+          (id) => (architecture.data ?? []).find((item) => item.id === id)?.label ?? id,
         )}
       />
       <NodeModal projectId={projectId} nodeKind="architecture" seed={{ architecture: architecture.data ?? null }} />

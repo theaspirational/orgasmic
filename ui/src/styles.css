@@ -57,6 +57,22 @@
   --bad: var(--destructive);
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --sans: 'Geist Variable', system-ui, -apple-system, sans-serif;
+
+  /* Wireframe/diagram tokens (arch_A3NSW — artifact block renderer). Aliased
+     to the app's own semantic tokens (rather than duplicated per theme block)
+     so a Wireframe/Screen/Diagram body reads correctly in every theme this
+     file defines, the same way the legacy bg/text aliases above do. */
+  --wf-ink: var(--foreground);
+  --wf-muted: var(--muted-foreground);
+  --wf-line: var(--border);
+  --wf-paper: var(--background);
+  --wf-card: var(--card);
+  --wf-accent: var(--primary);
+  --wf-accent-fg: var(--primary-foreground);
+  --wf-accent-soft: var(--accent-soft);
+  --wf-warn: var(--warn);
+  --wf-ok: var(--ok);
+  --wf-radius: var(--radius);
 }
 
 /* Safe-area insets. The Android shell runs the WebView edge-to-edge (it draws
@@ -629,4 +645,184 @@ html[data-theme='black-paper'] [data-slot='sidebar-inner'] {
   html {
     @apply font-sans;
   }
+}
+
+/* ---- Wireframe / diagram sandbox (arch_A3NSW artifact renderer) --------- */
+/* Every rendered Wireframe/Screen/Diagram body is wrapped in
+   `.orgasmic-wireframe` so bare elements (h1-h3, p, button, input, a, hr) get
+   a sensible themed default without the author writing any classes, per
+   ~/.claude/skills/visual-plan/references/wireframe.md. Scoped to this class
+   so it never leaks into the rest of the app shell. */
+.orgasmic-wireframe {
+  color: var(--wf-ink);
+  background: var(--wf-paper);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.orgasmic-wireframe * {
+  box-sizing: border-box;
+}
+.orgasmic-wireframe h1,
+.orgasmic-wireframe h2,
+.orgasmic-wireframe h3 {
+  margin: 0 0 4px;
+  font-weight: 600;
+  color: var(--wf-ink);
+}
+.orgasmic-wireframe h1 {
+  font-size: 1.2em;
+}
+.orgasmic-wireframe h2 {
+  font-size: 1.08em;
+}
+.orgasmic-wireframe h3 {
+  font-size: 0.98em;
+}
+.orgasmic-wireframe p,
+.orgasmic-wireframe li {
+  color: var(--wf-ink);
+  margin: 0;
+}
+.orgasmic-wireframe small {
+  color: var(--wf-muted);
+  font-size: 0.85em;
+}
+.orgasmic-wireframe a {
+  color: var(--wf-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--wf-accent) 40%, transparent);
+}
+.orgasmic-wireframe hr {
+  border: none;
+  border-top: 1px solid var(--wf-line);
+  margin: 8px 0;
+}
+.orgasmic-wireframe button {
+  font: inherit;
+  color: var(--wf-ink);
+  background: var(--wf-card);
+  border: 1.2px solid var(--wf-line);
+  border-radius: var(--wf-radius);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.orgasmic-wireframe button.primary,
+.orgasmic-wireframe button[data-primary],
+.orgasmic-wireframe [data-primary] {
+  background: var(--wf-accent);
+  color: var(--wf-accent-fg);
+  border-color: transparent;
+}
+.orgasmic-wireframe input,
+.orgasmic-wireframe select,
+.orgasmic-wireframe textarea {
+  font: inherit;
+  color: var(--wf-ink);
+  background: var(--wf-paper);
+  border: 1.2px solid var(--wf-line);
+  border-radius: calc(var(--wf-radius) * 0.6);
+  padding: 5px 8px;
+}
+.orgasmic-wireframe input[type='checkbox'],
+.orgasmic-wireframe input[type='radio'] {
+  width: auto;
+  padding: 0;
+  accent-color: var(--wf-accent);
+}
+.orgasmic-wireframe label {
+  color: var(--wf-ink);
+  font-size: 0.92em;
+}
+.orgasmic-wireframe .wf-card,
+.orgasmic-wireframe .wf-box {
+  background: var(--wf-card);
+  border: 1.2px solid var(--wf-line);
+  border-radius: var(--wf-radius);
+  padding: 10px;
+}
+.orgasmic-wireframe .wf-pill,
+.orgasmic-wireframe .wf-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--wf-line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.82em;
+  color: var(--wf-ink);
+  background: var(--wf-card);
+}
+.orgasmic-wireframe .wf-pill.accent,
+.orgasmic-wireframe .wf-chip.accent {
+  background: var(--wf-accent-soft);
+  border-color: transparent;
+  color: var(--wf-accent);
+}
+.orgasmic-wireframe .wf-muted {
+  color: var(--wf-muted);
+}
+.orgasmic-wireframe .wf-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.125em;
+}
+.orgasmic-wireframe.wf-skeleton .wf-card,
+.orgasmic-wireframe.wf-skeleton .wf-box {
+  border-color: transparent;
+}
+
+/* Diagram HTML/CSS blocks share the same token set through renderer-owned
+   primitives (document-quality.md), scoped separately since a Diagram is not
+   a product-screen mockup. */
+.orgasmic-diagram {
+  color: var(--wf-ink);
+  background: var(--wf-paper);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.orgasmic-diagram .diagram-panel,
+.orgasmic-diagram .diagram-card {
+  background: var(--wf-card);
+  border: 1.2px solid var(--wf-line);
+  border-radius: var(--wf-radius);
+  padding: 12px;
+}
+.orgasmic-diagram .diagram-node,
+.orgasmic-diagram .diagram-box {
+  background: var(--wf-card);
+  border: 1.2px solid var(--wf-line);
+  border-radius: calc(var(--wf-radius) * 0.7);
+  padding: 8px 12px;
+  display: inline-block;
+}
+.orgasmic-diagram .diagram-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--wf-line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  font-size: 0.82em;
+  background: var(--wf-card);
+}
+.orgasmic-diagram .diagram-muted {
+  color: var(--wf-muted);
+}
+
+/* Shiki dual-theme output (Code/AnnotatedCode blocks): codeToHtml is called
+   once with themes:{light,dark} + defaultColor:false, emitting only the
+   --shiki-light*/--shiki-dark* CSS vars per token — these rules pick the
+   active one from the same `.dark` class ThemeProvider already toggles, so
+   toggling the app theme re-themes highlighted code with no re-highlight. */
+.shiki,
+.shiki span {
+  color: var(--shiki-light);
+  background-color: var(--shiki-light-bg);
+}
+.dark .shiki,
+.dark .shiki span {
+  color: var(--shiki-dark);
+  background-color: var(--shiki-dark-bg);
 }

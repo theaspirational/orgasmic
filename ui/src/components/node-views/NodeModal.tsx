@@ -1,7 +1,7 @@
 // @arch arch_MK2Q2.7
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { ArrowLeft, Check, Copy, ExternalLink, Eye, Pencil } from 'lucide-react';
+import { ArrowLeft, Check, Copy, ExternalLink, Eye, Pencil, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +26,7 @@ import type { ArchitectureSummary, DecisionSummary, GlossarySummary } from '@/li
 import { useResource } from '@/lib/useResource';
 
 import { CopyIdBadge } from '../CopyIdBadge';
+import { GenerateArtifactDialog } from '../GenerateArtifactDialog';
 import { inferNodeKind, shortPath, type NodeKind } from './orgNodes';
 
 // Summaries for every layer, so the modal can resolve cross-kind chip labels,
@@ -395,7 +396,7 @@ function NodeModalContent({
               mode={mode}
             />
           </div>
-          <Aside id={activeId} kind={activeKind} data={data} onOpenNode={onOpenNode} />
+          <Aside projectId={projectId} id={activeId} kind={activeKind} data={data} onOpenNode={onOpenNode} />
         </div>
       </ScrollArea>
     </>
@@ -403,16 +404,19 @@ function NodeModalContent({
 }
 
 function Aside({
+  projectId,
   id,
   kind,
   data,
   onOpenNode,
 }: {
+  projectId: string;
   id: string;
   kind: NodeKind;
   data: DetailData;
   onOpenNode: (id: string) => void;
 }) {
+  const [generateOpen, setGenerateOpen] = useState(false);
   const archNode = kind === 'architecture' ? data.architecture.find((item) => item.id === id) : undefined;
   const decision = kind === 'decision' ? data.decisions.find((item) => item.id === id) : undefined;
   const decisionChildren = decision
@@ -426,8 +430,21 @@ function Aside({
       ? archNode?.source_file
       : data.glossary.find((item) => item.id === id)?.source_file;
   const tests = archNode?.tests ?? [];
+  const nodeLabel = nodeTitle(kind, id, data);
   return (
     <aside className="flex min-w-0 flex-col gap-3 rounded-md border bg-muted/20 p-3">
+      <Button type="button" variant="outline" size="sm" onClick={() => setGenerateOpen(true)}>
+        <Sparkles />
+        Generate artifact
+      </Button>
+      <GenerateArtifactDialog
+        projectId={projectId}
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        nodes={[id]}
+        nodeLabels={[nodeLabel]}
+      />
+      <Separator />
       <div>
         <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">Source</dt>
         <dd className="mt-1 flex items-center gap-1 font-mono text-xs">

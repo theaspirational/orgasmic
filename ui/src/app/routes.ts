@@ -18,7 +18,8 @@ export function initialView(): ViewName {
     raw === 'manager' ||
     raw === 'org' ||
     raw === 'status' ||
-    raw === 'settings'
+    raw === 'settings' ||
+    raw === 'artifacts'
   ) {
     return raw;
   }
@@ -43,6 +44,7 @@ export const NAV: { id: ViewName; label: string }[] = [
   { id: 'decisions', label: 'Decisions' },
   { id: 'architecture', label: 'Architecture' },
   { id: 'glossary', label: 'Glossary' },
+  { id: 'artifacts', label: 'Artifacts' },
   { id: 'activity', label: 'Activity' },
   { id: 'project', label: 'Project' },
   { id: 'tasks', label: 'Tasks' },
