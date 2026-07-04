@@ -3599,3 +3599,75 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-04 Sat 18:44:49 manager.dispatch_aborted TASK-DJGM5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1371
+:TIME:         [2026-07-04 Sat 18:44:49]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJGM5
+:REASON:       rmux run interrupted by environmental tmux-server teardown (whole server gone, all 9 sessions died at once ~21:35, coincident with terminal model-switch/compact) -- NOT a worker fault. Partial backend preserved at worktree commit ed95f29 (members.rs, authz.rs, identity middleware, /login+/me, comment route renames; ~40%, one missing handler post_artifact_comment_resolve from compiling). Worktree kept for continuation; UI half not started.
+:CLOSED_TX:    tx-20260704-orgasmic-1363
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-djgm5/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-04 Sat 18:44:49 task.state_transitioned TASK-DJGM5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1372
+:TIME:         [2026-07-04 Sat 18:44:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJGM5
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-DJGM5 to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-04 Sat 18:44:49 implementer.commit_pending TASK-DJGM5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1373
+:TIME:         [2026-07-04 Sat 18:44:49]
+:TYPE:         implementer.commit_pending
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJGM5
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-DJGM5-implementer-20260704T181745.jsonl
+:REASON:       implementer dispatch completed with uncommitted worktree
+:RUN_ID:       run-20260704T181745-81e2f7b079354edcb456006211f8dd0d
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-djgm5/worktree
+:HAS_UNCOMMITTED: yes
+:END:
+
+* TX 2026-07-04 Sat 18:45:38 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1374
+:TIME:         [2026-07-04 Sat 18:45:38]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-04 Sat 18:45:38 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1375
+:TIME:         [2026-07-04 Sat 18:45:38]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
