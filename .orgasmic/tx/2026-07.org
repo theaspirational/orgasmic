@@ -2755,3 +2755,264 @@
 :REASON:       edited task node TASK-EDQPG
 :NODE_ID:      TASK-EDQPG
 :END:
+
+* TX 2026-07-04 Sat 10:59:43 task.state_transitioned TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1318
+:TIME:         [2026-07-04 Sat 10:59:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RCWFF to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-04 Sat 10:59:43 manager.dispatch_started TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1319
+:TIME:         [2026-07-04 Sat 10:59:43]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rcwff/worktree
+:BRANCH:       task-rcwff-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RCWFF/task-RCWFF-brief.md
+:STARTED_AT:   [2026-07-04 Sat 10:59:43]
+:LIVENESS:     0ecbe77ee1b40882d81d3a98824a4cecffa8948f
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: hot-session followup rail (dec_S02E2)
+:END:
+
+* TX 2026-07-04 Sat 10:59:43 run.created TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1320
+:TIME:         [2026-07-04 Sat 10:59:43]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RCWFF-implementer-20260704T105943.jsonl
+:REASON:       hot-session followup rail (dec_S02E2)
+:RUN_ID:       run-20260704T105943-9d1ec64f8a684ef08378ed68806d001c
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor
+:KIND:         implementer
+:DRIVER:       subprocess-stream-json
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rcwff/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RCWFF/task-RCWFF-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-RCWFF/task-RCWFF-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-RCWFF/task-RCWFF-stdout.log
+:PID:          34552
+:DISPATCH_TX:  tx-20260704-orgasmic-1319
+:END:
+
+* TX 2026-07-04 Sat 10:59:44 task.state_transitioned TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1321
+:TIME:         [2026-07-04 Sat 10:59:44]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-0J0AV to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-04 Sat 10:59:44 manager.dispatch_started TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1322
+:TIME:         [2026-07-04 Sat 10:59:44]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-0j0av/worktree
+:BRANCH:       task-0j0av-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-0J0AV/task-0J0AV-brief.md
+:STARTED_AT:   [2026-07-04 Sat 10:59:44]
+:LIVENESS:     0ecbe77ee1b40882d81d3a98824a4cecffa8948f
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: prompt-only artifacts (dec_1EEYE)
+:END:
+
+* TX 2026-07-04 Sat 10:59:44 run.created TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1323
+:TIME:         [2026-07-04 Sat 10:59:44]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-0J0AV-implementer-20260704T105944.jsonl
+:REASON:       prompt-only artifacts (dec_1EEYE)
+:RUN_ID:       run-20260704T105944-a550ff81355f4a7aac3cfc021683446f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor
+:KIND:         implementer
+:DRIVER:       subprocess-stream-json
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-0j0av/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-0J0AV/task-0J0AV-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-0J0AV/task-0J0AV-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-0J0AV/task-0J0AV-stdout.log
+:PID:          34939
+:DISPATCH_TX:  tx-20260704-orgasmic-1322
+:END:
+
+* TX 2026-07-04 Sat 11:03:11 implementer.commit_pending TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1324
+:TIME:         [2026-07-04 Sat 11:03:11]
+:TYPE:         implementer.commit_pending
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-0J0AV-implementer-20260704T105944.jsonl
+:REASON:       implementer dispatch completed with uncommitted worktree
+:RUN_ID:       run-20260704T105944-a550ff81355f4a7aac3cfc021683446f
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-0j0av/worktree
+:HAS_UNCOMMITTED: yes
+:END:
+
+* TX 2026-07-04 Sat 11:05:46 implementer.done TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1325
+:TIME:         [2026-07-04 Sat 11:05:46]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:REASON:       prompt-only artifact generation; inline Opus review = ship (guard removal safe, 47 artifact tests green, clippy clean)
+:WORKER_COMMIT: d37443c91086354db5d7128622245bb4e63826b8
+:MERGE_SHA:    aa9f9f142b68137af864650b852562d49d4bb85c
+:BRANCH:       task-0j0av-impl
+:REVIEWED_DIFF: 0ecbe77..d37443c91086354db5d7128622245bb4e63826b8
+:CLOSED_TX:    tx-20260704-orgasmic-1322
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-04 Sat 11:05:46 task.state_transitioned TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1326
+:TIME:         [2026-07-04 Sat 11:05:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-0J0AV to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-04 Sat 11:06:10 task.state_transitioned TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1327
+:TIME:         [2026-07-04 Sat 11:06:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged to main aa9f9f1; inline Opus review shipped (guard removal safe, 47 artifact tests green, clippy clean)
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-04 Sat 11:12:38 implementer.commit_pending TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1328
+:TIME:         [2026-07-04 Sat 11:12:38]
+:TYPE:         implementer.commit_pending
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RCWFF-implementer-20260704T105943.jsonl
+:REASON:       implementer dispatch completed with uncommitted worktree
+:RUN_ID:       run-20260704T105943-9d1ec64f8a684ef08378ed68806d001c
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rcwff/worktree
+:HAS_UNCOMMITTED: yes
+:END:
+
+* TX 2026-07-04 Sat 11:17:31 task.created TASK-X0ZVE
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1329
+:TIME:         [2026-07-04 Sat 11:17:31]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-X0ZVE
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       one-off failure observed during TASK-RCWFF review
+:END:
+
+* TX 2026-07-04 Sat 11:17:49 implementer.done TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1330
+:TIME:         [2026-07-04 Sat 11:17:49]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:REASON:       rmux send_input followup delivery; inline Opus review = ship (field threading sound, wait_for_input_ready hang-fix, 122/122 tests, clippy clean; lone render flake pre-existing TASK-X0ZVE)
+:WORKER_COMMIT: 1c7ce0cce2981d9fd6b74f8e40097d37a1662ea5
+:MERGE_SHA:    446f8cfe56facdd73b41f748f1cda0fe117e283b
+:BRANCH:       task-rcwff-impl
+:REVIEWED_DIFF: 0ecbe77..1c7ce0cce2981d9fd6b74f8e40097d37a1662ea5
+:CLOSED_TX:    tx-20260704-orgasmic-1319
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-04 Sat 11:17:49 task.state_transitioned TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1331
+:TIME:         [2026-07-04 Sat 11:17:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RCWFF to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-04 Sat 11:17:49 task.state_transitioned TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1332
+:TIME:         [2026-07-04 Sat 11:17:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged to main 446f8cf; inline Opus review shipped
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

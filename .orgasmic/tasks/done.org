@@ -11310,3 +11310,30 @@ Acceptance: pressing generate on a real node (via curl) produces a validated art
 [2026-07-03] Landed: merge 6f8b88b (worker c37a5c0, implementer-claude-rmux sonnet-5, +1368/11 files). WorkerKind::Artifactor + shipped/workers/artifactor.org + artifact-generator prompt spec + slots; POST /artifacts/generate + /:id/regenerate launch a real worker run via spawn_worker_run under the artifact.generate:{id} lease (per-artifact regen mutex, LeaseHeld->409); submit-only write path; release-watcher reverts a stuck-regenerating artifact (only-if-still-regenerating, reuses the Y2ZQJ M1 write lock) with artifact.generation.failed tx. Worker self-caught+fixed a lease-ordering bug via live probe (mutate-before-lease closed comments + spurious tx on a 409'd regenerate) -> gated on lease acquire first. Manager diff review: lease-first ordering verified in both handlers; regenerate re-reads reviews.org fresh under the M1 lock before consume+flip. Gates (merged tree): core green (126+29), daemon 216 lib + integration green, cli 100% single-threaded (parallel 1-fail = known SJQ9V flake, no cli code touched), clippy -D warnings clean, architecture drift clean, parse_errors 0. Live probe (isolated serve --port 0): artifactor run visible in run list (task_id=artifact.generate:ART-HHPSK), artifact.created tx, concurrent regenerate->409 zero mutation, invalid submit->422 no write, valid retry->validated mdx+version bump+artifact.submitted, comment closed out (CONSUMED_CIDS), force-release->watcher revert both cases. B05AM fix validated: last.txt landed clean after a 56m run (no clobber). Qualified gap: end-to-end LLM turn not driven (sandbox claude had no creds); downstream contract proven by direct submit. arch_ARSPJ prose updated with artifact.generation.failed. Reviewer pass pending.
 [2026-07-03] Reviewer pass (reviewer-claude-rmux opus-4-8 xhigh, run-20260703T233904, ~10.5m): VERDICT ship-with-fixes. Verified clean: lease-first ordering (both handlers), release-watcher revert safety, submit-only write path (consistent w/ architector/reviewer/griller precedent), M1 lock reuse (no deadlock, bounded), context assembly (slots filled). Findings: M1 MEDIUM (pre-existing: post_artifact_submit lacked the per-artifact lock) + L1/L2 LOW. All fixed inline, commit 510d8d9: submit now wrapped in artifact_write_lock (teeth-verified test artifact_concurrent_resubmits_do_not_lose_version_bumps — 8 concurrent resubmits collapse to 1 version without the lock); consumed_cids predicate matched to consume_all_open_comments (!(resolved&&consumed)); doc comment lists all 4 writers. Gates: daemon 217 lib + integration green, clippy clean, fmt clean. last.txt landed clean (B05AM fix holding). Release-watcher flip-vs-instant-crash = same class as TASK-567JG restart gap (out of scope).
 
+* DONE TASK-0J0AV Prompt-only artifacts: make subject nodes optional :artifacts:daemon:
+:PROPERTIES:
+:ID: TASK-0J0AV
+:IMPLEMENTS: arch_045Q0.1
+:END:
+
+Relax POST /artifacts/generate to accept an empty nodes list (dec_1EEYE). Today post_artifact_generate rejects it ("nodes must be non-empty", api.rs ~9712).
+
+- nodes: [] is valid; artifact.org writes an empty :SUBJECT_NODES:.
+- Context assembly with zero subject nodes degrades to user prompt + repo-read instruction (no subject-Org/graph-neighborhood section); prompt slots render "not set" rather than empty garbage.
+- Materialized index and per-node rollups tolerate node-less artifacts (listed globally, absent from node rollups).
+- Tests: generate with nodes:[] succeeds end to end; node rollups unchanged; regenerate on a node-less artifact works.
+
+* DONE TASK-RCWFF rmux send_input: deliver followup turns into a live TUI session :runtime:drivers:
+:PROPERTIES:
+:ID: TASK-RCWFF
+:IMPLEMENTS: arch_A53QX.4 arch_045Q0.2
+:END:
+
+Implement WorkerDriver::send_input for the rmux mode. The pane-level primitive already exists — paste_text_and_submit (paste-buffer -p -b + send-keys Enter, modes/rmux.rs:940) is used once at dispatch to paste the brief; wire the trait method to the same verb set so POST /runs/:id/input -> supervisor.send_input (which already records composer_send) lands a new user turn in the live harness pane.
+
+Requirements:
+- Re-append the end-of-turn-marker instruction to every followup (same contract as the dispatch paste) so the babysitter's per-round stall detection keeps working.
+- Define mid-turn behavior deliberately (queue vs reject with a clear ack message) and test it; a paste landing while the harness is streaming must not corrupt the turn.
+- No supervisor/API changes expected — the plumbing exists; this is driver-mode work plus tests.
+- Rendered-screen tests mirroring the existing dispatch-paste tests: input lands as a user turn, EOT marker fires at round end, composer_send tx recorded.
+
