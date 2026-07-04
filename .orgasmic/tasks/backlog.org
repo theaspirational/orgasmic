@@ -52,6 +52,7 @@ Acceptance: two browsers, two members (one editor, one viewer) minted via CLI, b
 Close the loop end to end: Regenerate button (admin/editor) with optional extra-prompt field -> POST /artifacts/:id/regenerate archives the closing version (versions/vN.mdx + its comments marked consumed) and launches the artifactor with prior artifact + all current-version comments (authors, resolution state, anchors) + extra prompt in context; artifact regenerating state locks the comment box with a banner in every open browser (WS); on submit, the new version renders with a clean comment surface. Version switcher in ArtifactView browses archived versions together with their comment threads. artifact.regenerated tx entries complete the audit trail.
 
 Acceptance (full two-member smoke, per the feature verification): editor generates a visual-plan artifact on a task node; viewer pins comments; editor presses Regenerate with an extra prompt; commenting locks live in the viewer's browser; when the run completes, versions/v1.mdx exists with the viewer's comment archived+consumed, v2 renders clean, the version switcher shows v1 with its thread, and the tx log tells the whole story in order.
+Note (dec_S02E2): regenerate may now route to a live hot-session run instead of cold-spawning (TASK-RH4M5). The UI contract here is unchanged — regenerating state, lock banner, version switcher — but the loop should feel conversational when a session is live.
 
 * BACKLOG TASK-SJQ9V doctor staleness test fails only under cargo test --workspace concurrency    :tests:cli:
 :PROPERTIES:
@@ -88,3 +89,47 @@ Root cause: the session's RunMeta lifecycle event carries transport/harness/proj
 Fix direction: persist last_path + stdout_path (and worktree_path) in the RunMeta lifecycle event at dispatch time; on boot reattach (reattach_live_runs_on_boot), reconstruct a DispatchCompletion from RunMeta and call spawn_dispatch_completion_watcher for each reattached worker/reviewer run. Add a test: reattach a run with RunMeta artifact paths, release it, assert last.txt is written. Until then, the harness transcript remains the rescue source for restart-mid-run dispatches.
 
 Workaround already in effect: prefer in-process agent reviewers over rmux dispatches while the report path is fragile; rescue from harness transcript when a dispatch loses its report.
+
+* BACKLOG TASK-RCWFF rmux send_input: deliver followup turns into a live TUI session    :runtime:drivers:
+:PROPERTIES:
+:ID: TASK-RCWFF
+:IMPLEMENTS: arch_A53QX.4 arch_045Q0.2
+:END:
+
+Implement WorkerDriver::send_input for the rmux mode. The pane-level primitive already exists — paste_text_and_submit (paste-buffer -p -b + send-keys Enter, modes/rmux.rs:940) is used once at dispatch to paste the brief; wire the trait method to the same verb set so POST /runs/:id/input -> supervisor.send_input (which already records composer_send) lands a new user turn in the live harness pane.
+
+Requirements:
+- Re-append the end-of-turn-marker instruction to every followup (same contract as the dispatch paste) so the babysitter's per-round stall detection keeps working.
+- Define mid-turn behavior deliberately (queue vs reject with a clear ack message) and test it; a paste landing while the harness is streaming must not corrupt the turn.
+- No supervisor/API changes expected — the plumbing exists; this is driver-mode work plus tests.
+- Rendered-screen tests mirroring the existing dispatch-paste tests: input lands as a user turn, EOT marker fires at round end, composer_send tx recorded.
+
+* BACKLOG TASK-RH4M5 Hot-session artifact generation: rmux artifactor default + live followup routing    :artifacts:daemon:runtime:
+:PROPERTIES:
+:DEPENDS_ON: TASK-RCWFF
+:ID: TASK-RH4M5
+:IMPLEMENTS: arch_045Q0 arch_045Q0.2
+:END:
+
+Make the hot session the default generation loop (dec_S02E2, arch_045Q0.2).
+
+- Add an rmux-driven artifactor worker record (DRIVER rmux, HARNESS claude) and make it the default for artifact generation; keep the acp-stdio record as an alternate.
+- Generate launches the run as today, but the run persists after the first submit (session stays in the pane; artifact flips to submitted, run stays leased).
+- Regenerate branches on the lease: a live run holding artifact.generate:{id} gets the followup routed via send_input — version-N close-out (archive + mark consumed) happens exactly as the cold path, then the followup payload (consumed comments with authors/anchors + extra prompt) is pasted as the next turn. No live lease-holder -> cold spawn, unchanged.
+- State discipline per round: regenerating on followup send, submitted on submit; the per-artifact write lock covers the new branch; release-watcher revert semantics unchanged (guards session death mid-round).
+- Session lifetime: explicit end (release) plus an idle timeout (config default); daemon restart orphans the session -> next round cold-spawns (accepted, same class as TASK-567JG).
+
+Acceptance: two consecutive grilling rounds on one artifact reuse one run_id and round 2 pays no spawn/context-assembly cost; killing the session mid-round reverts to submitted@vN via the watcher; after a daemon restart the next regenerate cold-spawns cleanly; tx log shows regenerated/submitted per round with correct versions.
+
+* BACKLOG TASK-0J0AV Prompt-only artifacts: make subject nodes optional    :artifacts:daemon:
+:PROPERTIES:
+:ID: TASK-0J0AV
+:IMPLEMENTS: arch_045Q0.1
+:END:
+
+Relax POST /artifacts/generate to accept an empty nodes list (dec_1EEYE). Today post_artifact_generate rejects it ("nodes must be non-empty", api.rs ~9712).
+
+- nodes: [] is valid; artifact.org writes an empty :SUBJECT_NODES:.
+- Context assembly with zero subject nodes degrades to user prompt + repo-read instruction (no subject-Org/graph-neighborhood section); prompt slots render "not set" rather than empty garbage.
+- Materialized index and per-node rollups tolerate node-less artifacts (listed globally, absent from node rollups).
+- Tests: generate with nodes:[] succeeds end to end; node rollups unchanged; regenerate on a node-less artifact works.

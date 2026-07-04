@@ -1661,3 +1661,16 @@ The full Agent-Native plan block renderer (~22 block types including diagram, wi
 - Role gates mirror the daemon: viewers see no Generate/Regenerate affordances.
 - Live updates ride the existing WebSocket event surface, not polling.
 - The renderer port is bundle-weight-heavy by accepted decision (dec_GPV4G); no parallel lean renderer is kept.
+
+* arch_045Q0.2 hot-session followup channel
+:PROPERTIES:
+:CALLS: arch_A53QX.2 arch_A53QX.4 arch_045Q0.1
+:ID: arch_045Q0.2
+:MOTIVATED_BY: dec_S02E2 dec_1EEYE
+:READS: file:project
+:SOURCE_PATHS: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs shipped/workers/artifactor.org
+:TESTS: cargo test -p orgasmic-drivers && cargo test -p orgasmic-daemon
+:WRITES: file:project
+:END:
+
+The interactive-loop rail (dec_S02E2). Artifactor runs launch as long-lived rmux runs by default. When a regenerate/answer submission arrives while a live run holds the artifact.generate:{id} lease, the handler closes out version N exactly as the cold path does (archive vN.mdx, mark comments consumed) and then routes the followup payload — consumed comments with authors/anchors plus the extra prompt — into the live session via WorkerDriver::send_input, implemented for the rmux mode as paste-buffer + send-keys with the end-of-turn-marker instruction re-appended per round (stall babysitter keeps supervising each round). The lease doubles as session ownership; no live lease-holder means cold spawn, unchanged from arch_045Q0.1. orgasmic artifact submit stays the durable end-of-round signal: state flips regenerating on followup send, submitted on submit, and the release-watcher revert still guards a session dying mid-round. Session lifetime ends on explicit release or idle timeout; a daemon restart orphans the in-process session and the next round falls back to cold spawn (same class as TASK-567JG).

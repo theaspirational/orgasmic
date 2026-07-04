@@ -1822,3 +1822,37 @@ Context: The cross-layer Graph page shipped complete under goal-20260615-ship-th
 Decision: Remove the Graph page viewer while keeping the graph data model whole. Excise GraphView.tsx + node-views/NodeGraph.tsx (the app's only React Flow usage) with their route, nav entry, api functions, and tests; the /graph/layout GET/PATCH endpoints; parse_graph_layout_overlay + .orgasmic/graph_layout.org; and the graph_curator prompt spec. Cross-layer visibility becomes an artifact concern per dec_GPV4G - diagram blocks over curated subgraphs, commented and regenerated, instead of a live pan-zoom canvas. Keep GraphIndex, /graph/nodes, /graph/edges, /graph/parse-errors, /graph/markers, and the dec_KTF04 superseded machinery: they serve the framework core and the artifactor's graph-neighborhood context.
 
 Consequences: dec_WWAHT (layout-overlay persistence) is superseded - moot without the page. dec_KTF04's surface note (only the Graph page surfaces superseded decisions, grayed) is amended in effect: superseded decisions surface through the DecisionsView show-superseded toggle; the retention model is untouched. No data or write-authority loss (page topology was read-only). @xyflow/react drops from ui dependencies. arch_M8JQT sheds its graph-page INTERFACE/CONSTRAINTS claims at excision so architecture drift stays clean. The one real loss is a live always-current topology view; artifacts are regenerate-on-demand snapshots - accepted for the framework core, and the page can return later without schema work since every projection it consumed remains.
+
+* dec_S02E2 How do grilling answers and regeneration followups reach the agent: fresh run per round or a live session?
+:PROPERTIES:
+:ID: dec_S02E2
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+The 2ZQSB pipeline cold-spawns an artifactor run per generate/regenerate: each round pays worker spawn + full context assembly + the agent re-reading the repo. Fine for occasional review regenerations; too slow for the interactive grilling loop (QuestionForm answers -> next question round) that should feel like a conversation. Three candidate paths: cold respawn per round; warm resume (persist the harness session_id, respawn with --resume); persistent hot session receiving followups.
+
+** Decision
+Hot session is the default. Artifact generation runs launch as long-lived interactive rmux runs (a TUI harness in a pane). Followups — grilling answers, review comments, extra prompts — are pasted into the live session through WorkerDriver::send_input wired to the rmux paste-buffer/send-keys verbs, reached via the existing POST /runs/:id/input + supervisor.send_input (composer_send) path.
+
+Why rmux and not the stream-json/acp path:
+- an rmux session is inherently persistent between turns — the turn-end=run-end problem of the stream-json adapters (claude result -> RunComplete) never arises;
+- the operator can attach to the pane in the TUI and watch or join the grilling live;
+- the stall babysitter already supervises rmux runs — each followup paste re-appends the end-of-turn-marker instruction so per-round stall detection keeps working;
+- orgasmic artifact submit remains the durable end-of-round signal — no new turn-detection machinery, every round stays versioned and tx-stamped.
+
+Cold spawn remains the fallback whenever no live run holds the artifact.generate:{id} lease (first generate, session died, daemon restart) — the lease doubles as session ownership, so routing is a single branch in regenerate. Warm resume is rejected as the default but stays on the table as a later optimization for reviving dead sessions.
+
+Honest latency note: a hot session removes spawn + context-rebuild overhead, not the model turn itself — rounds are responsive (one streamed turn), not instant.
+
+* dec_1EEYE Must an artifact have subject nodes?
+:PROPERTIES:
+:ID: dec_1EEYE
+:PARENT: dec_GPV4G
+:END:
+
+** Context
+POST /artifacts/generate rejects an empty nodes list today ("nodes must be non-empty"). But grilling is often the step that *produces* the graph node: the operator opens the decisions page and starts a grilling artifact from a bare prompt, before any decision exists to attach it to.
+
+** Decision
+Subject nodes are optional; prompt-only generation is first-class. :SUBJECT_NODES: may be empty. Context assembly degrades gracefully — user prompt + repo-read instruction, no subject-Org/graph-neighborhood section. Per-node artifact rollups simply do not list node-less artifacts; they remain reachable from the artifact list and linkable to nodes later, once the grilled outcome lands as a decision. The grilling button on the decisions page is the first consumer (button/UI scope stays with arch_A3NSW).

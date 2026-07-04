@@ -2663,3 +2663,95 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-04 Sat 08:57:56 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1311
+:TIME:         [2026-07-04 Sat 08:57:56]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_S02E2
+:NODE_ID:      dec_S02E2
+:END:
+
+* TX 2026-07-04 Sat 08:58:05 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1312
+:TIME:         [2026-07-04 Sat 08:58:05]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_1EEYE
+:NODE_ID:      dec_1EEYE
+:END:
+
+* TX 2026-07-04 Sat 08:58:18 graph.architecture.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1313
+:TIME:         [2026-07-04 Sat 08:58:18]
+:TYPE:         graph.architecture.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       created graph node arch_045Q0.2
+:NODE_ID:      arch_045Q0.2
+:END:
+
+* TX 2026-07-04 Sat 08:58:29 task.created TASK-RCWFF
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1314
+:TIME:         [2026-07-04 Sat 08:58:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RCWFF
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       hot-session artifact loop foundation (dec_S02E2)
+:END:
+
+* TX 2026-07-04 Sat 08:58:41 task.created TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1315
+:TIME:         [2026-07-04 Sat 08:58:41]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       dec_S02E2: hot session is the default artifact loop
+:END:
+
+* TX 2026-07-04 Sat 08:58:45 task.created TASK-0J0AV
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1316
+:TIME:         [2026-07-04 Sat 08:58:45]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0J0AV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       dec_1EEYE: grilling starts from a bare prompt
+:END:
+
+* TX 2026-07-04 Sat 08:59:00 task.edited TASK-EDQPG
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1317
+:TIME:         [2026-07-04 Sat 08:59:00]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EDQPG
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-EDQPG
+:NODE_ID:      TASK-EDQPG
+:END:
