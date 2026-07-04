@@ -3016,3 +3016,125 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-04 Sat 12:51:49 task.state_transitioned TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1333
+:TIME:         [2026-07-04 Sat 12:51:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RH4M5 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-04 Sat 12:51:49 manager.dispatch_started TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1334
+:TIME:         [2026-07-04 Sat 12:51:49]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rh4m5/worktree
+:BRANCH:       task-rh4m5-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RH4M5/task-RH4M5-brief.md
+:STARTED_AT:   [2026-07-04 Sat 12:51:49]
+:LIVENESS:     68caa9633b820065d94bcd38d5e1029a66b13aa8
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: Hot-session artifactor default + live followup routing (dec_S02E2, arch_045Q0.2); unblocked by TASK-RCWFF
+:END:
+
+* TX 2026-07-04 Sat 12:51:49 run.created TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1335
+:TIME:         [2026-07-04 Sat 12:51:49]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RH4M5-implementer-20260704T125149.jsonl
+:REASON:       Hot-session artifactor default + live followup routing (dec_S02E2, arch_045Q0.2); unblocked by TASK-RCWFF
+:RUN_ID:       run-20260704T125149-8e7a0895b700413f9d70f4d1b8c1be3b
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-cursor
+:KIND:         implementer
+:DRIVER:       subprocess-stream-json
+:HARNESS:      cursor-agent
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rh4m5/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RH4M5/task-RH4M5-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-RH4M5/task-RH4M5-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-RH4M5/task-RH4M5-stdout.log
+:PID:          95497
+:DISPATCH_TX:  tx-20260704-orgasmic-1334
+:END:
+
+* TX 2026-07-04 Sat 13:05:10 implementer.done TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1336
+:TIME:         [2026-07-04 Sat 13:05:10]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:REASON:       Hot-session artifactor: Parts A/B/C/D1/D2 landed; D3 idle-timeout deferred. Inline review clean; gates green (drivers 124/124 + X0ZVE flake isolated-pass 3/3, daemon 226/226, clippy 0x2).
+:WORKER_SESSION: cursor-agent://orgasmic/TASK-RH4M5
+:WORKER_COMMIT: 4d057a0
+:MERGE_SHA:    fd4474c
+:BRANCH:       task-rh4m5-impl
+:REVIEWED_DIFF: 68caa96..4d057a0
+:CLOSED_TX:    tx-20260704-orgasmic-1334
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-04 Sat 13:05:10 task.state_transitioned TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1337
+:TIME:         [2026-07-04 Sat 13:05:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RH4M5 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-04 Sat 13:05:32 task.created TASK-F9N5F
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1338
+:TIME:         [2026-07-04 Sat 13:05:32]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-F9N5F
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Follow-up: D3 idle-timeout deferred from TASK-RH4M5 per brief scope guard (needs reset-on-input supervisor timer)
+:END:
+
+* TX 2026-07-04 Sat 13:06:09 task.state_transitioned TASK-RH4M5
+:PROPERTIES:
+:TX_ID:        tx-20260704-orgasmic-1339
+:TIME:         [2026-07-04 Sat 13:06:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RH4M5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Manager inline review: ship. Verified against real diff 68caa96..4d057a0 — Part A persistence decoupling (both eot sites, marker still in prompt), Part C hot/cold branch (send_input readiness-gated, 409-on-busy zero-mutation, shared close-out helper), D1 dynamic revert target. Gates green: drivers 124/124 (X0ZVE flake isolated-pass 3/3), daemon 226/226 incl. 4 acceptance tests, clippy 0 both crates, post-merge cargo check clean. Merged fd4474c. D3 idle-timeout deferred -> TASK-F9N5F.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

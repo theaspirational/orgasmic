@@ -11337,3 +11337,20 @@ Requirements:
 - No supervisor/API changes expected — the plumbing exists; this is driver-mode work plus tests.
 - Rendered-screen tests mirroring the existing dispatch-paste tests: input lands as a user turn, EOT marker fires at round end, composer_send tx recorded.
 
+* DONE TASK-RH4M5 Hot-session artifact generation: rmux artifactor default + live followup routing :artifacts:daemon:runtime:
+:PROPERTIES:
+:DEPENDS_ON: TASK-RCWFF
+:ID: TASK-RH4M5
+:IMPLEMENTS: arch_045Q0 arch_045Q0.2
+:END:
+
+Make the hot session the default generation loop (dec_S02E2, arch_045Q0.2).
+
+- Add an rmux-driven artifactor worker record (DRIVER rmux, HARNESS claude) and make it the default for artifact generation; keep the acp-stdio record as an alternate.
+- Generate launches the run as today, but the run persists after the first submit (session stays in the pane; artifact flips to submitted, run stays leased).
+- Regenerate branches on the lease: a live run holding artifact.generate:{id} gets the followup routed via send_input — version-N close-out (archive + mark consumed) happens exactly as the cold path, then the followup payload (consumed comments with authors/anchors + extra prompt) is pasted as the next turn. No live lease-holder -> cold spawn, unchanged.
+- State discipline per round: regenerating on followup send, submitted on submit; the per-artifact write lock covers the new branch; release-watcher revert semantics unchanged (guards session death mid-round).
+- Session lifetime: explicit end (release) plus an idle timeout (config default); daemon restart orphans the session -> next round cold-spawns (accepted, same class as TASK-567JG).
+
+Acceptance: two consecutive grilling rounds on one artifact reuse one run_id and round 2 pays no spawn/context-assembly cost; killing the session mid-round reverts to submitted@vN via the watcher; after a daemon restart the next regenerate cold-spawns cleanly; tx log shows regenerated/submitted per round with correct versions.
+

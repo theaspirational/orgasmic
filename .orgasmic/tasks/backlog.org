@@ -90,23 +90,6 @@ Fix direction: persist last_path + stdout_path (and worktree_path) in the RunMet
 
 Workaround already in effect: prefer in-process agent reviewers over rmux dispatches while the report path is fragile; rescue from harness transcript when a dispatch loses its report.
 
-* BACKLOG TASK-RH4M5 Hot-session artifact generation: rmux artifactor default + live followup routing    :artifacts:daemon:runtime:
-:PROPERTIES:
-:DEPENDS_ON: TASK-RCWFF
-:ID: TASK-RH4M5
-:IMPLEMENTS: arch_045Q0 arch_045Q0.2
-:END:
-
-Make the hot session the default generation loop (dec_S02E2, arch_045Q0.2).
-
-- Add an rmux-driven artifactor worker record (DRIVER rmux, HARNESS claude) and make it the default for artifact generation; keep the acp-stdio record as an alternate.
-- Generate launches the run as today, but the run persists after the first submit (session stays in the pane; artifact flips to submitted, run stays leased).
-- Regenerate branches on the lease: a live run holding artifact.generate:{id} gets the followup routed via send_input — version-N close-out (archive + mark consumed) happens exactly as the cold path, then the followup payload (consumed comments with authors/anchors + extra prompt) is pasted as the next turn. No live lease-holder -> cold spawn, unchanged.
-- State discipline per round: regenerating on followup send, submitted on submit; the per-artifact write lock covers the new branch; release-watcher revert semantics unchanged (guards session death mid-round).
-- Session lifetime: explicit end (release) plus an idle timeout (config default); daemon restart orphans the session -> next round cold-spawns (accepted, same class as TASK-567JG).
-
-Acceptance: two consecutive grilling rounds on one artifact reuse one run_id and round 2 pays no spawn/context-assembly cost; killing the session mid-round reverts to submitted@vN via the watcher; after a daemon restart the next regenerate cold-spawns cleanly; tx log shows regenerated/submitted per round with correct versions.
-
 * BACKLOG TASK-X0ZVE Live rmux tests flake under parallel load (render_stream sentinel timing)    :tests:runtime:
 :PROPERTIES:
 :ID: TASK-X0ZVE
@@ -125,3 +108,17 @@ Fix direction: serialize the live rmux/tmux tests (a shared serial guard / mutex
 or a #[serial] attribute) so real-daemon render/paste tests don't contend, or
 raise the render sentinel wait deadline. Low priority; gate green single-threaded
 and on re-run.
+
+* BACKLOG TASK-F9N5F Hot-session artifactor: idle-timeout session lifetime (D3, deferred from TASK-RH4M5)    :artifacts:daemon:runtime:
+:PROPERTIES:
+:DEPENDS_ON: TASK-RH4M5
+:ID: TASK-F9N5F
+:IMPLEMENTS: arch_045Q0.2
+:PRIORITY: low
+:END:
+
+Deferred D3 from TASK-RH4M5 (hot-session was landed without it; explicit POST /runs/:id/release + daemon-restart cold-spawn already cover teardown).
+
+Add a config-defaulted idle timeout to a persistent artifactor rmux session: if no followup (send_input) arrives for the configured duration, release the run (free the artifact.generate:{id} lease, tear down the pane). The timer RESETS on each accepted send_input — unlike the existing stall/ceiling timeouts (resolve_timeout_secs / is_interactive_manager_task at supervisor.rs), which are not reset-on-input. This is the one part of arch_045Q0.2's session-lifetime clause not yet shipped.
+
+Likely needs new supervisor machinery: a per-run last-input instant updated in supervisor.send_input on ack.accepted, plus a sweep (reuse release_first_timed_out_run's shape) that releases persistent runs idle past the threshold. Config default alongside the other timeout knobs. Acceptance: a persistent artifactor run with no followup for the idle window is released (lease freed, next regenerate cold-spawns); a run receiving periodic followups is never idle-released.
