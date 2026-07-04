@@ -18,8 +18,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
+use axum::extract::{Extension, MatchedPath, Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -49,7 +50,8 @@ use crate::artifacts::{
     new_cid, reviews_org_header, update_artifact_org, validate_mdx, versions_dir, ArtifactDetail,
     ArtifactLoadError, ArtifactSummary, NewComment,
 };
-use crate::auth::{bearer_middleware, AuthState};
+use crate::auth::AuthState;
+use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
@@ -128,10 +130,11 @@ impl ApiState {
 }
 
 pub fn router(state: ApiState) -> Router {
-    let auth_state = state.auth.clone();
+    let identity_state = state.clone();
     let protected = Router::new()
         // v0.0.1 priority: real handlers
         .route("/board", get(get_board))
+        .route("/me", get(get_me))
         .route("/projects", post(add_project).get(get_projects))
         .route("/projects/:id", get(get_project))
         .route(
@@ -247,14 +250,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/artifacts/:id", get(get_artifact))
         .route("/artifacts/:id/submit", post(post_artifact_submit))
         .route("/artifacts/:id/regenerate", post(post_artifact_regenerate))
-        .route("/artifacts/:id/feedback", post(post_artifact_feedback))
+        .route("/artifacts/:id/comments", post(post_artifact_add_comment))
         .route(
-            "/artifacts/:id/feedback/:cid/consume",
-            post(post_artifact_feedback_consume),
+            "/artifacts/:id/comments/:cid/resolve",
+            post(post_artifact_comment_resolve),
         )
         .layer(axum::middleware::from_fn_with_state(
-            auth_state,
-            bearer_middleware,
+            identity_state,
+            identity_middleware,
         ));
 
     let api = Router::new()
@@ -263,6 +266,7 @@ pub fn router(state: ApiState) -> Router {
             "/auth/ui-session",
             post(post_ui_session).get(get_app_session),
         )
+        .route("/login", post(post_login))
         .merge(protected)
         .fallback(api_not_found)
         .with_state(state);
@@ -277,6 +281,195 @@ pub fn router(state: ApiState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+}
+
+// ---- authorization seam wiring (arch_Z8CW2 / dec_KF2MR) --------------------
+//
+// Every request through `protected` resolves an `Identity` (admin, unchanged
+// full access; or a named member with grants read fresh from members.org)
+// and stores it in request extensions. For a member identity, the route
+// itself must additionally appear in `MEMBER_ALLOWED_ROUTES` below — the
+// route->action map spanning the whole surface: everything NOT listed here
+// is implicitly admin-only. Routes that ARE listed still gate their specific
+// per-project action through the one `authz::require` seam inside the
+// handler; this table only decides whether a member's request is even
+// allowed to reach that handler at all.
+
+/// `(HTTP method, axum route template)` pairs a member identity may reach.
+/// Every other route in `protected` is admin-only by omission. `/board` and
+/// `/me` are listed but gate nothing here — their handlers filter results per
+/// identity rather than rejecting the whole request.
+const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/board"),
+    ("GET", "/me"),
+    ("GET", "/projects/:id"),
+    ("GET", "/projects/:id/tasks"),
+    ("GET", "/projects/:id/tasks/:task_id"),
+    ("GET", "/tasks/:id/activity"),
+    ("GET", "/graph/nodes"),
+    ("GET", "/graph/edges"),
+    ("GET", "/decisions"),
+    ("GET", "/decisions/:id"),
+    ("GET", "/architecture"),
+    ("GET", "/architecture/nodes"),
+    ("GET", "/architecture/:id"),
+    ("GET", "/glossary"),
+    ("GET", "/glossary/:id"),
+    ("GET", "/artifacts"),
+    ("GET", "/artifacts/:id"),
+    ("POST", "/artifacts/generate"),
+    ("POST", "/artifacts/:id/regenerate"),
+    ("POST", "/artifacts/:id/comments"),
+    ("POST", "/artifacts/:id/comments/:cid/resolve"),
+    ("GET", "/ws"),
+    ("GET", "/ws/tmux/:run_id"),
+];
+
+fn member_route_allowed(method: &Method, pattern: &str) -> bool {
+    let method = method.as_str();
+    MEMBER_ALLOWED_ROUTES
+        .iter()
+        .any(|(m, p)| *m == method && *p == pattern)
+}
+
+/// Resolves identity for every request under `protected` and, for a member
+/// identity, checks the route against `MEMBER_ALLOWED_ROUTES` before the
+/// handler ever runs. Supersedes the old plain bearer-only `bearer_middleware`
+/// — admin auth (bearer token or admin UI session, plus the WS query-token
+/// escape hatch) is unchanged; member session-cookie resolution is additive.
+pub async fn identity_middleware(
+    State(state): State<ApiState>,
+    matched_path: Option<MatchedPath>,
+    mut request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+    let query_token_allowed = path == "/api/ws"
+        || path.starts_with("/api/ws/")
+        || path == "/ws"
+        || path.starts_with("/ws/");
+
+    let identity = match state.auth.resolve_identity(request.headers(), &state.home) {
+        Some(identity) => identity,
+        None if query_token_allowed && state.auth.check_query_token(request.uri().query()) => {
+            Identity::Admin
+        }
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                "missing or invalid bearer token",
+            )
+                .into_response();
+        }
+    };
+
+    if matches!(identity, Identity::Member { .. }) {
+        let pattern = matched_path.as_ref().map(|m| m.as_str()).unwrap_or(&path);
+        if !member_route_allowed(request.method(), pattern) {
+            return ApiError {
+                status: StatusCode::FORBIDDEN,
+                message: "forbidden for this member role".into(),
+                body: None,
+            }
+            .into_response();
+        }
+    }
+
+    request.extensions_mut().insert(identity);
+    next.run(request).await
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginRequest {
+    token: String,
+}
+
+/// `POST /login` — paste a member token, get a long-lived named session
+/// cookie. Public (no prior auth): this is how a member acquires one.
+async fn post_login(State(state): State<ApiState>, Json(body): Json<LoginRequest>) -> Response {
+    let Ok(Some(entry)) = orgasmic_core::find_member_by_token(&state.home, &body.token) else {
+        return (StatusCode::UNAUTHORIZED, "invalid or unknown token").into_response();
+    };
+    let (session, expires_at) = state.auth.create_member_session(&entry.name);
+    let cookie = format!(
+        "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        AuthState::member_session_cookie_name(),
+        session,
+        AuthState::member_session_max_age_seconds()
+    );
+    let mut response = Json(json!({
+        "name": entry.name,
+        "expires_at": expires_at.to_rfc3339(),
+    }))
+    .into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    response
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeProjectCapabilities {
+    project_id: String,
+    role: String,
+    capabilities: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeResponse {
+    identity: &'static str,
+    name: Option<String>,
+    projects: Vec<MeProjectCapabilities>,
+}
+
+/// `GET /me` — capability snapshot the UI renders nav/affordances from.
+/// Convenience only (per arch_Z8CW2: the server is the sole real gate);
+/// admin sees every project with every capability, a member sees only their
+/// granted projects with that grant's resolved role and capability set.
+async fn get_me(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<MeResponse> {
+    let snap = state.index.snapshot().await;
+    let all_ids: Vec<&str> = snap.board.iter().map(|e| e.id.as_str()).collect();
+    let visible = authz::visible_project_ids(&identity, all_ids.iter().copied());
+
+    let projects = visible
+        .into_iter()
+        .map(|project_id| {
+            let role = match &identity {
+                Identity::Admin => "admin".to_string(),
+                Identity::Member { .. } => {
+                    identity.role_for(project_id).unwrap_or("").to_string()
+                }
+            };
+            let capabilities = match &identity {
+                Identity::Admin => Action::ALL.iter().copied().map(authz::action_name).collect(),
+                Identity::Member { .. } => authz::role_capabilities(&role)
+                    .iter()
+                    .copied()
+                    .map(authz::action_name)
+                    .collect(),
+            };
+            MeProjectCapabilities {
+                project_id: project_id.to_string(),
+                role,
+                capabilities,
+            }
+        })
+        .collect();
+
+    Json(MeResponse {
+        identity: match identity {
+            Identity::Admin => "admin",
+            Identity::Member { .. } => "member",
+        },
+        name: identity.member_name().map(str::to_string),
+        projects,
+    })
 }
 
 // ---- real handlers ---------------------------------------------------------
@@ -8777,12 +8970,17 @@ struct ArtifactSubmitRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct ArtifactFeedbackRequest {
+struct ArtifactCommentRequest {
     message: String,
+    /// Opaque JSON anchor (selection-to-pin capture: `PlanCommentAnchor`
+    /// shape — textQuote, targetNodeId/path, canvas coords — is a UI-side
+    /// concern; the daemon stores and round-trips it verbatim).
     #[serde(default)]
     anchor: Option<String>,
     #[serde(default)]
     resolution_target: Option<String>,
+    /// Admin-only override (a member's comment is always stamped with their
+    /// session identity's name, never this field — see `post_artifact_add_comment`).
     #[serde(default)]
     author: Option<String>,
 }
@@ -8802,10 +9000,12 @@ fn resolve_artifact_project<'a>(
 
 async fn get_artifacts(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<Vec<ArtifactSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
     let project = snap
         .projects
         .get(&entry.id)
@@ -8815,11 +9015,13 @@ async fn get_artifacts(
 
 async fn get_artifact(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<ArtifactDetail>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
     let art_dir = artifact_dir(&entry.path, &id);
     let detail = load_artifact_detail(&art_dir, q.version, q.include_consumed.unwrap_or(false))
         .map_err(|e| match e {
@@ -10135,6 +10337,19 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let body = self.body.unwrap_or_else(|| json!({"error": self.message}));
         (self.status, Json(body)).into_response()
+    }
+}
+
+/// The one authorization seam's error converts to a plain 403 — route code
+/// never builds its own forbidden response, it just propagates `?` through
+/// `authz::require`.
+impl From<authz::Forbidden> for ApiError {
+    fn from(err: authz::Forbidden) -> Self {
+        ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: err.0,
+            body: None,
+        }
     }
 }
 

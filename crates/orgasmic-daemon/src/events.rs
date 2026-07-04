@@ -143,6 +143,36 @@ pub enum EventPayload {
     },
 }
 
+impl EventPayload {
+    /// The project this payload is scoped to, when it names one. Used by the
+    /// authz seam's coarse WS filter (`authz::event_visible`) — payloads with
+    /// no project (daemon-wide/manager-internal signals) pass once their
+    /// topic is allowed; payloads that do name one are also grant-checked.
+    pub fn project_id(&self) -> Option<&str> {
+        match self {
+            EventPayload::ProjectIndexed { project_id }
+            | EventPayload::TaskUpdated { project_id, .. }
+            | EventPayload::GraphNodeCreated { project_id, .. }
+            | EventPayload::GraphNodeRevised { project_id, .. }
+            | EventPayload::StageRequested { project_id, .. }
+            | EventPayload::StageCompleted { project_id, .. }
+            | EventPayload::StageFailed { project_id, .. }
+            | EventPayload::ArtifactChanged { project_id, .. }
+            | EventPayload::ArtifactCommentAdded { project_id, .. } => Some(project_id.as_str()),
+            EventPayload::ProjectParseError { project_id, .. }
+            | EventPayload::TxAppended { project_id, .. } => project_id.as_deref(),
+            EventPayload::BoardRefreshed
+            | EventPayload::RunEvent { .. }
+            | EventPayload::RunLifecycle { .. }
+            | EventPayload::ManagerNotice { .. }
+            | EventPayload::GraphChanged { .. }
+            | EventPayload::DaemonStarted { .. }
+            | EventPayload::DaemonRestartRequested
+            | EventPayload::DaemonHeartbeat => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
     pub seq: u64,
