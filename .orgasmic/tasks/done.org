@@ -11385,3 +11385,30 @@ Acceptance: an artifact generated in stage 2 (or hand-submitted via CLI) renders
 ** Notes
 [2026-07-03] Carried from the TASK-Y2ZQJ reviewer pass (finding L2): the daemon-side validate_mdx is a TOP-LEVEL STRUCTURAL validator only — it locates a registered block's body by its literal matching </Name> close string and treats the body as opaque. Consequence: a block body containing its own literal </Name> terminates the scan early, and nested same-name blocks are not tracked. This is by design (dec_GPV4G: MDX is opaque to the daemon). The real MDX/JSX parser lives HERE in T25XQ (the block renderer): it must handle nesting, literal-close-string-in-body, and deep validation. Do not assume the daemon validated block internals.
 
+* DONE TASK-M6146 Excise the Graph page viewer (UI, /graph/layout, overlay, curator spec) :ui:daemon:cleanup:
+:PROPERTIES:
+:ID: TASK-M6146
+:IMPLEMENTS: arch_M8JQT
+:MOTIVATED_BY: dec_ZG9B9
+:END:
+
+Remove the Graph page viewer per dec_ZG9B9 while keeping the graph data model whole.
+
+Remove: ui/src/components/GraphView.tsx; ui/src/components/node-views/NodeGraph.tsx; ui/src/components/__tests__/buildFlowGraph.test.ts; graphRoute + its lazy import in ui/src/app/router.tsx; the Graph nav entry and 'graph' ViewName in ui/src/components/AppShell.tsx; fetchGraphNodes/fetchGraphEdges/fetchGraphLayout/patchGraphLayout in ui/src/lib/api.ts plus any layout/flow types in ui/src/lib/types.ts that become unused; @xyflow/react from ui/package.json; get_graph_layout/patch_graph_layout handlers and the /graph/layout route in crates/orgasmic-daemon/src/api.rs; parse_graph_layout_overlay + its GraphLayoutEntry schema type in crates/orgasmic-core/src/schema.rs and the lib.rs re-export; shipped/prompt-studio/prompt-specs/graph_curator.org; the .orgasmic/graph_layout.org seed file.
+
+Keep untouched: GraphIndex and all index projections; /graph/nodes, /graph/edges, /graph/parse-errors, /graph/markers; the dec_KTF04 superseded-flag machinery and the DecisionsView show-superseded toggle; the 'graph' WS topic refresh path in AppShell.
+
+Manager at integration (not implementer scope): revise arch_M8JQT drawer/body via daemon verbs to drop graph-page INTERFACE/CONSTRAINTS claims (reference-page claims stay); confirm the drift scanner and parse-errors channel are clean.
+
+Gates: cd ui && npm run typecheck && npm test; cargo test -p orgasmic-daemon; cargo clippy --all-targets -- -D warnings; fmt clean on touched files.
+
+Acceptance: UI typechecks, tests pass, and builds with no /graph/layout caller and no React Flow dependency; daemon suite green with /graph/nodes, /graph/edges, /graph/parse-errors, /graph/markers behavior unchanged and no /graph/layout route; DecisionsView show-superseded toggle still works; orgasmic status reports parse_errors 0.
+** Evidence
+- Merged 45c6116 (worker commit 93529c2, implementer-claude-rmux, run-20260703T183245): -2997/+43 across 19 files. Worker scope-exact plus three legitimate catches beyond the brief: deleted crates/orgasmic-daemon/tests/graph_layout.rs, identified the real deps as reactflow+dagre+@types/dagre (brief guessed @xyflow/react), cleaned the vite manualChunks vendor-reactflow/vendor-dagre entries.
+- Gates: ui typecheck clean; ui tests 73 passed (buildFlowGraph suite removed by design); cargo test -p orgasmic-daemon all ok; cargo clippy --workspace --all-targets -D warnings clean; fmt clean. The 3 orgasmic-cli files (daemon_service/path_env/update) are rustfmt whitespace-only — verified by stripped-content hash equality against HEAD~1.
+- Workspace suite caveat: doctor::tests::daemon_staleness_warns_for_git_commits_since_boot fails ONLY under cargo test --workspace (2x consecutive), passes -p orgasmic-cli parallel and --test-threads=1 and 3x filtered. Pre-existing latent concurrency race (cli sources semantically untouched); filed TASK-SJQ9V.
+- Manager diff review: /graph/layout route + handlers + helpers (is_safe_node_id, render_layout_heading, layout_file_append) removed; /graph/nodes retains its TASK-008 POST stub; surviving routes /graph/nodes /graph/edges /graph/parse-errors /graph/markers confirmed present; DecisionsView untouched; 'graph' WS refresh clause intact in AppShell.
+- State cleanup at integration (manager, daemon verbs): arch_M8JQT props+body revised to reference-pages-only (MOTIVATED_BY drops dec_WWAHT, adds dec_ZG9B9; phantom dec_TQZTE dropped from Decided by); arch_MK2Q2.7 SOURCE_PATHS drops NodeGraph.tsx. orgasmic architecture drift: clean. parse_errors 0.
+** Reviewer pass
+REVIEWER PASS (reviewer-claude-rmux, claude-sonnet-4-6 xhigh, run-20260703T185257, ~3m): VERDICT ship, zero findings, no fix directions. Verified: no dangling symbol references (FileMutate/FileMutateTransform, transport import cleaned); route tree + AppShell unions consistent; 'graph' WS clause intentionally retained; reactflow/dagre/@types/dagre purged from package.json + lockfile (0 residue greps); schema.rs/lib.rs removals complete; GraphNodeSummary correctly retained (GraphIndex ref); tests/graph_layout.rs + graph_curator.org + graph_layout.org confirmed gone; 3 cli files independently confirmed rustfmt whitespace-only.
+
