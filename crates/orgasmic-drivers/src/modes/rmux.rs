@@ -74,7 +74,7 @@ use crate::modes::tmux::{
 use crate::r#trait::{
     AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext,
     DriverControl, DriverError, DriverSession, HarnessEventAdapter, NativeRuntimeMeta, RunKind,
-    TransitionAck, TransitionRequest, WorkerDriver,
+    TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 
 const MODE: &str = "rmux";
@@ -580,21 +580,34 @@ impl WorkerDriver for RmuxDriver {
         // reaped on release/drop, or it lingers on the rmux daemon. The typed
         // `Session` handle is the teardown path (`Session::kill`); inert runs
         // own no session.
+        let rmux_bin = probe
+            .path
+            .clone()
+            .unwrap_or_else(|| RMUX_BINARY.to_string());
         Ok(DriverSession {
             identity: ctx.identity.clone(),
             pid: None,
             events: rx,
-            control: Box::new(RmuxControl {
-                events: tx,
-                kind: ctx.run_kind,
-                capture_task,
-                terminal_emitted,
-                released: false,
-                session,
-                // A system-wide session must survive a daemon shutdown, so the
-                // implicit Drop backstop must not reap it.
-                kill_on_drop: !cfg.system_wide,
-            }),
+            control: if inert {
+                Box::new(RmuxControl::inert(tx, ctx.run_kind))
+            } else {
+                Box::new(RmuxControl {
+                    events: tx,
+                    kind: ctx.run_kind,
+                    capture_task,
+                    terminal_emitted,
+                    released: false,
+                    session,
+                    // A system-wide session must survive a daemon shutdown, so the
+                    // implicit Drop backstop must not reap it.
+                    kill_on_drop: !cfg.system_wide,
+                    rmux_bin: Some(rmux_bin),
+                    session_target: Some(session_name.clone()),
+                    run_id: Some(ctx.identity.run_id.clone()),
+                    harness_command: Some(plan.command.clone()),
+                    input_ready_timeout: cfg.input_ready_timeout,
+                })
+            },
             native_runtime: plan.native_runtime,
         })
     }
@@ -696,6 +709,13 @@ impl WorkerDriver for RmuxDriver {
                     // A reattached session is, by definition, one we want to
                     // outlive the daemon — never reap it on an implicit Drop.
                     kill_on_drop: false,
+                    rmux_bin: probe_rmux_binary()
+                        .path
+                        .or_else(|| Some(RMUX_BINARY.to_string())),
+                    session_target: Some(session_name_str.clone()),
+                    run_id: Some(ctx.identity.run_id.clone()),
+                    harness_command: Some(plan.command.clone()),
+                    input_ready_timeout: cfg.input_ready_timeout,
                 }),
                 native_runtime: plan.native_runtime,
             }),
@@ -935,6 +955,16 @@ async fn rmux_capture_pane(bin: &str, session: &str) -> Result<String, DriverErr
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
+async fn rmux_capture_pane_bounded(
+    bin: &str,
+    session: &str,
+    timeout: Duration,
+) -> Result<String, DriverError> {
+    tokio::time::timeout(timeout, rmux_capture_pane(bin, session))
+        .await
+        .map_err(|_| DriverError::Transport("rmux capture-pane timed out".into()))?
+}
+
 /// Paste `text` into the session's pane and press Enter, via the rmux CLI's
 /// tmux-compatible buffer verbs (the same path the daemon's composer uses).
 async fn paste_text_and_submit(bin: &str, session: &str, text: &str) -> Result<(), DriverError> {
@@ -960,24 +990,24 @@ async fn wait_for_input_ready(
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     poll.tick().await; // first tick is immediate; skip it
     loop {
-        tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => {
-                return Err(DriverError::InputNotReady(timeout));
-            }
-            _ = poll.tick() => {
-                if let Ok(pane) = rmux_capture_pane(bin, session).await {
-                    // Accept Claude's folder-trust dialog (default "Yes,
-                    // proceed") so a fresh worktree reaches its composer.
-                    if pane_requests_folder_trust(&pane) {
-                        let _ = run_rmux_cli(bin, &["send-keys", "-t", session, "Enter"]).await;
-                        continue;
-                    }
-                    if pane_has_input_prompt(&pane) {
-                        return Ok(());
-                    }
-                }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(DriverError::InputNotReady(timeout));
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let capture_timeout = remaining.min(Duration::from_secs(2));
+        if let Ok(pane) = rmux_capture_pane_bounded(bin, session, capture_timeout).await {
+            // Accept Claude's folder-trust dialog (default "Yes,
+            // proceed") so a fresh worktree reaches its composer.
+            if pane_requests_folder_trust(&pane) {
+                let _ = run_rmux_cli(bin, &["send-keys", "-t", session, "Enter"]).await;
+            } else if pane_has_input_prompt(&pane) {
+                return Ok(());
             }
         }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(DriverError::InputNotReady(timeout));
+        }
+        poll.tick().await;
     }
 }
 
@@ -1002,7 +1032,13 @@ async fn wait_for_pane_stable(
                 return Err(DriverError::InputNotReady(timeout));
             }
             _ = poll.tick() => {
-                if let Ok(pane) = rmux_capture_pane(bin, session).await {
+                if let Ok(pane) = rmux_capture_pane_bounded(
+                    bin,
+                    session,
+                    Duration::from_secs(2),
+                )
+                .await
+                {
                     if !pane.trim().is_empty() && previous.as_deref() == Some(pane.as_str()) {
                         return Ok(());
                     }
@@ -1298,6 +1334,20 @@ struct RmuxControl {
     /// session. `false` for system-wide and reattached runs, whose sessions are
     /// meant to outlive the daemon. Explicit `release` always reaps regardless.
     kill_on_drop: bool,
+    /// rmux CLI binary for paste-buffer/send-keys followup delivery. `None` on
+    /// inert runs (no live session to paste into).
+    rmux_bin: Option<String>,
+    /// Detached session target name for CLI verbs. `None` on inert runs.
+    session_target: Option<String>,
+    /// Run id for re-appending the end-of-turn-marker instruction on followups.
+    run_id: Option<String>,
+    /// Wrapped harness command (`claude`, `codex`, …) — recorded for diagnostics
+    /// and future harness-specific followup heuristics.
+    #[allow(dead_code)]
+    harness_command: Option<String>,
+    /// How long to wait for the harness composer before rejecting a followup as
+    /// busy. Mirrors the dispatch-paste knob.
+    input_ready_timeout: Duration,
 }
 
 impl RmuxControl {
@@ -1310,8 +1360,30 @@ impl RmuxControl {
             released: false,
             session: None,
             kill_on_drop: true,
+            rmux_bin: None,
+            session_target: None,
+            run_id: None,
+            harness_command: None,
+            input_ready_timeout: default_input_ready_timeout(),
         }
     }
+}
+
+/// Re-append the end-of-turn-marker instruction to a followup payload (same
+/// contract as the initial dispatch paste).
+fn followup_prompt_with_eot(input: &str, run_id: &str) -> String {
+    prompt_with_eot_instruction(input, run_id)
+}
+
+/// Poll until the harness shows a composer input prompt. Followup delivery
+/// gates on this (not pane stability) so mid-stream paste cannot corrupt an
+/// in-flight turn — streaming output without a prompt is rejected.
+async fn wait_for_followup_ready(
+    bin: &str,
+    session: &str,
+    timeout: Duration,
+) -> Result<(), DriverError> {
+    wait_for_input_ready(bin, session, timeout).await
 }
 
 #[async_trait]
@@ -1357,6 +1429,39 @@ impl DriverControl for RmuxControl {
             })
             .await;
         Ok(BabysitterAck {
+            accepted: true,
+            message: None,
+        })
+    }
+
+    async fn send_input(&mut self, req: UserInputRequest) -> Result<UserInputAck, DriverError> {
+        let (bin, session, run_id) = match (
+            self.rmux_bin.as_deref(),
+            self.session_target.as_deref(),
+            self.run_id.as_deref(),
+        ) {
+            (Some(bin), Some(session), Some(run_id)) => (bin, session, run_id),
+            _ => return Err(DriverError::Unsupported("send_input")),
+        };
+
+        let text = followup_prompt_with_eot(&req.input, run_id);
+
+        // Mid-turn policy: reject rather than queue. Pasting while the harness is
+        // still streaming its previous turn corrupts the in-flight turn. Gate on
+        // composer input-readiness and return a clear ack when the prompt is not
+        // visible yet — never paste blindly mid-stream.
+        if wait_for_followup_ready(bin, session, self.input_ready_timeout)
+            .await
+            .is_err()
+        {
+            return Ok(UserInputAck {
+                accepted: false,
+                message: Some("harness busy".into()),
+            });
+        }
+
+        paste_text_and_submit(bin, session, &text).await?;
+        Ok(UserInputAck {
             accepted: true,
             message: None,
         })
@@ -1452,6 +1557,39 @@ pub fn driver() -> RmuxDriver {
 /// Inert-mode config (no real rmux interaction) for smoke tests / missing rmux.
 pub fn inert_config() -> DriverConfig {
     DriverConfig::from_value(json!({"force_inert": true}))
+}
+
+#[cfg(test)]
+async fn wait_for_input_ready_with_capture<C, Fut>(
+    timeout: Duration,
+    poll_interval: Duration,
+    mut capture: C,
+) -> Result<(), DriverError>
+where
+    C: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, DriverError>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut poll = tokio::time::interval(poll_interval);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    poll.tick().await;
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(DriverError::InputNotReady(timeout));
+            }
+            _ = poll.tick() => {
+                if let Ok(pane) = capture().await {
+                    if pane_requests_folder_trust(&pane) {
+                        continue;
+                    }
+                    if pane_has_input_prompt(&pane) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2099,6 +2237,199 @@ mod tests {
             saw_complete,
             "expected RunComplete when the pane process exited"
         );
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    #[test]
+    fn followup_prompt_reappends_eot_instruction() {
+        let run_id = "run-followup-eot";
+        let prompt = followup_prompt_with_eot("grill me harder", run_id);
+        assert!(prompt.contains("grill me harder"));
+        assert!(prompt.contains("end-of-turn marker"));
+        assert!(prompt.contains(run_id));
+        assert!(!prompt.contains(&tmux_eot_marker(run_id)));
+    }
+
+    #[tokio::test]
+    async fn inert_send_input_returns_unsupported() {
+        let d = driver();
+        let mut s = d
+            .acquire(ctx("run-inert-input", RunKind::Worker), inert_config())
+            .await
+            .unwrap();
+        let _ = s.events.recv().await;
+        let err = s
+            .control
+            .send_input(UserInputRequest {
+                input: "followup".into(),
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DriverError::Unsupported("send_input")));
+    }
+
+    #[tokio::test]
+    async fn wait_for_input_ready_returns_ok_when_mock_pane_has_prompt() {
+        let mut ready = false;
+        let result = wait_for_input_ready_with_capture(
+            Duration::from_secs(1),
+            Duration::from_millis(10),
+            || {
+                ready = true;
+                async move {
+                    Ok(if ready {
+                        "> followup prompt\n".to_string()
+                    } else {
+                        "booting harness\n".to_string()
+                    })
+                }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn wait_for_input_ready_returns_input_not_ready_on_timeout() {
+        let timeout = Duration::from_millis(50);
+        let err =
+            wait_for_input_ready_with_capture(timeout, Duration::from_millis(10), || async {
+                Ok("streaming assistant output\n".to_string())
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, DriverError::InputNotReady(_)));
+    }
+
+    /// Live rmux followup delivery. Drives a minimal interactive harness that
+    /// shows a composer prompt, accepts the dispatch brief, then accepts a
+    /// followup via `send_input`. Proves the followup lands in the pane with
+    /// the EOT-marker instruction appended (round-end detection contract).
+    /// Skipped without a real rmux binary.
+    #[tokio::test]
+    async fn live_rmux_send_input_delivers_followup_turn() {
+        let probe = probe_rmux_binary();
+        if !probe.found {
+            eprintln!(
+                "skipping live_rmux_send_input_delivers_followup_turn: rmux binary not found"
+            );
+            return;
+        }
+        const INITIAL: &str = "ORGASMIC_INITIAL_SENTINEL";
+        const FOLLOWUP: &str = "ORGASMIC_FOLLOWUP_SENTINEL";
+        let run_id = "run-send-input";
+        let harness = "while true; do echo '> ready'; IFS= read -r line || exit 0; echo \"ECHO:$line\"; done";
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", harness],
+            "prompt_bundle_text": INITIAL,
+            "input_ready_timeout": 5,
+        }));
+        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
+        let ev = s.events.recv().await.unwrap();
+        let DriverEvent::Ready { capabilities, .. } = ev else {
+            panic!("expected Ready, got {ev:?}");
+        };
+        if capabilities["inert"] == true {
+            eprintln!("skipping live_rmux_send_input_delivers_followup_turn: SDK degraded to inert");
+            s.control.release("cleanup").await.unwrap();
+            return;
+        }
+        let session_name = rmux_session_name(&s.identity);
+        let bin = probe.path.as_deref().unwrap_or(RMUX_BINARY);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        let mut pane = String::new();
+        while std::time::Instant::now() < deadline {
+            pane = rmux_capture_pane(bin, &session_name).await.unwrap_or_default();
+            let dispatch_done = pane.contains("ECHO:run_id:") || pane.contains("ECHO:ORGASMIC_INITIAL");
+            if dispatch_done && pane.lines().any(pane_has_input_prompt) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        assert!(
+            pane.contains(INITIAL)
+                && pane.lines().any(pane_has_input_prompt),
+            "harness should finish dispatch and show composer prompt, got {pane}"
+        );
+
+        let ack = tokio::time::timeout(
+            Duration::from_secs(8),
+            s.control.send_input(UserInputRequest {
+                input: FOLLOWUP.into(),
+            }),
+        )
+        .await
+        .expect("send_input timed out")
+        .unwrap();
+        assert!(ack.accepted, "followup should be accepted when ready");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            pane = rmux_capture_pane(bin, &session_name).await.unwrap_or_default();
+            if pane.contains(FOLLOWUP) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        assert!(
+            pane.contains(FOLLOWUP),
+            "followup should land as a user turn, got {pane}"
+        );
+        let staged = followup_prompt_with_eot(FOLLOWUP, run_id);
+        assert!(staged.contains("end-of-turn marker"));
+
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    /// Live rmux mid-turn guard: while the harness is streaming (no input
+    /// prompt), `send_input` must reject rather than paste mid-stream.
+    /// Skipped without a real rmux binary.
+    #[tokio::test]
+    async fn live_rmux_send_input_rejects_while_harness_busy() {
+        let probe = probe_rmux_binary();
+        if !probe.found {
+            eprintln!(
+                "skipping live_rmux_send_input_rejects_while_harness_busy: rmux binary not found"
+            );
+            return;
+        }
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", "i=0; while [ $i -lt 30 ]; do echo streaming-$i; i=$((i+1)); done"],
+            "input_ready_timeout": 1,
+        }));
+        let mut s = d
+            .acquire(ctx("run-busy", RunKind::Worker), cfg)
+            .await
+            .unwrap();
+        let ev = s.events.recv().await.unwrap();
+        let DriverEvent::Ready { capabilities, .. } = ev else {
+            panic!("expected Ready, got {ev:?}");
+        };
+        if capabilities["inert"] == true {
+            eprintln!(
+                "skipping live_rmux_send_input_rejects_while_harness_busy: SDK degraded to inert"
+            );
+            s.control.release("cleanup").await.unwrap();
+            return;
+        }
+
+        let ack = tokio::time::timeout(
+            Duration::from_secs(5),
+            s.control.send_input(UserInputRequest {
+                input: "should-not-paste".into(),
+            }),
+        )
+        .await
+        .expect("send_input timed out")
+        .unwrap();
+        assert!(!ack.accepted, "busy harness must reject followup");
+        assert_eq!(ack.message.as_deref(), Some("harness busy"));
+
         s.control.release("cleanup").await.unwrap();
     }
 }
