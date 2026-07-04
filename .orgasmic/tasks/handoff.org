@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         147b07c116d3d331832009de60db60525bc1f241
+:LIVENESS:         3376efda2409d63cabc4dce940d6f3f720d58430
 :LIVENESS_AT:      [2026-07-04 Sat]
 :UPDATED_AT:       [2026-07-04 Sat]
 :END:
@@ -39,13 +39,13 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - Artifact queue: M6146 (1/6) done, ZEFEY (2/6) done, 2ZQSB (3/6) done, T25XQ (4/6) done; DJGM5 (5/6) and EDQPG (6/6) remain backlog. The completed hot-session loop now underpins EDQPG's regenerate routing (dec_S02E2).
 
 ** Next likely actions
-- OPEN DIRECTION DECISION (operator ran `/orgasmic resume EDQPG` [2026-07-04 Sat]): EDQPG (6/6, regeneration loop) is the named target, but its daemon depends_on is TASK-2ZQSB (done) + TASK-DJGM5 (5/6, still backlog), and its acceptance smoke needs named comments from DJGM5 (member identity, arch_Z8CW2). Goal order is DJGM5 -> EDQPG. Options: (a) DJGM5 first (goal order; unblocks EDQPG's full two-member smoke), then EDQPG; (b) EDQPG now (reorder -- build the regenerate/version-archive/lock/version-browser machinery on anonymous comments, defer the named-comment half of the smoke until DJGM5 lands). Awaiting operator choice.
-- TASK-DJGM5 (5/6): member identity, /login, pinned named comments (arch_Z8CW2 + arch_A3NSW). Deps T25XQ satisfied; ready to dispatch.
-- TASK-EDQPG (6/6): regeneration loop -- version archive, comment consumption, lock banner (WS), version browser; artifact.regenerated tx audit trail. Can now route through the hot-session live-regenerate path (dec_S02E2) rather than cold-spawn. Carries open question O1 (make current version N addressable via ?version=N).
+- Integrate TASK-DJGM5 when the watcher fires: read task-DJGM5-last.txt, merge --no-ff task-djgm5-impl, run gates (cargo test/clippy; ui typecheck/vitest/build), inline review (operator accepted inline reviews as the goal's review gate [2026-07-04]), record evidence, close tx, remove worktree.
+- Then TASK-EDQPG (6/6): regeneration loop -- version archive, comment consumption, lock banner (WS), version browser; artifact.regenerated tx. Routes through the hot-session live-regenerate path (dec_S02E2). DJGM5's member identity makes the full two-member named-comment smoke possible. Carries open question O1 (?version=N addressability).
+- Sequencing settled [2026-07-04]: operator had run `resume EDQPG` but chose "[no preference]" on order; manager ruling = goal order DJGM5 -> EDQPG.
 - Backlog follow-ups: TASK-A22TB (renderer fidelity), TASK-F9N5F (hot-session idle-timeout), TASK-567JG (reattach completion-watcher), TASK-X0ZVE (rmux flake), TASK-KBHAN (#+begin_ hardening), TASK-SJQ9V (doctor workspace flake).
 
 ** In flight
-- Nothing in flight. Working tree clean at 147b07c, no dispatch worktrees, dispatch-status empty. Last 07-04 session ended at TASK-T25XQ done (16:52). Blocked on operator direction: EDQPG-vs-DJGM5 sequencing (see Next likely actions).
+- TASK-DJGM5 (5/6) implementer-claude-rmux DISPATCHED [2026-07-04 Sat 18:17] run-20260704T181745-81e2f7b079354edcb456006211f8dd0d, worktree .orgasmic/tmp/dispatch/task-djgm5/worktree branch task-djgm5-impl from 3376efd. Brief at .orgasmic/tmp/dispatch/task-DJGM5-brief.md. Watcher installed. Scope was EXPANDED pre-dispatch per operator (dec_KF2MR): whole-surface capability gates, not just artifact routes.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.
@@ -59,3 +59,5 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - [2026-07-04 Sat reconciliation] Handoff was 15 commits stale again -- the same-day 07-04 continuation committed state task-to-task without touching this file. Folded into Done so far; LIVENESS bumped 510d8d9 -> 147b07c. Recurring pattern worth a guard: sessions close tasks + move on without a handoff write.
 - REVIEW-MODE SHIFT: the 07-04 session closed 0J0AV/RCWFF/RH4M5 and the goal task T25XQ via manager inline Opus review, not dispatched reviewer-claude-rmux passes. The active goal's Reached-When asks for a reviewer-claude-rmux pass per goal task; T25XQ currently has only an inline review. Operator call needed: accept inline reviews as satisfying that gate, or schedule a T25XQ reviewer-rmux pass before declaring the goal reached.
 - The 44-commit and release-follow-up notes below predate this reconciliation and are historical; the "re-check at the first M6146 gate run" they mention is long past (M6146 done, gates were green).
+- REVIEW-MODE RULING [2026-07-04 Sat]: operator explicitly accepted manager inline reviews as satisfying the goal's reviewer gate ("Accept inline reviews") -- T25XQ needs no retroactive reviewer-rmux pass, and inline review is the accepted close mode for the remaining goal tasks. The 07-04 REVIEW-MODE SHIFT concern below is RESOLVED by this ruling.
+- SCOPE EXPANSION pre-dispatch [2026-07-04 Sat]: DJGM5 rescoped from artifact-route role gates to whole-surface capability grants (dec_KF2MR: per-project :GRANTS:, action vocabulary, viewer/editor/artifacts built-ins, sessions.interact admin-only, server-side WS gating both directions). arch_Z8CW2 rewritten accordingly. EDQPG is unaffected (its smoke needs member names, which DJGM5 still delivers) but the goal's "two-member smoke" now also has an artifacts-only third-member check inside DJGM5's acceptance.
