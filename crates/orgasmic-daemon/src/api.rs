@@ -117,7 +117,7 @@ impl ApiState {
     /// Every handler with a read→transaction window on the same artifact MUST
     /// hold this per-artifact lock across that window so they serialize again
     /// while keeping finding #4's file+tx atomicity:
-    /// - `post_artifact_feedback` / `post_artifact_feedback_consume` (reviews.org)
+    /// - `post_artifact_add_comment` / `post_artifact_comment_resolve` (reviews.org)
     /// - `post_artifact_regenerate` (reviews.org consume + artifact.org state flip)
     /// - `post_artifact_submit` (artifact.org version read→bump; TASK-2ZQSB M1)
     /// - `revert_artifact_generation_state` (the release-watcher's state restore)
@@ -9524,7 +9524,7 @@ async fn post_artifact_comment_resolve(
             state: actual_state,
         },
     );
-    Ok(Json(json!({ "cid": cid, "resolved": true })))
+    Ok(Json(json!({ "cid": cid, "resolved": body.resolved })))
 }
 
 // ---- artifact generation launch (arch_045Q0 / dec_JBWB9 / dec_V44E4) -------
@@ -13527,7 +13527,7 @@ mod tests {
         assert_eq!(submit_resp.0["version"], 1);
 
         // --- list ---
-        let list_resp = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list_resp = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list should succeed");
         assert_eq!(list_resp.0.len(), 1);
@@ -13540,6 +13540,7 @@ mod tests {
         // --- detail ---
         let detail_resp = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13550,11 +13551,12 @@ mod tests {
         assert_eq!(detail_resp.0.comments.len(), 0);
 
         // --- feedback (add comment) ---
-        let fb_resp = post_artifact_feedback(
+        let fb_resp = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "This looks good!".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13567,25 +13569,32 @@ mod tests {
         assert!(cid.starts_with("CID-"));
 
         // Index should reflect 1 open comment
-        let list2 = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list2 = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list 2");
         assert_eq!(list2.0[0].open_comment_count, 1);
 
-        // --- consume ---
-        let consume_resp = post_artifact_feedback_consume(
-            State(state.clone()),
-            Path((art_id.to_string(), cid.clone())),
-            Query(artifact_query("test-proj")),
+        // --- consume (agent-facing axis: regeneration close-out) ---
+        // `consumed` is set in production ONLY by regeneration close-out via
+        // `consume_all_open_comments`; the people-facing resolve handler never
+        // touches it. This test asserts exclusion-by-default, which keys off
+        // `consumed` (not `resolved`), so it must drive the consume axis the
+        // production way. The test already operates at the file layer below, so
+        // apply `consume_all_open_comments` to reviews.org directly and refresh
+        // the index projection.
+        let reviews_path = artifact_dir(&project_root, art_id).join("reviews.org");
+        let consumed_reviews = artifacts::consume_all_open_comments(
+            &std::fs::read_to_string(&reviews_path).unwrap(),
         )
-        .await
-        .expect("consume should succeed");
-        assert_eq!(consume_resp.0["resolved"], true);
+        .expect("consume open comments should succeed");
+        std::fs::write(&reviews_path, &consumed_reviews).unwrap();
+        let _ = state.index.refresh_project("test-proj").await;
 
         // Default view: consumed comments are excluded (MANAGER RULING,
         // TASK-Y2ZQJ).
         let detail2 = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13599,6 +13608,7 @@ mod tests {
         // include_consumed=true surfaces it, resolved + consumed.
         let detail2_all = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(ArtifactQuery {
                 include_consumed: Some(true),
@@ -13614,7 +13624,7 @@ mod tests {
         assert!(comments[0].consumed);
 
         // Open comment count should be 0 after consume
-        let list3 = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list3 = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list 3");
         assert_eq!(list3.0[0].open_comment_count, 0);
@@ -13642,11 +13652,12 @@ mod tests {
         let org_content = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
         let updated_org = update_artifact_org(&org_content, 1, "regenerating").unwrap();
         std::fs::write(art_dir.join("artifact.org"), &updated_org).unwrap();
-        let fb2 = post_artifact_feedback(
+        let fb2 = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "Should be refused".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13680,6 +13691,115 @@ mod tests {
 
         // versions/v1.mdx should be the archive
         assert!(art_dir.join("versions/v1.mdx").exists());
+    }
+
+    // People-facing resolve axis (dec_V44E4 / dec_KF2MR). Preserves the
+    // people-axis half of the former feedback/consume roundtrip, which the
+    // two-axis split separates from consumption: `post_artifact_comment_resolve`
+    // toggles `resolved` only. It must NEVER set `consumed` (the agent-facing
+    // axis, driven solely by regeneration close-out), and a resolved-but-
+    // unconsumed comment must STILL appear in the default (exclude-consumed)
+    // view.
+    #[tokio::test]
+    async fn artifact_comment_resolve_toggles_people_axis_without_consuming() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RESOLV";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>Hello</RichText>\n".into(),
+                title: Some("Resolve axis".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let fb = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "please tighten this".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("comment add should succeed");
+        let cid = fb.0["cid"].as_str().unwrap().to_string();
+
+        // Resolve (people-facing axis only).
+        let resolve_resp = post_artifact_comment_resolve(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path((art_id.to_string(), cid.clone())),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: true }),
+        )
+        .await
+        .expect("resolve should succeed");
+        assert_eq!(resolve_resp.0["resolved"], true);
+
+        // Resolved but NOT consumed: still visible in the default view.
+        let detail = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("detail");
+        let comment = detail
+            .0
+            .comments
+            .iter()
+            .find(|c| c.cid == cid)
+            .expect("resolved comment must remain visible in the default view");
+        assert!(comment.resolved, "resolve must set the people-facing axis");
+        assert!(
+            !comment.consumed,
+            "resolve must never set the agent-facing consumed axis (dec_V44E4/dec_KF2MR)"
+        );
+
+        // Members can re-open (toggle back to open).
+        let _ = post_artifact_comment_resolve(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path((art_id.to_string(), cid.clone())),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: false }),
+        )
+        .await
+        .expect("re-open should succeed");
+
+        let detail2 = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("detail after reopen");
+        let comment2 = detail2
+            .0
+            .comments
+            .iter()
+            .find(|c| c.cid == cid)
+            .expect("re-opened comment still visible");
+        assert!(!comment2.resolved, "re-open clears the resolved axis");
+        assert!(!comment2.consumed, "re-open never touches the consumed axis");
     }
 
     // Regression guard for TASK-Y2ZQJ finding M1: concurrent comment-adds on
@@ -13717,11 +13837,12 @@ mod tests {
         for i in 0..N {
             let st = state.clone();
             handles.push(tokio::spawn(async move {
-                post_artifact_feedback(
+                post_artifact_add_comment(
                     State(st),
+                    Extension(Identity::Admin),
                     Path(art_id.to_string()),
                     Query(artifact_query("test-proj")),
-                    Json(ArtifactFeedbackRequest {
+                    Json(ArtifactCommentRequest {
                         message: format!("comment number {i}"),
                         anchor: None,
                         resolution_target: None,
@@ -13745,7 +13866,7 @@ mod tests {
         let unique: std::collections::HashSet<_> = cids.iter().collect();
         assert_eq!(unique.len(), N, "each add should mint a distinct CID");
 
-        let list = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list");
         assert_eq!(
@@ -13755,6 +13876,7 @@ mod tests {
 
         let detail = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13864,6 +13986,7 @@ mod tests {
 
         let missing_artifact = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path("ART-NOPE".to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13873,6 +13996,7 @@ mod tests {
 
         let missing_version = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(ArtifactQuery {
                 version: Some(9),
@@ -13925,11 +14049,12 @@ mod tests {
         std::fs::remove_file(art_dir.join("reviews.org")).unwrap();
         std::fs::create_dir(art_dir.join("reviews.org")).unwrap();
 
-        let result = post_artifact_feedback(
+        let result = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "should not land".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13952,7 +14077,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn artifact_feedback_consume_leaves_no_partial_state_on_writer_failure() {
+    async fn artifact_comment_resolve_leaves_no_partial_state_on_writer_failure() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -13975,11 +14100,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let fb_resp = post_artifact_feedback(
+        let fb_resp = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "to be consumed".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14001,10 +14127,12 @@ mod tests {
         std::fs::remove_file(art_dir.join("reviews.org")).unwrap();
         std::fs::create_dir(art_dir.join("reviews.org")).unwrap();
 
-        let result = post_artifact_feedback_consume(
+        let result = post_artifact_comment_resolve(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path((art_id.to_string(), cid)),
             Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: true }),
         )
         .await;
         assert!(result.is_err());
@@ -14210,6 +14338,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
@@ -14263,6 +14392,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
@@ -14291,7 +14421,7 @@ mod tests {
         assert_eq!(summary.version, 0);
         assert!(summary.subject_nodes.is_empty());
 
-        let list = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list should include node-less artifact");
         assert!(
@@ -14330,11 +14460,12 @@ mod tests {
         .await
         .expect("attached submit should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(attached_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "needs work".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14345,7 +14476,7 @@ mod tests {
         .expect("feedback should succeed");
 
         let rollup_before = open_comment_count_for_node(
-            &get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+            &get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
                 .await
                 .expect("list before generate")
                 .0,
@@ -14355,6 +14486,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
@@ -14365,7 +14497,7 @@ mod tests {
         .expect("generate with empty nodes should succeed");
 
         let _ = state.index.refresh_project("test-proj").await;
-        let artifacts = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let artifacts = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list after generate")
             .0;
@@ -14423,6 +14555,7 @@ mod tests {
 
         let resp = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14473,11 +14606,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let fb_resp = post_artifact_feedback(
+        let fb_resp = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 1 feedback".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14490,6 +14624,7 @@ mod tests {
 
         let first = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14518,11 +14653,12 @@ mod tests {
         .expect("submit v2 should succeed");
         assert_eq!(load_artifact(&art_dir).unwrap().version, 2);
 
-        let fb2 = post_artifact_feedback(
+        let fb2 = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14543,6 +14679,7 @@ mod tests {
             for _ in 0..40 {
                 match post_artifact_regenerate(
                     State(state.clone()),
+                    Extension(Identity::Admin),
                     Path(art_id.to_string()),
                     Query(artifact_query("test-proj")),
                     Json(ArtifactRegenerateRequest {
@@ -14631,11 +14768,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "needs work".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14647,6 +14785,7 @@ mod tests {
 
         let first = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14669,6 +14808,7 @@ mod tests {
         // mutation (arch_045Q0.1 ordering).
         let err = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14729,11 +14869,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 1".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14745,6 +14886,7 @@ mod tests {
 
         let first = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14776,11 +14918,12 @@ mod tests {
         .await
         .expect("submit v2 after restart");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "after restart".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14792,6 +14935,7 @@ mod tests {
 
         let resp = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14849,11 +14993,12 @@ mod tests {
         .await
         .expect("submit v1 should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14865,6 +15010,7 @@ mod tests {
 
         let regen = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14916,6 +15062,7 @@ mod tests {
 
         let result = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
@@ -14959,6 +15106,7 @@ mod tests {
 
         let result = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest { extra_prompt: None }),
@@ -14985,6 +15133,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],

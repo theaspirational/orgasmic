@@ -655,7 +655,7 @@ pub fn new_artifact_id() -> String {
 ///
 /// Used when a regenerate closes out the current version's comment surface
 /// (dec_V44E4: "the fresh version starts with a clean comment surface").
-/// Mirrors [`resolve_comment_in_reviews`]'s targeted property-span splice,
+/// Mirrors [`set_comment_resolved`]'s targeted property-span splice,
 /// generalized to every open heading instead of one `cid`.
 pub fn consume_all_open_comments(current: &str) -> Result<Vec<u8>> {
     if current.trim().is_empty() {
@@ -931,11 +931,15 @@ mod tests {
             resolution_target: "",
             message: "two",
         });
-        let content = format!("{header}{open_a}{open_b}");
-        // Pre-close one of the two via the existing single-cid path.
-        let content =
-            String::from_utf8(resolve_comment_in_reviews(&content, "CID-open0001").unwrap())
+        // Pre-close one of the two the production way (regeneration close-out):
+        // `consume_all_open_comments` marks it resolved+consumed. Applying it to
+        // open_a alone, then concatenating the still-open open_b, yields the
+        // "one closed, one open" fixture. There is no single-cid resolve+consume
+        // helper — resolve (people axis) and consume (agent axis) are separate.
+        let closed_a =
+            String::from_utf8(consume_all_open_comments(&format!("{header}{open_a}")).unwrap())
                 .unwrap();
+        let content = format!("{closed_a}{open_b}");
 
         let open_before: Vec<_> = parse_comments(&content)
             .into_iter()
@@ -1058,10 +1062,12 @@ mod tests {
             message: "old",
         });
         let reviews = format!("{}{}", reviews_org_header("ART-XYZAB"), block);
-        let resolved = resolve_comment_in_reviews(&reviews, "CID-consumed01").unwrap();
+        // Default view excludes CONSUMED (agent axis), not merely resolved, so
+        // the fixture must be consumed via the production close-out path.
+        let consumed = consume_all_open_comments(&reviews).unwrap();
         fs::write(
             art_dir.join("reviews.org"),
-            String::from_utf8(resolved).unwrap(),
+            String::from_utf8(consumed).unwrap(),
         )
         .unwrap();
 
