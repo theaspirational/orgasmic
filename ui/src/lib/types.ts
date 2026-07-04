@@ -554,7 +554,47 @@ export type QuestionEntry = {
   time: string;
 };
 
-export type DaemonTopic = 'board' | 'task' | 'run' | 'manager' | 'graph' | 'daemon';
+export type DaemonTopic = 'board' | 'task' | 'run' | 'manager' | 'graph' | 'daemon' | 'artifact';
+
+export type ArtifactSummary = {
+  id: string;
+  title: string;
+  subject_nodes: string[];
+  version: number;
+  state: string;
+  open_comment_count: number;
+};
+
+export type CommentRecord = {
+  cid: string;
+  author: string;
+  version: number;
+  anchor: string;
+  resolution_target: string;
+  resolved: boolean;
+  consumed: boolean;
+  message: string;
+};
+
+export type ArtifactDetail = ArtifactSummary & {
+  prompt: string;
+  content: string;
+  comments: CommentRecord[];
+};
+
+export type ArtifactGenerateRequest = {
+  nodes: string[];
+  prompt: string;
+};
+
+export type ArtifactGenerateResponse = {
+  artifact_id: string;
+  run_id: string;
+};
+
+export type ArtifactRegenerateRequest = {
+  extraPrompt?: string;
+};
 
 export type DaemonEvent = {
   seq: number;
@@ -577,7 +617,8 @@ export type ViewName =
   | 'manager'
   | 'org'
   | 'status'
-  | 'settings';
+  | 'settings'
+  | 'artifacts';
 
 export type TasksLayout = 'list' | 'kanban';
 

@@ -1,10 +1,11 @@
 // @arch arch_MK2Q2.7
-import { useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
-import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useRefreshBump, useRefreshToken } from '@/hooks/useRefreshBus';
 import { createDecision, fetchDecisions } from '@/lib/api';
 import { appendDrawerStack, routeSearch, searchList, type AppSearch } from '@/lib/searchState';
@@ -13,6 +14,7 @@ import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
 
 import { CopyIdBadge } from './CopyIdBadge';
+import { GenerateArtifactDialog } from './GenerateArtifactDialog';
 import { ErrorPanel, PageHeader } from './Primitives';
 import { NodeModal } from './node-views/NodeModal';
 import { TagFilterInput } from './node-views/TagFilterInput';
@@ -138,6 +140,21 @@ export function DecisionsView({ projectId }: { projectId: string }) {
   const [showSuperseded, setShowSuperseded] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [creatingUnder, setCreatingUnder] = useState<string | null>(null);
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [generateOpen, setGenerateOpen] = useState(false);
+  const [generateSelectionOpen, setGenerateSelectionOpen] = useState(false);
+
+  // Drop selections that no longer exist once a live refresh lands, so a
+  // stale id never rides along in a "Generate from N selected" request.
+  useEffect(() => {
+    if (!decisions.data) return;
+    const known = new Set(decisions.data.map((item) => item.id));
+    setSelected((current) => {
+      const next = new Set([...current].filter((id) => known.has(id)));
+      return next.size === current.size ? current : next;
+    });
+  }, [decisions.data]);
 
   const supersededCount = useMemo(
     () => (decisions.data ?? []).filter((d) => d.superseded).length,
@@ -164,11 +181,16 @@ export function DecisionsView({ projectId }: { projectId: string }) {
     });
   }
 
+  function activateRow(id: string) {
+    if (selectMode) toggleSelected(id);
+    else openNode(id);
+  }
+
   function openRowFromKeyboard(event: KeyboardEvent<HTMLDivElement>, id: string) {
     if (event.target !== event.currentTarget) return;
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      openNode(id);
+      activateRow(id);
     }
   }
 
@@ -178,6 +200,15 @@ export function DecisionsView({ projectId }: { projectId: string }) {
 
   function toggleCollapsed(id: string) {
     setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelected(id: string) {
+    setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -213,6 +244,33 @@ export function DecisionsView({ projectId }: { projectId: string }) {
         title="Decisions"
         count={rows.length}
         description={`Decision records for ${projectId}.`}
+        actions={
+          <>
+            <Button
+              type="button"
+              variant={selectMode ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={selectMode}
+              onClick={() => {
+                setSelectMode((v) => !v);
+                setSelected(new Set());
+              }}
+            >
+              {selectMode ? `${selected.size} selected` : 'Select'}
+            </Button>
+            {selectMode ? (
+              <Button type="button" size="sm" disabled={selected.size === 0} onClick={() => setGenerateSelectionOpen(true)}>
+                <Sparkles />
+                Generate from {selected.size} selected
+              </Button>
+            ) : (
+              <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
+                <Sparkles />
+                Generate artifact
+              </Button>
+            )}
+          </>
+        }
       />
       <section className="rounded-xl border bg-card" aria-label="Decisions">
         <div className="border-b p-3">
@@ -252,7 +310,7 @@ export function DecisionsView({ projectId }: { projectId: string }) {
               return (
                 <div
                   key={decision.id}
-                  onClick={() => openNode(decision.id)}
+                  onClick={() => activateRow(decision.id)}
                   className={cn(
                     'grid w-full cursor-pointer gap-2 px-3 py-3 transition-colors hover:bg-muted/30 md:grid-cols-[1fr_auto] md:items-center',
                     row.ghost && 'bg-muted/20 opacity-70',
@@ -292,7 +350,7 @@ export function DecisionsView({ projectId }: { projectId: string }) {
                         className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
                         onClick={(event) => {
                           event.stopPropagation();
-                          openNode(decision.id);
+                          activateRow(decision.id);
                         }}
                         onKeyDown={(event) => openRowFromKeyboard(event, decision.id)}
                       >
@@ -309,16 +367,24 @@ export function DecisionsView({ projectId }: { projectId: string }) {
                     {decisionTags.map((tag) => (
                       <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">{tag}</Badge>
                     ))}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={creatingUnder === decision.id}
-                      onClick={() => void addSubDecision(decision.id)}
-                    >
-                      <Plus />
-                      Add sub-decision
-                    </Button>
+                    {selectMode ? (
+                      <Checkbox
+                        checked={selected.has(decision.id)}
+                        onCheckedChange={() => toggleSelected(decision.id)}
+                        aria-label={`Select ${decision.title || decision.id}`}
+                      />
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={creatingUnder === decision.id}
+                        onClick={() => void addSubDecision(decision.id)}
+                      >
+                        <Plus />
+                        Add sub-decision
+                      </Button>
+                    )}
                   </div>
                 </div>
               );
@@ -326,6 +392,23 @@ export function DecisionsView({ projectId }: { projectId: string }) {
           )}
         </div>
       </section>
+      <GenerateArtifactDialog
+        projectId={projectId}
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        nodes={(decisions.data ?? []).map((item) => item.id)}
+        nodeLabels={(decisions.data ?? []).map((item) => item.title || item.id)}
+      />
+      <GenerateArtifactDialog
+        projectId={projectId}
+        open={generateSelectionOpen}
+        onOpenChange={(next) => {
+          setGenerateSelectionOpen(next);
+          if (!next) setSelectMode(false);
+        }}
+        nodes={[...selected]}
+        nodeLabels={[...selected].map((id) => (decisions.data ?? []).find((item) => item.id === id)?.title ?? id)}
+      />
       <NodeModal
         projectId={projectId}
         nodeKind="decision"

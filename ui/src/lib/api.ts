@@ -5,6 +5,11 @@ import type {
   ActivityEntry,
   ArchitectureSummary,
   ArchitectureNodesResponse,
+  ArtifactDetail,
+  ArtifactGenerateRequest,
+  ArtifactGenerateResponse,
+  ArtifactRegenerateRequest,
+  ArtifactSummary,
   BoardEntry,
   DaemonStatus,
   DecisionSummary,
@@ -359,4 +364,31 @@ export function postStage(stage: 'grill' | 'architect' | 'plan', project?: strin
     project,
     request_id: requestId(stage),
   });
+}
+
+export function fetchArtifacts(project?: string | null): Promise<ArtifactSummary[]> {
+  return get<ArtifactSummary[]>(`/artifacts${q(project)}`);
+}
+
+export function fetchArtifact(
+  id: string,
+  project?: string | null,
+  version?: number,
+): Promise<ArtifactDetail> {
+  return get<ArtifactDetail>(`/artifacts/${encodeURIComponent(id)}${q(project, { version })}`);
+}
+
+export function generateArtifact(
+  body: ArtifactGenerateRequest,
+  project?: string | null,
+): Promise<ArtifactGenerateResponse> {
+  return post<ArtifactGenerateResponse>(`/artifacts/generate${q(project)}`, body);
+}
+
+export function regenerateArtifact(
+  id: string,
+  body: ArtifactRegenerateRequest = {},
+  project?: string | null,
+): Promise<ArtifactGenerateResponse> {
+  return post<ArtifactGenerateResponse>(`/artifacts/${encodeURIComponent(id)}/regenerate${q(project)}`, body);
 }

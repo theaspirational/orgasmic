@@ -8,6 +8,7 @@ import {
   ChevronRight,
   Cpu,
   FileCode2,
+  FileStack,
   FolderOpen,
   FolderTree,
   GitCommitHorizontal,
@@ -82,6 +83,7 @@ type ProjectPage =
   | 'architecture'
   | 'tasks'
   | 'glossary'
+  | 'artifacts'
   | 'project'
   | 'runs'
   | 'prompts'
@@ -99,6 +101,7 @@ type NavItem = {
     | '/projects/$projectId/architecture'
     | '/projects/$projectId/tasks'
     | '/projects/$projectId/glossary'
+    | '/projects/$projectId/artifacts'
     | '/projects/$projectId/project'
     | '/projects/$projectId/runs'
     | '/projects/$projectId/prompts'
@@ -117,6 +120,7 @@ const PRIMARY: NavItem[] = [
 ];
 
 const MORE: NavItem[] = [
+  { page: 'artifacts', label: 'Artifacts', icon: FileStack, to: '/projects/$projectId/artifacts' },
   { page: 'prompts', label: 'Prompts', icon: FileCode2, to: '/projects/$projectId/prompts' },
   { page: 'activity', label: 'Activity', icon: LayoutList, to: '/projects/$projectId/activity' },
 ];
@@ -150,6 +154,7 @@ function pathForView(view: ViewName, projectId: string | null) {
       | '/projects/$projectId/decisions'
       | '/projects/$projectId/architecture'
       | '/projects/$projectId/glossary'
+      | '/projects/$projectId/artifacts'
       | '/projects/$projectId/runs'
       | '/projects/$projectId/prompts'
       | '/projects/$projectId/org'
@@ -225,6 +230,7 @@ export function AppShell() {
           event.topic === 'task' ||
           event.topic === 'graph' ||
           event.topic === 'daemon' ||
+          event.topic === 'artifact' ||
           kind === 'project_parse_error' ||
           kind === 'daemon_started'
         ) {

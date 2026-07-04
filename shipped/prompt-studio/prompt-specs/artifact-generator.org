@@ -44,10 +44,96 @@ registered block types, then submit it.
   Diagram, Code, AnnotatedCode, Table, Callout, Checklist, FileTree,
   DataModel, QuestionForm, Wireframe, Canvas, Prototype, Tabs, Columns,
   Section, Image, SequenceDiagram, FlowChart, Mermaid, Timeline,
-  EntityRelationship.
-- Content nested inside a registered block's own body is opaque to
-  validation (code, generics, nested-looking tags) — only top-level tags are
-  checked, so keep everything you want rendered inside a registered block.
+  EntityRelationship. This is the three-way agreement with the UI renderer
+  (=ui/src/lib/artifacts/blocks/=) and its fixture
+  (=ui/src/lib/artifacts/__fixtures__/all-blocks.mdx=): if a generated
+  artifact does not match one of the shapes below, that is a bug — file it
+  against TASK-T25XQ rather than improvising a new shape.
+- **Raw-text convention (load-bearing, and split two ways for a reason — read
+  both halves).** Two different fields carry arbitrary multi-line text, and
+  they use OPPOSITE forms because they fail in opposite ways otherwise:
+  - `Code`/`AnnotatedCode`'s `code` MUST be a backtick template-literal
+    attribute, e.g. =code={`const x = 1;`}=, never bare children. The
+    renderer's parser finds a block's end by matching `</Tag>`, and children
+    text ends that match at the first literal occurrence — even one meant as
+    displayed content (e.g. a code sample that itself prints `</Code>`).
+    Inside a backtick attribute that substring is just characters in a
+    string, so it renders correctly.
+  - `Wireframe`/`Screen`/`Diagram`'s `html` and
+    `Mermaid`/`SequenceDiagram`/`FlowChart`'s `source` MUST be children, NOT a
+    backtick attribute — the opposite rule. The daemon's own submit-time
+    validator (`crates/orgasmic-daemon/src/artifacts.rs::scan_tag_header`)
+    tracks `"`/`'` quote state byte-by-byte while scanning an opening tag's
+    attribute list so it can tell where that tag ends, but it has no concept
+    of backticks: a self-closing tag whose attribute value is a multi-line
+    HTML/Mermaid blob (real markup and diagram syntax are full of `>` and
+    quote characters) can desync that tracker and make the daemon misdetect
+    where the tag ends, rejecting an otherwise-valid submit with an "unclosed
+    tag" error. Put this content as children instead — the daemon finds a
+    non-self-closing tag's end with a plain `</Tag>` substring search, which
+    doesn't care how many quotes or `>` characters are inside.
+  - Only markdown prose or nested blocks otherwise go in children
+    (RichText/Callout bodies, Section/Columns/Tabs contents) — those two
+    exceptions above are the only raw-text fields, and each has exactly one
+    correct form.
+- **Per-block shapes** (attributes unless noted as children; `?` = optional):
+  - RichText — children: markdown prose. No attributes.
+  - Callout — `tone?` one of info/decision/risk/warning/success (default
+    info); children: markdown body.
+  - Code — `language?`, `filename?`, `caption?`, `maxLines?` (number, collapses
+    longer code behind a "show all" toggle); `code={`...`}`.
+  - AnnotatedCode — same as Code plus
+    `annotations={[{lines:"12-18", label:"...", note:"..."}]}` (`lines` is
+    `"N"` or `"N-M"`, 1-indexed).
+  - Table — `headers={["Col A","Col B"]}`, `rows={[["v1","v2"]]}`, `caption?`.
+  - Checklist — `items={[{label:"...", done:true, note:"..."}]}`.
+  - FileTree — `nodes={[{name:"src", type:"dir", children:[{name:"index.ts",
+    type:"file", note:"..."}]}]}` (`type` is `"file"` or `"dir"`).
+  - DataModel / EntityRelationship — same shape, ERD is just the same model:
+    `entities={[{name:"User", fields:[{name:"id", type:"uuid", pk:true,
+    fk:false, nullable:false}]}]}`, `relations={[{from:"User.id",
+    to:"Order.user_id", label:"has many"}]}`.
+  - QuestionForm — `title?` (defaults "Open Questions"),
+    `questions={[{type:"single", prompt:"...", options:[{label:"...",
+    detail:"...", recommended:true}], allowOther:true}]}` (`type` is
+    `single`/`multi`/`freeform`); this stage renders it read-only, no
+    submit — do not expect answers back in this run.
+  - Wireframe — `surface` one of browser/desktop/mobile/popover/panel,
+    `skeleton?` boolean; children: an HTML *fragment* (no html/body/script/
+    style tags) written per the wireframe quality bar in
+    =~/.claude/skills/visual-plan/references/wireframe.md= (bare elements
+    auto-themed, `.wf-card`/`.wf-pill`/`.wf-chip` helper classes, `--wf-*`
+    tokens for any custom color, `data-icon="name"` for icons, never hex).
+  - Canvas — children: one or more `<Screen surface="..." label="...">
+    ...html fragment...</Screen>` (same html contract as Wireframe, as
+    children — never self-closing with an `html={` attribute).
+  - Prototype — `start?` (a screen `id`); children: one or more
+    `<Screen id="..." label="...">...html...</Screen>`; this html renders in
+    a sandboxed iframe so, unlike Wireframe/Canvas, it MAY include its own
+    `<script>`/`<style>` for real interactivity.
+  - Tabs — children: one or more `<Tab label="...">...nested blocks or
+    prose...</Tab>` (a vertical file rail is a `tabs` of `Code` children).
+  - Columns — children: one or more `<Column label="...">...nested blocks or
+    prose...</Column>` (before/after, current/target).
+  - Section — `title?`; children: nested blocks or prose.
+  - Image — `src` (`https://...` or a `data:image/...;base64,` URI — no other
+    scheme is rendered), `alt?`, `caption?`.
+  - SequenceDiagram — children: the participants/messages body only; the
+    `sequenceDiagram` header line is implied (added if missing).
+  - FlowChart — children: the node/edge body only, `direction?` (default
+    `TD`); the `graph <direction>` header is implied (added if missing).
+  - Mermaid — children: full Mermaid source including its own header line
+    (any diagram kind — used when no dedicated block fits).
+  - Diagram — `caption?`, `css?` (a short attribute is fine — CSS rarely
+    carries the `>`/quote density that trips the daemon's header scan);
+    children: the HTML fragment (same reasoning as Wireframe).
+  - Timeline — `items={[{date:"...", label:"...", body:"..."}]}` (date/body
+    optional, rendered as a vertical time-ordered list).
+- Content nested inside a registered block's own body is opaque to the
+  daemon's structural validator (code, generics, nested-looking tags) — only
+  top-level tags are checked there. The renderer itself still parses nested
+  blocks (Section/Columns/Tabs/Canvas/Prototype contents) in full, so keep
+  everything you want rendered inside a registered block regardless.
 - On regeneration, treat the prior artifact.mdx and the listed comments as
   the brief for what changed; the comments are already closed out for you as
   part of starting this run, so do not try to resolve or reference them
