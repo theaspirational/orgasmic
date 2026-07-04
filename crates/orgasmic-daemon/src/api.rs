@@ -2978,6 +2978,13 @@ fn stage_driver_config_with_overrides(
             map.insert("input_ready_timeout".to_string(), json!(secs));
         }
     }
+    if worker.kind == WorkerKind::Artifactor && worker.driver == "rmux" {
+        if let Some(map) = config.as_object_mut() {
+            // orgasmic:dec_S02E2 — hot-session artifactor: persist across grilling
+            // rounds; not system_wide so daemon shutdown reaps the pane cleanly.
+            map.insert("persistent".to_string(), json!(true));
+        }
+    }
     apply_driver_defaults(
         DriverConfig::from_value(config),
         &worker.driver,
@@ -9581,7 +9588,14 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
     if summary.state != "regenerating" {
         return;
     }
-    let Ok(new_org) = update_artifact_org(&current_org, restore_version, restore_state) else {
+    // For established hot sessions, revert to the last submitted version — not
+    // the frozen (failed, 0) target captured at first generate time.
+    let (target_state, target_version) = if summary.version > 0 {
+        ("submitted", summary.version)
+    } else {
+        (restore_state, restore_version)
+    };
+    let Ok(new_org) = update_artifact_org(&current_org, target_version, target_state) else {
         return;
     };
 
@@ -9606,7 +9620,7 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
     tx_entry.extra = vec![
         ("ARTIFACT_ID".into(), art_id.to_string()),
         ("RUN_ID".into(), run_id.to_string()),
-        ("RESTORED_STATE".into(), restore_state.to_string()),
+        ("RESTORED_STATE".into(), target_state.to_string()),
         ("REASON".into(), reason.to_string()),
     ];
 
@@ -9641,9 +9655,119 @@ async fn revert_artifact_generation_state(state: &ApiState, revert: RevertArtifa
         EventPayload::ArtifactChanged {
             project_id: entry.id.clone(),
             artifact_id: art_id.to_string(),
-            state: restore_state.to_string(),
+            state: target_state.to_string(),
         },
     );
+}
+
+struct ArtifactRegenerateCloseOut<'a> {
+    state: &'a ApiState,
+    entry: &'a BoardEntry,
+    art_dir: &'a FsPath,
+    art_id: &'a str,
+    run_id: &'a str,
+    version: u32,
+    extra_prompt: &'a str,
+}
+
+/// Version-N close-out shared by cold and hot regenerate paths: consume open
+/// comments, flip artifact.org to `regenerating`, append `artifact.regenerated`.
+async fn close_out_artifact_regenerate_round(
+    close: ArtifactRegenerateCloseOut<'_>,
+) -> Result<(), ApiError> {
+    let ArtifactRegenerateCloseOut {
+        state,
+        entry,
+        art_dir,
+        art_id,
+        run_id,
+        version,
+        extra_prompt,
+    } = close;
+    let write_lock = state.artifact_write_lock(art_dir);
+    let _write_guard = write_lock.lock().await;
+
+    let reviews_path = art_dir.join("reviews.org");
+    let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
+    let consumed_cids: Vec<String> = artifacts::parse_comments(&current_reviews)
+        .into_iter()
+        .filter(|c| !(c.resolved && c.consumed))
+        .map(|c| c.cid)
+        .collect();
+    let new_reviews = artifacts::consume_all_open_comments(&current_reviews)
+        .map_err(|e| ApiError::internal(format!("consume open comments: {e}")))?;
+
+    let current_org = std::fs::read_to_string(art_dir.join("artifact.org"))
+        .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
+    let new_org = update_artifact_org(&current_org, version, "regenerating")
+        .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
+
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+
+    let mut regen_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.regenerated",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    regen_entry.project = Some(entry.id.clone());
+    regen_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.to_string()),
+        ("RUN_ID".into(), run_id.to_string()),
+        ("VERSION".into(), version.to_string()),
+        ("CONSUMED_CIDS".into(), consumed_cids.join(" ")),
+        (
+            "EXTRA_PROMPT".into(),
+            artifacts::escape_single_line(extra_prompt),
+        ),
+    ];
+
+    state
+        .writer
+        .transaction(
+            vec![
+                FileRewrite {
+                    path: art_dir.join("artifact.org"),
+                    new_contents: new_org,
+                },
+                FileRewrite {
+                    path: reviews_path,
+                    new_contents: new_reviews,
+                },
+            ],
+            TxAppend {
+                tx_path,
+                entry: regen_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: None,
+            },
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("write regenerate state: {e}")))?;
+
+    let _ = state.index.refresh_project(&entry.id).await;
+    state.events.publish(
+        Topic::Artifact,
+        EventPayload::ArtifactChanged {
+            project_id: entry.id.clone(),
+            artifact_id: art_id.to_string(),
+            state: "regenerating".into(),
+        },
+    );
+    Ok(())
 }
 
 struct ArtifactReleaseWatch {
@@ -9848,12 +9972,9 @@ async fn post_artifact_regenerate(
 
     let extra_prompt = body.extra_prompt.unwrap_or_default();
 
-    // Read-only: feeds the launch prompt. This is NOT yet the final "what
-    // gets closed out" comment set — that is re-read and applied only after
-    // the lease is actually acquired, below, so a refused (409) call because
-    // a run is already live leaves no trace in artifact.org, reviews.org, or
-    // the tx log (a live probe against a real daemon, TASK-2ZQSB, caught the
-    // opposite ordering doing exactly that).
+    // Read-only: feeds the launch/followup prompt. This is NOT yet the final
+    // "what gets closed out" comment set — that is re-read and applied only
+    // after the round is committed (lease acquire or accepted send_input).
     let detail = load_artifact_detail(&art_dir, None, false).map_err(|e| match e {
         ArtifactLoadError::NotFound => ApiError::not_found("artifact not found"),
         ArtifactLoadError::VersionNotFound(v) => {
@@ -9863,6 +9984,50 @@ async fn post_artifact_regenerate(
     let version = detail.summary.version;
     let nodes = detail.summary.subject_nodes.clone();
 
+    let artifact_task_id = format!("artifact.generate:{art_id}");
+    let snapshot = state.supervisor.snapshot().await;
+    let live = snapshot
+        .runs
+        .iter()
+        .find(|r| r.task_id == artifact_task_id);
+
+    if let Some(live_run) = live {
+        // HOT PATH: route the followup into the live session — no new lease.
+        let followup_payload =
+            assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
+        let ack = state
+            .supervisor
+            .send_input(&live_run.run_id, followup_payload, &live_run.identity)
+            .await
+            .map_err(|e| match e {
+                crate::supervisor::SupervisorError::RunNotFound(_) => {
+                    ApiError::not_found(format!("active run {}", live_run.run_id))
+                }
+                other => supervisor_control_error("artifact regenerate followup", other),
+            })?;
+        if !ack.accepted {
+            return Err(ApiError::conflict(
+                ack.message
+                    .unwrap_or_else(|| "harness busy".to_string()),
+            ));
+        }
+        close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
+            state: &state,
+            entry: &entry,
+            art_dir: &art_dir,
+            art_id: &art_id,
+            run_id: &live_run.run_id,
+            version,
+            extra_prompt: &extra_prompt,
+        })
+        .await?;
+        return Ok(Json(ArtifactGenerateResponse {
+            artifact_id: art_id,
+            run_id: live_run.run_id.clone(),
+        }));
+    }
+
+    // COLD PATH: no live holder — spawn a fresh run (also post-restart).
     let subject_context = assemble_artifact_context(&state, &entry.id, &nodes).await;
     let regen_context = assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
     let bundle = compile_artifact_generate_prompt_bundle(
@@ -9874,10 +10039,6 @@ async fn post_artifact_regenerate(
         &regen_context,
     )?;
 
-    // Gate on the lease first: nothing durable changes until a run is
-    // actually acquired. Nothing to revert on failure here (see
-    // `launch_artifact_generation`'s doc comment) — the artifact is still
-    // exactly as it was before this request.
     let run_id = launch_artifact_generation(
         &state,
         &entry,
@@ -9889,102 +10050,16 @@ async fn post_artifact_regenerate(
     )
     .await?;
 
-    // Lease acquired: close out the current version's open comments and flip
-    // to `regenerating` in one locked transaction (dec_V44E4), serialized
-    // against the feedback/consume handlers' own read->transaction window on
-    // reviews.org (same lock, same discipline as TASK-Y2ZQJ M1). Re-reads
-    // fresh rather than reusing `detail` above, since a comment may have
-    // landed while the launch was in flight.
-    let write_lock = state.artifact_write_lock(&art_dir);
-    let _write_guard = write_lock.lock().await;
-
-    let reviews_path = art_dir.join("reviews.org");
-    let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
-    // Match consume_all_open_comments' own predicate exactly: it flips every
-    // heading that is NOT already (resolved && consumed), so CONSUMED_CIDS must
-    // report that same set — not just the fully-open ones (TASK-2ZQSB L1). A
-    // resolved-but-not-yet-consumed comment is consumed by the rewrite and must
-    // be listed.
-    let consumed_cids: Vec<String> = artifacts::parse_comments(&current_reviews)
-        .into_iter()
-        .filter(|c| !(c.resolved && c.consumed))
-        .map(|c| c.cid)
-        .collect();
-    let new_reviews = artifacts::consume_all_open_comments(&current_reviews)
-        .map_err(|e| ApiError::internal(format!("consume open comments: {e}")))?;
-
-    let current_org = std::fs::read_to_string(art_dir.join("artifact.org"))
-        .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
-    let new_org = update_artifact_org(&current_org, version, "regenerating")
-        .map_err(|e| ApiError::internal(format!("update artifact.org: {e}")))?;
-
-    let now = Utc::now();
-    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
-    let project_date = now.format("%Y%m%d").to_string();
-    let month_str = now.format("%Y-%m").to_string();
-    let tx_path = entry
-        .path
-        .join(".orgasmic")
-        .join("tx")
-        .join(format!("{month_str}.org"));
-
-    let mut regen_entry = orgasmic_core::tx::TxEntry::new(
-        "pending",
-        "artifact.regenerated",
-        &time_str,
-        &state.actor,
-        &state.machine,
-    );
-    regen_entry.project = Some(entry.id.clone());
-    regen_entry.extra = vec![
-        ("ARTIFACT_ID".into(), art_id.clone()),
-        ("RUN_ID".into(), run_id.clone()),
-        ("VERSION".into(), version.to_string()),
-        ("CONSUMED_CIDS".into(), consumed_cids.join(" ")),
-        (
-            "EXTRA_PROMPT".into(),
-            artifacts::escape_single_line(&extra_prompt),
-        ),
-    ];
-
-    state
-        .writer
-        .transaction(
-            vec![
-                FileRewrite {
-                    path: art_dir.join("artifact.org"),
-                    new_contents: new_org,
-                },
-                FileRewrite {
-                    path: reviews_path,
-                    new_contents: new_reviews,
-                },
-            ],
-            TxAppend {
-                tx_path,
-                entry: regen_entry,
-                project_id: Some(entry.id.clone()),
-                tx_id_policy: TxIdPolicy::ProjectSequence {
-                    project_id: entry.id.clone(),
-                    date: project_date,
-                },
-                request_id: None,
-            },
-        )
-        .await
-        .map_err(|e| ApiError::internal(format!("write regenerate state: {e}")))?;
-
-    drop(_write_guard);
-
-    let _ = state.index.refresh_project(&entry.id).await;
-    state.events.publish(
-        Topic::Artifact,
-        EventPayload::ArtifactChanged {
-            project_id: entry.id.clone(),
-            artifact_id: art_id.clone(),
-            state: "regenerating".into(),
-        },
-    );
+    close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
+        state: &state,
+        entry: &entry,
+        art_dir: &art_dir,
+        art_id: &art_id,
+        run_id: &run_id,
+        version,
+        extra_prompt: &extra_prompt,
+    })
+    .await?;
 
     Ok(Json(ArtifactGenerateResponse {
         artifact_id: art_id,
@@ -13692,18 +13767,55 @@ mod tests {
 
     // ── artifact generation launch (TASK-2ZQSB acceptance) ───────────────────
 
-    /// Overrides the shipped `artifactor` worker with a `tmux`/`claude` pairing
-    /// for tests: `spawn_worker_run` always drives the tmux mode through a
-    /// literal `sh -lc "echo ...; exec sh"` stub (see
-    /// `stage_driver_config_with_overrides`), never invoking a real harness
-    /// binary, so this is the same "mock driver" shape supervisor.rs's own
-    /// tests use — deterministic and free, and the run stays live (`exec sh`
-    /// never exits) until the test explicitly releases it.
+    /// Overrides the shipped `artifactor` worker with an rmux/custom pairing
+    /// for tests: a minimal interactive harness script that stays live and
+    /// accepts `send_input` followups (hot-session regenerate path). Skips
+    /// when rmux is unavailable — same pattern as orgasmic-drivers rmux live
+    /// tests.
     fn seed_test_artifactor_worker(home: &Home) {
+        let harness = home.user().join("artifactor-test-harness.sh");
         write(
-            home.user().join("workers/artifactor.org"),
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-2ZQSB).\n",
+            harness.clone(),
+            "#!/bin/sh\nwhile true; do\n  echo '> ready'\n  echo READY\n  IFS= read -r line || exit 0\n  echo \"ECHO:$line\"\ndone\n",
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&harness).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&harness, perms).unwrap();
+        }
+        let harness_path = harness.display();
+        let worker_org = format!(
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-RH4M5 hot-session).\n"
+        );
+        write(home.user().join("workers/artifactor.org"), &worker_org);
+    }
+
+    fn rmux_available_for_test() -> bool {
+        orgasmic_drivers::modes::rmux::probe_rmux_binary().found
+    }
+
+    /// Like `seed_test_artifactor_worker` but the harness sleeps before showing
+    /// its composer prompt so an immediate followup hits the busy gate.
+    fn seed_busy_harness_artifactor_worker(home: &Home) {
+        let harness = home.user().join("artifactor-busy-harness.sh");
+        write(
+            harness.clone(),
+            "#!/bin/sh\necho BOOTING\nsleep 120\nwhile true; do\n  echo '> ready'\n  IFS= read -r line || exit 0\n  echo \"ECHO:$line\"\ndone\n",
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&harness).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&harness, perms).unwrap();
+        }
+        let harness_path = harness.display();
+        let worker_org = format!(
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:VERSION:                     1\n:END:\n"
+        );
+        write(home.user().join("workers/artifactor.org"), &worker_org);
     }
 
     /// A worker record with an explicitly unsupported driver/harness pair —
@@ -14081,7 +14193,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_artifact_regenerate_refused_by_lease_while_prior_run_is_live() {
+    async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
+        if !rmux_available_for_test() {
+            eprintln!("skipping post_artifact_regenerate_hot_path_reuses_live_run_id: rmux binary not found");
+            return;
+        }
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -14090,14 +14206,14 @@ mod tests {
         seed_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-REGEN1";
+        let art_id = "ART-HOT1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactSubmitRequest {
                 content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Regen test".into()),
+                title: Some("Hot session".into()),
                 subject_nodes: Some(vec!["TASK-PRE".into()]),
                 prompt: Some("Initial prompt".into()),
             }),
@@ -14110,7 +14226,7 @@ mod tests {
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactFeedbackRequest {
-                message: "please tighten this".into(),
+                message: "round 1 feedback".into(),
                 anchor: None,
                 resolution_target: None,
                 author: Some("reviewer@test.com".into()),
@@ -14118,7 +14234,164 @@ mod tests {
         )
         .await
         .expect("feedback should succeed");
-        let cid = fb_resp.0["cid"].as_str().unwrap().to_string();
+        let cid1 = fb_resp.0["cid"].as_str().unwrap().to_string();
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first pass".into()),
+            }),
+        )
+        .await
+        .expect("first regenerate should succeed (cold spawn)");
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+
+        // Simulate round 1 completing: submit v2 while the hot session stays live.
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v2</RichText>\n".into(),
+                title: None,
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit v2 should succeed");
+        assert_eq!(load_artifact(&art_dir).unwrap().version, 2);
+
+        let fb2 = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "round 2 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("round 2 feedback should succeed");
+        let cid2 = fb2.0["cid"].as_str().unwrap().to_string();
+
+        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
+
+        // Wait for the harness to finish the first dispatch and show its
+        // composer prompt before routing round 2 via send_input.
+        let second = {
+            let mut last_err = None;
+            let mut resp = None;
+            for _ in 0..40 {
+                match post_artifact_regenerate(
+                    State(state.clone()),
+                    Path(art_id.to_string()),
+                    Query(artifact_query("test-proj")),
+                    Json(ArtifactRegenerateRequest {
+                        extra_prompt: Some("second pass".into()),
+                    }),
+                )
+                .await
+                {
+                    Ok(ok) => {
+                        resp = Some(ok);
+                        break;
+                    }
+                    Err(err) if err.status == StatusCode::CONFLICT => {
+                        last_err = Some(err);
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                    Err(err) => panic!("unexpected regenerate error: {err:?}"),
+                }
+            }
+            resp.unwrap_or_else(|| {
+                panic!(
+                    "second regenerate should route via send_input (hot path): {:?}",
+                    last_err
+                )
+            })
+        };
+        assert_eq!(
+            second.0.run_id, first.0.run_id,
+            "two consecutive rounds must reuse one run_id"
+        );
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+
+        let detail = load_artifact_detail(&art_dir, None, true).unwrap();
+        for cid in [cid1, cid2] {
+            let comment = detail
+                .comments
+                .iter()
+                .find(|c| c.cid == cid)
+                .expect("comment present");
+            assert!(comment.consumed, "{comment:?}");
+        }
+
+        let tx_after = std::fs::read_to_string(
+            project_root
+                .join(".orgasmic/tx")
+                .join(format!("{}.org", Utc::now().format("%Y-%m"))),
+        )
+        .unwrap_or_default();
+        assert!(tx_after.contains("artifact.regenerated"));
+        assert_ne!(reviews_before, std::fs::read_to_string(art_dir.join("reviews.org")).unwrap());
+
+        let _ = state
+            .supervisor
+            .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
+        if !rmux_available_for_test() {
+            eprintln!(
+                "skipping post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation: rmux binary not found"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_busy_harness_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-BUSY";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Busy harness".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "needs work".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
 
         let first = post_artifact_regenerate(
             State(state.clone()),
@@ -14132,60 +14405,251 @@ mod tests {
         .expect("first regenerate should succeed");
 
         let art_dir = artifact_dir(&project_root, art_id);
-        let summary = load_artifact(&art_dir).unwrap();
-        assert_eq!(summary.state, "regenerating");
-        assert_eq!(
-            summary.version, 1,
-            "version stays at 1 until the next submit"
-        );
+        let org_before = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
+        let tx_path = project_root
+            .join(".orgasmic/tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx_before = std::fs::read_to_string(&tx_path).unwrap_or_default();
 
-        // dec_V44E4: regenerate closes out the current version's open comments.
-        let detail_all = load_artifact_detail(&art_dir, None, true).unwrap();
-        let comment = detail_all
-            .comments
-            .iter()
-            .find(|c| c.cid == cid)
-            .expect("comment still present in the archive view");
-        assert!(comment.resolved && comment.consumed, "{comment:?}");
-
-        // A second regenerate while the first run is live must be refused.
-        let second = post_artifact_regenerate(
+        // Harness is mid-turn until the dispatch prompt is consumed and the
+        // composer prompt reappears — followup must be refused with no durable
+        // mutation (arch_045Q0.1 ordering).
+        let err = post_artifact_regenerate(
             State(state.clone()),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
-                extra_prompt: Some("second pass".into()),
+                extra_prompt: Some("too soon".into()),
             }),
         )
-        .await;
-        let err = second.expect_err("second regenerate while one runs must be refused");
+        .await
+        .expect_err("followup while harness busy must be refused");
         assert_eq!(err.status, StatusCode::CONFLICT);
 
-        // Commenting is also locked while regenerating (existing guard, still
-        // correct against the real regenerating state this route now produces).
-        let fb2 = post_artifact_feedback(
-            State(state.clone()),
-            Path(art_id.to_string()),
-            Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
-                message: "should be refused".into(),
-                anchor: None,
-                resolution_target: None,
-                author: None,
-            }),
-        )
-        .await;
-        assert_eq!(fb2.unwrap_err().status, StatusCode::CONFLICT);
-
-        // The refused second call must not have mutated state or version.
-        let summary_after = load_artifact(&art_dir).unwrap();
-        assert_eq!(summary_after.state, "regenerating");
-        assert_eq!(summary_after.version, 1);
+        assert_eq!(
+            std::fs::read_to_string(art_dir.join("artifact.org")).unwrap(),
+            org_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap(),
+            reviews_before
+        );
+        assert_eq!(
+            std::fs::read_to_string(&tx_path).unwrap_or_default(),
+            tx_before
+        );
 
         let _ = state
             .supervisor
             .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
             .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
+        if !rmux_available_for_test() {
+            eprintln!(
+                "skipping post_artifact_regenerate_cold_spawns_after_forgotten_run: rmux binary not found"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-COLD";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Restart path".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "round 1".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first round".into()),
+            }),
+        )
+        .await
+        .expect("first regenerate should cold-spawn");
+        let first_run_id = first.0.run_id.clone();
+
+        // Simulate daemon restart: release drops the run from the supervisor.
+        state
+            .supervisor
+            .release(&first_run_id, "simulate restart", ReleaseOutcome::Completed)
+            .await
+            .unwrap();
+
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v2</RichText>\n".into(),
+                title: None,
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit v2 after restart");
+
+        let _ = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "after restart".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let resp = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("post-restart".into()),
+            }),
+        )
+        .await
+        .expect("regenerate should cold-spawn when no live holder");
+        assert!(!resp.0.run_id.is_empty());
+        assert_ne!(
+            resp.0.run_id, first_run_id,
+            "post-restart regenerate must spawn a fresh run"
+        );
+        assert_eq!(
+            load_artifact(&artifact_dir(&project_root, art_id))
+                .unwrap()
+                .state,
+            "regenerating"
+        );
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
+        if !rmux_available_for_test() {
+            eprintln!(
+                "skipping artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round: rmux binary not found"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-REVERT2";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Revert v1".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit v1 should succeed");
+
+        let _ = post_artifact_feedback(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "round 2 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let regen = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("round 2".into()),
+            }),
+        )
+        .await
+        .expect("regenerate should succeed");
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
+        assert_eq!(load_artifact(&art_dir).unwrap().version, 1);
+
+        state
+            .supervisor
+            .release(
+                &regen.0.run_id,
+                "test: session died mid-round-2",
+                ReleaseOutcome::Failed,
+            )
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let summary = load_artifact(&art_dir).unwrap();
+            if summary.state == "submitted" && summary.version == 1 {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "watcher did not revert to submitted@v1 in time; state={} version={}",
+                summary.state,
+                summary.version
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
     }
 
     #[tokio::test]
