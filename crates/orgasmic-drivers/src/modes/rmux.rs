@@ -152,6 +152,13 @@ struct RmuxConfig {
     /// Defaults ON for the manager (set by the UI), OFF otherwise.
     #[serde(default)]
     system_wide: bool,
+    /// Hot-session runs: keep the dispatch EOT marker in prompts (and followups)
+    /// for per-round stall detection and operator visibility, but do **not**
+    /// treat marker appearance as run completion — the run ends on pane/process
+    /// exit only. The stall babysitter is a separate run that reads the pane
+    /// itself and is unaffected by this run's completion wiring.
+    #[serde(default)]
+    persistent: bool,
 }
 
 /// Result of the separate rmux-binary discovery (kept distinct from the
@@ -258,6 +265,7 @@ struct RmuxSpawnPlan {
     /// interactive agent we paste the brief into, not a line-oriented command).
     use_render_default: bool,
     native_runtime: Option<NativeRuntimeMeta>,
+    persistent: bool,
 }
 
 fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> RmuxSpawnPlan {
@@ -357,6 +365,7 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         eot_marker,
         use_render_default,
         native_runtime,
+        persistent: cfg.persistent,
     }
 }
 
@@ -666,7 +675,13 @@ impl WorkerDriver for RmuxDriver {
             .unwrap_or_else(|| self.adapter.harness());
         let plan = build_spawn_plan(&cfg, &ctx, harness);
         let use_render = cfg.force_render.unwrap_or(plan.use_render_default);
-        let eot_marker = Some(tmux_eot_marker(&ctx.identity.run_id));
+        // Persistent hot sessions complete on process exit only — see
+        // `run_live_session` for the same decoupling.
+        let eot_marker = if cfg.persistent {
+            None
+        } else {
+            Some(tmux_eot_marker(&ctx.identity.run_id))
+        };
 
         let (tx, rx) = mpsc::channel(64);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
@@ -807,13 +822,19 @@ async fn run_live_session(
     // for plain commands. `force_render` overrides the per-command heuristic.
     let use_render = cfg.force_render.unwrap_or(plan.use_render_default);
 
-    // The EOT marker only completes runs that were given a dispatch prompt
-    // (which carries the marker instruction); plain sessions complete on
-    // process exit alone.
-    let eot_marker = plan
-        .initial_prompt
-        .is_some()
-        .then(|| plan.eot_marker.clone());
+    // The EOT marker only completes non-persistent runs that were given a dispatch
+    // prompt (which carries the marker instruction). Persistent hot sessions still
+    // append the marker to prompts for the stall babysitter's per-round pane scan
+    // (a separate run — unaffected by this completion wiring) but complete on
+    // pane/process exit only. Plain sessions without a dispatch prompt also
+    // complete on process exit alone.
+    let eot_marker = if plan.persistent {
+        None
+    } else {
+        plan.initial_prompt
+            .is_some()
+            .then(|| plan.eot_marker.clone())
+    };
 
     let pane = session.pane(0, 0);
     let capture_task = spawn_pane_capture(
@@ -2236,6 +2257,191 @@ mod tests {
         assert!(
             saw_complete,
             "expected RunComplete when the pane process exited"
+        );
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    /// Persistent hot sessions must not self-complete when the EOT marker
+    /// appears — only when the pane process exits.
+    #[tokio::test]
+    async fn live_rmux_persistent_run_does_not_complete_on_eot_marker() {
+        let probe = probe_rmux_binary();
+        if !probe.found {
+            eprintln!(
+                "skipping live_rmux_persistent_run_does_not_complete_on_eot_marker: rmux binary not found"
+            );
+            return;
+        }
+        let run_id = "run-persistent-marker";
+        let marker = tmux_eot_marker(run_id);
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", format!("printf '{marker}\\n'; sleep 30")],
+            "prompt_bundle_text": "do the task",
+            "persistent": true,
+            "force_render": true,
+        }));
+        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
+        let ev = s.events.recv().await.unwrap();
+        let DriverEvent::Ready { capabilities, .. } = ev else {
+            panic!("expected Ready, got {ev:?}");
+        };
+        if capabilities["inert"] == true {
+            eprintln!(
+                "skipping live_rmux_persistent_run_does_not_complete_on_eot_marker: SDK degraded to inert"
+            );
+            s.control.release("cleanup").await.unwrap();
+            return;
+        }
+
+        let mut saw_marker = false;
+        let mut saw_complete = false;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
+                .await
+                .expect("timed out waiting for rmux render event")
+                .expect("event stream closed");
+            match ev {
+                DriverEvent::TextChunk { chunk, .. } => {
+                    saw_marker |= chunk.contains(&marker);
+                }
+                DriverEvent::RunComplete { .. } => {
+                    saw_complete = true;
+                    break;
+                }
+                DriverEvent::DriverError { fatal, message } => {
+                    panic!("unexpected driver error (fatal={fatal}): {message}");
+                }
+                other => panic!("unexpected event before completion: {other:?}"),
+            }
+            if saw_marker {
+                break;
+            }
+        }
+        assert!(saw_marker, "expected the rendered screen to carry the EOT marker");
+        assert!(
+            !saw_complete,
+            "persistent run must not emit RunComplete when the marker appears"
+        );
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    /// Persistent hot sessions complete when the pane process exits.
+    #[tokio::test]
+    async fn live_rmux_persistent_run_completes_on_process_exit() {
+        let probe = probe_rmux_binary();
+        if !probe.found {
+            eprintln!(
+                "skipping live_rmux_persistent_run_completes_on_process_exit: rmux binary not found"
+            );
+            return;
+        }
+        let run_id = "run-persistent-exit";
+        let marker = tmux_eot_marker(run_id);
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", format!("printf '{marker}\\n'; exit 0")],
+            "prompt_bundle_text": "do the task",
+            "persistent": true,
+            "force_render": true,
+        }));
+        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
+        let ev = s.events.recv().await.unwrap();
+        let DriverEvent::Ready { capabilities, .. } = ev else {
+            panic!("expected Ready, got {ev:?}");
+        };
+        if capabilities["inert"] == true {
+            eprintln!(
+                "skipping live_rmux_persistent_run_completes_on_process_exit: SDK degraded to inert"
+            );
+            s.control.release("cleanup").await.unwrap();
+            return;
+        }
+
+        let mut saw_complete = false;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
+                .await
+                .expect("timed out waiting for rmux render event")
+                .expect("event stream closed");
+            match ev {
+                DriverEvent::RunComplete { summary } => {
+                    saw_complete = true;
+                    assert_eq!(
+                        summary.as_deref(),
+                        Some("rmux pane render stream ended (process exited)"),
+                        "persistent run should complete on process exit"
+                    );
+                    break;
+                }
+                DriverEvent::DriverError { fatal, message } => {
+                    panic!("unexpected driver error (fatal={fatal}): {message}");
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            saw_complete,
+            "expected RunComplete when the persistent run's process exited"
+        );
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    /// Non-persistent dispatch runs still complete when the EOT marker appears.
+    #[tokio::test]
+    async fn live_rmux_non_persistent_dispatch_completes_on_eot_marker() {
+        let probe = probe_rmux_binary();
+        if !probe.found {
+            eprintln!(
+                "skipping live_rmux_non_persistent_dispatch_completes_on_eot_marker: rmux binary not found"
+            );
+            return;
+        }
+        let run_id = "run-non-persistent-marker";
+        let marker = tmux_eot_marker(run_id);
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", format!("printf '{marker}\\n'; sleep 30")],
+            "prompt_bundle_text": "do the task",
+            "persistent": false,
+            "force_render": true,
+        }));
+        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
+        let ev = s.events.recv().await.unwrap();
+        let DriverEvent::Ready { capabilities, .. } = ev else {
+            panic!("expected Ready, got {ev:?}");
+        };
+        if capabilities["inert"] == true {
+            eprintln!(
+                "skipping live_rmux_non_persistent_dispatch_completes_on_eot_marker: SDK degraded to inert"
+            );
+            s.control.release("cleanup").await.unwrap();
+            return;
+        }
+
+        let mut saw_complete = false;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
+                .await
+                .expect("timed out waiting for rmux render event")
+                .expect("event stream closed");
+            match ev {
+                DriverEvent::RunComplete { .. } => {
+                    saw_complete = true;
+                    break;
+                }
+                DriverEvent::DriverError { fatal, message } => {
+                    panic!("unexpected driver error (fatal={fatal}): {message}");
+                }
+                _ => {}
+            }
+        }
+        assert!(
+            saw_complete,
+            "non-persistent dispatch run must complete when the EOT marker appears"
         );
         s.control.release("cleanup").await.unwrap();
     }
