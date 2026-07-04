@@ -9708,9 +9708,6 @@ async fn post_artifact_generate(
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .collect();
-    if nodes.is_empty() {
-        return Err(ApiError::bad_request("nodes must be non-empty"));
-    }
     let prompt = body.prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(ApiError::bad_request("prompt is required"));
@@ -13729,6 +13726,72 @@ mod tests {
         assert!(title.ends_with('…'), "{title}");
     }
 
+    fn open_comment_count_for_node(artifacts: &[ArtifactSummary], node_id: &str) -> usize {
+        artifacts
+            .iter()
+            .filter(|artifact| artifact.subject_nodes.iter().any(|node| node == node_id))
+            .map(|artifact| artifact.open_comment_count)
+            .sum()
+    }
+
+    #[test]
+    fn artifact_org_content_renders_empty_subject_nodes_property() {
+        let org = artifact_org_content("ART-ABC", "Title", &[], "prompt", 0, "regenerating");
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        let heading = file.headings.first().unwrap();
+        assert_eq!(heading.property("SUBJECT_NODES"), Some(""));
+        let parsed: Vec<String> = heading
+            .property("SUBJECT_NODES")
+            .unwrap_or("")
+            .split_whitespace()
+            .map(str::to_string)
+            .collect();
+        assert!(parsed.is_empty());
+    }
+
+    #[tokio::test]
+    async fn assemble_artifact_context_empty_nodes_omits_subject_section() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let context = assemble_artifact_context(&state, "test-proj", &[]).await;
+        assert!(context.is_empty(), "expected no subject context, got: {context}");
+    }
+
+    #[test]
+    fn compile_artifact_generate_prompt_bundle_empty_subject_renders_not_set() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        symlink_repo_source(&home);
+
+        let bundle = compile_artifact_generate_prompt_bundle(
+            &home,
+            "test-proj",
+            "ART-NONE",
+            "",
+            "Draft a grilling artifact from this prompt",
+            "",
+        )
+        .expect("compile should succeed");
+        assert!(
+            bundle.contains("not set"),
+            "empty subject context should render as not set: {bundle}"
+        );
+        assert!(
+            bundle.contains("Draft a grilling artifact from this prompt"),
+            "user prompt must still be present: {bundle}"
+        );
+        assert!(
+            !bundle.contains("Graph neighborhood"),
+            "node-less bundle must not include graph neighborhood: {bundle}"
+        );
+    }
+
     #[tokio::test]
     async fn assemble_artifact_context_includes_subject_node_and_neighborhood() {
         let tmp = tempfile::tempdir().unwrap();
@@ -13817,6 +13880,199 @@ mod tests {
         let tx = std::fs::read_to_string(&tx_path).unwrap();
         assert!(tx.contains("artifact.created"));
         assert!(tx.contains(&art_id));
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_with_empty_nodes_succeeds_end_to_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec![],
+                prompt: "Grill this idea before any decision exists".to_string(),
+            }),
+        )
+        .await
+        .expect("generate with empty nodes should succeed");
+
+        let art_id = resp.0.artifact_id.clone();
+        assert!(art_id.starts_with("ART-"), "{art_id}");
+        assert!(!resp.0.run_id.is_empty());
+
+        let art_dir = artifact_dir(&project_root, &art_id);
+        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        assert_eq!(
+            file.headings
+                .first()
+                .and_then(|h| h.property("SUBJECT_NODES")),
+            Some("")
+        );
+
+        let summary = load_artifact(&art_dir).expect("artifact.org readable");
+        assert_eq!(summary.state, "regenerating");
+        assert_eq!(summary.version, 0);
+        assert!(summary.subject_nodes.is_empty());
+
+        let list = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+            .await
+            .expect("list should include node-less artifact");
+        assert!(
+            list.0.iter().any(|artifact| artifact.id == art_id),
+            "node-less artifact must appear in the global list: {list:?}"
+        );
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_generate_empty_nodes_excluded_from_node_rollups() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let attached_id = "ART-ATTCH";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(attached_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>attached</RichText>\n".into(),
+                title: Some("Attached".into()),
+                subject_nodes: Some(vec!["TASK-PRE".into()]),
+                prompt: Some("Attached prompt".into()),
+            }),
+        )
+        .await
+        .expect("attached submit should succeed");
+
+        let _ = post_artifact_feedback(
+            State(state.clone()),
+            Path(attached_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactFeedbackRequest {
+                message: "needs work".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let rollup_before = open_comment_count_for_node(
+            &get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+                .await
+                .expect("list before generate")
+                .0,
+            "TASK-PRE",
+        );
+        assert_eq!(rollup_before, 1);
+
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec![],
+                prompt: "Prompt-only artifact".to_string(),
+            }),
+        )
+        .await
+        .expect("generate with empty nodes should succeed");
+
+        let _ = state.index.refresh_project("test-proj").await;
+        let artifacts = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+            .await
+            .expect("list after generate")
+            .0;
+        assert_eq!(artifacts.len(), 2);
+
+        let nodeless = artifacts
+            .iter()
+            .find(|artifact| artifact.id == resp.0.artifact_id)
+            .expect("node-less artifact listed globally");
+        assert!(nodeless.subject_nodes.is_empty());
+
+        assert_eq!(open_comment_count_for_node(&artifacts, "TASK-PRE"), 1);
+        assert!(
+            !artifacts
+                .iter()
+                .filter(|artifact| artifact.subject_nodes.iter().any(|node| node == "TASK-PRE"))
+                .any(|artifact| artifact.id == resp.0.artifact_id),
+            "node-less artifact must not appear in TASK-PRE rollups"
+        );
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_on_nodeless_artifact_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-NODE0";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Nodeless".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Prompt-only artifact".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let subject_context =
+            assemble_artifact_context(&state, "test-proj", &[]).await;
+        assert!(subject_context.is_empty());
+
+        let resp = post_artifact_regenerate(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("tighten the prose".into()),
+            }),
+        )
+        .await
+        .expect("regenerate on node-less artifact should succeed");
+        assert!(!resp.0.run_id.is_empty());
+
+        let art_dir = artifact_dir(&project_root, art_id);
+        let summary = load_artifact(&art_dir).unwrap();
+        assert_eq!(summary.state, "regenerating");
+        assert!(summary.subject_nodes.is_empty());
 
         let _ = state
             .supervisor
