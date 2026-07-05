@@ -11423,3 +11423,28 @@ Build the member layer per arch_Z8CW2 as revised by dec_KF2MR (grants, not a rol
 
 Acceptance: two browsers, two members (one editor, one viewer) minted via CLI, both sign in at /login; the viewer pins a comment to a diagram node and it appears in the editor's browser over WS under the viewer's name without refresh; the viewer sees no Generate/Regenerate affordances and the daemon refuses those routes for the viewer session; the viewer opens a live rmux session stream read-only and the daemon rejects their input; a third member minted with --grant <project>=artifacts sees only the Artifacts surface (nav and routes), gets 403 on the tasks/graph APIs and on any project not in their grants, and their WS receives only artifact.* events; revoking the viewer kills their session; secrets are absent from the repo tree (hash-only in members.org, host-local).
 
+* DONE TASK-EDQPG Regeneration loop: version archive, comment consumption, lock, and version browser :artifacts:daemon:ui:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2ZQSB TASK-DJGM5
+:ID: TASK-EDQPG
+:IMPLEMENTS: arch_ARSPJ arch_045Q0 arch_A3NSW
+:END:
+
+Close the loop end to end: Regenerate button (admin/editor) with optional extra-prompt field -> POST /artifacts/:id/regenerate archives the closing version (versions/vN.mdx + its comments marked consumed) and launches the artifactor with prior artifact + all current-version comments (authors, resolution state, anchors) + extra prompt in context; artifact regenerating state locks the comment box with a banner in every open browser (WS); on submit, the new version renders with a clean comment surface. Version switcher in ArtifactView browses archived versions together with their comment threads. artifact.regenerated tx entries complete the audit trail.
+
+Acceptance (full two-member smoke, per the feature verification): editor generates a visual-plan artifact on a task node; viewer pins comments; editor presses Regenerate with an extra prompt; commenting locks live in the viewer's browser; when the run completes, versions/v1.mdx exists with the viewer's comment archived+consumed, v2 renders clean, the version switcher shows v1 with its thread, and the tx log tells the whole story in order.
+Note (dec_S02E2): regenerate may now route to a live hot-session run instead of cold-spawning (TASK-RH4M5). The UI contract here is unchanged — regenerating state, lock banner, version switcher — but the loop should feel conversational when a session is live.
+** Evidence
+[2026-07-05 Sun] DONE. Merged --no-ff 45c4546 (worker commit e02307a, implementer-claude-rmux claude-sonnet-5 high, run-20260705T073712, ~26m).
+
+The regeneration loop was ~90% pre-built by 2ZQSB/T25XQ/RH4M5; a manager Explore gap analysis scoped EDQPG to two real gaps + one tightening, all landed:
+1. Extra-prompt UI: RegenerateArtifactDialog (optional Textarea) gated behind canGenerate; regenerate() threads {extraPrompt} to POST /artifacts/:id/regenerate. Backend/client/type already accepted extraPrompt.
+2. Archived-version comment threads: load_artifact_detail scopes comments to c.version==N for an archived view (version Some(v), v != current), returning that version own consumed thread regardless of include_consumed, while the current/live view is unchanged (include_consumed governs; criterion-5 invariant). Client sends include_consumed=true only for archived views.
+3. assemble_regen_context now folds each comment resolved flag into the worker context.
+
+GATES (manager independently re-ran on merged main): cargo test -p orgasmic-daemon = 255 lib + all integration binaries pass, 0 failed, including 3 new EDQPG tests (get_artifact_archived_version_returns_that_versions_own_comment_thread; get_artifact_archived_version_over_real_http_returns_scoped_thread; load_artifact_detail_scopes_comments_to_archived_version). cargo clippy --workspace --all-targets -D warnings clean. rustfmt clean on touched files. ui: npm run typecheck clean, vitest 133 passed (15 files, +7), npm run build green. Worker also ran a live real-HTTP round-trip (isolated Daemon::run, OS port) proving archived-version GET returns v1 body + only the consumed v1 comment while the current view returns v2 body + only the open v2 comment.
+
+Review: manager inline (operator-accepted review gate [2026-07-04]); diff correct, criterion-5 invariant tested, include_consumed UI logic verified safe (never sent for the current view, so no consumed leak).
+
+QUALIFIED: the full live two-BROWSER two-MEMBER smoke with a real LLM-driven regenerate (goal Reached-When) exercises pre-existing WS-lock/hot-session machinery (already verified in 2ZQSB/RH4M5/DJGM5) and needs LLM creds; deferred to operator acceptance. The EDQPG code delta itself is fully covered deterministically by the new real-HTTP daemon test + vitest.
+

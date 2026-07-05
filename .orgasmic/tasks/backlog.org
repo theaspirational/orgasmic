@@ -122,3 +122,18 @@ NOT here: Prototype cross-screen data-goto and QuestionForm answering (TASK-EDQP
 :END:
 
 crates/orgasmic-core/tests/fixtures.rs:543 asserts count==19 shipped workers, but shipped/workers/ has 20 (.org files); the test is RED on main (verified 2026-07-04, independent of TASK-DJGM5). A 20th worker (e.g. reviewer-claude-rmux.org) was added without bumping the count. Fix: confirm all 20 are intended-valid workers, then bump the assertion to 20 (or exclude the non-worker file if 19 is intentional). Trivial but currently breaks 'cargo test -p orgasmic-core'.
+
+* BACKLOG TASK-KTRHZ Repair repo-wide rustfmt --all drift (6 non-EDQPG files)    :housekeeping:rust:
+:PROPERTIES:
+:ID: TASK-KTRHZ
+:END:
+
+cargo fmt --all --check is RED on main across 6 files entirely outside recent task scopes — a rustfmt-version/toolchain drift (rustfmt-1.8.0 reformats these), predating EDQPG:
+- crates/orgasmic-cli/src/member.rs:171
+- crates/orgasmic-core/src/lib.rs:51
+- crates/orgasmic-core/src/members.rs:285,303,310,335
+- crates/orgasmic-daemon/src/authz.rs:146,359
+- crates/orgasmic-daemon/src/ws.rs:136
+- crates/orgasmic-drivers/src/modes/rmux.rs:2319,2498,2524,2538,2548,2556,2574
+
+Fix = one cargo fmt --all commit (touches only these; no logic). Verify cargo fmt --all --check clean + workspace still builds. Keeps the fmt CI gate green. Discovered at TASK-EDQPG integration; EDQPG-touched files were already fmt-clean.
