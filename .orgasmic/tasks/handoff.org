@@ -6,9 +6,9 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         3376efda2409d63cabc4dce940d6f3f720d58430
-:LIVENESS_AT:      [2026-07-04 Sat]
-:UPDATED_AT:       [2026-07-04 Sat]
+:LIVENESS:         62564e45d593bfcdc7e09cfaf308ba36615ad926
+:LIVENESS_AT:      [2026-07-05 Sun]
+:UPDATED_AT:       [2026-07-05 Sun]
 :END:
 
 Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal goal-20260615-ship-the-editable was REACHED (operator reviewed the live Graph page 2026-07-03) and immediately superseded by operator direction: the interactive canvas is judged weak on looks/UX/utility, so cut it (dec_ZG9B9) and ship the dec_GPV4G artifact review loop as the framework's visual surface instead. Use task Evidence, decisions.org, tx logs, and git for detail.
@@ -40,25 +40,20 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - TASK-ZEFEY heading stale-state corrected to done ([2026-07-04 Sat] 15:12; work was merged ddd6b56 on 07-03, heading had lagged).
 - TASK-M6146 (1/6) heading repaired in_progress -> done ([2026-07-04 Sat], this resume): genuinely done since 07-03 (merged 45c6116, reviewer pass zero findings) -- the reviewer-flip nit had left the heading in_progress.
 - Artifact queue: M6146 (1/6) done, ZEFEY (2/6) done, 2ZQSB (3/6) done, T25XQ (4/6) done; DJGM5 (5/6) and EDQPG (6/6) remain backlog. The completed hot-session loop now underpins EDQPG's regenerate routing (dec_S02E2).
+- TASK-DJGM5 (5/6) DONE + MERGED to main @ 09935b1 [2026-07-05] (member identity, /login, whole-surface capability gating, pinned named comments; --no-ff merge touched only crates/ + ui/, live .orgasmic state untouched). Acceptance two-browser smoke passed on an ISOLATED throwaway daemon (admin/viewer/artifacts-only); a member-shell gap (admin-only global polls 403ing for members -> ErrorPanel) was caught in-smoke + fixed 3d16519 (capability-aware member landing, hide bell/RunDock/admin nav, gate polls on !isMember). tsc clean, 126 vitest, vite build green. Non-blocking follow-ups noted (write-affordance gating audit for read-only viewers; member live-session viewing UI deferred; transient first-connect 401). Leftover task-djgm5-impl worktree removed this session.
+- Artifact queue now 5/6 DONE (M6146, ZEFEY, 2ZQSB, T25XQ, DJGM5); TASK-EDQPG (6/6) is the last.
+- TASK-EDQPG (6/6) dispatched [2026-07-05] after a manager Explore gap analysis established the regen loop is ~90% already built by 2ZQSB/T25XQ/RH4M5 -- only two real gaps remain (extra-prompt UI; archived-version comment thread) + a small resolved-flag context tightening. See ** In flight. LIVENESS reconciled in place 3376efd -> 62564e4 (13 commits, all DJGM5 work already documented in the top bullet; the stale In-flight/Next-actions were the DJGM5-pre-merge snapshot).
 
 ** Next likely actions
-- Integrate TASK-DJGM5 when the watcher fires: read task-DJGM5-last.txt, merge --no-ff task-djgm5-impl, run gates (cargo test/clippy; ui typecheck/vitest/build), inline review (operator accepted inline reviews as the goal's review gate [2026-07-04]), record evidence, close tx, remove worktree.
-- Then TASK-EDQPG (6/6): regeneration loop -- version archive, comment consumption, lock banner (WS), version browser; artifact.regenerated tx. Routes through the hot-session live-regenerate path (dec_S02E2). DJGM5's member identity makes the full two-member named-comment smoke possible. Carries open question O1 (?version=N addressability).
-- Sequencing settled [2026-07-04]: operator had run `resume EDQPG` but chose "[no preference]" on order; manager ruling = goal order DJGM5 -> EDQPG.
-- Backlog follow-ups: TASK-A22TB (renderer fidelity), TASK-F9N5F (hot-session idle-timeout), TASK-567JG (reattach completion-watcher), TASK-X0ZVE (rmux flake), TASK-KBHAN (#+begin_ hardening), TASK-SJQ9V (doctor workspace flake).
+- Integrate TASK-EDQPG when the watcher fires -- steps + the two-member smoke are in ** In flight. This closes the FINAL goal task; when the smoke passes and orgasmic status reports parse_errors 0, goal-20260703-cut-the-graph is REACHED. Surface that to the operator (recall-style) rather than auto-picking a new goal.
+- If EDQPG review surfaces non-trivial findings: file a :FIX_SUBTASK: t subtask (:PARENT_TASK: TASK-EDQPG) and dispatch a fresh implementer per manager-dispatch; trivial findings roll in at integration.
+- Backlog follow-ups (post-goal): TASK-A22TB (renderer fidelity), TASK-F9N5F (hot-session idle-timeout), TASK-567JG (reattach completion-watcher), TASK-X0ZVE (rmux flake), TASK-KBHAN (#+begin_ hardening), TASK-SJQ9V (doctor workspace flake), TASK-ZNQ8F (shipped-worker count 20 vs 19).
 
 ** In flight
-- TASK-DJGM5 (5/6) IN PROGRESS -- BACKEND COMPLETE + GREEN; UI is the only remaining piece. Branch task-djgm5-impl (worktree .orgasmic/tmp/dispatch/task-djgm5/worktree), NOT merged. [2026-07-04 Sat]
-  Backend commits (base 3376efd): ed95f29 + 319262d (rescued worker output) + a6a7a40 (test migration to green) + b9f1649 (member CLI + whole-surface gating + WS filtering + security fix). Done inline (manager + two subagents) after the rmux worker was cut off; see prior handoff versions for the wrong-socket false-death history.
-  BACKEND DONE (all compiling + tested, cargo test core+daemon+cli green, clippy -D warnings clean):
-    * Capability model (authz.rs): 9-action vocabulary, viewer/editor/artifacts role caps, require(), visible_project_ids, allowed_topics, event_visible -- all written by the worker.
-    * members.rs + auth.rs identity/session store; /login + /me + identity_middleware; live member resolution from members.org (revoke effective immediately).
-    * orgasmic member add/revoke/list CLI (host-local; --role seeds *=role, --grant PROJECT=ROLE; token shown once, only hash on disk).
-    * Fine authz::require gates: artifact routes (Read/Comment/Generate) + non-artifact reads (ProjectRead/TasksRead/GraphRead) + board/projects list-filtering. artifacts-only member 403s tasks/graph, 200 artifacts+project.
-    * WS: /ws per-subscriber event_visible filter; /ws/tmux stream needs SessionsWatch on run's project, input (send_keys/keystrokes/RESIZE) admin-only -> members read-only.
-    * SECURITY FIX (fresh-eyes catch): MEMBER_ALLOWED_ROUTES compared /api-prefixed MatchedPath vs app-relative templates -> every member request 403'd; the whole member surface was non-functional. Fixed by stripping /api before the allow-list check. No prior test hit a real member request.
-  KNOWN NON-BLOCKER: doctor::tests::daemon_staleness_warns_for_git_commits_since_boot flakes under parallel test load (passes 3/3 in isolation) -- pre-existing, TASK-SJQ9V; also filed TASK-ZNQ8F (shipped-worker count 20 vs 19, red on main).
-  REMAINING = UI ONLY (zero ui/ changes yet): /login (or extend ConnectGate.tsx) paste-token flow; useMe hook -> GET /me capability snapshot -> AppShell.tsx nav filtering + affordance gating (hide Generate/Regenerate for viewers, show only Artifacts for artifacts-role); ArtifactView.tsx comment threads with member NAMES + live WS + resolve toggle + regenerating banner; read-only xterm for members (ManagerTmuxPane.tsx). Backend contract: POST /login {token}->cookie+{name,expires_at}; GET /me->{identity,name,projects:[{projectId,role,capabilities[]}]}; POST /artifacts/:id/comments; POST /artifacts/:id/comments/:cid/resolve {resolved}; WS artifact.* events. Then a two-browser live smoke (browser tools) before review+merge.
+- TASK-EDQPG (6/6, FINAL goal task) IN FLIGHT -- dispatched implementer-claude-rmux (claude-sonnet-5 high) [2026-07-05 Sun]. run-20260705T073712-d7d286a6e2d043f98c39b5374e18fe0f; branch task-edqpg-impl, worktree .orgasmic/tmp/dispatch/task-edqpg/worktree; base 62564e4. Pre-flight tx manager.dispatch_started recorded on daemon dispatch. Watcher polling task-edqpg-last.txt.
+  SCOPE = the regen loop is ALREADY ~90% built (2ZQSB/T25XQ/RH4M5); a manager gap analysis found only TWO real gaps + a small tightening: (1) extra-prompt UI on Regenerate (ArtifactView sends {} today; backend/client/type already accept extraPrompt); (2) archived-version GET must return that version OWN consumed comment thread -- client to send include_consumed=true for archived views + load_artifact_detail to scope comments to c.version==N, WITHOUT regressing the clean current-version surface; (3 minor) fold each comment resolved flag into assemble_regen_context. Brief: .orgasmic/tmp/dispatch/task-edqpg/task-edqpg-brief.md.
+  ALREADY DONE (do NOT rebuild): archive-on-submit vN.mdx, close_out_artifact_regenerate_round (consume + regenerating + artifact.regenerated tx, cold+hot), WS lock+banner, hot/cold routing, version-distinct 404s.
+  INTEGRATE when watcher fires: read task-edqpg-last.txt, git merge --no-ff task-edqpg-impl from main, gates (cargo test -p orgasmic-daemon REDIRECTED to a log file per gotcha never pipe; clippy -D warnings; fmt; cd ui && npm run typecheck/test/build), manager inline review (operator-accepted review gate), then the FULL TWO-MEMBER LIVE SMOKE on an isolated daemon (goal Reached-When), record Evidence, implementer.done close tx, git worktree remove + branch -D.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.

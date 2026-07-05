@@ -1,3 +1,15 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-EDQPG Regeneration loop: version archive, comment consumption, lock, and version browser :artifacts:daemon:ui:
+:PROPERTIES:
+:DEPENDS_ON: TASK-2ZQSB TASK-DJGM5
+:ID: TASK-EDQPG
+:IMPLEMENTS: arch_ARSPJ arch_045Q0 arch_A3NSW
+:END:
+
+Close the loop end to end: Regenerate button (admin/editor) with optional extra-prompt field -> POST /artifacts/:id/regenerate archives the closing version (versions/vN.mdx + its comments marked consumed) and launches the artifactor with prior artifact + all current-version comments (authors, resolution state, anchors) + extra prompt in context; artifact regenerating state locks the comment box with a banner in every open browser (WS); on submit, the new version renders with a clean comment surface. Version switcher in ArtifactView browses archived versions together with their comment threads. artifact.regenerated tx entries complete the audit trail.
+
+Acceptance (full two-member smoke, per the feature verification): editor generates a visual-plan artifact on a task node; viewer pins comments; editor presses Regenerate with an extra prompt; commenting locks live in the viewer's browser; when the run completes, versions/v1.mdx exists with the viewer's comment archived+consumed, v2 renders clean, the version switcher shows v1 with its thread, and the tx log tells the whole story in order.
+Note (dec_S02E2): regenerate may now route to a live hot-session run instead of cold-spawning (TASK-RH4M5). The UI contract here is unchanged — regenerating state, lock banner, version switcher — but the loop should feel conversational when a session is live.
+

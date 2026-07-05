@@ -3790,3 +3790,140 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-05 Sun 07:37:11 task.state_transitioned TASK-EDQPG
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1385
+:TIME:         [2026-07-05 Sun 07:37:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EDQPG
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-EDQPG to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-05 Sun 07:37:12 manager.dispatch_started TASK-EDQPG
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1386
+:TIME:         [2026-07-05 Sun 07:37:12]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EDQPG
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-edqpg/worktree
+:BRANCH:       task-edqpg-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-edqpg/task-edqpg-brief.md
+:STARTED_AT:   [2026-07-05 Sun 07:37:12]
+:LIVENESS:     62564e45d593bfcdc7e09cfaf308ba36615ad926
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: EDQPG (6/6): close last two regen-loop gaps — extra-prompt UI + archived-version comment threads
+:END:
+
+* TX 2026-07-05 Sun 07:37:12 run.created TASK-EDQPG
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1387
+:TIME:         [2026-07-05 Sun 07:37:12]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EDQPG
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-EDQPG-implementer-20260705T073712.jsonl
+:REASON:       EDQPG (6/6): close last two regen-loop gaps — extra-prompt UI + archived-version comment threads
+:RUN_ID:       run-20260705T073712-d7d286a6e2d043f98c39b5374e18fe0f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-edqpg/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-edqpg/task-edqpg-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-edqpg/task-edqpg-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-edqpg/task-edqpg-stdout.log
+:DISPATCH_TX:  tx-20260705-orgasmic-1386
+:END:
+
+* TX 2026-07-05 Sun 07:38:51 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1388
+:TIME:         [2026-07-05 Sun 07:38:51]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-05 Sun 07:38:51 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1389
+:TIME:         [2026-07-05 Sun 07:38:51]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-05 Sun 07:38:52 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1390
+:TIME:         [2026-07-05 Sun 07:38:52]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-05 Sun 07:39:09 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1391
+:TIME:         [2026-07-05 Sun 07:39:09]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-05 Sun 07:39:20 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1392
+:TIME:         [2026-07-05 Sun 07:39:20]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-05 Sun 07:39:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1393
+:TIME:         [2026-07-05 Sun 07:39:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
