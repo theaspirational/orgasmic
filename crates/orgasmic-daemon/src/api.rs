@@ -451,12 +451,14 @@ async fn get_me(
         .map(|project_id| {
             let role = match &identity {
                 Identity::Admin => "admin".to_string(),
-                Identity::Member { .. } => {
-                    identity.role_for(project_id).unwrap_or("").to_string()
-                }
+                Identity::Member { .. } => identity.role_for(project_id).unwrap_or("").to_string(),
             };
             let capabilities = match &identity {
-                Identity::Admin => Action::ALL.iter().copied().map(authz::action_name).collect(),
+                Identity::Admin => Action::ALL
+                    .iter()
+                    .copied()
+                    .map(authz::action_name)
+                    .collect(),
                 Identity::Member { .. } => authz::role_capabilities(&role)
                     .iter()
                     .copied()
@@ -1260,7 +1262,9 @@ async fn get_project_tasks(
         .project(&id)
         .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
     authz::require(&identity, Some(&id), Action::TasksRead)?;
-    Ok(Json(apply_task_owners(project.clone(), &supervisor.runs).tasks))
+    Ok(Json(
+        apply_task_owners(project.clone(), &supervisor.runs).tasks,
+    ))
 }
 
 async fn get_task(
@@ -9716,8 +9720,8 @@ fn assemble_regen_context(
                 c.resolution_target.as_str()
             };
             out.push_str(&format!(
-                "- [{}] {} (anchor: {}; resolves: {}): {}\n",
-                c.cid, c.author, c.anchor, resolves, c.message
+                "- [{}] {} (anchor: {}; resolves: {}; resolved: {}): {}\n",
+                c.cid, c.author, c.anchor, resolves, c.resolved, c.message
             ));
         }
     }
@@ -10289,10 +10293,7 @@ async fn post_artifact_regenerate(
 
     let artifact_task_id = format!("artifact.generate:{art_id}");
     let snapshot = state.supervisor.snapshot().await;
-    let live = snapshot
-        .runs
-        .iter()
-        .find(|r| r.task_id == artifact_task_id);
+    let live = snapshot.runs.iter().find(|r| r.task_id == artifact_task_id);
 
     if let Some(live_run) = live {
         // HOT PATH: route the followup into the live session — no new lease.
@@ -10310,8 +10311,7 @@ async fn post_artifact_regenerate(
             })?;
         if !ack.accepted {
             return Err(ApiError::conflict(
-                ack.message
-                    .unwrap_or_else(|| "harness busy".to_string()),
+                ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
         }
         close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
@@ -13592,9 +13592,13 @@ mod tests {
         assert_eq!(submit_resp.0["version"], 1);
 
         // --- list ---
-        let list_resp = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-            .await
-            .expect("list should succeed");
+        let list_resp = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list should succeed");
         assert_eq!(list_resp.0.len(), 1);
         assert_eq!(list_resp.0[0].id, art_id);
         assert_eq!(list_resp.0[0].title, "My Test Artifact");
@@ -13634,9 +13638,13 @@ mod tests {
         assert!(cid.starts_with("CID-"));
 
         // Index should reflect 1 open comment
-        let list2 = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-            .await
-            .expect("list 2");
+        let list2 = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list 2");
         assert_eq!(list2.0[0].open_comment_count, 1);
 
         // --- consume (agent-facing axis: regeneration close-out) ---
@@ -13648,10 +13656,9 @@ mod tests {
         // apply `consume_all_open_comments` to reviews.org directly and refresh
         // the index projection.
         let reviews_path = artifact_dir(&project_root, art_id).join("reviews.org");
-        let consumed_reviews = artifacts::consume_all_open_comments(
-            &std::fs::read_to_string(&reviews_path).unwrap(),
-        )
-        .expect("consume open comments should succeed");
+        let consumed_reviews =
+            artifacts::consume_all_open_comments(&std::fs::read_to_string(&reviews_path).unwrap())
+                .expect("consume open comments should succeed");
         std::fs::write(&reviews_path, &consumed_reviews).unwrap();
         let _ = state.index.refresh_project("test-proj").await;
 
@@ -13689,9 +13696,13 @@ mod tests {
         assert!(comments[0].consumed);
 
         // Open comment count should be 0 after consume
-        let list3 = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-            .await
-            .expect("list 3");
+        let list3 = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list 3");
         assert_eq!(list3.0[0].open_comment_count, 0);
 
         // --- reject invalid MDX ---
@@ -13756,6 +13767,280 @@ mod tests {
 
         // versions/v1.mdx should be the archive
         assert!(art_dir.join("versions/v1.mdx").exists());
+    }
+
+    // Archived-version reads (TASK-EDQPG gap 2): GET ?version=N&include_consumed=true
+    // for an archived version N must return that version's own comment thread
+    // (consumed or not), while the current/live view keeps returning only its
+    // own open thread — never leaking an older version's (consumed) comments
+    // into the live view, and never leaking the live version's open comment
+    // into an archived read.
+    #[tokio::test]
+    async fn get_artifact_archived_version_returns_that_versions_own_comment_thread() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-VEDQP";
+
+        // --- v1: create ---
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1 body</RichText>\n".into(),
+                title: Some("Version Scoping Test".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("prompt".into()),
+            }),
+        )
+        .await
+        .expect("v1 submit should succeed");
+
+        // --- v1 comment, from a viewer ---
+        let fb1 = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "v1 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("viewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("v1 feedback should succeed");
+        let v1_cid = fb1.0["cid"].as_str().unwrap().to_string();
+
+        // --- regenerate close-out consumes the v1 thread. Driven at the file
+        // layer (as the existing consume-axis test above does) rather than
+        // through `close_out_artifact_regenerate_round`, which is off-limits
+        // for this task. ---
+        let art_dir = artifact_dir(&project_root, art_id);
+        let reviews_path = art_dir.join("reviews.org");
+        let consumed =
+            artifacts::consume_all_open_comments(&std::fs::read_to_string(&reviews_path).unwrap())
+                .expect("consume should succeed");
+        std::fs::write(&reviews_path, &consumed).unwrap();
+
+        // --- v2: submit archives v1.mdx and bumps version ---
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v2 body</RichText>\n".into(),
+                title: None,
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("v2 submit should succeed");
+
+        // --- v2 comment: fresh, open thread ---
+        let fb2 = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "v2 feedback".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("editor@test.com".into()),
+            }),
+        )
+        .await
+        .expect("v2 feedback should succeed");
+        let v2_cid = fb2.0["cid"].as_str().unwrap().to_string();
+
+        // --- archived view: version=1 & include_consumed=true ---
+        let archived = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(ArtifactQuery {
+                version: Some(1),
+                include_consumed: Some(true),
+                ..artifact_query("test-proj")
+            }),
+        )
+        .await
+        .expect("archived detail should succeed");
+        assert!(archived.0.content.contains("v1 body"));
+        assert_eq!(archived.0.comments.len(), 1);
+        assert_eq!(archived.0.comments[0].cid, v1_cid);
+        assert!(archived.0.comments[0].consumed);
+
+        // --- current/live view (criterion 5 invariant): only v2's own open
+        // comment; v1's consumed comment must not leak in. ---
+        let live = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("live detail should succeed");
+        assert!(live.0.content.contains("v2 body"));
+        assert_eq!(live.0.comments.len(), 1);
+        assert_eq!(live.0.comments[0].cid, v2_cid);
+    }
+
+    // Same scenario as the handler-level test above, but driven over a real
+    // bound TCP listener with `reqwest` (the pattern other wire-level tests in
+    // this file use via `Daemon::run` + `test_options()`/`read_token()`).
+    // Handler-level calls bypass Axum's `Query<ArtifactQuery>` extractor
+    // entirely, so they can't prove `?include_consumed=true` actually
+    // deserializes off a real URL the way the UI's `fetchArtifact` sends it;
+    // this test exercises that real wire path end to end (TASK-EDQPG live
+    // self-check).
+    #[tokio::test]
+    async fn get_artifact_archived_version_over_real_http_returns_scoped_thread() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}/api", running.addr);
+        let art_id = "ART-HTTPLV";
+
+        // --- v1: create, over real HTTP ---
+        let submit1 = client
+            .post(format!(
+                "{base}/artifacts/{art_id}/submit?project=test-proj"
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "content": "<RichText>v1 body</RichText>\n",
+                "title": "HTTP live probe",
+                "prompt": "prompt",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            submit1.status().is_success(),
+            "submit v1: {:?}",
+            submit1.status()
+        );
+
+        // --- v1 comment, over real HTTP ---
+        let fb1 = client
+            .post(format!(
+                "{base}/artifacts/{art_id}/comments?project=test-proj"
+            ))
+            .bearer_auth(&token)
+            .json(&json!({ "message": "v1 feedback", "author": "viewer@test.com" }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            fb1.status().is_success(),
+            "add v1 comment: {:?}",
+            fb1.status()
+        );
+        let fb1_body: Value = fb1.json().await.unwrap();
+        let v1_cid = fb1_body["cid"].as_str().unwrap().to_string();
+
+        // --- regenerate close-out consumes the v1 thread. Driven at the file
+        // layer, same convention as the handler-level test above:
+        // `close_out_artifact_regenerate_round` itself is off-limits/already
+        // verified for this task, and driving a real regenerate here would
+        // need a live worker/LLM credential this environment doesn't have. ---
+        let art_dir = artifact_dir(&project_root, art_id);
+        let reviews_path = art_dir.join("reviews.org");
+        let consumed =
+            artifacts::consume_all_open_comments(&std::fs::read_to_string(&reviews_path).unwrap())
+                .expect("consume should succeed");
+        std::fs::write(&reviews_path, &consumed).unwrap();
+
+        // --- v2: submit archives v1.mdx and bumps version, over real HTTP ---
+        let submit2 = client
+            .post(format!(
+                "{base}/artifacts/{art_id}/submit?project=test-proj"
+            ))
+            .bearer_auth(&token)
+            .json(&json!({ "content": "<RichText>v2 body</RichText>\n" }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            submit2.status().is_success(),
+            "submit v2: {:?}",
+            submit2.status()
+        );
+
+        // --- v2 comment: fresh, open thread ---
+        let fb2 = client
+            .post(format!(
+                "{base}/artifacts/{art_id}/comments?project=test-proj"
+            ))
+            .bearer_auth(&token)
+            .json(&json!({ "message": "v2 feedback", "author": "editor@test.com" }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            fb2.status().is_success(),
+            "add v2 comment: {:?}",
+            fb2.status()
+        );
+        let fb2_body: Value = fb2.json().await.unwrap();
+        let v2_cid = fb2_body["cid"].as_str().unwrap().to_string();
+
+        // --- archived view over real HTTP: the exact query string the UI
+        // sends for an archived version (fetchArtifact + includeConsumed). ---
+        let archived_resp = client
+            .get(format!(
+                "{base}/artifacts/{art_id}?project=test-proj&version=1&include_consumed=true"
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            archived_resp.status().is_success(),
+            "{:?}",
+            archived_resp.status()
+        );
+        let archived: Value = archived_resp.json().await.unwrap();
+        assert!(archived["content"].as_str().unwrap().contains("v1 body"));
+        let archived_comments = archived["comments"].as_array().unwrap();
+        assert_eq!(archived_comments.len(), 1);
+        assert_eq!(archived_comments[0]["cid"], v1_cid);
+        assert_eq!(archived_comments[0]["consumed"], true);
+
+        // --- current/live view over real HTTP: no version, no
+        // include_consumed — v1's consumed comment must not leak in. ---
+        let live_resp = client
+            .get(format!("{base}/artifacts/{art_id}?project=test-proj"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert!(live_resp.status().is_success(), "{:?}", live_resp.status());
+        let live: Value = live_resp.json().await.unwrap();
+        assert!(live["content"].as_str().unwrap().contains("v2 body"));
+        let live_comments = live["comments"].as_array().unwrap();
+        assert_eq!(live_comments.len(), 1);
+        assert_eq!(live_comments[0]["cid"], v2_cid);
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     // People-facing resolve axis (dec_V44E4 / dec_KF2MR). Preserves the
@@ -13864,7 +14149,10 @@ mod tests {
             .find(|c| c.cid == cid)
             .expect("re-opened comment still visible");
         assert!(!comment2.resolved, "re-open clears the resolved axis");
-        assert!(!comment2.consumed, "re-open never touches the consumed axis");
+        assert!(
+            !comment2.consumed,
+            "re-open never touches the consumed axis"
+        );
     }
 
     // Regression guard for TASK-Y2ZQJ finding M1: concurrent comment-adds on
@@ -13931,9 +14219,13 @@ mod tests {
         let unique: std::collections::HashSet<_> = cids.iter().collect();
         assert_eq!(unique.len(), N, "each add should mint a distinct CID");
 
-        let list = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-            .await
-            .expect("list");
+        let list = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list");
         assert_eq!(
             list.0[0].open_comment_count, N,
             "all {N} concurrent comment-adds must survive (no lost updates)"
@@ -14316,7 +14608,10 @@ mod tests {
         let state = direct_stage_test_state(home.clone()).await;
 
         let context = assemble_artifact_context(&state, "test-proj", &[]).await;
-        assert!(context.is_empty(), "expected no subject context, got: {context}");
+        assert!(
+            context.is_empty(),
+            "expected no subject context, got: {context}"
+        );
     }
 
     #[test]
@@ -14374,21 +14669,35 @@ mod tests {
 
     #[test]
     fn assemble_regen_context_lists_open_comments_and_extra_prompt() {
-        let comments = vec![artifacts::CommentRecord {
-            cid: "CID-abc12345".into(),
-            author: "reviewer@test.com".into(),
-            version: 1,
-            anchor: "{}".into(),
-            resolution_target: String::new(),
-            resolved: false,
-            consumed: false,
-            message: "tighten the copy".into(),
-        }];
+        let comments = vec![
+            artifacts::CommentRecord {
+                cid: "CID-abc12345".into(),
+                author: "reviewer@test.com".into(),
+                version: 1,
+                anchor: "{}".into(),
+                resolution_target: String::new(),
+                resolved: false,
+                consumed: false,
+                message: "tighten the copy".into(),
+            },
+            artifacts::CommentRecord {
+                cid: "CID-def67890".into(),
+                author: "other@test.com".into(),
+                version: 1,
+                anchor: "{}".into(),
+                resolution_target: String::new(),
+                resolved: true,
+                consumed: false,
+                message: "already addressed".into(),
+            },
+        ];
         let out = assemble_regen_context("<RichText>v1</RichText>", &comments, "make it punchier");
         assert!(out.contains("<RichText>v1</RichText>"));
         assert!(out.contains("reviewer@test.com"));
         assert!(out.contains("tighten the copy"));
         assert!(out.contains("make it punchier"));
+        assert!(out.contains("[CID-abc12345] reviewer@test.com (anchor: {}; resolves: -; resolved: false): tighten the copy"));
+        assert!(out.contains("[CID-def67890] other@test.com (anchor: {}; resolves: -; resolved: true): already addressed"));
     }
 
     #[tokio::test]
@@ -14486,9 +14795,13 @@ mod tests {
         assert_eq!(summary.version, 0);
         assert!(summary.subject_nodes.is_empty());
 
-        let list = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-            .await
-            .expect("list should include node-less artifact");
+        let list = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list should include node-less artifact");
         assert!(
             list.0.iter().any(|artifact| artifact.id == art_id),
             "node-less artifact must appear in the global list: {list:?}"
@@ -14541,10 +14854,14 @@ mod tests {
         .expect("feedback should succeed");
 
         let rollup_before = open_comment_count_for_node(
-            &get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-                .await
-                .expect("list before generate")
-                .0,
+            &get_artifacts(
+                State(state.clone()),
+                Extension(Identity::Admin),
+                Query(artifact_query("test-proj")),
+            )
+            .await
+            .expect("list before generate")
+            .0,
             "TASK-PRE",
         );
         assert_eq!(rollup_before, 1);
@@ -14562,10 +14879,14 @@ mod tests {
         .expect("generate with empty nodes should succeed");
 
         let _ = state.index.refresh_project("test-proj").await;
-        let artifacts = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
-            .await
-            .expect("list after generate")
-            .0;
+        let artifacts = get_artifacts(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("list after generate")
+        .0;
         assert_eq!(artifacts.len(), 2);
 
         let nodeless = artifacts
@@ -14614,8 +14935,7 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let subject_context =
-            assemble_artifact_context(&state, "test-proj", &[]).await;
+        let subject_context = assemble_artifact_context(&state, "test-proj", &[]).await;
         assert!(subject_context.is_empty());
 
         let resp = post_artifact_regenerate(
@@ -14794,7 +15114,10 @@ mod tests {
         )
         .unwrap_or_default();
         assert!(tx_after.contains("artifact.regenerated"));
-        assert_ne!(reviews_before, std::fs::read_to_string(art_dir.join("reviews.org")).unwrap());
+        assert_ne!(
+            reviews_before,
+            std::fs::read_to_string(art_dir.join("reviews.org")).unwrap()
+        );
 
         let _ = state
             .supervisor
@@ -15304,9 +15627,13 @@ mod tests {
 
         // ProjectRead + ArtifactsRead: allowed.
         assert!(
-            get_project(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
-                .await
-                .is_ok(),
+            get_project(
+                State(state.clone()),
+                Extension(id.clone()),
+                Path("proj-a".into())
+            )
+            .await
+            .is_ok(),
             "artifacts role carries ProjectRead"
         );
         assert!(
@@ -15321,9 +15648,12 @@ mod tests {
         );
 
         // TasksRead: denied.
-        let tasks =
-            get_project_tasks(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
-                .await;
+        let tasks = get_project_tasks(
+            State(state.clone()),
+            Extension(id.clone()),
+            Path("proj-a".into()),
+        )
+        .await;
         assert_eq!(tasks.err().map(|e| e.status), Some(StatusCode::FORBIDDEN));
 
         // GraphRead: denied.
@@ -15333,7 +15663,10 @@ mod tests {
             Query(graph_query("proj-a")),
         )
         .await;
-        assert_eq!(decisions.err().map(|e| e.status), Some(StatusCode::FORBIDDEN));
+        assert_eq!(
+            decisions.err().map(|e| e.status),
+            Some(StatusCode::FORBIDDEN)
+        );
     }
 
     /// A `viewer` member reads tasks and the graph/decisions surfaces (200).
@@ -15349,29 +15682,27 @@ mod tests {
 
         let id = member(&[("proj-a", "viewer")]);
 
-        assert!(
-            get_project_tasks(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
-                .await
-                .is_ok()
-        );
-        assert!(
-            get_graph_nodes(
-                State(state.clone()),
-                Extension(id.clone()),
-                Query(graph_query("proj-a"))
-            )
-            .await
-            .is_ok()
-        );
-        assert!(
-            get_decisions(
-                State(state.clone()),
-                Extension(id.clone()),
-                Query(graph_query("proj-a"))
-            )
-            .await
-            .is_ok()
-        );
+        assert!(get_project_tasks(
+            State(state.clone()),
+            Extension(id.clone()),
+            Path("proj-a".into())
+        )
+        .await
+        .is_ok());
+        assert!(get_graph_nodes(
+            State(state.clone()),
+            Extension(id.clone()),
+            Query(graph_query("proj-a"))
+        )
+        .await
+        .is_ok());
+        assert!(get_decisions(
+            State(state.clone()),
+            Extension(id.clone()),
+            Query(graph_query("proj-a"))
+        )
+        .await
+        .is_ok());
     }
 
     /// The cross-project list endpoints never 403 a member — they filter to the
@@ -15449,8 +15780,7 @@ mod tests {
     async fn connect_ws_cookie(addr: std::net::SocketAddr, cookie: &str, topic: &str) -> TestWs {
         let url = format!("ws://{addr}/api/ws?topic={topic}");
         let mut req = url.into_client_request().unwrap();
-        req.headers_mut()
-            .insert("cookie", cookie.parse().unwrap());
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
         let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
         ws
     }
@@ -15462,9 +15792,10 @@ mod tests {
     ) -> Result<TestWs, tokio_tungstenite::tungstenite::Error> {
         let url = format!("ws://{addr}/api/ws/tmux/{run_id}");
         let mut req = url.into_client_request().unwrap();
-        req.headers_mut()
-            .insert("cookie", cookie.parse().unwrap());
-        tokio_tungstenite::connect_async(req).await.map(|(ws, _)| ws)
+        req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        tokio_tungstenite::connect_async(req)
+            .await
+            .map(|(ws, _)| ws)
     }
 
     /// The next event-bus message delivered to a socket, decoded.
@@ -15522,7 +15853,11 @@ mod tests {
             .send()
             .await
             .unwrap();
-        assert!(graph.status().is_success(), "create arch: {}", graph.status());
+        assert!(
+            graph.status().is_success(),
+            "create arch: {}",
+            graph.status()
+        );
 
         // (2) An artifact event — visible to both.
         let artifact = client

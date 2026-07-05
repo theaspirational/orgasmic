@@ -1,10 +1,18 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import { Check, Loader2, MessageSquarePlus, RefreshCw, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -45,14 +53,32 @@ export function ArtifactView({ projectId }: { projectId: string }) {
   const refresh = useRefreshToken();
   const { can } = useMe();
   const [regenerating, setRegenerating] = useState(false);
+  const [regenerateDialogOpen, setRegenerateDialogOpen] = useState(false);
+  // Last known live version (set from any successful fetch — `data.version`
+  // always reflects the current/live version, never the archived version's
+  // own number). Used to decide whether a version in the URL is archived
+  // *before* this fetch resolves, without ever guessing "archived" when we
+  // don't yet know better (see fetchArtifact call below).
+  const currentVersionRef = useRef<number | undefined>(undefined);
 
   const canComment = can(projectId, 'artifacts.comment');
   const canGenerate = can(projectId, 'artifacts.generate');
 
   const artifact = useResource(
     `artifact:${projectId}:${artifactId}:${search.version ?? 'latest'}:${refresh}`,
-    () => fetchArtifact(artifactId, projectId, search.version),
+    () => {
+      const requestedVersion = search.version;
+      const includeConsumed =
+        typeof requestedVersion === 'number' &&
+        typeof currentVersionRef.current === 'number' &&
+        requestedVersion !== currentVersionRef.current;
+      return fetchArtifact(artifactId, projectId, requestedVersion, includeConsumed);
+    },
   );
+
+  useEffect(() => {
+    if (artifact.data) currentVersionRef.current = artifact.data.version;
+  }, [artifact.data]);
 
   useEventStream(
     useCallback(
@@ -72,11 +98,12 @@ export function ArtifactView({ projectId }: { projectId: string }) {
     });
   }
 
-  async function regenerate() {
+  async function regenerate(extraPrompt: string) {
     setRegenerating(true);
     try {
-      await regenerateArtifact(artifactId, {}, projectId);
+      await regenerateArtifact(artifactId, extraPrompt ? { extraPrompt } : {}, projectId);
       toast.success('Regenerate started');
+      setRegenerateDialogOpen(false);
       artifact.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
@@ -125,7 +152,7 @@ export function ArtifactView({ projectId }: { projectId: string }) {
                 variant="outline"
                 size="sm"
                 disabled={regenerating || isArchivedVersion}
-                onClick={() => void regenerate()}
+                onClick={() => setRegenerateDialogOpen(true)}
               >
                 {regenerating ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
                 Regenerate
@@ -134,6 +161,14 @@ export function ArtifactView({ projectId }: { projectId: string }) {
           </div>
         }
       />
+      {canGenerate ? (
+        <RegenerateArtifactDialog
+          open={regenerateDialogOpen}
+          onOpenChange={setRegenerateDialogOpen}
+          submitting={regenerating}
+          onSubmit={(extraPrompt) => void regenerate(extraPrompt)}
+        />
+      ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge variant={STATE_VARIANT[data.state] ?? 'outline'} className={data.state === 'regenerating' ? 'animate-pulse' : undefined}>
           {data.state}
@@ -149,6 +184,67 @@ export function ArtifactView({ projectId }: { projectId: string }) {
         onChanged={() => artifact.refresh()}
       />
     </div>
+  );
+}
+
+function RegenerateArtifactDialog({
+  open,
+  onOpenChange,
+  submitting,
+  onSubmit,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  submitting: boolean;
+  /** Trimmed extra-prompt text; empty string means "none". */
+  onSubmit: (extraPrompt: string) => void;
+}) {
+  const [extraPrompt, setExtraPrompt] = useState('');
+
+  useEffect(() => {
+    if (!open) return;
+    setExtraPrompt('');
+  }, [open]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    onSubmit(extraPrompt.trim());
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent showCloseButton className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Regenerate artifact</DialogTitle>
+          <DialogDescription>
+            Archives the current version and launches a new run with the prior artifact and
+            current-version comments as context.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="flex flex-col gap-4" onSubmit={handleSubmit}>
+          <label className="flex flex-col gap-1.5 text-sm">
+            <span className="font-medium">Extra prompt (optional)</span>
+            <Textarea
+              autoFocus
+              rows={4}
+              value={extraPrompt}
+              disabled={submitting}
+              onChange={(event) => setExtraPrompt(event.target.value)}
+              placeholder="Anything extra to steer this regeneration…"
+            />
+          </label>
+          <DialogFooter className="mx-0 mb-0 mt-2 rounded-md">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {submitting ? 'Regenerating…' : 'Regenerate'}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

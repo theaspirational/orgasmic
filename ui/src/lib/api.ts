@@ -377,8 +377,14 @@ export function fetchArtifact(
   id: string,
   project?: string | null,
   version?: number,
+  includeConsumed?: boolean,
 ): Promise<ArtifactDetail> {
-  return get<ArtifactDetail>(`/artifacts/${encodeURIComponent(id)}${q(project, { version })}`);
+  return get<ArtifactDetail>(
+    `/artifacts/${encodeURIComponent(id)}${q(project, {
+      version,
+      include_consumed: includeConsumed ? 'true' : undefined,
+    })}`,
+  );
 }
 
 export function generateArtifact(
