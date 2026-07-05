@@ -13,6 +13,7 @@
 pub mod api;
 pub mod artifacts;
 pub mod auth;
+pub mod authz;
 pub mod config;
 pub mod content;
 pub mod events;

@@ -10,18 +10,23 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::middleware::Next;
-use axum::response::{IntoResponse, Response};
+use axum::http::{header, HeaderMap};
 use chrono::{DateTime, Duration, Utc};
 use orgasmic_core::Home;
 use rand::Rng;
 use subtle::ConstantTimeEq;
 
+use crate::authz::Identity;
+
 const UI_SESSION_COOKIE: &str = "orgasmic_ui_session";
 const UI_TICKET_TTL_SECONDS: i64 = 60;
 const UI_SESSION_TTL_SECONDS: i64 = 12 * 60 * 60;
+/// Member session cookie — distinct from the admin `UI_SESSION_COOKIE`.
+/// "Long-lived" per dec_N9HW0: unlike the admin flow, a member has no CLI to
+/// re-mint a ticket if their session expires, only their durable token
+/// (which they may not have saved) — so this outlives the 12h admin session.
+const MEMBER_SESSION_COOKIE: &str = "orgasmic_member_session";
+const MEMBER_SESSION_TTL_SECONDS: i64 = 30 * 24 * 60 * 60;
 
 /// Read the token from disk, generating one if missing.
 pub fn load_or_generate(home: &Home) -> Result<String> {
@@ -69,6 +74,7 @@ fn generate_token() -> String {
 pub struct AuthState {
     pub token: String,
     ui_sessions: Arc<Mutex<UiSessionStore>>,
+    member_sessions: Arc<Mutex<MemberSessionStore>>,
 }
 
 #[derive(Debug)]
@@ -83,12 +89,32 @@ pub struct UiSessionTicket {
     pub expires_at: DateTime<Utc>,
 }
 
+#[derive(Debug)]
+struct MemberSessionStore {
+    sessions: BTreeMap<String, MemberSession>,
+}
+
+#[derive(Debug, Clone)]
+struct MemberSession {
+    member_name: String,
+    expires_at: DateTime<Utc>,
+}
+
+impl MemberSessionStore {
+    fn prune(&mut self, now: DateTime<Utc>) {
+        self.sessions.retain(|_, s| s.expires_at > now);
+    }
+}
+
 impl AuthState {
     pub fn new(token: String) -> Self {
         Self {
             token,
             ui_sessions: Arc::new(Mutex::new(UiSessionStore {
                 tickets: BTreeMap::new(),
+                sessions: BTreeMap::new(),
+            })),
+            member_sessions: Arc::new(Mutex::new(MemberSessionStore {
                 sessions: BTreeMap::new(),
             })),
         }
@@ -179,6 +205,59 @@ impl AuthState {
             .map(|expires_at| *expires_at > now)
             .unwrap_or(false)
     }
+
+    pub fn member_session_cookie_name() -> &'static str {
+        MEMBER_SESSION_COOKIE
+    }
+
+    pub fn member_session_max_age_seconds() -> i64 {
+        MEMBER_SESSION_TTL_SECONDS
+    }
+
+    /// Mint a named member session, set at `/login` after a token hash match.
+    pub fn create_member_session(&self, member_name: &str) -> (String, DateTime<Utc>) {
+        let session = generate_token();
+        let expires_at = Utc::now() + Duration::seconds(MEMBER_SESSION_TTL_SECONDS);
+        if let Ok(mut store) = self.member_sessions.lock() {
+            store.prune(Utc::now());
+            store.sessions.insert(
+                session.clone(),
+                MemberSession {
+                    member_name: member_name.to_string(),
+                    expires_at,
+                },
+            );
+        }
+        (session, expires_at)
+    }
+
+    fn check_member_session(&self, headers: &HeaderMap) -> Option<String> {
+        let session = cookie_value(headers, MEMBER_SESSION_COOKIE)?;
+        let now = Utc::now();
+        let mut store = self.member_sessions.lock().ok()?;
+        store.prune(now);
+        store.sessions.get(session).map(|s| s.member_name.clone())
+    }
+
+    /// Resolve the request's identity: the pre-existing admin bearer
+    /// token/UI session takes priority (unchanged, full access); otherwise a
+    /// member session cookie is looked up and cross-checked against
+    /// `members.org` *fresh* on every call, so a revoke or grant edit on disk
+    /// takes effect on the very next request with no separate invalidation
+    /// channel. Returns `None` when neither resolves (401 at the call site).
+    pub fn resolve_identity(&self, headers: &HeaderMap, home: &Home) -> Option<Identity> {
+        if self.check_headers(headers) {
+            return Some(Identity::Admin);
+        }
+        let member_name = self.check_member_session(headers)?;
+        let entry = orgasmic_core::find_member_by_name(home, &member_name)
+            .ok()
+            .flatten()?;
+        Some(Identity::Member {
+            name: entry.name,
+            grants: entry.grants,
+        })
+    }
 }
 
 impl UiSessionStore {
@@ -198,30 +277,6 @@ fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
             None
         }
     })
-}
-
-pub async fn bearer_middleware(
-    State(auth): State<AuthState>,
-    request: Request,
-    next: Next,
-) -> Response {
-    let path = request.uri().path();
-    let query_token_allowed = path == "/api/ws"
-        || path.starts_with("/api/ws/")
-        || path == "/ws"
-        || path.starts_with("/ws/");
-    let authorized = auth.check_headers(request.headers())
-        || (query_token_allowed && auth.check_query_token(request.uri().query()));
-    if authorized {
-        next.run(request).await
-    } else {
-        (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-            "missing or invalid bearer token",
-        )
-            .into_response()
-    }
 }
 
 #[cfg(test)]
@@ -273,5 +328,82 @@ mod tests {
         assert!(auth.check_query_token(Some("topic=graph&token=secret")));
         assert!(!auth.check_query_token(Some("topic=graph&token=wrong")));
         assert!(!auth.check_query_token(Some("topic=graph")));
+    }
+
+    fn member_cookie_headers(session: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!(
+                "{}={session}",
+                AuthState::member_session_cookie_name()
+            ))
+            .unwrap(),
+        );
+        headers
+    }
+
+    #[test]
+    fn resolve_identity_admin_bearer_takes_priority() {
+        let auth = AuthState::new("secret".into());
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_static("Bearer secret"),
+        );
+        assert!(matches!(
+            auth.resolve_identity(&headers, &home),
+            Some(Identity::Admin)
+        ));
+    }
+
+    #[test]
+    fn resolve_identity_member_session_resolves_current_grants() {
+        let auth = AuthState::new("secret".into());
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        orgasmic_core::add_member(&home, "alice", &[("proj-a".into(), "editor".into())]).unwrap();
+
+        let (session, _expires) = auth.create_member_session("alice");
+        let headers = member_cookie_headers(&session);
+        match auth.resolve_identity(&headers, &home) {
+            Some(Identity::Member { name, grants }) => {
+                assert_eq!(name, "alice");
+                assert_eq!(grants, vec![("proj-a".to_string(), "editor".to_string())]);
+            }
+            other => panic!("expected member identity, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_identity_returns_none_after_revoke() {
+        let auth = AuthState::new("secret".into());
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        orgasmic_core::add_member(&home, "alice", &[("*".into(), "viewer".into())]).unwrap();
+        let (session, _) = auth.create_member_session("alice");
+        let headers = member_cookie_headers(&session);
+        assert!(auth.resolve_identity(&headers, &home).is_some());
+
+        orgasmic_core::revoke_member(&home, "alice").unwrap();
+        assert!(
+            auth.resolve_identity(&headers, &home).is_none(),
+            "revoking a member must invalidate their live session on the next lookup"
+        );
+    }
+
+    #[test]
+    fn resolve_identity_rejects_unknown_session() {
+        let auth = AuthState::new("secret".into());
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let headers = member_cookie_headers("bogus-session-id");
+        assert!(auth.resolve_identity(&headers, &home).is_none());
     }
 }

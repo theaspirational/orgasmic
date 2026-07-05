@@ -18,8 +18,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
+use axum::extract::{Extension, MatchedPath, Path, Query, State};
+use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
+use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -49,7 +50,8 @@ use crate::artifacts::{
     new_cid, reviews_org_header, update_artifact_org, validate_mdx, versions_dir, ArtifactDetail,
     ArtifactLoadError, ArtifactSummary, NewComment,
 };
-use crate::auth::{bearer_middleware, AuthState};
+use crate::auth::AuthState;
+use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
@@ -115,7 +117,7 @@ impl ApiState {
     /// Every handler with a read→transaction window on the same artifact MUST
     /// hold this per-artifact lock across that window so they serialize again
     /// while keeping finding #4's file+tx atomicity:
-    /// - `post_artifact_feedback` / `post_artifact_feedback_consume` (reviews.org)
+    /// - `post_artifact_add_comment` / `post_artifact_comment_resolve` (reviews.org)
     /// - `post_artifact_regenerate` (reviews.org consume + artifact.org state flip)
     /// - `post_artifact_submit` (artifact.org version read→bump; TASK-2ZQSB M1)
     /// - `revert_artifact_generation_state` (the release-watcher's state restore)
@@ -128,10 +130,11 @@ impl ApiState {
 }
 
 pub fn router(state: ApiState) -> Router {
-    let auth_state = state.auth.clone();
+    let identity_state = state.clone();
     let protected = Router::new()
         // v0.0.1 priority: real handlers
         .route("/board", get(get_board))
+        .route("/me", get(get_me))
         .route("/projects", post(add_project).get(get_projects))
         .route("/projects/:id", get(get_project))
         .route(
@@ -247,14 +250,14 @@ pub fn router(state: ApiState) -> Router {
         .route("/artifacts/:id", get(get_artifact))
         .route("/artifacts/:id/submit", post(post_artifact_submit))
         .route("/artifacts/:id/regenerate", post(post_artifact_regenerate))
-        .route("/artifacts/:id/feedback", post(post_artifact_feedback))
+        .route("/artifacts/:id/comments", post(post_artifact_add_comment))
         .route(
-            "/artifacts/:id/feedback/:cid/consume",
-            post(post_artifact_feedback_consume),
+            "/artifacts/:id/comments/:cid/resolve",
+            post(post_artifact_comment_resolve),
         )
         .layer(axum::middleware::from_fn_with_state(
-            auth_state,
-            bearer_middleware,
+            identity_state,
+            identity_middleware,
         ));
 
     let api = Router::new()
@@ -263,6 +266,7 @@ pub fn router(state: ApiState) -> Router {
             "/auth/ui-session",
             post(post_ui_session).get(get_app_session),
         )
+        .route("/login", post(post_login))
         .merge(protected)
         .fallback(api_not_found)
         .with_state(state);
@@ -277,6 +281,204 @@ pub fn router(state: ApiState) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
+}
+
+// ---- authorization seam wiring (arch_Z8CW2 / dec_KF2MR) --------------------
+//
+// Every request through `protected` resolves an `Identity` (admin, unchanged
+// full access; or a named member with grants read fresh from members.org)
+// and stores it in request extensions. For a member identity, the route
+// itself must additionally appear in `MEMBER_ALLOWED_ROUTES` below — the
+// route->action map spanning the whole surface: everything NOT listed here
+// is implicitly admin-only. Routes that ARE listed still gate their specific
+// per-project action through the one `authz::require` seam inside the
+// handler; this table only decides whether a member's request is even
+// allowed to reach that handler at all.
+
+/// `(HTTP method, axum route template)` pairs a member identity may reach.
+/// Every other route in `protected` is admin-only by omission. `/board` and
+/// `/me` are listed but gate nothing here — their handlers filter results per
+/// identity rather than rejecting the whole request.
+const MEMBER_ALLOWED_ROUTES: &[(&str, &str)] = &[
+    ("GET", "/board"),
+    ("GET", "/me"),
+    ("GET", "/projects/:id"),
+    ("GET", "/projects/:id/tasks"),
+    ("GET", "/projects/:id/tasks/:task_id"),
+    ("GET", "/tasks/:id/activity"),
+    ("GET", "/graph/nodes"),
+    ("GET", "/graph/edges"),
+    ("GET", "/decisions"),
+    ("GET", "/decisions/:id"),
+    ("GET", "/architecture"),
+    ("GET", "/architecture/nodes"),
+    ("GET", "/architecture/:id"),
+    ("GET", "/glossary"),
+    ("GET", "/glossary/:id"),
+    ("GET", "/artifacts"),
+    ("GET", "/artifacts/:id"),
+    ("POST", "/artifacts/generate"),
+    ("POST", "/artifacts/:id/regenerate"),
+    ("POST", "/artifacts/:id/comments"),
+    ("POST", "/artifacts/:id/comments/:cid/resolve"),
+    ("GET", "/ws"),
+    ("GET", "/ws/tmux/:run_id"),
+];
+
+fn member_route_allowed(method: &Method, pattern: &str) -> bool {
+    let method = method.as_str();
+    MEMBER_ALLOWED_ROUTES
+        .iter()
+        .any(|(m, p)| *m == method && *p == pattern)
+}
+
+/// Resolves identity for every request under `protected` and, for a member
+/// identity, checks the route against `MEMBER_ALLOWED_ROUTES` before the
+/// handler ever runs. Supersedes the old plain bearer-only `bearer_middleware`
+/// — admin auth (bearer token or admin UI session, plus the WS query-token
+/// escape hatch) is unchanged; member session-cookie resolution is additive.
+pub async fn identity_middleware(
+    State(state): State<ApiState>,
+    matched_path: Option<MatchedPath>,
+    mut request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let path = request.uri().path().to_string();
+    let query_token_allowed = path == "/api/ws"
+        || path.starts_with("/api/ws/")
+        || path == "/ws"
+        || path.starts_with("/ws/");
+
+    let identity = match state.auth.resolve_identity(request.headers(), &state.home) {
+        Some(identity) => identity,
+        None if query_token_allowed && state.auth.check_query_token(request.uri().query()) => {
+            Identity::Admin
+        }
+        None => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(header::WWW_AUTHENTICATE, "Bearer")],
+                "missing or invalid bearer token",
+            )
+                .into_response();
+        }
+    };
+
+    if matches!(identity, Identity::Member { .. }) {
+        // `MatchedPath` reports the route template *including* the `/api` nest
+        // prefix (e.g. `/api/ws`, `/api/projects/:id`), while
+        // `MEMBER_ALLOWED_ROUTES` lists app-relative templates (`/ws`). Strip
+        // the prefix so the coarse allow-list matches — otherwise every member
+        // request is rejected here before the per-capability gate ever runs.
+        let raw = matched_path.as_ref().map(|m| m.as_str()).unwrap_or(&path);
+        let pattern = raw
+            .strip_prefix("/api")
+            .filter(|rest| rest.starts_with('/'))
+            .unwrap_or(raw);
+        if !member_route_allowed(request.method(), pattern) {
+            return ApiError {
+                status: StatusCode::FORBIDDEN,
+                message: "forbidden for this member role".into(),
+                body: None,
+            }
+            .into_response();
+        }
+    }
+
+    request.extensions_mut().insert(identity);
+    next.run(request).await
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginRequest {
+    token: String,
+}
+
+/// `POST /login` — paste a member token, get a long-lived named session
+/// cookie. Public (no prior auth): this is how a member acquires one.
+async fn post_login(State(state): State<ApiState>, Json(body): Json<LoginRequest>) -> Response {
+    let Ok(Some(entry)) = orgasmic_core::find_member_by_token(&state.home, &body.token) else {
+        return (StatusCode::UNAUTHORIZED, "invalid or unknown token").into_response();
+    };
+    let (session, expires_at) = state.auth.create_member_session(&entry.name);
+    let cookie = format!(
+        "{}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        AuthState::member_session_cookie_name(),
+        session,
+        AuthState::member_session_max_age_seconds()
+    );
+    let mut response = Json(json!({
+        "name": entry.name,
+        "expires_at": expires_at.to_rfc3339(),
+    }))
+    .into_response();
+    if let Ok(value) = HeaderValue::from_str(&cookie) {
+        response.headers_mut().insert(header::SET_COOKIE, value);
+    }
+    response
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeProjectCapabilities {
+    project_id: String,
+    role: String,
+    capabilities: Vec<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MeResponse {
+    identity: &'static str,
+    name: Option<String>,
+    projects: Vec<MeProjectCapabilities>,
+}
+
+/// `GET /me` — capability snapshot the UI renders nav/affordances from.
+/// Convenience only (per arch_Z8CW2: the server is the sole real gate);
+/// admin sees every project with every capability, a member sees only their
+/// granted projects with that grant's resolved role and capability set.
+async fn get_me(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<MeResponse> {
+    let snap = state.index.snapshot().await;
+    let all_ids: Vec<&str> = snap.board.iter().map(|e| e.id.as_str()).collect();
+    let visible = authz::visible_project_ids(&identity, all_ids.iter().copied());
+
+    let projects = visible
+        .into_iter()
+        .map(|project_id| {
+            let role = match &identity {
+                Identity::Admin => "admin".to_string(),
+                Identity::Member { .. } => {
+                    identity.role_for(project_id).unwrap_or("").to_string()
+                }
+            };
+            let capabilities = match &identity {
+                Identity::Admin => Action::ALL.iter().copied().map(authz::action_name).collect(),
+                Identity::Member { .. } => authz::role_capabilities(&role)
+                    .iter()
+                    .copied()
+                    .map(authz::action_name)
+                    .collect(),
+            };
+            MeProjectCapabilities {
+                project_id: project_id.to_string(),
+                role,
+                capabilities,
+            }
+        })
+        .collect();
+
+    Json(MeResponse {
+        identity: match identity {
+            Identity::Admin => "admin",
+            Identity::Member { .. } => "member",
+        },
+        name: identity.member_name().map(str::to_string),
+        projects,
+    })
 }
 
 // ---- real handlers ---------------------------------------------------------
@@ -458,17 +660,43 @@ fn collect_ui_files<'a>(dir: &'a Dir<'a>, out: &mut Vec<(String, &'a [u8])>) {
     }
 }
 
-async fn get_board(State(state): State<ApiState>) -> Json<Vec<crate::index::BoardEntry>> {
+async fn get_board(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<Vec<crate::index::BoardEntry>> {
     let snap = state.index.snapshot().await;
-    Json(snap.board)
+    // Cross-project list: never 403 — filter to the projects this identity may
+    // see (admin sees all; a member sees only granted projects). Mirrors `get_me`.
+    let visible: std::collections::HashSet<String> =
+        authz::visible_project_ids(&identity, snap.board.iter().map(|e| e.id.as_str()))
+            .into_iter()
+            .map(String::from)
+            .collect();
+    Json(
+        snap.board
+            .into_iter()
+            .filter(|e| visible.contains(&e.id))
+            .collect(),
+    )
 }
 
-async fn get_projects(State(state): State<ApiState>) -> Json<Vec<crate::index::ProjectIndex>> {
+async fn get_projects(
+    State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
+) -> Json<Vec<crate::index::ProjectIndex>> {
     let snap = state.index.snapshot().await;
     let supervisor = state.supervisor.snapshot().await;
+    // Cross-project list: filter to visible projects rather than 403 (admin
+    // sees all; a member sees only granted projects).
+    let visible: std::collections::HashSet<String> =
+        authz::visible_project_ids(&identity, snap.projects.keys().map(String::as_str))
+            .into_iter()
+            .map(String::from)
+            .collect();
     Json(
         snap.projects
             .into_values()
+            .filter(|project| visible.contains(&project.project_id))
             .map(|project| apply_task_owners(project, &supervisor.runs))
             .collect(),
     )
@@ -1006,30 +1234,38 @@ fn is_project_input_error(message: &str) -> bool {
 
 async fn get_project(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<crate::index::ProjectIndex>, ApiError> {
     let snap = state.index.snapshot().await;
     let supervisor = state.supervisor.snapshot().await;
-    snap.project(&id)
+    // Resolve existence first (404), then gate the capability (403) — mirrors
+    // the artifact-handler pattern (`resolve_artifact_project` + `require`).
+    let project = snap
+        .project(&id)
         .cloned()
-        .map(|project| apply_task_owners(project, &supervisor.runs))
-        .map(Json)
-        .ok_or_else(|| ApiError::not_found(format!("project {id}")))
+        .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
+    authz::require(&identity, Some(&id), Action::ProjectRead)?;
+    Ok(Json(apply_task_owners(project, &supervisor.runs)))
 }
 
 async fn get_project_tasks(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
 ) -> Result<Json<Vec<crate::index::TaskSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
     let supervisor = state.supervisor.snapshot().await;
-    snap.project(&id)
-        .map(|p| Json(apply_task_owners(p.clone(), &supervisor.runs).tasks))
-        .ok_or_else(|| ApiError::not_found(format!("project {id}")))
+    let project = snap
+        .project(&id)
+        .ok_or_else(|| ApiError::not_found(format!("project {id}")))?;
+    authz::require(&identity, Some(&id), Action::TasksRead)?;
+    Ok(Json(apply_task_owners(project.clone(), &supervisor.runs).tasks))
 }
 
 async fn get_task(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path((project_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<crate::index::TaskDetail>, ApiError> {
     let snap = state.index.snapshot().await;
@@ -1037,6 +1273,7 @@ async fn get_task(
         tracing::warn!(project_id = %project_id, "project not found");
         ApiError::not_found("project not found")
     })?;
+    authz::require(&identity, Some(&project_id), Action::TasksRead)?;
     if !project.tasks.iter().any(|task| task.id == task_id) {
         tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
         return Err(ApiError::not_found("task not found"));
@@ -1171,10 +1408,12 @@ async fn post_task_comment(
 
 async fn get_task_activity(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(task_id): Path<String>,
 ) -> Result<Json<Vec<crate::index::ActivityEntry>>, ApiError> {
     let snap = state.index.snapshot().await;
     let located = locate_task(&snap, &task_id)?;
+    authz::require(&identity, Some(&located.project_id), Action::TasksRead)?;
     let entries = snap
         .projects
         .get(&located.project_id)
@@ -6234,20 +6473,24 @@ fn org_file_artifact_label(relative_path: &FsPath) -> &'static str {
 
 async fn get_graph_nodes(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::GraphNodeSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.nodes.clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.nodes.clone()))
 }
 
 async fn get_graph_edges(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphEdgesQuery>,
 ) -> Result<Json<Vec<crate::index::GraphEdgeSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    let graph = select_graph(&snap, q.project.as_deref())?;
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    let graph = &project.graph;
     let (relation_kind, dir_from_relation) = graph_relation_filter(q.relation.as_deref())?;
     // A relation alias already fixes both kind and direction; reject a
     // conflicting explicit kind/dir rather than silently overriding the
@@ -6332,21 +6575,26 @@ async fn get_graph_markers(
 
 async fn get_decisions(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::DecisionSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.decisions.clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.decisions.clone()))
 }
 
 async fn get_decision(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::DecisionSummary>, ApiError> {
     let snap = state.index.snapshot().await;
-    select_graph(&snap, q.project.as_deref())?
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    project
+        .graph
         .decisions
         .iter()
         .find(|node| node.id == id)
@@ -6357,33 +6605,37 @@ async fn get_decision(
 
 async fn get_architecture(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::ArchitectureSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?
-            .architecture
-            .clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.architecture.clone()))
 }
 
 async fn get_architecture_nodes(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::ArchitectureNodesResponse>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.architecture_nodes_response(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.architecture_nodes_response()))
 }
 
 async fn get_architecture_node(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::ArchitectureSummary>, ApiError> {
     let snap = state.index.snapshot().await;
-    select_graph(&snap, q.project.as_deref())?
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    project
+        .graph
         .architecture
         .iter()
         .find(|node| node.id == id)
@@ -6394,21 +6646,26 @@ async fn get_architecture_node(
 
 async fn get_glossary(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<Vec<crate::index::GlossarySummary>>, ApiError> {
     let snap = state.index.snapshot().await;
-    Ok(Json(
-        select_graph(&snap, q.project.as_deref())?.glossary.clone(),
-    ))
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    Ok(Json(project.graph.glossary.clone()))
 }
 
 async fn get_glossary_term(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<GraphQuery>,
 ) -> Result<Json<crate::index::GlossarySummary>, ApiError> {
     let snap = state.index.snapshot().await;
-    select_graph(&snap, q.project.as_deref())?
+    let project = select_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&project.project_id), Action::GraphRead)?;
+    project
+        .graph
         .glossary
         .iter()
         .find(|term| term.id == id)
@@ -8777,12 +9034,17 @@ struct ArtifactSubmitRequest {
 }
 
 #[derive(Debug, Deserialize)]
-struct ArtifactFeedbackRequest {
+struct ArtifactCommentRequest {
     message: String,
+    /// Opaque JSON anchor (selection-to-pin capture: `PlanCommentAnchor`
+    /// shape — textQuote, targetNodeId/path, canvas coords — is a UI-side
+    /// concern; the daemon stores and round-trips it verbatim).
     #[serde(default)]
     anchor: Option<String>,
     #[serde(default)]
     resolution_target: Option<String>,
+    /// Admin-only override (a member's comment is always stamped with their
+    /// session identity's name, never this field — see `post_artifact_add_comment`).
     #[serde(default)]
     author: Option<String>,
 }
@@ -8802,10 +9064,12 @@ fn resolve_artifact_project<'a>(
 
 async fn get_artifacts(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<Vec<ArtifactSummary>>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
     let project = snap
         .projects
         .get(&entry.id)
@@ -8815,11 +9079,13 @@ async fn get_artifacts(
 
 async fn get_artifact(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(id): Path<String>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<ArtifactDetail>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
     let art_dir = artifact_dir(&entry.path, &id);
     let detail = load_artifact_detail(&art_dir, q.version, q.include_consumed.unwrap_or(false))
         .map_err(|e| match e {
@@ -9076,14 +9342,22 @@ async fn post_artifact_submit(
     ))
 }
 
-async fn post_artifact_feedback(
+/// `POST /artifacts/:id/comments` — pin a named comment (selection-to-pin
+/// capture, arch_A3NSW). A member's comment is always attributed to their own
+/// session identity; the request body's `author` field is honored only for
+/// the admin identity (backward-compatible scripting override), never for a
+/// member — closing the client-supplied-author spoofing hole the old
+/// `/feedback` route had.
+async fn post_artifact_add_comment(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(art_id): Path<String>,
     Query(q): Query<ArtifactQuery>,
-    Json(body): Json<ArtifactFeedbackRequest>,
+    Json(body): Json<ArtifactCommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
     let project_id = entry.id.clone();
     let project_root = entry.path.clone();
     drop(snap);
@@ -9111,12 +9385,15 @@ async fn post_artifact_feedback(
     let version = summary.version;
 
     let cid = new_cid();
-    let author = body
-        .author
-        .as_deref()
-        .and_then(|s| if s.is_empty() { None } else { Some(s) })
-        .unwrap_or(&state.actor)
-        .to_string();
+    let author = match identity.member_name() {
+        Some(name) => name.to_string(),
+        None => body
+            .author
+            .as_deref()
+            .and_then(|s| if s.is_empty() { None } else { Some(s) })
+            .unwrap_or(&state.actor)
+            .to_string(),
+    };
     let anchor = body.anchor.unwrap_or_else(|| "{}".into());
     let resolution_target = body.resolution_target.unwrap_or_default();
 
@@ -9196,13 +9473,33 @@ async fn post_artifact_feedback(
     Ok(Json(json!({ "cid": cid })))
 }
 
-async fn post_artifact_feedback_consume(
+#[derive(Debug, Deserialize)]
+struct ArtifactCommentResolveRequest {
+    /// Members toggle both ways (open<->resolved); omitted defaults to the
+    /// common "mark resolved" case.
+    #[serde(default = "default_true")]
+    resolved: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// `POST /artifacts/:id/comments/:cid/resolve` — the people-facing axis of
+/// two-axis thread state (dec_V44E4/dec_KF2MR): any member with
+/// `artifacts.comment` may open/resolve a thread. Consumed is a separate
+/// agent-facing axis, touched only by regeneration close-out
+/// ([`consume_all_open_comments`]), never by this route.
+async fn post_artifact_comment_resolve(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path((art_id, cid)): Path<(String, String)>,
     Query(q): Query<ArtifactQuery>,
+    Json(body): Json<ArtifactCommentResolveRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
     let project_id = entry.id.clone();
     let project_root = entry.path.clone();
     drop(snap);
@@ -9219,8 +9516,8 @@ async fn post_artifact_feedback_consume(
 
     let reviews_path = art_dir.join("reviews.org");
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
-    let new_reviews =
-        artifacts::resolve_comment_in_reviews(&current_reviews, &cid).map_err(|e| {
+    let new_reviews = artifacts::set_comment_resolved(&current_reviews, &cid, body.resolved)
+        .map_err(|e| {
             if e.to_string().contains("not found") {
                 ApiError::not_found(format!("comment {cid} not found"))
             } else {
@@ -9229,7 +9526,7 @@ async fn post_artifact_feedback_consume(
         })?;
 
     // The WS event should carry the artifact's actual current state:
-    // consume only touches reviews.org, never artifact.org's :STATE:.
+    // resolving only touches reviews.org, never artifact.org's :STATE:.
     let actual_state = load_artifact(&art_dir)
         .map(|s| s.state)
         .unwrap_or_else(|| "submitted".to_string());
@@ -9243,6 +9540,7 @@ async fn post_artifact_feedback_consume(
         .join("tx")
         .join(format!("{month_str}.org"));
 
+    let resolved_by = identity.member_name().unwrap_or(&state.actor).to_string();
     let mut tx_entry = orgasmic_core::tx::TxEntry::new(
         "pending",
         "artifact.comment.resolved",
@@ -9254,7 +9552,8 @@ async fn post_artifact_feedback_consume(
     tx_entry.extra = vec![
         ("ARTIFACT_ID".into(), art_id.clone()),
         ("CID".into(), cid.clone()),
-        ("RESOLVED_BY".into(), state.actor.clone()),
+        ("RESOLVED".into(), body.resolved.to_string()),
+        ("RESOLVED_BY".into(), resolved_by),
     ];
 
     // Single writer.transaction bundling the reviews.org rewrite + the tx
@@ -9289,7 +9588,7 @@ async fn post_artifact_feedback_consume(
             state: actual_state,
         },
     );
-    Ok(Json(json!({ "cid": cid, "resolved": true })))
+    Ok(Json(json!({ "cid": cid, "resolved": body.resolved })))
 }
 
 // ---- artifact generation launch (arch_045Q0 / dec_JBWB9 / dec_V44E4) -------
@@ -9823,6 +10122,7 @@ fn spawn_artifact_release_watcher(state: ApiState, watch: ArtifactReleaseWatch) 
 
 async fn post_artifact_generate(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactGenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
@@ -9839,6 +10139,7 @@ async fn post_artifact_generate(
 
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
     drop(snap);
 
     let art_id = artifacts::new_artifact_id();
@@ -9957,12 +10258,14 @@ async fn post_artifact_generate(
 
 async fn post_artifact_regenerate(
     State(state): State<ApiState>,
+    Extension(identity): Extension<Identity>,
     Path(art_id): Path<String>,
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
+    authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
     drop(snap);
 
     let art_dir = artifact_dir(&entry.path, &art_id);
@@ -10135,6 +10438,19 @@ impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let body = self.body.unwrap_or_else(|| json!({"error": self.message}));
         (self.status, Json(body)).into_response()
+    }
+}
+
+/// The one authorization seam's error converts to a plain 403 — route code
+/// never builds its own forbidden response, it just propagates `?` through
+/// `authz::require`.
+impl From<authz::Forbidden> for ApiError {
+    fn from(err: authz::Forbidden) -> Self {
+        ApiError {
+            status: StatusCode::FORBIDDEN,
+            message: err.0,
+            body: None,
+        }
     }
 }
 
@@ -11813,6 +12129,7 @@ mod tests {
 
         let Json(detail) = get_task(
             State(state),
+            Extension(Identity::Admin),
             Path(("orgasmic".to_string(), "TASK-PRE".to_string())),
         )
         .await
@@ -13275,7 +13592,7 @@ mod tests {
         assert_eq!(submit_resp.0["version"], 1);
 
         // --- list ---
-        let list_resp = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list_resp = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list should succeed");
         assert_eq!(list_resp.0.len(), 1);
@@ -13288,6 +13605,7 @@ mod tests {
         // --- detail ---
         let detail_resp = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13298,11 +13616,12 @@ mod tests {
         assert_eq!(detail_resp.0.comments.len(), 0);
 
         // --- feedback (add comment) ---
-        let fb_resp = post_artifact_feedback(
+        let fb_resp = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "This looks good!".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13315,25 +13634,32 @@ mod tests {
         assert!(cid.starts_with("CID-"));
 
         // Index should reflect 1 open comment
-        let list2 = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list2 = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list 2");
         assert_eq!(list2.0[0].open_comment_count, 1);
 
-        // --- consume ---
-        let consume_resp = post_artifact_feedback_consume(
-            State(state.clone()),
-            Path((art_id.to_string(), cid.clone())),
-            Query(artifact_query("test-proj")),
+        // --- consume (agent-facing axis: regeneration close-out) ---
+        // `consumed` is set in production ONLY by regeneration close-out via
+        // `consume_all_open_comments`; the people-facing resolve handler never
+        // touches it. This test asserts exclusion-by-default, which keys off
+        // `consumed` (not `resolved`), so it must drive the consume axis the
+        // production way. The test already operates at the file layer below, so
+        // apply `consume_all_open_comments` to reviews.org directly and refresh
+        // the index projection.
+        let reviews_path = artifact_dir(&project_root, art_id).join("reviews.org");
+        let consumed_reviews = artifacts::consume_all_open_comments(
+            &std::fs::read_to_string(&reviews_path).unwrap(),
         )
-        .await
-        .expect("consume should succeed");
-        assert_eq!(consume_resp.0["resolved"], true);
+        .expect("consume open comments should succeed");
+        std::fs::write(&reviews_path, &consumed_reviews).unwrap();
+        let _ = state.index.refresh_project("test-proj").await;
 
         // Default view: consumed comments are excluded (MANAGER RULING,
         // TASK-Y2ZQJ).
         let detail2 = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13347,6 +13673,7 @@ mod tests {
         // include_consumed=true surfaces it, resolved + consumed.
         let detail2_all = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(ArtifactQuery {
                 include_consumed: Some(true),
@@ -13362,7 +13689,7 @@ mod tests {
         assert!(comments[0].consumed);
 
         // Open comment count should be 0 after consume
-        let list3 = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list3 = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list 3");
         assert_eq!(list3.0[0].open_comment_count, 0);
@@ -13390,11 +13717,12 @@ mod tests {
         let org_content = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
         let updated_org = update_artifact_org(&org_content, 1, "regenerating").unwrap();
         std::fs::write(art_dir.join("artifact.org"), &updated_org).unwrap();
-        let fb2 = post_artifact_feedback(
+        let fb2 = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "Should be refused".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13428,6 +13756,115 @@ mod tests {
 
         // versions/v1.mdx should be the archive
         assert!(art_dir.join("versions/v1.mdx").exists());
+    }
+
+    // People-facing resolve axis (dec_V44E4 / dec_KF2MR). Preserves the
+    // people-axis half of the former feedback/consume roundtrip, which the
+    // two-axis split separates from consumption: `post_artifact_comment_resolve`
+    // toggles `resolved` only. It must NEVER set `consumed` (the agent-facing
+    // axis, driven solely by regeneration close-out), and a resolved-but-
+    // unconsumed comment must STILL appear in the default (exclude-consumed)
+    // view.
+    #[tokio::test]
+    async fn artifact_comment_resolve_toggles_people_axis_without_consuming() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RESOLV";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>Hello</RichText>\n".into(),
+                title: Some("Resolve axis".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let fb = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "please tighten this".into(),
+                anchor: None,
+                resolution_target: None,
+                author: Some("reviewer@test.com".into()),
+            }),
+        )
+        .await
+        .expect("comment add should succeed");
+        let cid = fb.0["cid"].as_str().unwrap().to_string();
+
+        // Resolve (people-facing axis only).
+        let resolve_resp = post_artifact_comment_resolve(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path((art_id.to_string(), cid.clone())),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: true }),
+        )
+        .await
+        .expect("resolve should succeed");
+        assert_eq!(resolve_resp.0["resolved"], true);
+
+        // Resolved but NOT consumed: still visible in the default view.
+        let detail = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("detail");
+        let comment = detail
+            .0
+            .comments
+            .iter()
+            .find(|c| c.cid == cid)
+            .expect("resolved comment must remain visible in the default view");
+        assert!(comment.resolved, "resolve must set the people-facing axis");
+        assert!(
+            !comment.consumed,
+            "resolve must never set the agent-facing consumed axis (dec_V44E4/dec_KF2MR)"
+        );
+
+        // Members can re-open (toggle back to open).
+        let _ = post_artifact_comment_resolve(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path((art_id.to_string(), cid.clone())),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: false }),
+        )
+        .await
+        .expect("re-open should succeed");
+
+        let detail2 = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("detail after reopen");
+        let comment2 = detail2
+            .0
+            .comments
+            .iter()
+            .find(|c| c.cid == cid)
+            .expect("re-opened comment still visible");
+        assert!(!comment2.resolved, "re-open clears the resolved axis");
+        assert!(!comment2.consumed, "re-open never touches the consumed axis");
     }
 
     // Regression guard for TASK-Y2ZQJ finding M1: concurrent comment-adds on
@@ -13465,11 +13902,12 @@ mod tests {
         for i in 0..N {
             let st = state.clone();
             handles.push(tokio::spawn(async move {
-                post_artifact_feedback(
+                post_artifact_add_comment(
                     State(st),
+                    Extension(Identity::Admin),
                     Path(art_id.to_string()),
                     Query(artifact_query("test-proj")),
-                    Json(ArtifactFeedbackRequest {
+                    Json(ArtifactCommentRequest {
                         message: format!("comment number {i}"),
                         anchor: None,
                         resolution_target: None,
@@ -13493,7 +13931,7 @@ mod tests {
         let unique: std::collections::HashSet<_> = cids.iter().collect();
         assert_eq!(unique.len(), N, "each add should mint a distinct CID");
 
-        let list = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list");
         assert_eq!(
@@ -13503,6 +13941,7 @@ mod tests {
 
         let detail = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13612,6 +14051,7 @@ mod tests {
 
         let missing_artifact = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path("ART-NOPE".to_string()),
             Query(artifact_query("test-proj")),
         )
@@ -13621,6 +14061,7 @@ mod tests {
 
         let missing_version = get_artifact(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(ArtifactQuery {
                 version: Some(9),
@@ -13673,11 +14114,12 @@ mod tests {
         std::fs::remove_file(art_dir.join("reviews.org")).unwrap();
         std::fs::create_dir(art_dir.join("reviews.org")).unwrap();
 
-        let result = post_artifact_feedback(
+        let result = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "should not land".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13700,7 +14142,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn artifact_feedback_consume_leaves_no_partial_state_on_writer_failure() {
+    async fn artifact_comment_resolve_leaves_no_partial_state_on_writer_failure() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -13723,11 +14165,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let fb_resp = post_artifact_feedback(
+        let fb_resp = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "to be consumed".into(),
                 anchor: None,
                 resolution_target: None,
@@ -13749,10 +14192,12 @@ mod tests {
         std::fs::remove_file(art_dir.join("reviews.org")).unwrap();
         std::fs::create_dir(art_dir.join("reviews.org")).unwrap();
 
-        let result = post_artifact_feedback_consume(
+        let result = post_artifact_comment_resolve(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path((art_id.to_string(), cid)),
             Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: true }),
         )
         .await;
         assert!(result.is_err());
@@ -13958,6 +14403,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
@@ -14011,6 +14457,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
@@ -14039,7 +14486,7 @@ mod tests {
         assert_eq!(summary.version, 0);
         assert!(summary.subject_nodes.is_empty());
 
-        let list = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let list = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list should include node-less artifact");
         assert!(
@@ -14078,11 +14525,12 @@ mod tests {
         .await
         .expect("attached submit should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(attached_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "needs work".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14093,7 +14541,7 @@ mod tests {
         .expect("feedback should succeed");
 
         let rollup_before = open_comment_count_for_node(
-            &get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+            &get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
                 .await
                 .expect("list before generate")
                 .0,
@@ -14103,6 +14551,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
@@ -14113,7 +14562,7 @@ mod tests {
         .expect("generate with empty nodes should succeed");
 
         let _ = state.index.refresh_project("test-proj").await;
-        let artifacts = get_artifacts(State(state.clone()), Query(artifact_query("test-proj")))
+        let artifacts = get_artifacts(State(state.clone()), Extension(Identity::Admin), Query(artifact_query("test-proj")))
             .await
             .expect("list after generate")
             .0;
@@ -14171,6 +14620,7 @@ mod tests {
 
         let resp = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14221,11 +14671,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let fb_resp = post_artifact_feedback(
+        let fb_resp = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 1 feedback".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14238,6 +14689,7 @@ mod tests {
 
         let first = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14266,11 +14718,12 @@ mod tests {
         .expect("submit v2 should succeed");
         assert_eq!(load_artifact(&art_dir).unwrap().version, 2);
 
-        let fb2 = post_artifact_feedback(
+        let fb2 = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14291,6 +14744,7 @@ mod tests {
             for _ in 0..40 {
                 match post_artifact_regenerate(
                     State(state.clone()),
+                    Extension(Identity::Admin),
                     Path(art_id.to_string()),
                     Query(artifact_query("test-proj")),
                     Json(ArtifactRegenerateRequest {
@@ -14379,11 +14833,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "needs work".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14395,6 +14850,7 @@ mod tests {
 
         let first = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14417,6 +14873,7 @@ mod tests {
         // mutation (arch_045Q0.1 ordering).
         let err = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14477,11 +14934,12 @@ mod tests {
         .await
         .expect("submit should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 1".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14493,6 +14951,7 @@ mod tests {
 
         let first = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14524,11 +14983,12 @@ mod tests {
         .await
         .expect("submit v2 after restart");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "after restart".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14540,6 +15000,7 @@ mod tests {
 
         let resp = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14597,11 +15058,12 @@ mod tests {
         .await
         .expect("submit v1 should succeed");
 
-        let _ = post_artifact_feedback(
+        let _ = post_artifact_add_comment(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactFeedbackRequest {
+            Json(ArtifactCommentRequest {
                 message: "round 2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
@@ -14613,6 +15075,7 @@ mod tests {
 
         let regen = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
@@ -14664,6 +15127,7 @@ mod tests {
 
         let result = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
@@ -14707,6 +15171,7 @@ mod tests {
 
         let result = post_artifact_regenerate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest { extra_prompt: None }),
@@ -14733,6 +15198,7 @@ mod tests {
 
         let resp = post_artifact_generate(
             State(state.clone()),
+            Extension(Identity::Admin),
             Query(artifact_query("test-proj")),
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
@@ -14778,5 +15244,364 @@ mod tests {
             .join(format!("{}.org", Utc::now().format("%Y-%m")));
         let tx = std::fs::read_to_string(&tx_path).unwrap();
         assert!(tx.contains("artifact.generation.failed"));
+    }
+
+    // ---- authorization wiring (arch_Z8CW2 / dec_KF2MR) ---------------------
+
+    fn member(grants: &[(&str, &str)]) -> Identity {
+        Identity::Member {
+            name: "alice".into(),
+            grants: grants
+                .iter()
+                .map(|(p, r)| (p.to_string(), r.to_string()))
+                .collect(),
+        }
+    }
+
+    fn graph_query(project: &str) -> GraphQuery {
+        GraphQuery {
+            project: Some(project.into()),
+        }
+    }
+
+    fn seed_two_projects(home: &Home, root_a: &FsPath, root_b: &FsPath) {
+        symlink_repo_source(home);
+        for (root, id) in [(root_a, "proj-a"), (root_b, "proj-b")] {
+            write(
+                root.join(".orgasmic/project.org"),
+                &format!(
+                    "#+title: {id}\n#+orgasmic_version: 1\n\n* PROJECT {id}\n:PROPERTIES:\n:ID:               {id}\n:END:\n"
+                ),
+            );
+            write(
+                task_file_path(root, "backlog.org"),
+                "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-PRE Pre-boot task :work:\n:PROPERTIES:\n:ID:               TASK-PRE\n:END:\n",
+            );
+        }
+        write(
+            home.board(),
+            &format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj-a\n:PROPERTIES:\n:ID:               proj-a\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n\n* PROJECT proj-b\n:PROPERTIES:\n:ID:               proj-b\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                root_a.display(),
+                root_b.display(),
+            ),
+        );
+    }
+
+    /// An `artifacts`-role member reaches artifact + project-detail reads but is
+    /// 403'd on the tasks and graph surfaces (they lack TasksRead/GraphRead).
+    #[tokio::test]
+    async fn authz_artifacts_member_gated_on_tasks_and_graph_reads() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        seed_minimal_graph(&project_root);
+        let state = direct_stage_test_state(home).await;
+
+        let id = member(&[("proj-a", "artifacts")]);
+
+        // ProjectRead + ArtifactsRead: allowed.
+        assert!(
+            get_project(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
+                .await
+                .is_ok(),
+            "artifacts role carries ProjectRead"
+        );
+        assert!(
+            get_artifacts(
+                State(state.clone()),
+                Extension(id.clone()),
+                Query(artifact_query("proj-a"))
+            )
+            .await
+            .is_ok(),
+            "artifacts role carries ArtifactsRead"
+        );
+
+        // TasksRead: denied.
+        let tasks =
+            get_project_tasks(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
+                .await;
+        assert_eq!(tasks.err().map(|e| e.status), Some(StatusCode::FORBIDDEN));
+
+        // GraphRead: denied.
+        let decisions = get_decisions(
+            State(state.clone()),
+            Extension(id.clone()),
+            Query(graph_query("proj-a")),
+        )
+        .await;
+        assert_eq!(decisions.err().map(|e| e.status), Some(StatusCode::FORBIDDEN));
+    }
+
+    /// A `viewer` member reads tasks and the graph/decisions surfaces (200).
+    #[tokio::test]
+    async fn authz_viewer_member_reads_tasks_and_graph() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        seed_minimal_graph(&project_root);
+        let state = direct_stage_test_state(home).await;
+
+        let id = member(&[("proj-a", "viewer")]);
+
+        assert!(
+            get_project_tasks(State(state.clone()), Extension(id.clone()), Path("proj-a".into()))
+                .await
+                .is_ok()
+        );
+        assert!(
+            get_graph_nodes(
+                State(state.clone()),
+                Extension(id.clone()),
+                Query(graph_query("proj-a"))
+            )
+            .await
+            .is_ok()
+        );
+        assert!(
+            get_decisions(
+                State(state.clone()),
+                Extension(id.clone()),
+                Query(graph_query("proj-a"))
+            )
+            .await
+            .is_ok()
+        );
+    }
+
+    /// The cross-project list endpoints never 403 a member — they filter to the
+    /// member's granted projects (admin sees all).
+    #[tokio::test]
+    async fn authz_board_and_projects_lists_filtered_to_member_grants() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root_a = tmp.path().join("proj-a");
+        let root_b = tmp.path().join("proj-b");
+        seed_two_projects(&home, &root_a, &root_b);
+        let state = direct_stage_test_state(home).await;
+
+        // Admin sees both.
+        assert_eq!(
+            get_board(State(state.clone()), Extension(Identity::Admin))
+                .await
+                .0
+                .len(),
+            2
+        );
+        assert_eq!(
+            get_projects(State(state.clone()), Extension(Identity::Admin))
+                .await
+                .0
+                .len(),
+            2
+        );
+
+        // A member granted only proj-a sees only proj-a in both lists.
+        let id = member(&[("proj-a", "viewer")]);
+        let board = get_board(State(state.clone()), Extension(id.clone())).await;
+        assert_eq!(
+            board.0.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(),
+            vec!["proj-a"]
+        );
+        let projects = get_projects(State(state.clone()), Extension(id.clone())).await;
+        assert_eq!(
+            projects
+                .0
+                .iter()
+                .map(|p| p.project_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["proj-a"]
+        );
+    }
+
+    // ---- WebSocket authorization wiring -----------------------------------
+
+    /// Mint a member session cookie via `POST /login` (the same flow the UI
+    /// uses), returning the `name=value` pair to send on later requests.
+    async fn member_session_cookie(addr: std::net::SocketAddr, member_token: &str) -> String {
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("http://{addr}/api/login"))
+            .json(&serde_json::json!({ "token": member_token }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "member login failed: {}",
+            resp.status()
+        );
+        let raw = resp
+            .headers()
+            .get("set-cookie")
+            .expect("login must set a session cookie")
+            .to_str()
+            .unwrap();
+        raw.split(';').next().unwrap().to_string()
+    }
+
+    async fn connect_ws_cookie(addr: std::net::SocketAddr, cookie: &str, topic: &str) -> TestWs {
+        let url = format!("ws://{addr}/api/ws?topic={topic}");
+        let mut req = url.into_client_request().unwrap();
+        req.headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        let (ws, _resp) = tokio_tungstenite::connect_async(req).await.unwrap();
+        ws
+    }
+
+    async fn connect_tmux_ws_cookie(
+        addr: std::net::SocketAddr,
+        cookie: &str,
+        run_id: &str,
+    ) -> Result<TestWs, tokio_tungstenite::tungstenite::Error> {
+        let url = format!("ws://{addr}/api/ws/tmux/{run_id}");
+        let mut req = url.into_client_request().unwrap();
+        req.headers_mut()
+            .insert("cookie", cookie.parse().unwrap());
+        tokio_tungstenite::connect_async(req).await.map(|(ws, _)| ws)
+    }
+
+    /// The next event-bus message delivered to a socket, decoded.
+    async fn next_ws_event(ws: &mut TestWs) -> Value {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match ws.next().await.unwrap().unwrap() {
+                    Message::Text(text) => return serde_json::from_str::<Value>(&text).unwrap(),
+                    Message::Close(frame) => panic!("websocket closed early: {frame:?}"),
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .expect("timed out waiting for a ws event")
+    }
+
+    /// An artifacts-only member's `/ws` receives artifact events but not the
+    /// graph/task events their role can't see; admin receives everything.
+    #[tokio::test]
+    async fn ws_event_stream_filters_by_member_capability() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let member_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "artifacts".to_string())],
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let cookie = member_session_cookie(running.addr, &member_token).await;
+
+        // Both sockets subscribe to every topic; filtering is per-identity.
+        let mut member_ws = connect_ws_cookie(running.addr, &cookie, "").await;
+        let mut admin_ws = connect_ws(running.addr, &token, "").await;
+
+        let client = reqwest::Client::new();
+
+        // (1) A graph event — visible to admin, filtered out for an artifacts member.
+        let graph = client
+            .post(format!("http://{}/api/architecture", running.addr))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "proj-a",
+                "request_id": "ws-authz-graph",
+                "title": "WS authz architecture node"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(graph.status().is_success(), "create arch: {}", graph.status());
+
+        // (2) An artifact event — visible to both.
+        let artifact = client
+            .post(format!(
+                "http://{}/api/artifacts/ART-WSXYZ/submit?project=proj-a",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "content": "<RichText>hello</RichText>\n",
+                "title": "WS gate artifact",
+                "subject_nodes": ["arch_ARSPJ"],
+                "prompt": "test"
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            artifact.status().is_success(),
+            "submit artifact: {}",
+            artifact.status()
+        );
+
+        // Admin sees the graph event (and later the artifact event).
+        let admin_graph = next_event_kind(&mut admin_ws, "graph_node_created").await;
+        assert_eq!(admin_graph["payload"]["project_id"], "proj-a");
+        let admin_artifact = next_event_kind(&mut admin_ws, "artifact_changed").await;
+        assert_eq!(admin_artifact["payload"]["project_id"], "proj-a");
+
+        // The member's FIRST delivered event is the artifact event: the graph
+        // event (published first) was filtered out by the topic gate.
+        let member_first = next_ws_event(&mut member_ws).await;
+        assert_eq!(
+            member_first["payload"]["kind"], "artifact_changed",
+            "artifacts member must not receive graph events"
+        );
+        assert_eq!(member_first["payload"]["project_id"], "proj-a");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// A member is denied streaming a run they can't watch (the handshake is
+    /// rejected before upgrade); admin is unaffected by the stream gate.
+    #[tokio::test]
+    async fn tmux_ws_member_denied_stream_admin_allowed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj-a");
+        seed_project(&home, &project_root, "proj-a");
+        let member_token = orgasmic_core::add_member(
+            &home,
+            "alice",
+            &[("proj-a".to_string(), "viewer".to_string())],
+        )
+        .unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let cookie = member_session_cookie(running.addr, &member_token).await;
+
+        // 'missing-run' has no supervisor record → no resolvable project → a
+        // member cannot be authorized, so the WS handshake is rejected (403).
+        let member_attempt = connect_tmux_ws_cookie(running.addr, &cookie, "missing-run").await;
+        assert!(
+            member_attempt.is_err(),
+            "member must be denied streaming a run they can't watch"
+        );
+
+        // Admin is unaffected: the socket upgrades and the daemon returns the
+        // honest 'no live run' error frame rather than a 403.
+        let mut admin_ws = connect_tmux_ws(running.addr, &token, "missing-run").await;
+        let err = next_ws_text_containing(&mut admin_ws, "no live run").await;
+        assert!(err.contains("missing-run"));
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 }

@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useNavigate } from '@tanstack/react-router';
 
 import { Badge } from '@/components/ui/badge';
+import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchArchitecture, fetchArtifacts, fetchDecisions, fetchGlossary } from '@/lib/api';
 import type { ArchitectureSummary, ArtifactSummary, DecisionSummary, GlossarySummary } from '@/lib/types';
@@ -49,12 +50,27 @@ function subjectSummary(nodes: string[], dir: SubjectDirectory): string {
 export function ArtifactsView({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
   const refresh = useRefreshToken();
+  // Subject labels come from the graph nodes an artifact is "about"; a member
+  // without graph.read (e.g. an artifacts-only reviewer) can't read those and
+  // would 403 — skip the lookups and fall back to raw ids / "Prompt-only".
+  const { can } = useMe();
+  const canReadGraph = can(projectId, 'graph.read');
   const artifacts = useResource(`artifacts:${projectId}:${refresh}`, () => fetchArtifacts(projectId));
-  const decisions = useResource(`artifacts-subjects-decisions:${projectId}:${refresh}`, () => fetchDecisions(projectId));
-  const architecture = useResource(`artifacts-subjects-architecture:${projectId}:${refresh}`, () =>
-    fetchArchitecture(projectId),
+  const decisions = useResource(
+    `artifacts-subjects-decisions:${projectId}:${refresh}`,
+    () => fetchDecisions(projectId),
+    { enabled: canReadGraph },
   );
-  const glossary = useResource(`artifacts-subjects-glossary:${projectId}:${refresh}`, () => fetchGlossary(projectId));
+  const architecture = useResource(
+    `artifacts-subjects-architecture:${projectId}:${refresh}`,
+    () => fetchArchitecture(projectId),
+    { enabled: canReadGraph },
+  );
+  const glossary = useResource(
+    `artifacts-subjects-glossary:${projectId}:${refresh}`,
+    () => fetchGlossary(projectId),
+    { enabled: canReadGraph },
+  );
 
   const dir = useMemo<SubjectDirectory>(
     () => ({

@@ -5,11 +5,14 @@ import type {
   ActivityEntry,
   ArchitectureSummary,
   ArchitectureNodesResponse,
+  ArtifactCommentRequest,
+  ArtifactCommentResolveResponse,
   ArtifactDetail,
   ArtifactGenerateRequest,
   ArtifactGenerateResponse,
   ArtifactRegenerateRequest,
   ArtifactSummary,
+  Me,
   BoardEntry,
   DaemonStatus,
   DecisionSummary,
@@ -391,4 +394,32 @@ export function regenerateArtifact(
   project?: string | null,
 ): Promise<ArtifactGenerateResponse> {
   return post<ArtifactGenerateResponse>(`/artifacts/${encodeURIComponent(id)}/regenerate${q(project)}`, body);
+}
+
+// Post a member/admin comment on an artifact. The author is resolved from the
+// session identity server-side — never sent from the client.
+export function postArtifactComment(
+  id: string,
+  body: ArtifactCommentRequest,
+  project?: string | null,
+): Promise<unknown> {
+  return post(`/artifacts/${encodeURIComponent(id)}/comments${q(project)}`, body);
+}
+
+// Toggle the people-facing "resolved" axis on a comment thread.
+export function resolveArtifactComment(
+  id: string,
+  cid: string,
+  resolved: boolean,
+  project?: string | null,
+): Promise<ArtifactCommentResolveResponse> {
+  return post<ArtifactCommentResolveResponse>(
+    `/artifacts/${encodeURIComponent(id)}/comments/${encodeURIComponent(cid)}/resolve${q(project)}`,
+    { resolved },
+  );
+}
+
+// GET /me — the identity + per-project capability snapshot backing useMe.
+export function fetchMe(): Promise<Me> {
+  return get<Me>('/me');
 }

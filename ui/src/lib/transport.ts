@@ -52,6 +52,23 @@ let activeProfile: TransportProfile = {
   token: null,
 };
 
+// Auth mode. The default `bearer` mode is the admin flow: an `Authorization:
+// Bearer <token>` header on HTTP and `?token=<token>` on the WS URL. `member`
+// mode is the identity-scoped flow: a member has no admin token, so we drop the
+// bearer/query token entirely and authenticate via the HttpOnly session cookie
+// set by POST /login — sent by attaching `credentials: 'include'` to fetch and
+// relying on the browser to carry the cookie on same-origin WS.
+type AuthMode = 'bearer' | 'member';
+let authMode: AuthMode = 'bearer';
+
+export function setAuthMode(mode: AuthMode): void {
+  authMode = mode;
+}
+
+export function getAuthMode(): AuthMode {
+  return authMode;
+}
+
 export function setActiveProfileForTransport(profile: TransportProfile): void {
   activeProfile = {
     baseUrl: normalizeBaseUrl(profile.baseUrl),
@@ -83,7 +100,9 @@ function resolveWsUrl(path: string, profile: TransportProfile): string {
   const url = new URL(httpUrl);
   if (url.protocol === 'http:') url.protocol = 'ws:';
   if (url.protocol === 'https:') url.protocol = 'wss:';
-  if (profile.token) url.searchParams.set('token', profile.token);
+  // Member mode carries auth via the session cookie the browser attaches to a
+  // same-origin WS automatically — never put a token on the query (admin-only).
+  if (authMode === 'bearer' && profile.token) url.searchParams.set('token', profile.token);
   return url.toString();
 }
 
@@ -93,6 +112,7 @@ type BuiltRequest = {
     method: RequestInit['method'];
     headers: Record<string, string>;
     body?: string;
+    credentials?: RequestCredentials;
   };
 };
 
@@ -112,10 +132,11 @@ function buildRequest(path: string, init: RequestInit, profile: TransportProfile
     body = '{}';
     headers['content-type'] = init.contentType ?? 'application/json';
   }
-  if (profile.token) headers.authorization = `Bearer ${profile.token}`;
+  // Member mode authenticates by cookie, so never attach the admin bearer.
+  if (authMode === 'bearer' && profile.token) headers.authorization = `Bearer ${profile.token}`;
   return {
     url: resolveHttpUrl(path, profile),
-    init: { method, headers, body },
+    init: { method, headers, body, credentials: authMode === 'member' ? 'include' : 'same-origin' },
   };
 }
 
@@ -147,6 +168,27 @@ export const transport = {
   request: browserRequest,
   openWebSocket: browserWebSocket,
 };
+
+export type MemberLoginResult = {
+  name: string;
+  expires_at: string;
+};
+
+// POST /login with the member token in the body. Always sent cookie-first
+// (credentials:'include') and without a bearer, independent of the current
+// auth mode, so the daemon's Set-Cookie is stored. On 200 the caller switches
+// the transport into member mode via setAuthMode('member').
+export async function memberLogin(token: string): Promise<MemberLoginResult> {
+  const url = resolveHttpUrl('/login', activeProfile);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+    credentials: 'include',
+  });
+  if (!res.ok) throw new HttpError(res.status, await res.text());
+  return (await res.json()) as MemberLoginResult;
+}
 
 export function get<T>(path: string): Promise<T> {
   return transport.request<T>(path);

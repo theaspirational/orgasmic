@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useActiveProject } from '@/hooks/useActiveProject';
 import { useEventStream } from '@/hooks/useEventStream';
+import { useMe } from '@/hooks/useMe';
 import {
   fetchManagerDrivers,
   fetchManagerState,
@@ -101,6 +102,11 @@ function shouldToggleFromHeaderClick(event: MouseEvent<HTMLElement>): boolean {
 
 export function RunDock() {
   const { activeProjectId } = useActiveProject();
+  const { can } = useMe();
+  // The dock only renders when the viewer may watch sessions (see AppShell). A
+  // member who can watch but lacks sessions.interact gets a read-only surface:
+  // no composer, no PTY input, no launch/stop. Admin ⇒ can() true ⇒ interactive.
+  const readOnly = !can(activeProjectId, 'sessions.interact');
   const {
     size,
     tabs,
@@ -264,6 +270,8 @@ export function RunDock() {
       openManager('workbench');
       return;
     }
+    // A read-only member can watch an existing manager but never launch one.
+    if (readOnly) return;
     if (!activeProjectId) {
       toast.error('Select a project before launching the manager');
       return;
@@ -402,6 +410,7 @@ export function RunDock() {
               run={activeWorkerRun}
               initialDraft={activeTab?.draftPrompt}
               onPromptSent={() => activeTab && consumeDraft(activeTab.tabId)}
+              readOnly={readOnly}
             />
           </div>
         </div>
@@ -435,7 +444,7 @@ export function RunDock() {
             onPointerCancel={pointerHandlers.onPointerCancel}
             runningAgents={<RunningAgentsMenu projectId={activeProjectId} />}
             managerControls={
-              activeTabId === MANAGER_TAB_ID && activeManagerRun ? (
+              !readOnly && activeTabId === MANAGER_TAB_ID && activeManagerRun ? (
                 <Button
                   type="button"
                   variant="ghost"
@@ -457,6 +466,7 @@ export function RunDock() {
                 projectId={activeProjectId}
                 runs={managerRuns}
                 activeRun={activeManagerRun}
+                readOnly={readOnly}
                 legacyDriverTag={
                   activeManagerRun ? runDriverTag(activeManagerRun, managerSource) : 'chat'
                 }
@@ -478,6 +488,7 @@ export function RunDock() {
                 run={activeWorkerRun}
                 initialDraft={activeTab?.draftPrompt}
                 onPromptSent={() => activeTab && consumeDraft(activeTab.tabId)}
+                readOnly={readOnly}
               />
             ) : (
               <MissingRunPanel

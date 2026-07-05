@@ -95,6 +95,11 @@ impl Home {
     pub fn auth_token(&self) -> PathBuf {
         self.user().join("auth").join("token")
     }
+    /// Host-local member records (name, token hash, per-project grants) —
+    /// arch_Z8CW2. Never written into the repo-shared `.orgasmic/`.
+    pub fn members_org(&self) -> PathBuf {
+        self.user().join("auth").join("members.org")
+    }
     pub fn board(&self) -> PathBuf {
         self.user().join("board.org")
     }
@@ -126,7 +131,7 @@ impl Home {
         }
         let auth_gitignore = self.user().join("auth").join(".gitignore");
         if !auth_gitignore.exists() {
-            write_file(auth_gitignore, b"token\n")?;
+            write_file(auth_gitignore, b"token\nmembers.org\n")?;
         }
         Ok(())
     }

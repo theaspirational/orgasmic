@@ -49,9 +49,11 @@ import {
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEventStream, useWsStatus } from '@/hooks/useEventStream';
+import { useMe } from '@/hooks/useMe';
 import { useRefreshBump, useRefreshToken } from '@/hooks/useRefreshBus';
 import { useActiveProject } from '@/hooks/useActiveProject';
 import { useTabSync } from '@/hooks/useProjectTabs';
+import { navPageVisible } from '@/lib/capabilities';
 import { useBackendProfiles } from '@/lib/backend';
 import { fetchProjects } from '@/lib/api';
 import {
@@ -175,10 +177,16 @@ export function AppShell() {
   const projectId = activeProjectId;
   const page = pageFromPath(pathname);
   const { activeProfile, updateProfile, testConnection } = useBackendProfiles();
+  const { me, can, isMember, onUnauthorized } = useMe();
   const [authError, setAuthError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(!isMobile);
   const bumpRefresh = useRefreshBump();
-  const needsToken = !activeProfile.token || Boolean(authError);
+  // A member has no admin token and authenticates by cookie, so the bearer gate
+  // must not block them — only prompt when an admin bearer is actually missing.
+  const needsToken = !isMember && (!activeProfile.token || Boolean(authError));
+  const visiblePrimary = PRIMARY.filter((item) => navPageVisible(me, projectId, item.page));
+  const visibleMore = MORE.filter((item) => navPageVisible(me, projectId, item.page));
+  const canWatchSessions = can(projectId, 'sessions.watch');
 
   useTabSync();
 
@@ -187,9 +195,14 @@ export function AppShell() {
   }, [isMobile]);
 
   useEffect(() => {
-    setUnauthorizedHandler((err) => setAuthError(err.message));
+    setUnauthorizedHandler((err) => {
+      // A dead member cookie drops back to the login gate; an admin bearer 401
+      // surfaces inline on the bearer gate as before.
+      if (onUnauthorized()) return;
+      setAuthError(err.message);
+    });
     return () => setUnauthorizedHandler(null);
-  }, []);
+  }, [onUnauthorized]);
 
   useEffect(() => {
     let cancelled = false;
@@ -266,7 +279,7 @@ export function AppShell() {
 
   return (
     <TooltipProvider>
-      <RichTextProvider projectId={projectId}>
+      <RichTextProvider projectId={projectId} canReadGraph={can(projectId, 'graph.read')}>
       <RunDockProvider>
       <SidebarProvider>
         <Sidebar collapsible="icon">
@@ -288,7 +301,7 @@ export function AppShell() {
               <SidebarGroupLabel>Primary</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {PRIMARY.map((item) => (
+                  {visiblePrimary.map((item) => (
                     <NavMenuItem
                       key={item.page}
                       item={item}
@@ -299,29 +312,31 @@ export function AppShell() {
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
-            <SidebarGroup>
-              <button
-                type="button"
-                className="flex w-full items-center gap-1 px-2 py-1 text-left text-xs font-medium text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden"
-                aria-expanded={moreOpen}
-                onClick={() => setMoreOpen((open) => !open)}
-              >
-                {moreOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-                <span>More</span>
-              </button>
-              <SidebarGroupContent className={cn(!moreOpen && 'hidden group-data-[collapsible=icon]:block')}>
-                <SidebarMenu>
-                  {MORE.map((item) => (
-                    <NavMenuItem
-                      key={item.page}
-                      item={item}
-                      projectId={projectId}
-                      activePage={page}
-                    />
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
+            {visibleMore.length > 0 ? (
+              <SidebarGroup>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1 px-2 py-1 text-left text-xs font-medium text-sidebar-foreground/70 group-data-[collapsible=icon]:hidden"
+                  aria-expanded={moreOpen}
+                  onClick={() => setMoreOpen((open) => !open)}
+                >
+                  {moreOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                  <span>More</span>
+                </button>
+                <SidebarGroupContent className={cn(!moreOpen && 'hidden group-data-[collapsible=icon]:block')}>
+                  <SidebarMenu>
+                    {visibleMore.map((item) => (
+                      <NavMenuItem
+                        key={item.page}
+                        item={item}
+                        projectId={projectId}
+                        activePage={page}
+                      />
+                    ))}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            ) : null}
           </SidebarContent>
           <SidebarFooter>
             <ProjectSidebarFooter />
@@ -344,11 +359,15 @@ export function AppShell() {
             <ProjectTabs />
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
               <ConnectionLed state={wsState} onClick={() => goView('status')} />
-              <NotificationBell
-                projectId={projectId}
-                onNavigate={goView}
-                onOpenTask={openTask}
-              />
+              {/* The bell polls admin-only parse-error + tx activity; members
+                  (who 403 those routes) never mount it. */}
+              {!isMember ? (
+                <NotificationBell
+                  projectId={projectId}
+                  onNavigate={goView}
+                  onOpenTask={openTask}
+                />
+              ) : null}
               <ThemeToggle className="hidden md:inline-flex" />
               <Button
                 type="button"
@@ -375,7 +394,10 @@ export function AppShell() {
             <Outlet />
           </div>
         </SidebarInset>
-        <RunDock />
+        {/* The run dock is an admin/manager surface — it polls admin-only
+            manager + runs state, so members never mount it (a member's
+            read-only session viewing is a separate, not-yet-exposed surface). */}
+        {canWatchSessions && !isMember ? <RunDock /> : null}
         <Toaster position="bottom-right" />
       </SidebarProvider>
       </RunDockProvider>
@@ -510,7 +532,12 @@ function MobileOverflow({ onNavigate }: { onNavigate: (next: ViewName) => void }
 
 function ProjectSidebarFooter() {
   const refresh = useRefreshToken();
-  const { data } = useResource(`projects:${refresh}:sidebar-footer`, fetchProjects);
+  const { isMember } = useMe();
+  // The admin `/projects` list (and the Add/Manage actions it feeds) are
+  // admin-only; a member would 403, so skip the fetch entirely for them.
+  const { data } = useResource(`projects:${refresh}:sidebar-footer`, fetchProjects, {
+    enabled: !isMember,
+  });
   const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const addLabel = data?.length === 0 ? 'Add your first project' : 'Add project';

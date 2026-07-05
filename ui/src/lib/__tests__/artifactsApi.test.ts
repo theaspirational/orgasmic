@@ -8,7 +8,15 @@ vi.mock('@/lib/transport', () => ({
   HttpError: class HttpError extends Error {},
 }));
 
-import { fetchArtifact, fetchArtifacts, generateArtifact, regenerateArtifact } from '../api';
+import {
+  fetchArtifact,
+  fetchArtifacts,
+  fetchMe,
+  generateArtifact,
+  postArtifactComment,
+  regenerateArtifact,
+  resolveArtifactComment,
+} from '../api';
 
 describe('artifacts api', () => {
   it('fetchArtifacts builds the project-scoped path', async () => {
@@ -50,5 +58,28 @@ describe('artifacts api', () => {
     expect(post).toHaveBeenCalledWith('/artifacts/ART-1/regenerate?project=orgasmic', {
       extraPrompt: 'Add more detail',
     });
+  });
+
+  it('postArtifactComment posts message+anchor to the comments route (no author)', async () => {
+    post.mockResolvedValueOnce({});
+    await postArtifactComment('ART-1', { message: 'Fix this', anchor: 'para 2' }, 'orgasmic');
+    expect(post).toHaveBeenCalledWith('/artifacts/ART-1/comments?project=orgasmic', {
+      message: 'Fix this',
+      anchor: 'para 2',
+    });
+  });
+
+  it('resolveArtifactComment posts the resolved flag to the resolve route', async () => {
+    post.mockResolvedValueOnce({ cid: 'cmt_1', resolved: true });
+    await resolveArtifactComment('ART-1', 'cmt_1', true, 'orgasmic');
+    expect(post).toHaveBeenCalledWith('/artifacts/ART-1/comments/cmt_1/resolve?project=orgasmic', {
+      resolved: true,
+    });
+  });
+
+  it('fetchMe reads the capability snapshot', async () => {
+    get.mockResolvedValueOnce({ identity: 'admin', name: null, projects: [] });
+    await fetchMe();
+    expect(get).toHaveBeenCalledWith('/me');
   });
 });

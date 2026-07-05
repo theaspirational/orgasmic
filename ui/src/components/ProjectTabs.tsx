@@ -16,6 +16,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useActiveProject } from '@/hooks/useActiveProject';
 import { useProjectTabs } from '@/hooks/useProjectTabs';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
+import { useMe } from '@/hooks/useMe';
 import { fetchProjects } from '@/lib/api';
 import { projectChipStyle, projectInitial } from '@/lib/projectColor';
 import { DEFAULT_TAB_VIEW, type ProjectTab, type TabView } from '@/lib/tabsStore';
@@ -65,7 +66,13 @@ export function ProjectTabs() {
   const { activeProjectId } = useActiveProject();
   const { tabs, openTab, closeTab, closeOthers, closeToRight, reorderTabs, pruneTabs } =
     useProjectTabs();
-  const { data: projects } = useResource(`projects:${refresh}:tabs`, fetchProjects);
+  // Members have no access to the admin `/projects` list; their open tabs come
+  // from the persisted tab store, so skip the metadata fetch (it only enriches
+  // tab labels + prunes stale tabs) rather than 403 on every refresh.
+  const { isMember } = useMe();
+  const { data: projects } = useResource(`projects:${refresh}:tabs`, fetchProjects, {
+    enabled: !isMember,
+  });
 
   const projectMeta = useMemo(() => {
     const map = new Map<string, ProjectIndex>();

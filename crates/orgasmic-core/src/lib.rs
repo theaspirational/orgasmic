@@ -16,6 +16,7 @@ pub mod identity_lint;
 pub mod marker;
 // arch: arch_003 — see decisions dec_017 dec_019
 pub mod home;
+pub mod members;
 pub mod org;
 pub mod paths;
 pub mod projects;
@@ -48,6 +49,10 @@ pub use marker::{
     has_comment_token_before_marker, is_marker_id_byte, is_structured_marker_payload,
     marker_node_ids_in_line, normalize_marker_node_id, parse_marker_payload,
     should_skip_marker_path,
+};
+pub use members::{
+    add_member, find_member_by_name, find_member_by_token, read_members, revoke_member,
+    sha256_hex, MemberEntry,
 };
 pub use org::{
     wrap_raw_body, Heading, OrgError, OrgFile, OrgRewriter, PropertyDrawer, PropertyEntry,
