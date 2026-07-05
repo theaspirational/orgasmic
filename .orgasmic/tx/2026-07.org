@@ -3762,3 +3762,31 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-05 Sun 05:07:50 task.state_transitioned TASK-DJGM5
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1383
+:TIME:         [2026-07-05 Sun 05:07:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJGM5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Completed inline + merged to main at 09935b1 (branch task-djgm5-impl). Backend: cargo test core+daemon+cli green, clippy -D warnings clean. UI: tsc clean, 126 vitest, vite build green. Live two-browser smoke on an isolated throwaway daemon across admin/viewer/artifacts-only personas: capability-scoped landing, pinned named comments live over WS, Generate/Regenerate hidden for viewers, artifacts-only nav=Project+Artifacts, member cookie auth (credentials:'include', WS cookie-only), wire-level 403/401 gating. Live-smoke follow-up 3d16519 gates admin-only global polls so members load with 0 non-200 responses and no error toast.
+:FROM_STATE:   todo
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-05 Sun 05:09:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260705-orgasmic-1384
+:TIME:         [2026-07-05 Sun 05:09:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
