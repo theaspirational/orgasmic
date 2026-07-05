@@ -39,16 +39,22 @@ function escapeRegExp(value: string): string {
 
 export function RichTextProvider({
   projectId,
+  canReadGraph = true,
   children,
 }: {
   projectId: string | null;
+  /** Whether the current identity may read graph nodes. Members without
+   * graph.read would 403 the glossary lookup, so the caller (AppShell) passes
+   * the capability down and autolinking degrades to plain prose. Defaults to
+   * true so admin surfaces and isolated tests keep the prior behavior. */
+  canReadGraph?: boolean;
   children: ReactNode;
 }) {
   const navigate = useNavigate();
   const glossary = useResource(
     `richtext-glossary:${projectId ?? 'none'}`,
     () => fetchGlossary(projectId!),
-    { enabled: Boolean(projectId) },
+    { enabled: Boolean(projectId) && canReadGraph },
   );
 
   const value = useMemo<RichTextValue | null>(() => {

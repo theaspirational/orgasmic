@@ -31,6 +31,28 @@ const watcher: Me = {
   ],
 };
 
+// A full read-only member (viewer role): reads everything and comments, but the
+// admin-only Activity/Prompts surfaces stay hidden even though its read caps
+// would otherwise satisfy their nav-capability keys.
+const viewer: Me = {
+  identity: 'member',
+  name: 'Viewer',
+  projects: [
+    {
+      projectId: 'orgasmic',
+      role: 'viewer',
+      capabilities: [
+        'project.read',
+        'graph.read',
+        'tasks.read',
+        'sessions.watch',
+        'artifacts.read',
+        'artifacts.comment',
+      ],
+    },
+  ],
+};
+
 describe('meCan', () => {
   it('admin can do everything on any project', () => {
     expect(meCan(admin, 'orgasmic', 'artifacts.generate')).toBe(true);
@@ -92,6 +114,12 @@ describe('navPageVisible (AppShell nav gating)', () => {
 
   it('a watch-only member sees Project (graph/tasks/artifacts hidden)', () => {
     expect(visibleFor(watcher)).toEqual(['project']);
+  });
+
+  it('a full read-only member sees read pages but never admin-only Activity/Prompts', () => {
+    expect(visibleFor(viewer).sort()).toEqual(
+      ['architecture', 'artifacts', 'decisions', 'glossary', 'project', 'tasks'].sort(),
+    );
   });
 
   it('every nav page maps to a required capability', () => {

@@ -279,7 +279,7 @@ export function AppShell() {
 
   return (
     <TooltipProvider>
-      <RichTextProvider projectId={projectId}>
+      <RichTextProvider projectId={projectId} canReadGraph={can(projectId, 'graph.read')}>
       <RunDockProvider>
       <SidebarProvider>
         <Sidebar collapsible="icon">
@@ -359,11 +359,15 @@ export function AppShell() {
             <ProjectTabs />
             <div className="ml-auto flex shrink-0 items-center gap-1.5">
               <ConnectionLed state={wsState} onClick={() => goView('status')} />
-              <NotificationBell
-                projectId={projectId}
-                onNavigate={goView}
-                onOpenTask={openTask}
-              />
+              {/* The bell polls admin-only parse-error + tx activity; members
+                  (who 403 those routes) never mount it. */}
+              {!isMember ? (
+                <NotificationBell
+                  projectId={projectId}
+                  onNavigate={goView}
+                  onOpenTask={openTask}
+                />
+              ) : null}
               <ThemeToggle className="hidden md:inline-flex" />
               <Button
                 type="button"
@@ -390,8 +394,10 @@ export function AppShell() {
             <Outlet />
           </div>
         </SidebarInset>
-        {/* Members without sessions.watch never see the run dock / session pane. */}
-        {canWatchSessions ? <RunDock /> : null}
+        {/* The run dock is an admin/manager surface — it polls admin-only
+            manager + runs state, so members never mount it (a member's
+            read-only session viewing is a separate, not-yet-exposed surface). */}
+        {canWatchSessions && !isMember ? <RunDock /> : null}
         <Toaster position="bottom-right" />
       </SidebarProvider>
       </RunDockProvider>
@@ -526,7 +532,12 @@ function MobileOverflow({ onNavigate }: { onNavigate: (next: ViewName) => void }
 
 function ProjectSidebarFooter() {
   const refresh = useRefreshToken();
-  const { data } = useResource(`projects:${refresh}:sidebar-footer`, fetchProjects);
+  const { isMember } = useMe();
+  // The admin `/projects` list (and the Add/Manage actions it feeds) are
+  // admin-only; a member would 403, so skip the fetch entirely for them.
+  const { data } = useResource(`projects:${refresh}:sidebar-footer`, fetchProjects, {
+    enabled: !isMember,
+  });
   const [addOpen, setAddOpen] = useState(false);
   const [manageOpen, setManageOpen] = useState(false);
   const addLabel = data?.length === 0 ? 'Add your first project' : 'Add project';

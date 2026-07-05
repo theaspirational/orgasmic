@@ -37,11 +37,18 @@ export const NAV_CAPABILITY: Partial<Record<string, MemberCapability>> = {
   activity: 'tasks.read',
 };
 
+// Pages whose backing routes are admin-only regardless of member capability:
+// Activity reads the daemon tx log and Prompts is the authoring studio, neither
+// exposed to members. Hide them outright even for a member who holds the read
+// capability the page is otherwise keyed on, so members never see nav that 403s.
+const MEMBER_HIDDEN_PAGES = new Set(['activity', 'prompts']);
+
 export function navPageVisible(
   me: Me | null,
   projectId: string | null | undefined,
   page: string,
 ): boolean {
+  if (me?.identity === 'member' && MEMBER_HIDDEN_PAGES.has(page)) return false;
   const required = NAV_CAPABILITY[page];
   if (!required) return true;
   return meCan(me, projectId, required);

@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 
 import { useEventStream } from '@/hooks/useEventStream';
+import { useMe } from '@/hooks/useMe';
 import { fetchRuns } from '@/lib/api';
 import type { DaemonEvent, RunSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
@@ -13,7 +14,10 @@ export function useTaskRuns(): {
   loading: boolean;
   forTask: (taskId: string) => TaskRunMatch;
 } {
-  const runs = useResource('task-badges-runs', fetchRuns);
+  // Run badges read the admin-only `/runs` list; members 403 there, so skip the
+  // poll (they see tasks without live-run badges) rather than error on it.
+  const { isMember } = useMe();
+  const runs = useResource('task-badges-runs', fetchRuns, { enabled: !isMember });
 
   useEventStream(
     useCallback(

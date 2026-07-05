@@ -27,8 +27,10 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { fetchProjects } from '@/lib/api';
 import { routeSearch } from '@/lib/searchState';
 import { DEFAULT_TAB_VIEW, getSnapshot as getTabsSnapshot } from '@/lib/tabsStore';
-import type { ProjectIndex } from '@/lib/types';
+import type { Me, ProjectIndex } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
+import { useMe } from '@/hooks/useMe';
+import { navPageVisible } from '@/lib/capabilities';
 
 const ActivityView = lazy(() =>
   import('@/components/ActivityView').then((module) => ({ default: module.ActivityView })),
@@ -85,6 +87,19 @@ function chooseInitialProject(projects: ProjectIndex[]): string | null {
     return DEFAULT_PROJECT_ID;
   }
   return projects[0]?.project_id ?? null;
+}
+
+// The first project view a member may land on, in priority order. A member is
+// routed here from `/` instead of the admin Decisions default, so an
+// artifacts-only member (no graph.read) lands on Artifacts rather than a view
+// their capabilities would 403.
+const MEMBER_LANDING_VIEWS = ['decisions', 'tasks', 'artifacts', 'project'] as const;
+
+function memberLandingView(me: Me | null, projectId: string): string {
+  for (const view of MEMBER_LANDING_VIEWS) {
+    if (navPageVisible(me, projectId, view)) return view;
+  }
+  return 'project';
 }
 
 function fallback(label: string) {
@@ -278,9 +293,34 @@ const indexRoute = createRoute({
   path: '/',
   component: function IndexRoute() {
     const navigate = indexRoute.useNavigate();
-    const projects = useResource('projects:index', fetchProjects);
+    const { isMember, me, visibleProjects } = useMe();
+    // A member authenticates by cookie and has no access to the admin `/projects`
+    // list — skip that fetch and route from their `/me`-granted projects instead.
+    const projects = useResource('projects:index', fetchProjects, { enabled: !isMember });
 
     useEffect(() => {
+      if (isMember) {
+        // Wait for /me to resolve before routing — a null snapshot means "not
+        // loaded yet", not "no projects", and navigating away from `/` now would
+        // unmount this route before the retry could land the member correctly.
+        if (!me) return;
+        // Land on the first project the member can see, on the first view their
+        // capabilities allow (an artifacts-only member lands on Artifacts, never
+        // the Decisions default they cannot read).
+        const projectId = visibleProjects?.[0]?.projectId ?? null;
+        if (!projectId) {
+          void navigate({ to: '/board', replace: true });
+          return;
+        }
+        rememberProject(projectId);
+        const view = memberLandingView(me, projectId);
+        void navigate({
+          to: `/projects/$projectId/${view}` as '/projects/$projectId/tasks',
+          params: { projectId },
+          replace: true,
+        });
+        return;
+      }
       if (!projects.data) return;
       const projectId = chooseInitialProject(projects.data);
       if (!projectId) {
@@ -295,9 +335,9 @@ const indexRoute = createRoute({
         params: { projectId },
         replace: true,
       });
-    }, [navigate, projects.data]);
+    }, [navigate, isMember, me, visibleProjects, projects.data]);
 
-    if (projects.error) return <ErrorPanel error={projects.error} />;
+    if (!isMember && projects.error) return <ErrorPanel error={projects.error} />;
     return fallback('Loading projects...');
   },
 });
