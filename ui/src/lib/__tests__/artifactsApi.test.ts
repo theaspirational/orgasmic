@@ -37,6 +37,18 @@ describe('artifacts api', () => {
     expect(get).toHaveBeenCalledWith('/artifacts/ART%201%2F2?project=orgasmic&version=3');
   });
 
+  it('fetchArtifact sends include_consumed=true only when explicitly requested', async () => {
+    get.mockResolvedValueOnce({});
+    await fetchArtifact('ART-1', 'orgasmic', 1, true);
+    expect(get).toHaveBeenCalledWith('/artifacts/ART-1?project=orgasmic&version=1&include_consumed=true');
+  });
+
+  it('fetchArtifact omits include_consumed when not requested, even with a version', async () => {
+    get.mockResolvedValueOnce({});
+    await fetchArtifact('ART-1', 'orgasmic', 1, false);
+    expect(get).toHaveBeenCalledWith('/artifacts/ART-1?project=orgasmic&version=1');
+  });
+
   it('generateArtifact posts nodes+prompt to the project-scoped generate route', async () => {
     post.mockResolvedValueOnce({ artifact_id: 'ART-1', run_id: 'run-1' });
     await generateArtifact({ nodes: ['dec_ABC12'], prompt: 'Summarize the decision' }, 'orgasmic');

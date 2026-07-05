@@ -408,10 +408,7 @@ pub fn set_comment_resolved(current: &str, cid: &str, resolved: bool) -> Result<
         bail!("comment {cid} not found in reviews.org");
     };
 
-    let Some(entry) = heading
-        .property_entries()
-        .find(|e| e.key == "RESOLVED")
-    else {
+    let Some(entry) = heading.property_entries().find(|e| e.key == "RESOLVED") else {
         bail!("comment {cid} has no RESOLVED property");
     };
     let range = entry.value_span.clone();
@@ -553,9 +550,16 @@ pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
 
 /// Load full artifact detail including MDX and comments.
 ///
-/// `include_consumed` controls whether consumed comments are included in
-/// `comments` (current-version reads default to excluding them; archived
-/// views pass `include_consumed: true`).
+/// Comment scoping (TASK-EDQPG): when `version` names an *archived* version
+/// (`Some(n)` where `n != summary.version`), `comments` is scoped to that
+/// version's own thread (`c.version == n`) regardless of consumed state —
+/// an archived view always shows the thread that was closed out with it,
+/// consumed or not, and never another version's comments. Otherwise (no
+/// version requested, or the requested version equals the current/live
+/// version) behavior is unchanged from before archived-version support:
+/// `include_consumed` alone decides whether consumed comments are stripped
+/// (current-version reads default to excluding them via `include_consumed:
+/// false`; callers that need the full current-version thread pass `true`).
 pub fn load_artifact_detail(
     art_dir: &Path,
     version: Option<u32>,
@@ -588,8 +592,16 @@ pub fn load_artifact_detail(
     } else {
         Vec::new()
     };
-    if !include_consumed {
-        comments.retain(|c| !c.consumed);
+    match version {
+        Some(v) if v != summary.version => {
+            // Archived view: that version's own thread, consumed or not.
+            comments.retain(|c| c.version == v);
+        }
+        _ => {
+            if !include_consumed {
+                comments.retain(|c| !c.consumed);
+            }
+        }
     }
 
     Ok(ArtifactDetail {
@@ -1077,5 +1089,66 @@ mod tests {
         let full_view = load_artifact_detail(&art_dir, None, true).unwrap();
         assert_eq!(full_view.comments.len(), 1);
         assert!(full_view.comments[0].consumed);
+    }
+
+    #[test]
+    fn load_artifact_detail_scopes_comments_to_archived_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let art_dir = tmp.path().join("ART-XYZAB");
+        fs::create_dir_all(&art_dir).unwrap();
+        fs::create_dir_all(versions_dir(&art_dir)).unwrap();
+
+        // Current/live version is 2; v1 is archived.
+        let org_content = artifact_org_content("ART-XYZAB", "Title", &[], "prompt", 2, "submitted");
+        fs::write(art_dir.join("artifact.org"), &org_content).unwrap();
+        fs::write(
+            art_dir.join("artifact.mdx"),
+            "<RichText>v2 body</RichText>\n",
+        )
+        .unwrap();
+        fs::write(
+            versions_dir(&art_dir).join("v1.mdx"),
+            "<RichText>v1 body</RichText>\n",
+        )
+        .unwrap();
+
+        // v1's thread was consumed at regenerate close-out.
+        let v1_block = comment_org_block(&NewComment {
+            cid: "CID-v1consumed",
+            author: "viewer@test.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: "v1 thread comment",
+        });
+        let v1_only = format!("{}{}", reviews_org_header("ART-XYZAB"), v1_block);
+        let v1_consumed = String::from_utf8(consume_all_open_comments(&v1_only).unwrap()).unwrap();
+
+        // v2 has one fresh, still-open comment.
+        let v2_block = comment_org_block(&NewComment {
+            cid: "CID-v2open",
+            author: "editor@test.com",
+            version: 2,
+            anchor: "{}",
+            resolution_target: "",
+            message: "v2 thread comment",
+        });
+        let mut reviews = v1_consumed;
+        reviews.push_str(&v2_block);
+        fs::write(art_dir.join("reviews.org"), &reviews).unwrap();
+
+        // Archived view (version=1): only v1's own comment, returned despite
+        // being consumed and despite include_consumed=false.
+        let archived = load_artifact_detail(&art_dir, Some(1), false).unwrap();
+        assert_eq!(archived.content.trim(), "<RichText>v1 body</RichText>");
+        assert_eq!(archived.comments.len(), 1);
+        assert_eq!(archived.comments[0].cid, "CID-v1consumed");
+        assert!(archived.comments[0].consumed);
+
+        // Current/live view (criterion 5 invariant): only the open v2
+        // comment, v1's consumed comment never leaks in.
+        let live = load_artifact_detail(&art_dir, None, false).unwrap();
+        assert_eq!(live.comments.len(), 1);
+        assert_eq!(live.comments[0].cid, "CID-v2open");
     }
 }
