@@ -1136,6 +1136,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
+ "fs2",
  "libc",
  "orgasmic-core",
  "orgasmic-daemon",

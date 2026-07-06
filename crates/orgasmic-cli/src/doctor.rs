@@ -683,6 +683,11 @@ mod tests {
 
     #[test]
     fn daemon_staleness_warns_for_git_commits_since_boot() {
+        // Serialize against every other heavy real-subprocess test in the
+        // workspace: this test spawns 6 real `git` subprocesses whose
+        // `run_git` panics on any transient spawn failure under load (TASK-X0ZVE
+        // flock class; TASK-SJQ9V residual).
+        let _live_guard = crate::test_support::live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         run_git(tmp.path(), &["init"]);
         run_git(tmp.path(), &["config", "user.email", "tester@example.com"]);

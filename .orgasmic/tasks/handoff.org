@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260706-drain-the-full
-:LIVENESS:         86f0fe50cc73618be25e25201fe4548ef0c43cf2
+:LIVENESS:         cd4f2d49a6403cb7f86b39cb896c551904461da3
 :LIVENESS_AT:      [2026-07-06]
 :UPDATED_AT:       [2026-07-06]
 :END:
@@ -61,7 +61,7 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - After all backlog DONE/cancelled + the 3 residual flakes resolved: run the joint workspace-green-3x verification, then declare + clear the goal.
 
 ** In flight
-- (none) — TASK-X0ZVE landed d70af6f. Next dispatch not yet launched.
+- TASK-F9N5F (7/10) DISPATCHED [2026-07-06 15:15] implementer-claude-rmux (sonnet-5 high), run-20260706T151535, worktree task-f9n5f-impl. Brief: idle-timeout release for persistent artifactor rmux sessions (arch_045Q0.2 D3). Add RunRecord.last_input_at + idle_timeout Option, reset on accepted send_input, third idle candidate in timed_out_run (reason idle_timeout_exceeded) riding the existing 50ms sweep; thread persistence/idle signal through AcquireRequest from the api.rs artifactor spawn; DEFAULT_IDLE_TIMEOUT const. One-shot/manager/reviewer runs exempt. Teeth tests via time-warp helpers (backdated run_started_at). Told NOT to chase workspace-green (3 known pre-existing cli flakes). WRITE_SCOPE: supervisor.rs + api.rs + AcquireRequest plumbing (+ config const). If manager dies: pre-flight tx present; check worktree git log + task-f9n5f-last.txt.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.

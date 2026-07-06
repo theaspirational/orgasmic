@@ -828,6 +828,10 @@ mod tests {
 
     #[test]
     fn hub_install_list_remove_uses_git_and_loader_layer() {
+        // Serialize against every other heavy real-subprocess test: this test
+        // runs real `git` init + clone through install_hub, which contends under
+        // `cargo test --workspace` peak load (TASK-X0ZVE flock class).
+        let _live_guard = crate::test_support::live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();

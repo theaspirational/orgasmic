@@ -8,6 +8,33 @@ use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+/// Serialize heavy real-subprocess tests across ALL test binaries via an
+/// exclusive advisory flock on a shared temp path (the same path the live
+/// tmux/rmux tests use, TASK-X0ZVE). Dispatch tests boot a real daemon and run
+/// real `git` worktree add/remove; under `cargo test --workspace` peak load the
+/// worktree teardown races the post-close pruning assertions. Held for the whole
+/// test via the returned guard (TASK-SJQ9V residual). Defined locally because an
+/// integration binary cannot reach the lib's `#[cfg(test)]` test_support module.
+fn live_session_guard() -> LiveSessionGuard {
+    let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&path)
+        .expect("open live-session lock file");
+    // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
+    fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
+    LiveSessionGuard(file)
+}
+
+struct LiveSessionGuard(std::fs::File);
+impl Drop for LiveSessionGuard {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
 fn test_options() -> DaemonOptions {
     DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -2066,6 +2093,7 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
 /// Closing a dispatch removes transient stem artifacts but retains the brief.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_close_prunes_stem_dir_leaving_brief() {
+    let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
