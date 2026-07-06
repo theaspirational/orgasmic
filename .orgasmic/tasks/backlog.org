@@ -23,19 +23,6 @@ doctor::tests::daemon_staleness_warns_for_git_commits_since_boot (crates/orgasmi
 
 Acceptance: root cause identified and fixed (or the test hardened against workspace-parallel execution); cargo test --workspace green 3x consecutively from this checkout with the production daemon live.
 
-* BACKLOG TASK-KBHAN Harden comment-body #+begin_/#+end_ injection in reviews.org    :artifacts:daemon:hardening:
-:PROPERTIES:
-:ID: TASK-KBHAN
-:IMPLEMENTS: arch_ARSPJ
-:SEVERITY: low
-:END:
-
-TASK-Y2ZQJ hardened leading-* injection in comment bodies (escape_comment_message) but not org block markers. Because orgasmic_core OrgFile's block-mask is file-global, an unmatched #+begin_x line in a member-authored comment body can suppress heading recognition for LATER comments in the same reviews.org, silently swallowing them from the parsed comment list. Blast radius: comments hidden/dropped within one artifact's reviews.org; NOT property/flag injection into artifact.org (comments live only in reviews.org). Same injection class as ZEFEY finding #2; scoped out of the one-round Y2ZQJ fix which addressed the literal leading-* requirement.
-
-Fix direction: extend the comment-body escaper (escape_comment_message / trim_and_unescape_comment_body in crates/orgasmic-daemon/src/artifacts.rs) to also neutralize lines beginning with #+begin_ / #+end_ (comma-prefix like the leading-* handling), or validate/reject them on write. Add a round-trip unit test with a comment body containing a #+begin_src ... #+end_src block and assert later comments in the same reviews.org still parse. Keep the escape invertible.
-
-Severity LOW: requires a member to author a comment containing a bare org block marker, and only hides subsequent comments (no privilege/flag escalation).
-
 * BACKLOG TASK-X0ZVE Live rmux tests flake under parallel load (render_stream sentinel timing)    :tests:runtime:
 :PROPERTIES:
 :ID: TASK-X0ZVE

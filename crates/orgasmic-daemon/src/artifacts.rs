@@ -249,26 +249,42 @@ pub fn escape_single_line(value: &str) -> String {
     value.replace("\r\n", " ").replace(['\n', '\r'], " ")
 }
 
-// ── comment-body leading-`*` escaping ───────────────────────────────────────
+// ── comment-body structural escaping (`*` headings + `#+begin_`/`#+end_` blocks) ─
 
-/// True when `line`, after stripping any leading commas already present,
-/// begins with `*` — i.e. unescaped it would be misread by the canonical
-/// parser as a new `* heading`. Mirrors the comma-quoting convention
-/// `orgasmic_core::wrap_raw_body` uses for raw body text, scoped to `*`
-/// only: comment bodies are heading-adjacent free text, not `#+begin_`
-/// blocks, so only structural heading injection is a concern here.
-fn comment_line_needs_star_escape(line: &str) -> bool {
-    line.trim_start_matches(',').starts_with('*')
+/// True when `line`, after stripping any leading commas already present, would
+/// be read by the canonical parser as structure rather than free text — either
+/// a `* heading` or an org block marker (`#+begin_…` / `#+end_…`). Both are
+/// injection vectors from a member-authored comment body:
+/// - a column-0 `*` line forks reviews.org into a spurious extra heading
+///   (`orgasmic_core::org::heading_level` matches `*` only at byte 0);
+/// - an unbalanced `#+begin_`/`#+end_` line drives the file-global block mask
+///   (`org::org_block_line_mask`), which lower-cases and trim-starts the line
+///   before matching and never resets at EOF — so one stray marker can suppress
+///   heading recognition for every LATER comment in the same reviews.org
+///   (TASK-KBHAN).
+///
+/// A single leading comma neutralizes both: the parser's `trim_start()` strips
+/// whitespace but not a comma, so `,#+begin_src` / `,* h` are inert. Mirrors the
+/// comma-quoting convention `orgasmic_core::wrap_raw_body` uses for raw bodies.
+/// The block check matches the parser's semantics exactly: case-insensitive and
+/// after leading-whitespace trim (so `  #+BEGIN_SRC` is caught too).
+fn comment_line_needs_escape(line: &str) -> bool {
+    let bare = line.trim_start_matches(',');
+    if bare.starts_with('*') {
+        return true;
+    }
+    let directive = bare.trim_start().to_ascii_lowercase();
+    directive.starts_with("#+begin_") || directive.starts_with("#+end_")
 }
 
-/// Escape a comment message so no line can be misread as a `* heading` once
-/// appended to reviews.org. Reversed by the unescape step in
-/// [`comment_record_from_heading`].
+/// Escape a comment message so no line can be misread as a `* heading` or an
+/// org block marker once appended to reviews.org. Reversed by the unescape step
+/// in [`comment_record_from_heading`].
 fn escape_comment_message(message: &str) -> String {
     message
         .split('\n')
         .map(|line| {
-            if comment_line_needs_star_escape(line) {
+            if comment_line_needs_escape(line) {
                 format!(",{line}")
             } else {
                 line.to_string()
@@ -463,7 +479,8 @@ fn comment_record_from_heading(file: &OrgFile, heading: &Heading) -> Option<Comm
 }
 
 /// Trim leading/trailing blank lines from a raw heading body (the template
-/// blank line right after `:END:`), then reverse the leading-`*` escape.
+/// blank line right after `:END:`), then reverse the structural escape
+/// (leading-`*` headings and `#+begin_`/`#+end_` block markers).
 fn trim_and_unescape_comment_body(raw: &str) -> String {
     let mut lines: Vec<&str> = raw.lines().collect();
     while lines.first().map(|l| l.trim().is_empty()).unwrap_or(false) {
@@ -475,7 +492,7 @@ fn trim_and_unescape_comment_body(raw: &str) -> String {
     lines
         .into_iter()
         .map(|line| {
-            if comment_line_needs_star_escape(line) {
+            if comment_line_needs_escape(line) {
                 line.strip_prefix(',').unwrap_or(line).to_string()
             } else {
                 line.to_string()
@@ -870,6 +887,51 @@ mod tests {
         let records = parse_comments(&content);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].message, message);
+    }
+
+    #[test]
+    fn comment_body_block_marker_does_not_suppress_later_comments() {
+        // TASK-KBHAN: a member-authored comment whose body carries an org block
+        // marker must not drive the file-global block mask and swallow LATER
+        // comments in the same reviews.org. Teeth: the first comment carries an
+        // UNBALANCED `#+begin_src` (no matching `#+end_`) plus a lowercase-defeating
+        // uppercase marker and an indented one; a second comment follows.
+        let header = "#+title: reviews\n#+orgasmic_version: 1\n";
+        let first_msg =
+            "look here:\n#+begin_src rust\nlet x = 1;\n#+END_SRC\n  #+begin_example\nstill me";
+        let second_msg = "I am the second comment and must survive";
+        let block1 = comment_org_block(&NewComment {
+            cid: "CID-block00001",
+            author: "alice@test.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: first_msg,
+        });
+        let block2 = comment_org_block(&NewComment {
+            cid: "CID-block00002",
+            author: "bob@test.com",
+            version: 1,
+            anchor: "{}",
+            resolution_target: "",
+            message: second_msg,
+        });
+        let content = format!("{header}{block1}{block2}");
+
+        // Without the block-marker escape the stored `#+begin_src` opens a
+        // never-closed block, masking every heading after it → the parser sees
+        // only one comment. With it, both survive and round-trip losslessly.
+        let records = parse_comments(&content);
+        assert_eq!(
+            records.len(),
+            2,
+            "a block marker in one comment body must not swallow later comments"
+        );
+        assert_eq!(
+            records[0].message, first_msg,
+            "block-marker body round-trips"
+        );
+        assert_eq!(records[1].message, second_msg);
     }
 
     #[test]
