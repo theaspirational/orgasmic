@@ -13,6 +13,37 @@ Use the CLI as the agent/human surface. Treat the daemon as the CLI backend.
 - `.orgasmic/*.org`: CLI-only for agents (`orgasmic --help`); no hand-edits.
 - Missing `/orgasmic` skill: read `conventions/no-skill-installed.org`.
 
+* Convention: dispatching implementation work
+
+Any request to *implement* or *dispatch* work in a managed repo goes through an
+orgasmic worker — never a raw provider CLI. Shelling out to `codex`, `claude`,
+`cursor-agent`, etc. to do project work bypasses the daemon's write authority,
+tx recording, worktree isolation, dispatch leases, and reattach/recovery — the
+entire reason work is managed here. Those raw binaries are off-limits for doing
+project work (checking a version with `--help` is fine; running `codex exec` to
+implement is not).
+
+A request that names a provider + model + effort (e.g. "implement all, use
+codex 5.5 xhigh on fast") maps to:
+
+: orgasmic manager dispatch --kind implementer \
+:   --worker implementer-<harness>-<driver> \
+:   --model <model> --effort <effort> --brief <path>
+
+Resolve the worker id from `orgasmic worker list`. Mapping table (confirm
+against the live list — ids/models evolve):
+
+| request                | --worker                  | --model     | --effort |
+|------------------------+---------------------------+-------------+----------|
+| codex 5.5 xhigh        | implementer-codex-tmux    | gpt-5.5     | xhigh    |
+| claude sonnet high     | implementer-claude-rmux   | sonnet-5    | high     |
+| claude opus xhigh      | implementer-claude-rmux   | opus-4-8    | xhigh    |
+
+Service-tier hints like "on fast" come from the harness config, not a dispatch
+flag. When no provider is named, pick the default implementer worker from
+`orgasmic worker list`. Reviews dispatch the same way with `--kind reviewer` and
+the matching `reviewer-<harness>-<driver>` worker.
+
 * Convention: restarting the daemon
 
 Restarting the daemon (for example to pick up a rebuild) is permitted — from a

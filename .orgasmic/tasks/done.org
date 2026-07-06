@@ -11567,3 +11567,18 @@ and on re-run.
 ** Evidence
 Merged d70af6f (worker e4bd43f). Cross-process advisory flock (fs2::FileExt::lock_exclusive on $TMPDIR/orgasmic-live-session-tests.lock) added as first stmt of all live tmux/rmux tests across 4 modules: orgasmic-drivers modes/tmux.rs (7 real_tmux_*), modes/rmux.rs (9 live_rmux_*), orgasmic-daemon api.rs (boot_reattach/recovery/post_artifact_regenerate x3/artifact_release_watcher/tmux_ws_member_denied) + supervisor.rs (tmux_terminal_event_releases). fs2 added to drivers dev-deps; .truncate(false) for clippy. Verify: cargo test -p orgasmic-drivers 125+5+25 pass; clippy --workspace --all-targets -D warnings clean; fmt clean. Worker ran cargo test --workspace 14x: X0ZVE flake class (real-tmux/rmux contention) GONE — zero failures across all 24 guarded tests every run. Residual workspace redness is 3 pre-existing out-of-scope orgasmic-cli flakes (dispatch_close_prunes_stem_dir_leaving_brief reproduces at baseline 88c0e94; doctor daemon_staleness_warns_for_git_commits_since_boot; content_lifecycle hub_install_list_remove) — tracked separately.
 
+* DONE TASK-KNENN Harden default instructions: route implementation through orgasmic workers, not raw provider CLIs :conventions:agent-dx:
+:PROPERTIES:
+:ID: TASK-KNENN
+:END:
+
+Harden the agent-facing default instructions so the next agent dispatches implementation work through orgasmic workers, never a raw provider CLI.
+
+Observed failure: asked to "implement all, use codex 5.5 xhigh on fast" inside this managed repo, an agent reached for the raw `codex` binary (`codex --help`, `codex exec ...`) instead of `orgasmic manager dispatch`. Shelling out to a provider CLI bypasses the daemon write authority, tx recording, worktree isolation, dispatch leases, and reattach/recovery — the entire reason work is managed here.
+
+Fix: add an explicit rule to `conventions/orgasmic-tooling.org` (and/or `contributing.org`) stating that any request to implement/dispatch work — especially one naming a provider+model+effort like "codex 5.5 xhigh" — maps to `orgasmic manager dispatch --kind implementer --worker implementer-<harness>-<driver> --model <model> --effort <effort> --brief <path>`, resolving the worker from `orgasmic worker list` (e.g. codex 5.5 xhigh -> implementer-codex-tmux, model gpt-5.5, effort xhigh; service_tier fast comes from the codex harness config). Raw `codex`/`claude`/`cursor-agent` invocations are off-limits for doing project work. State the why (write authority, tx, leases, reattach) so it sticks.
+
+Scope: docs/conventions only; a worded rule + a short mapping table from "provider model effort" to worker id. No code. Consider whether the daemon should also surface workers more discoverably to agents.
+** Evidence
+Manager-inline (docs-only, no dispatch). Added a 'Convention: dispatching implementation work' section to conventions/orgasmic-tooling.org (live .orgasmic + shipped/skills/orgasmic/scaffold copy): any implement/dispatch request routes through 'orgasmic manager dispatch --kind implementer --worker implementer-<harness>-<driver> --model --effort --brief', resolving the worker from 'orgasmic worker list'; raw codex/claude/cursor-agent invocations off-limits for project work (version --help OK). Includes the mapping table (codex 5.5 xhigh -> implementer-codex-tmux/gpt-5.5/xhigh; claude sonnet high -> implementer-claude-rmux/sonnet-5/high; claude opus xhigh -> .../opus-4-8/xhigh), the 'on fast' = harness-config note, and the WHY (write authority, tx, worktree isolation, leases, reattach/recovery). Cross-reference bullet added to contributing.org (both copies). Verified: daemon reindex parse_errors 0 after the live edits.
+

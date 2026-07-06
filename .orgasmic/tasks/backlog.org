@@ -1,19 +1,6 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-KNENN Harden default instructions: route implementation through orgasmic workers, not raw provider CLIs    :conventions:agent-dx:
-:PROPERTIES:
-:ID: TASK-KNENN
-:END:
-
-Harden the agent-facing default instructions so the next agent dispatches implementation work through orgasmic workers, never a raw provider CLI.
-
-Observed failure: asked to "implement all, use codex 5.5 xhigh on fast" inside this managed repo, an agent reached for the raw `codex` binary (`codex --help`, `codex exec ...`) instead of `orgasmic manager dispatch`. Shelling out to a provider CLI bypasses the daemon write authority, tx recording, worktree isolation, dispatch leases, and reattach/recovery — the entire reason work is managed here.
-
-Fix: add an explicit rule to `conventions/orgasmic-tooling.org` (and/or `contributing.org`) stating that any request to implement/dispatch work — especially one naming a provider+model+effort like "codex 5.5 xhigh" — maps to `orgasmic manager dispatch --kind implementer --worker implementer-<harness>-<driver> --model <model> --effort <effort> --brief <path>`, resolving the worker from `orgasmic worker list` (e.g. codex 5.5 xhigh -> implementer-codex-tmux, model gpt-5.5, effort xhigh; service_tier fast comes from the codex harness config). Raw `codex`/`claude`/`cursor-agent` invocations are off-limits for doing project work. State the why (write authority, tx, leases, reattach) so it sticks.
-
-Scope: docs/conventions only; a worded rule + a short mapping table from "provider model effort" to worker id. No code. Consider whether the daemon should also surface workers more discoverably to agents.
-
 * BACKLOG TASK-F9N5F Hot-session artifactor: idle-timeout session lifetime (D3, deferred from TASK-RH4M5)    :artifacts:daemon:runtime:
 :PROPERTIES:
 :DEPENDS_ON: TASK-RH4M5
