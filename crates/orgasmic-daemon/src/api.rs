@@ -10547,6 +10547,30 @@ mod tests {
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
 
+    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
+    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
+    /// advisory flock on a shared temp path lets at most one run at a time,
+    /// cross-process. Held for the whole test via the returned guard.
+    fn live_session_guard() -> LiveSessionGuard {
+        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .expect("open live-session lock file");
+        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
+        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
+        LiveSessionGuard(file)
+    }
+
+    struct LiveSessionGuard(std::fs::File);
+    impl Drop for LiveSessionGuard {
+        fn drop(&mut self) {
+            let _ = fs2::FileExt::unlock(&self.0);
+        }
+    }
+
     fn write(path: PathBuf, contents: &str) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -11364,6 +11388,7 @@ mod tests {
     /// releases the run and asserts the artifact lands.
     #[tokio::test]
     async fn boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt() {
+        let _live_guard = live_session_guard();
         if !tmux_on_path() {
             eprintln!(
                 "skipping boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt: tmux not on PATH"
@@ -13504,6 +13529,7 @@ mod tests {
 
     #[tokio::test]
     async fn recovery_reattaches_tmux_session_when_handle_exists() {
+        let _live_guard = live_session_guard();
         if !tmux_on_path() {
             eprintln!(
                 "skipping recovery_reattaches_tmux_session_when_handle_exists: tmux not on PATH"
@@ -15180,6 +15206,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
+        let _live_guard = live_session_guard();
         if !rmux_available_for_test() {
             eprintln!("skipping post_artifact_regenerate_hot_path_reuses_live_run_id: rmux binary not found");
             return;
@@ -15343,6 +15370,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
+        let _live_guard = live_session_guard();
         if !rmux_available_for_test() {
             eprintln!(
                 "skipping post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation: rmux binary not found"
@@ -15444,6 +15472,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
+        let _live_guard = live_session_guard();
         if !rmux_available_for_test() {
             eprintln!(
                 "skipping post_artifact_regenerate_cold_spawns_after_forgotten_run: rmux binary not found"
@@ -15568,6 +15597,7 @@ mod tests {
 
     #[tokio::test]
     async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
+        let _live_guard = live_session_guard();
         if !rmux_available_for_test() {
             eprintln!(
                 "skipping artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round: rmux binary not found"
@@ -16120,6 +16150,7 @@ mod tests {
     /// rejected before upgrade); admin is unaffected by the stream gate.
     #[tokio::test]
     async fn tmux_ws_member_denied_stream_admin_allowed() {
+        let _live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();

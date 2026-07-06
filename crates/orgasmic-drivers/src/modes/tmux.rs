@@ -1189,6 +1189,30 @@ mod tests {
     use serde_json::Value;
     use std::collections::VecDeque;
 
+    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
+    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
+    /// advisory flock on a shared temp path lets at most one run at a time,
+    /// cross-process. Held for the whole test via the returned guard.
+    fn live_session_guard() -> LiveSessionGuard {
+        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .expect("open live-session lock file");
+        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
+        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
+        LiveSessionGuard(file)
+    }
+
+    struct LiveSessionGuard(std::fs::File);
+    impl Drop for LiveSessionGuard {
+        fn drop(&mut self) {
+            let _ = fs2::FileExt::unlock(&self.0);
+        }
+    }
+
     /// Drop-guard that kills a real tmux session on every exit path — success,
     /// assert-failure unwinding, or panic. Real-tmux tests assert pane/session
     /// state *before* they call `release`, so without this guard a failed assert
@@ -1609,6 +1633,7 @@ mod tests {
     /// driver actually spawns + tears down a session.
     #[tokio::test]
     async fn real_tmux_session_lifecycle() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await {
             eprintln!("skipping real_tmux_session_lifecycle: tmux unavailable or unusable");
             return;
@@ -1661,6 +1686,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_tmux_control_drop_without_release_kills_session() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await {
             eprintln!(
                 "skipping real_tmux_control_drop_without_release_kills_session: tmux unavailable or unusable"
@@ -1739,6 +1765,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_tmux_eot_marker_emits_run_complete() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await || !command_available("bash") {
             eprintln!("skipping real_tmux_eot_marker_emits_run_complete: tmux/bash unavailable");
             return;
@@ -1788,6 +1815,7 @@ mod tests {
     /// return well before that because delivery now runs in the background.
     #[tokio::test]
     async fn real_tmux_acquire_returns_before_prompt_delivery() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await {
             eprintln!(
                 "skipping real_tmux_acquire_returns_before_prompt_delivery: tmux unavailable"
@@ -1818,6 +1846,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_tmux_early_exit_before_eot_is_failure() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await || !command_available("bash") {
             eprintln!("skipping real_tmux_early_exit_before_eot_is_failure: tmux/bash unavailable");
             return;
@@ -1860,6 +1889,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_tmux_prompt_bundle_is_consumed() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await {
             eprintln!("skipping real_tmux_prompt_bundle_is_consumed: tmux unavailable or unusable");
             return;
@@ -1903,6 +1933,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_tmux_attach_proves_existing_session() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await {
             eprintln!(
                 "skipping real_tmux_attach_proves_existing_session: tmux unavailable or unusable"
