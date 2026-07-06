@@ -544,6 +544,18 @@ mod tests {
     use super::*;
     use chrono::Duration as ChronoDuration;
     use orgasmic_daemon::{Daemon, DaemonOptions};
+    // Shared with daemon_client tests: env is process-global, and these tests
+    // exercise production paths that read ORGASMIC_DAEMON_URL / token vars.
+    // Serialize against every other env-touching test in the crate and clear
+    // the daemon env so ambient/leaked values can't reach the reads (TASK-SJQ9V).
+    use crate::test_support::{env_guard, ScopedEnv};
+
+    /// Env keys read by the daemon-status production paths these tests drive.
+    const DAEMON_ENV_KEYS: &[&str] = &[
+        "ORGASMIC_DAEMON_URL",
+        "ORGASMIC_DAEMON_TOKEN",
+        "ORGASMIC_DAEMON_TOKEN_FILE",
+    ];
 
     fn status_started_at(started_at: DateTime<Utc>) -> DaemonStatus {
         DaemonStatus {
@@ -578,10 +590,21 @@ mod tests {
     }
 
     fn run_git(repo: &Path, args: &[&str]) -> String {
+        // Isolate git from ambient global/system config and any interactive
+        // prompt so a developer's or CI's `~/.gitconfig` (commit.gpgsign,
+        // log.showSignature, credential prompts, hook templates) can't perturb
+        // these test git ops — one of the workspace-concurrency flake vectors
+        // for TASK-SJQ9V. A fixed commit date makes `git log --since` filtering
+        // fully deterministic regardless of wall clock or CPU scheduling.
         let output = Command::new("git")
             .arg("-C")
             .arg(repo)
             .args(args)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_AUTHOR_DATE", "2026-01-01T00:00:00+00:00")
+            .env("GIT_COMMITTER_DATE", "2026-01-01T00:00:00+00:00")
             .output()
             .expect("run git");
         assert!(
@@ -672,8 +695,23 @@ mod tests {
         run_git(tmp.path(), &["commit", "-m", "TASK-052 daemon route"]);
         let sha = run_git(tmp.path(), &["rev-parse", "--short", "HEAD"]);
 
-        let started_at = Utc::now() - ChronoDuration::hours(1);
-        let commits = recent_daemon_code_commits(tmp.path(), started_at);
+        // The commit is pinned to 2026-01-01T00:00:00Z (GIT_COMMITTER_DATE in
+        // run_git); start the window an hour before it so `git log --since`
+        // deterministically includes it, with no dependence on the wall clock.
+        let started_at = utc("2026-01-01T00:00:00Z") - ChronoDuration::hours(1);
+        // `recent_daemon_code_commits` spawns `git log` and silently yields an
+        // empty vec on any git non-success; under heavy `cargo test --workspace`
+        // load that git subprocess can transiently fail (CPU/process pressure),
+        // so retry a few times — the commit is guaranteed present here, an empty
+        // result means a transient failure, not "no commits" (TASK-SJQ9V).
+        let mut commits = recent_daemon_code_commits(tmp.path(), started_at);
+        for _ in 0..8 {
+            if !commits.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            commits = recent_daemon_code_commits(tmp.path(), started_at);
+        }
         let status = status_started_at(started_at);
         let binary_mtime = system_time(started_at - ChronoDuration::hours(1));
 
@@ -778,6 +816,8 @@ mod tests {
 
     #[test]
     fn daemon_status_connection_refused_emits_one_liveness_warn() {
+        let _env_guard = env_guard();
+        let _env = ScopedEnv::clear(DAEMON_ENV_KEYS);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -793,6 +833,8 @@ mod tests {
 
     #[test]
     fn daemon_status_token_mismatch_emits_one_liveness_warn() {
+        let _env_guard = env_guard();
+        let _env = ScopedEnv::clear(DAEMON_ENV_KEYS);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -878,6 +920,8 @@ mod tests {
 
     #[test]
     fn check_daemon_for_status_none_when_unauthorized() {
+        let _env_guard = env_guard();
+        let _env = ScopedEnv::clear(DAEMON_ENV_KEYS);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         let runtime = tokio::runtime::Runtime::new().unwrap();
@@ -895,6 +939,8 @@ mod tests {
 
     #[test]
     fn check_daemon_for_status_none_when_daemon_down() {
+        let _env_guard = env_guard();
+        let _env = ScopedEnv::clear(DAEMON_ENV_KEYS);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -907,6 +953,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn check_daemon_for_status_none_when_fresh() {
+        let _env_guard = env_guard();
+        let _env = ScopedEnv::clear(DAEMON_ENV_KEYS);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -925,6 +973,8 @@ mod tests {
     #[test]
     #[cfg(unix)]
     fn check_daemon_for_status_some_when_stale() {
+        let _env_guard = env_guard();
+        let _env = ScopedEnv::clear(DAEMON_ENV_KEYS);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();

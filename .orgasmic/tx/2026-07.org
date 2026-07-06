@@ -4800,3 +4800,119 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-06 Mon 12:34:12 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1456
+:TIME:         [2026-07-06 Mon 12:34:12]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 12:36:57 task.state_transitioned TASK-SJQ9V
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1457
+:TIME:         [2026-07-06 Mon 12:36:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SJQ9V
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-SJQ9V to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-06 Mon 12:36:58 manager.dispatch_started TASK-SJQ9V
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1458
+:TIME:         [2026-07-06 Mon 12:36:58]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SJQ9V
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-sjq9v/worktree
+:BRANCH:       task-sjq9v-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-sjq9v/task-sjq9v-brief.md
+:STARTED_AT:   [2026-07-06 Mon 12:36:58]
+:LIVENESS:     4f7c57f8a6ce3d76697cf57ecfdb3d7db5df5eb1
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: goal-20260706-drain-the-full 5/10: root-cause+fix doctor-staleness workspace-concurrency flake
+:END:
+
+* TX 2026-07-06 Mon 12:36:58 run.created TASK-SJQ9V
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1459
+:TIME:         [2026-07-06 Mon 12:36:58]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SJQ9V
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-SJQ9V-implementer-20260706T123658.jsonl
+:REASON:       goal-20260706-drain-the-full 5/10: root-cause+fix doctor-staleness workspace-concurrency flake
+:RUN_ID:       run-20260706T123658-62011da326aa48d1b3436b532f5244e9
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-sjq9v/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-sjq9v/task-sjq9v-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-sjq9v/task-sjq9v-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-sjq9v/task-sjq9v-stdout.log
+:DISPATCH_TX:  tx-20260706-orgasmic-1458
+:END:
+
+* TX 2026-07-06 Mon 12:37:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1460
+:TIME:         [2026-07-06 Mon 12:37:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+
+* TX 2026-07-06 Mon 13:57:44 manager.dispatch_aborted TASK-SJQ9V
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1461
+:TIME:         [2026-07-06 Mon 13:57:44]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SJQ9V
+:REASON:       manager rescue: worker stuck in stochastic-repro loop (brief over-emphasized reproduce-first); fix is deterministic hardening, implementing inline
+:CLOSED_TX:    tx-20260706-orgasmic-1458
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-sjq9v/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-06 Mon 13:57:44 task.state_transitioned TASK-SJQ9V
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1462
+:TIME:         [2026-07-06 Mon 13:57:44]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SJQ9V
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-SJQ9V to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:

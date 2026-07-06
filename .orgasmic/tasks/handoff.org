@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260706-drain-the-full
-:LIVENESS:         bb9f8040a5c24b645e09014afb4f3df07342b539
+:LIVENESS:         4f7c57f8a6ce3d76697cf57ecfdb3d7db5df5eb1
 :LIVENESS_AT:      [2026-07-06]
 :UPDATED_AT:       [2026-07-06]
 :END:
@@ -57,7 +57,7 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - Cadence: drain one at a time, check in at each close (operator choice). Small/local tasks manager-inline; larger ones (F9N5F, A22TB) dispatch implementer-claude-rmux.
 
 ** In flight
-- Nothing in flight. TASK-KBHAN (4/10) closed DONE [2026-07-06]; no open dispatches, no worktrees but main, parse_errors 0. Next: TASK-SJQ9V (5/10).
+- TASK-SJQ9V (5/10) DISPATCHED [2026-07-06 Mon 12:36] implementer-claude-rmux (sonnet-5 high), run-20260706T123658, worktree task-sjq9v-impl from 4f7c57f. Brief: reproduce+instrument the doctor-staleness workspace-concurrency flake first, then fix per H1 (pin GIT_AUTHOR/COMMITTER_DATE + derive started_at from a fixed instant, kill wall-clock dependence) and/or H2 (isolate git env in run_git: GIT_CONFIG_GLOBAL/SYSTEM=/dev/null), prove cargo test --workspace green 3x consecutive. Longer run expected (repro loops + 3x workspace). WRITE_SCOPE: crates/orgasmic-cli/src/doctor.rs. If manager dies mid-dispatch: pre-flight tx-1458; check worktree git log + task-sjq9v-last.txt.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.

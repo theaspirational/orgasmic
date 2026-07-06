@@ -356,57 +356,13 @@ fn read_bind_port(config: &Path) -> Result<(std::net::IpAddr, u16)> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
 
     use super::*;
     use crate::manager::{DispatchKind, DispatchPlan};
+    // Shared, poison-resilient env lock + RAII override: env is process-global,
+    // so these must be the SAME lock the doctor tests use (TASK-SJQ9V).
+    use crate::test_support::{env_guard, ScopedEnv};
     use orgasmic_core::Home;
-
-    fn env_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
-
-    struct ScopedEnv {
-        keys: Vec<(&'static str, Option<String>)>,
-    }
-
-    impl ScopedEnv {
-        fn set(pairs: &[(&'static str, &str)]) -> Self {
-            let keys = pairs
-                .iter()
-                .map(|(key, value)| {
-                    let prior = std::env::var(key).ok();
-                    std::env::set_var(key, value);
-                    (*key, prior)
-                })
-                .collect();
-            Self { keys }
-        }
-
-        fn clear(keys: &[&'static str]) -> Self {
-            let keys = keys
-                .iter()
-                .map(|key| {
-                    let prior = std::env::var(key).ok();
-                    std::env::remove_var(key);
-                    (*key, prior)
-                })
-                .collect();
-            Self { keys }
-        }
-    }
-
-    impl Drop for ScopedEnv {
-        fn drop(&mut self) {
-            for (key, prior) in &self.keys {
-                match prior {
-                    Some(value) => std::env::set_var(key, value),
-                    None => std::env::remove_var(key),
-                }
-            }
-        }
-    }
 
     fn sample_plan(worker_override: Option<String>) -> DispatchPlan {
         DispatchPlan {

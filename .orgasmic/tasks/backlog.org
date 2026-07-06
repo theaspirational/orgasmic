@@ -14,15 +14,6 @@ Fix: add an explicit rule to `conventions/orgasmic-tooling.org` (and/or `contrib
 
 Scope: docs/conventions only; a worded rule + a short mapping table from "provider model effort" to worker id. No code. Consider whether the daemon should also surface workers more discoverably to agents.
 
-* BACKLOG TASK-SJQ9V doctor staleness test fails only under cargo test --workspace concurrency    :tests:cli:
-:PROPERTIES:
-:ID: TASK-SJQ9V
-:END:
-
-doctor::tests::daemon_staleness_warns_for_git_commits_since_boot (crates/orgasmic-cli/src/doctor.rs:662) fails with "expected warn, got None" (panic at doctor.rs:569) under cargo test --workspace — reproduced twice consecutively on 45c6116 — yet passes with cargo test -p orgasmic-cli (parallel AND --test-threads=1) and 3x filtered. The failure means recent_daemon_code_commits() returned no commits for a temp git repo the test itself just committed to, so the trigger is cross-binary workspace concurrency (env/CPU/git-subprocess interaction), not the test logic in isolation. Latent race, unmasked during TASK-M6146 integration whose cli diff was whitespace-only (verified by stripped-content hash); same class as the historical TASK-BRXGG parallel-safety work.
-
-Acceptance: root cause identified and fixed (or the test hardened against workspace-parallel execution); cargo test --workspace green 3x consecutively from this checkout with the production daemon live.
-
 * BACKLOG TASK-X0ZVE Live rmux tests flake under parallel load (render_stream sentinel timing)    :tests:runtime:
 :PROPERTIES:
 :ID: TASK-X0ZVE

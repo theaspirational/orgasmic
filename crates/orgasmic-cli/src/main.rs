@@ -25,6 +25,8 @@ mod manager;
 mod member;
 mod node;
 mod path_env;
+#[cfg(test)]
+mod test_support;
 mod update;
 
 use std::net::IpAddr;
