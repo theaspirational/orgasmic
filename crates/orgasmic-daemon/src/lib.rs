@@ -253,15 +253,13 @@ impl Daemon {
         let supervisor = supervisor::Supervisor::new(writer.clone(), boot.clone());
         index.spawn_tx_listener(events.clone());
 
-        // Boot auto-reattach: rehydrate still-live runs (notably the operator's
-        // manager terminal) against their surviving mux sessions so a daemon
-        // restart/rebuild is transparent. Runs whose mux session is gone are
-        // skipped, not interrupted. Uses the project roots captured above.
+        // Project roots for boot auto-reattach, run once `api_state` exists
+        // below (the dispatch completion watcher it may respawn needs the
+        // full `ApiState`, not just `home`/`supervisor`).
         let reattach_roots: Vec<PathBuf> = migrate_projects
             .iter()
             .map(|(_, root)| root.clone())
             .collect();
-        api::reattach_live_runs_on_boot(&home, &supervisor, &reattach_roots).await;
 
         let watcher = spawn_watcher(
             home.clone(),
@@ -307,6 +305,13 @@ impl Daemon {
             dispatch_response_delay: opts.dispatch_response_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
+
+        // Boot auto-reattach: rehydrate still-live runs (notably the operator's
+        // manager terminal) against their surviving mux sessions so a daemon
+        // restart/rebuild is transparent. Runs whose mux session is gone are
+        // skipped, not interrupted. Reattached dispatch runs get their
+        // completion watcher respawned (TASK-567JG).
+        api::reattach_live_runs_on_boot(&api_state, &reattach_roots).await;
 
         let app: Router = router(api_state);
         let addr = SocketAddr::new(cfg.bind, cfg.port);

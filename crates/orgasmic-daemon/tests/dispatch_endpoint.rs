@@ -2629,6 +2629,8 @@ async fn continuation_early_exit_auto_releases_stuck_lease() {
         role: "implementer".into(),
         project_id: Some("proj-dispatch".into()),
         worktree: Some(worktree.clone()),
+        last_path: None,
+        stdout_path: None,
         session_path: session_path.clone(),
         driver_config: driver_config.clone(),
         babysitter_target: None,

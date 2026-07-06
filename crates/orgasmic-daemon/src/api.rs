@@ -2102,6 +2102,8 @@ async fn post_manager_launch(
                 role: "manager".into(),
                 project_id: Some(req.project_id.clone()),
                 worktree: Some(project.root),
+                last_path: None,
+                stdout_path: None,
                 session_path,
                 driver_config,
                 babysitter_target: None,
@@ -2456,6 +2458,8 @@ async fn post_stage(
                 role: worker_kind_name(worker.kind).to_string(),
                 project_id: Some(project_id.clone()),
                 worktree: Some(project.root.clone()),
+                last_path: None,
+                stdout_path: None,
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
@@ -3435,6 +3439,11 @@ struct SpawnWorkerRequest<'a> {
     overrides: DriverOverrides,
     project_root_path: &'a FsPath,
     worktree_path: &'a FsPath,
+    /// Dispatch artifact paths (CLI dispatch only). `None` for
+    /// non-dispatch spawns (artifact generation); threaded into `RunMeta` so
+    /// a boot reattach can respawn the dispatch completion watcher.
+    last_path: Option<&'a FsPath>,
+    stdout_path: Option<&'a FsPath>,
     origin: &'static str,
     /// Session-path fragment for CLI dispatch (`implementer` / `reviewer`).
     dispatch_kind: Option<&'a str>,
@@ -3536,6 +3545,8 @@ async fn spawn_worker_run(
                 role: kind.to_string(),
                 project_id: Some(req.project_id.to_string()),
                 worktree: Some(req.worktree_path.to_path_buf()),
+                last_path: req.last_path.map(|p| p.to_path_buf()),
+                stdout_path: req.stdout_path.map(|p| p.to_path_buf()),
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
@@ -3663,6 +3674,8 @@ async fn post_task_dispatch(
             overrides,
             project_root_path: &project.root,
             worktree_path: &req.worktree_path,
+            last_path: Some(&req.last_path),
+            stdout_path: Some(&req.stdout_path),
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
             preloaded_worker: Some(worker_for_bundle),
@@ -5549,6 +5562,8 @@ async fn post_run_recover(
                         worker_id,
                         project_id: req.project.clone(),
                         worktree,
+                        last_path: None,
+                        stdout_path: None,
                         session_path: session_path.clone(),
                         driver_config,
                         babysitter_target: None,
@@ -5635,16 +5650,22 @@ struct BootReattachCandidate {
     harness: Option<String>,
     project_id: Option<String>,
     worktree: Option<PathBuf>,
+    /// Dispatch artifact paths, when the reattached run was a CLI dispatch —
+    /// enables respawning its completion watcher (TASK-567JG).
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
 }
 
-/// `(worker_id, transport, harness, worktree, driver_config)` from a `RunMeta`
-/// lifecycle event.
+/// `(transport, harness, project_id, worktree, last_path, stdout_path,
+/// driver_config)` from a `RunMeta` lifecycle event.
 type RunMetaFields = (
     String,
     Option<String>,
     Option<String>,
+    Option<PathBuf>,
+    Option<PathBuf>,
     Option<PathBuf>,
     serde_json::Value,
 );
@@ -5689,14 +5710,26 @@ fn boot_reattach_candidate(
                 harness,
                 project_id,
                 worktree,
+                last_path,
+                stdout_path,
                 driver_config,
-            }) => meta = Some((transport, harness, project_id, worktree, driver_config)),
+            }) => {
+                meta = Some((
+                    transport,
+                    harness,
+                    project_id,
+                    worktree,
+                    last_path,
+                    stdout_path,
+                    driver_config,
+                ))
+            }
             _ => {}
         }
     }
 
     let (task_id, kind_str, worker_id) = acquire?;
-    let (transport, harness, project_id, worktree, driver_config) = meta?;
+    let (transport, harness, project_id, worktree, last_path, stdout_path, driver_config) = meta?;
     let kind = match kind_str.as_str() {
         // Babysitters watch another run; they are re-derived, not reattached.
         "babysitter" => return None,
@@ -5714,6 +5747,8 @@ fn boot_reattach_candidate(
         harness,
         project_id,
         worktree,
+        last_path,
+        stdout_path,
         driver_config,
         session_path: session_path.to_path_buf(),
     })
@@ -5726,12 +5761,18 @@ fn boot_reattach_candidate(
 /// driver's `attach()` proves the mux session is still live (otherwise the run
 /// is skipped, not interrupted). Manager runs (`manager.launch:` task ids) are
 /// reattached first so the operator's terminal reconnects promptly.
-pub async fn reattach_live_runs_on_boot(
-    home: &Home,
-    supervisor: &crate::supervisor::Supervisor,
-    project_roots: &[PathBuf],
-) {
-    let _ = home; // reserved for symmetry with the recovery scanners
+///
+/// A reattached run that carries dispatch artifact paths (`last_path` /
+/// `stdout_path`, set only for CLI dispatch runs) gets its dispatch
+/// completion watcher respawned (TASK-567JG): that watcher is a tokio task
+/// spawned only at dispatch time, so it dies with the old daemon process on a
+/// mid-run restart, and without a respawn `last.txt`/`stdout.log` are never
+/// written on release. Runs missing either path (manager, recovery, stage
+/// launch, or pre-upgrade session JSONL) are reattached with no watcher, same
+/// as before this fix.
+pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
+    let home = &state.home;
+    let supervisor = &state.supervisor;
     let mut candidates: Vec<BootReattachCandidate> = Vec::new();
     let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     for root in project_roots {
@@ -5798,6 +5839,43 @@ pub async fn reattach_live_runs_on_boot(
                     task_id = %c.task_id,
                     "boot reattach: rehydrated live run"
                 );
+                match (
+                    c.last_path.clone(),
+                    c.stdout_path.clone(),
+                    c.project_id.clone(),
+                    c.worktree.clone(),
+                ) {
+                    (Some(last_path), Some(stdout_path), Some(project_id), Some(worktree_path)) => {
+                        tracing::info!(
+                            run_id = %c.run_id,
+                            task_id = %c.task_id,
+                            "boot reattach: respawning dispatch completion watcher"
+                        );
+                        spawn_dispatch_completion_watcher(
+                            state.clone(),
+                            DispatchCompletion {
+                                project_id,
+                                task_id: c.task_id.clone(),
+                                run_id: c.run_id.clone(),
+                                session_path: c.session_path.clone(),
+                                last_path,
+                                stdout_path,
+                                worktree_path,
+                            },
+                        );
+                    }
+                    (None, None, _, _) => {
+                        // Non-dispatch run (manager, recovery, stage launch) or
+                        // pre-upgrade RunMeta: no watcher, as before this fix.
+                    }
+                    _ => {
+                        tracing::warn!(
+                            run_id = %c.run_id,
+                            task_id = %c.task_id,
+                            "boot reattach: dispatch artifact paths present without project_id/worktree; skipping completion watcher"
+                        );
+                    }
+                }
             }
             Err(e) => {
                 skipped += 1;
@@ -9829,6 +9907,8 @@ async fn launch_artifact_generation(
             overrides: DriverOverrides::default(),
             project_root_path: &entry.path,
             worktree_path: &entry.path,
+            last_path: None,
+            stdout_path: None,
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
             preloaded_worker: Some(worker),
@@ -11084,6 +11164,8 @@ mod tests {
                     role: "manager".into(),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(home.source()),
+                    last_path: None,
+                    stdout_path: None,
                     session_path: home.sessions().join("manager-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -11120,6 +11202,8 @@ mod tests {
                     role: "reviewer".into(),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(home.source()),
+                    last_path: None,
+                    stdout_path: None,
                     session_path: home.sessions().join("reviewer-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -11156,6 +11240,8 @@ mod tests {
                     role: "manager".into(),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(home.source()),
+                    last_path: None,
+                    stdout_path: None,
                     session_path: home.sessions().join("manager-restart-guard.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -11230,6 +11316,8 @@ mod tests {
                 harness: Some("claude".into()),
                 project_id: Some("orgasmic".into()),
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
+                last_path: None,
+                stdout_path: None,
                 driver_config: json!({"system_wide": true}),
             })
             .unwrap(),
@@ -11252,6 +11340,10 @@ mod tests {
         assert_eq!(candidate.transport, "rmux");
         assert_eq!(candidate.harness.as_deref(), Some("claude"));
         assert_eq!(candidate.driver_config["system_wide"], json!(true));
+        // Pre-upgrade / non-dispatch RunMeta carries no artifact paths — boot
+        // reattach must still succeed, just without a completion watcher.
+        assert!(candidate.last_path.is_none());
+        assert!(candidate.stdout_path.is_none());
 
         // Terminal release → not a candidate.
         assert!(
@@ -11259,6 +11351,128 @@ mod tests {
         );
         // Missing RunMeta (pre-upgrade session) → not a candidate.
         assert!(boot_reattach_candidate(&[acquire], &path).is_none());
+    }
+
+    /// TASK-567JG: a daemon restart mid-run must still write `last.txt` on
+    /// release. `spawn_dispatch_completion_watcher` is a tokio task spawned
+    /// only at dispatch time, so it dies with the old daemon process; without
+    /// respawning it on boot reattach, `write_dispatch_completion_artifacts`
+    /// never runs. This drives the real `reattach_live_runs_on_boot` path
+    /// (not just `boot_reattach_candidate`) against a genuinely live tmux
+    /// session — simulating the restart with a second, independent
+    /// `ApiState`/`Supervisor` that never acquired the run itself — then
+    /// releases the run and asserts the artifact lands.
+    #[tokio::test]
+    async fn boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt() {
+        if !tmux_on_path() {
+            eprintln!(
+                "skipping boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt: tmux not on PATH"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-reattach-watcher-{suffix}"),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
+        let status = Command::new("tmux")
+            .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "tmux test session should start");
+        let _guard = TmuxSessionGuard(session_name);
+
+        let session_path =
+            project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
+        let last_path = tmp.path().join("last.txt");
+        let stdout_path = tmp.path().join("stdout.log");
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-567JG-REATTACH".into(),
+                    kind: "implementer".into(),
+                    worker_id: "implementer-claude-rmux".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: "tmux".into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: Some(last_path.clone()),
+                    stdout_path: Some(stdout_path.clone()),
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::TextChunk {
+                    stream: orgasmic_core::TextStream::Assistant,
+                    chunk: "## Report\nboot reattach watcher smoke".into(),
+                    seq: 0,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        // A fresh Supervisor/ApiState never acquired this run — standing in
+        // for the post-restart daemon boot.
+        let state = direct_stage_test_state(home).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "run should be rehydrated into the post-restart supervisor"
+        );
+
+        state
+            .supervisor
+            .release(
+                &identity.run_id,
+                "test cleanup",
+                orgasmic_core::ReleaseOutcome::Completed,
+            )
+            .await
+            .expect("release reattached run");
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            if last_path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let last_body = std::fs::read_to_string(&last_path)
+            .unwrap_or_else(|e| panic!("last.txt was never written by the respawned watcher: {e}"));
+        assert!(
+            last_body.contains("boot reattach watcher smoke"),
+            "last.txt should carry the worker report: {last_body}"
+        );
     }
 
     fn dispatch_summary_env(kind: SessionEventKind, event: serde_json::Value) -> SessionEnvelope {
@@ -11368,6 +11582,8 @@ mod tests {
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),

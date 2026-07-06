@@ -132,6 +132,8 @@ fn request(
         role: "implementer".into(),
         project_id: Some("orgasmic".into()),
         worktree: None,
+        last_path: None,
+        stdout_path: None,
         session_path,
         driver_config: DriverConfig::empty(),
         babysitter_target: None,
