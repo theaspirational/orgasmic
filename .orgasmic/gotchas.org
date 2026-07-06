@@ -110,6 +110,20 @@ evidence, the likely cause, an exit condition, and the backlog task expected to
 make the gotcha obsolete. Entries marked "Durable invariant" are permanent
 engineering constraints rather than transient patterns awaiting a fix.
 
+** Overwriting an in-use codesigned macOS binary in place gets it silently SIGKILLed
+Replacing the bytes of a codesigned binary AT THE SAME PATH/INODE while any
+process still has it open (e.g. swapping `~/.orgasmic/runtimes/<v>/bin/orgasmic`
+in place to test a fix against the live LaunchAgent-managed daemon) causes ALL
+subsequent execs of that exact path to be silently killed by the kernel
+(exit 137, zero stdout/stderr) even though `codesign --verify` reports the file
+"valid on disk" and the bytes match a known-good copy exactly. Symptom looks
+like a sandbox/tool problem, not a codesign one. Fix: never overwrite in place;
+`rm` the file first and then write the replacement (fresh inode), e.g.
+`rm -f "$BIN" && cp "$SRC" "$BIN" && chmod +x "$BIN"`. Copying the identical
+bytes to a different path also works fine, which is the tell that it is a
+path/inode-identity issue, not a signature or content problem. Observed
+2026-07-06 verifying TASK-VXXQC's launchd stop-agent fix. Durable invariant.
+
 ** rmux workers intentionally do not auto-spawn babysitters
 rmux worker templates are interactive PTY smoke/proof surfaces, not the default
 production dispatch lane. Auto-spawning =babysitter_worker= there would require a

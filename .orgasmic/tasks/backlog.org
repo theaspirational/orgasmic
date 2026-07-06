@@ -138,20 +138,3 @@ cargo fmt --all --check is RED on main across 6 files entirely outside recent ta
 
 Fix = one cargo fmt --all commit (touches only these; no logic). Verify cargo fmt --all --check clean + workspace still builds. Keeps the fmt CI gate green. Discovered at TASK-EDQPG integration; EDQPG-touched files were already fmt-clean.
 
-* BACKLOG TASK-VXXQC Make `orgasmic update` launchd-aware (or set SO_REUSEADDR on the daemon listener)    :bug:cli:daemon:
-:PROPERTIES:
-:ID: TASK-VXXQC
-:END:
-
-`orgasmic update` (any channel) fails and rolls back on hosts where the daemon runs under a launchd LaunchAgent with KeepAlive=true (the maintainer Mac: ~/Library/LaunchAgents/orgasmic.daemon.plist, label orgasmic.daemon). update stops the running daemon and starts a new one directly, but launchd immediately respawns the OLD daemon and reoccupies 0.0.0.0:4848, so the new binary hits `bind: Address already in use` -> "daemon exited before becoming ready after 20s" -> runtime links rolled back. The tarball downloads fine into ~/.orgasmic/runtimes/<version>-<target>/; only the `current` symlink is reverted.
-
-Observed 2026-07-06 updating to 0.0.8-nightly.20260706.1783315823. The new binary boots cleanly on the production home (2 projects, ~1386 tx, parse_errors 0) in ~1.2s when started once on a drained port — the failure is purely the launchd/KeepAlive + EADDRINUSE port race, not a state/migration issue. Compounding factors: (a) a killed serving daemon leaves accepted-connection sockets in TIME_WAIT and the listener does not set SO_REUSEADDR, so a respawn during TIME_WAIT re-fails; (b) `orgasmic status` auto-spawns a competing daemon when it cannot reach one, which re-triggers the race during recovery.
-
-Manual workaround that works: launchctl bootout gui/$(id -u)/orgasmic.daemon -> pkill -9 -f "orgasmic serve" -> poll lsof :4848 until drained -> ln -sfn the new runtime dir to ~/.orgasmic/current -> launchctl bootstrap the plist -> verify via curl (not `orgasmic status`).
-
-Fix options (one or both):
-1. Make orgasmic update restart launchd-aware: detect the managing LaunchAgent, launchctl bootout it (KeepAlive stops), swap the runtime link, then launchctl bootstrap it — instead of stopping/starting the daemon process directly.
-2. Set SO_REUSEADDR (consider SO_REUSEPORT) on the daemon TCP listener so a fresh bind succeeds while a prior socket is in TIME_WAIT, closing the race window regardless of how the restart is driven.
-Also consider: orgasmic status should not auto-spawn a daemon during an update/restart window (or should be race-safe).
-
-Acceptance: `orgasmic update --channel nightly` succeeds end-to-end on a launchd-managed host (daemon returns on the new binary, KeepAlive intact, parse_errors 0) with no manual intervention; add a test or documented manual verification.

@@ -4200,3 +4200,98 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       File bug: orgasmic update not launchd-aware (KeepAlive + EADDRINUSE port race), observed updating local runtime to nightly 20260706; recovered via manual bootout/repoint-current/bootstrap.
 :END:
+
+
+* TX 2026-07-06 Mon 07:15:39 task.state_transitioned TASK-VXXQC
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1414
+:TIME:         [2026-07-06 Mon 07:15:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VXXQC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Fixed + verified live: stop_macos_launch_agent now verifies launchd unload before restart (75ddb4e). Cut nightly 0.0.8-nightly.20260706.1783321648 and ran orgasmic update --channel nightly for real on this host: succeeded end-to-end, no manual intervention, new pid/boot_id, parse_errors 0, single clean launchd job, port 4848 bound once.
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-06 Mon 07:16:29 task.edited TASK-VXXQC
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1415
+:TIME:         [2026-07-06 Mon 07:16:29]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VXXQC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/done.org
+:REASON:       edited task node TASK-VXXQC
+:NODE_ID:      TASK-VXXQC
+:END:
+
+* TX 2026-07-06 Mon 07:17:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1416
+:TIME:         [2026-07-06 Mon 07:17:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 07:17:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1417
+:TIME:         [2026-07-06 Mon 07:17:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 07:17:43 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1418
+:TIME:         [2026-07-06 Mon 07:17:43]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 07:17:43 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1419
+:TIME:         [2026-07-06 Mon 07:17:43]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 07:17:52 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1420
+:TIME:         [2026-07-06 Mon 07:17:52]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

@@ -11448,3 +11448,32 @@ Review: manager inline (operator-accepted review gate [2026-07-04]); diff correc
 
 QUALIFIED: the full live two-BROWSER two-MEMBER smoke with a real LLM-driven regenerate (goal Reached-When) exercises pre-existing WS-lock/hot-session machinery (already verified in 2ZQSB/RH4M5/DJGM5) and needs LLM creds; deferred to operator acceptance. The EDQPG code delta itself is fully covered deterministically by the new real-HTTP daemon test + vitest.
 
+* DONE TASK-VXXQC Make `orgasmic update` launchd-aware (or set SO_REUSEADDR on the daemon listener) :bug:cli:daemon:
+:PROPERTIES:
+:ID: TASK-VXXQC
+:END:
+
+`orgasmic update` (any channel) fails and rolls back on hosts where the daemon runs under a launchd LaunchAgent with KeepAlive=true (the maintainer Mac: ~/Library/LaunchAgents/orgasmic.daemon.plist, label orgasmic.daemon). update stops the running daemon and starts a new one directly, but launchd immediately respawns the OLD daemon and reoccupies 0.0.0.0:4848, so the new binary hits `bind: Address already in use` -> "daemon exited before becoming ready after 20s" -> runtime links rolled back. The tarball downloads fine into ~/.orgasmic/runtimes/<version>-<target>/; only the `current` symlink is reverted.
+
+Observed 2026-07-06 updating to 0.0.8-nightly.20260706.1783315823. The new binary boots cleanly on the production home (2 projects, ~1386 tx, parse_errors 0) in ~1.2s when started once on a drained port — the failure is purely the launchd/KeepAlive + EADDRINUSE port race, not a state/migration issue. Compounding factors: (a) a killed serving daemon leaves accepted-connection sockets in TIME_WAIT and the listener does not set SO_REUSEADDR, so a respawn during TIME_WAIT re-fails; (b) `orgasmic status` auto-spawns a competing daemon when it cannot reach one, which re-triggers the race during recovery.
+
+Manual workaround that works: launchctl bootout gui/$(id -u)/orgasmic.daemon -> pkill -9 -f "orgasmic serve" -> poll lsof :4848 until drained -> ln -sfn the new runtime dir to ~/.orgasmic/current -> launchctl bootstrap the plist -> verify via curl (not `orgasmic status`).
+
+Fix options (one or both):
+1. Make orgasmic update restart launchd-aware: detect the managing LaunchAgent, launchctl bootout it (KeepAlive stops), swap the runtime link, then launchctl bootstrap it — instead of stopping/starting the daemon process directly.
+2. Set SO_REUSEADDR (consider SO_REUSEPORT) on the daemon TCP listener so a fresh bind succeeds while a prior socket is in TIME_WAIT, closing the race window regardless of how the restart is driven.
+Also consider: orgasmic status should not auto-spawn a daemon during an update/restart window (or should be race-safe).
+
+Acceptance: `orgasmic update --channel nightly` succeeds end-to-end on a launchd-managed host (daemon returns on the new binary, KeepAlive intact, parse_errors 0) with no manual intervention; add a test or documented manual verification.
+** Evidence
+Root cause: stop_macos_launch_agent discarded launchctl bootout's result (let _ =); a failed/slow unload left the LaunchAgent loaded+KeepAlive-supervised, so killing the pid directly let launchd respawn it before the restart's own bootstrap, losing the EADDRINUSE race. Ruled out the SO_REUSEADDR theory: empirically confirmed tokio's TcpListener::bind already sets SO_REUSEADDR by default on this host (reuseaddr_probe test), so that was not the gap.
+
+Fix (crates/orgasmic-cli/src/daemon_service.rs, commit 75ddb4e): stop_macos_launch_agent now checks the job is actually loaded before bootout, requires bootout to succeed, and polls (bounded 5s) to confirm the unload completed before returning -- bailing with a clear error instead of silently racing a respawn. Not-currently-loaded (e.g. a bare orgasmic serve) is left untouched (no regression for non-launchd-managed daemons). Two new unit tests cover the bounded-wait helper via an injectable probe.
+
+Gates: cargo build -p orgasmic-cli clean; targeted + workspace cargo test green (one pre-existing unrelated flake under full-workspace concurrency, doctor::tests::daemon_staleness_warns_for_git_commits_since_boot, already tracked as TASK-SJQ9V -- passes standalone); cargo clippy --workspace --all-targets -D warnings clean; cargo fmt --check clean on the touched file.
+
+LIVE VERIFICATION (real production host, operator-approved): published nightly 0.0.8-nightly.20260706.1783321648 (commit 75ddb4e) via scripts/publish-runtime.sh --channel nightly (dry-run then live, all 4 targets + smoke green), then ran orgasmic update --channel nightly for real against this Mac's production ~/.orgasmic (launchd-managed, KeepAlive=true). Result: exit 0, no manual intervention. Daemon came back with a new pid (22998 -> 17253) and boot_id, on the new version, tx_count preserved (1387), parse_errors 0, exactly one launchd job in state=running, port 4848 bound exactly once by the new pid, cloudflared tunnel reconnected on its own. Old runtimes auto-pruned per dec_B4147 retention.
+
+Gotcha discovered mid-verification (recorded in gotchas.org + memory): overwriting an in-use codesigned macOS binary IN PLACE (same inode) causes ALL subsequent execs of that path to be silently SIGKILLed (exit 137, zero output) even though codesign --verify reports it valid on disk; delete-then-recreate (fresh inode) fixes it immediately. Not related to the shipped fix itself -- hit only because verification manually swapped the production binary file to test before the real nightly existed.
+
+Residual, out of scope for this task: the 'orgasmic status auto-spawns during an update window' compounding factor from the original filing was not addressed (no reproduction needed it once the launchd race was closed); left as a known follow-up if it resurfaces.
