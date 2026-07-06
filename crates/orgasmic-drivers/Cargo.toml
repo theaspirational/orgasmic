@@ -26,6 +26,7 @@ rmux-sdk = "0.5"
 
 [dev-dependencies]
 tempfile = "3"
+fs2 = { workspace = true }
 
 [lib]
 path = "src/lib.rs"

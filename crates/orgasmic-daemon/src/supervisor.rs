@@ -2462,6 +2462,30 @@ mod tests {
     use orgasmic_drivers::{modes::tmux, ClaudeAcpDriver, TmuxTuiDriver};
     use serde_json::json;
 
+    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
+    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
+    /// advisory flock on a shared temp path lets at most one run at a time,
+    /// cross-process. Held for the whole test via the returned guard.
+    fn live_session_guard() -> LiveSessionGuard {
+        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .expect("open live-session lock file");
+        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
+        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
+        LiveSessionGuard(file)
+    }
+
+    struct LiveSessionGuard(std::fs::File);
+    impl Drop for LiveSessionGuard {
+        fn drop(&mut self) {
+            let _ = fs2::FileExt::unlock(&self.0);
+        }
+    }
+
     fn make_supervisor() -> (Supervisor, tempfile::TempDir, WriterHandle) {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
@@ -3184,6 +3208,7 @@ mod tests {
 
     #[tokio::test]
     async fn tmux_terminal_event_releases_supervisor_run_and_session() {
+        let _live_guard = live_session_guard();
         if !tmux_spawn_usable_for_test().await || !command_available_for_test("bash") {
             eprintln!(
                 "skipping tmux_terminal_event_releases_supervisor_run_and_session: tmux/bash unavailable"

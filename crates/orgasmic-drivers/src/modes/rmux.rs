@@ -1617,6 +1617,30 @@ where
 mod tests {
     use super::*;
 
+    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
+    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
+    /// advisory flock on a shared temp path lets at most one run at a time,
+    /// cross-process. Held for the whole test via the returned guard.
+    fn live_session_guard() -> LiveSessionGuard {
+        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .expect("open live-session lock file");
+        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
+        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
+        LiveSessionGuard(file)
+    }
+
+    struct LiveSessionGuard(std::fs::File);
+    impl Drop for LiveSessionGuard {
+        fn drop(&mut self) {
+            let _ = fs2::FileExt::unlock(&self.0);
+        }
+    }
+
     fn ctx(run_id: &str, kind: RunKind) -> DriverContext {
         DriverContext {
             identity: RuntimeIdentity::new(run_id, "boot-test"),
@@ -1951,6 +1975,7 @@ mod tests {
     /// that streams from the same rmux session. Skipped without an rmux binary.
     #[tokio::test]
     async fn live_rmux_attach_reattaches_when_available() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!("skipping live_rmux_attach_reattaches_when_available: rmux binary not found");
@@ -2062,6 +2087,7 @@ mod tests {
     /// early so CI stays green; the honest inert path is covered above.
     #[tokio::test]
     async fn live_rmux_session_lifecycle_when_available() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!("skipping live_rmux_session_lifecycle_when_available: rmux binary not found");
@@ -2119,6 +2145,7 @@ mod tests {
     /// real rmux binary so CI stays green.
     #[tokio::test]
     async fn live_rmux_streams_output_and_completes_on_exit() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
@@ -2193,6 +2220,7 @@ mod tests {
     /// rmux binary.
     #[tokio::test]
     async fn live_rmux_render_path_streams_screen_and_completes() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
@@ -2265,6 +2293,7 @@ mod tests {
     /// appears — only when the pane process exits.
     #[tokio::test]
     async fn live_rmux_persistent_run_does_not_complete_on_eot_marker() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
@@ -2333,6 +2362,7 @@ mod tests {
     /// Persistent hot sessions complete when the pane process exits.
     #[tokio::test]
     async fn live_rmux_persistent_run_completes_on_process_exit() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
@@ -2395,6 +2425,7 @@ mod tests {
     /// Non-persistent dispatch runs still complete when the EOT marker appears.
     #[tokio::test]
     async fn live_rmux_non_persistent_dispatch_completes_on_eot_marker() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
@@ -2516,6 +2547,7 @@ mod tests {
     /// Skipped without a real rmux binary.
     #[tokio::test]
     async fn live_rmux_send_input_delivers_followup_turn() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
@@ -2604,6 +2636,7 @@ mod tests {
     /// Skipped without a real rmux binary.
     #[tokio::test]
     async fn live_rmux_send_input_rejects_while_harness_busy() {
+        let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
