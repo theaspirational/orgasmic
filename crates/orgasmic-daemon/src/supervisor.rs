@@ -122,6 +122,12 @@ pub struct AcquireRequest {
     pub role: String,
     pub project_id: Option<String>,
     pub worktree: Option<PathBuf>,
+    /// Dispatch artifact paths (`orgasmic dispatch` CLI-derived), carried
+    /// through to the `RunMeta` lifecycle event so a boot reattach can
+    /// respawn the dispatch completion watcher. `None` for non-dispatch
+    /// acquires (manager launch, recovery, stage launch, babysitter).
+    pub last_path: Option<PathBuf>,
+    pub stdout_path: Option<PathBuf>,
     /// Where the per-run JSONL lives. The supervisor opens this through
     /// the daemon writer so concurrent runs don't race on the file
     /// descriptor.
@@ -650,6 +656,8 @@ impl Supervisor {
             harness.clone(),
             req.project_id.clone(),
             req.worktree.clone(),
+            req.last_path.clone(),
+            req.stdout_path.clone(),
             req.driver_config.clone(),
         )
         .await?;
@@ -948,6 +956,8 @@ impl Supervisor {
             harness.clone(),
             req.project_id.clone(),
             req.worktree.clone(),
+            req.last_path.clone(),
+            req.stdout_path.clone(),
             req.driver_config.clone(),
         )
         .await?;
@@ -1094,6 +1104,8 @@ impl Supervisor {
         harness: Option<String>,
         project_id: Option<String>,
         worktree: Option<PathBuf>,
+        last_path: Option<PathBuf>,
+        stdout_path: Option<PathBuf>,
         driver_config: DriverConfig,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RunMeta {
@@ -1101,6 +1113,8 @@ impl Supervisor {
             harness,
             project_id,
             worktree,
+            last_path,
+            stdout_path,
             driver_config: driver_config.0,
         };
         self.writer
@@ -1395,6 +1409,8 @@ impl Supervisor {
             role: "babysitter".into(),
             project_id,
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: bs_path,
             driver_config,
             babysitter_target: Some(target_run.into()),
@@ -2506,6 +2522,8 @@ mod tests {
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.join(format!("{task}.jsonl")),
             driver_config: tmux::inert_config(),
             babysitter_target: None,
@@ -3368,6 +3386,8 @@ mod tests {
             role: "babysitter".into(),
             project_id: None,
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join(format!("{}.babysitter.jsonl", r1.run_id)),
             driver_config: tmux::inert_config(),
             babysitter_target: Some(r1.run_id.clone()),
@@ -3644,6 +3664,8 @@ mod tests {
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join("TASK-CONT.jsonl"),
             driver_config: orgasmic_drivers::adapters::claude::simulated_config(),
             babysitter_target: None,
@@ -3694,6 +3716,8 @@ mod tests {
             role: "babysitter".into(),
             project_id: None,
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join("bs.jsonl"),
             driver_config: tmux::inert_config(),
             babysitter_target: None,
@@ -3773,6 +3797,8 @@ mod tests {
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join("TASK-079.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -3814,6 +3840,8 @@ mod tests {
                 role: "implementer".into(),
                 project_id: Some("orgasmic".into()),
                 worktree: None,
+                last_path: None,
+                stdout_path: None,
                 session_path: dir.path().join(format!("spin-{idx}.jsonl")),
                 driver_config: tmux::inert_config(),
                 babysitter_target: None,
@@ -3858,6 +3886,8 @@ mod tests {
                     role: "babysitter".into(),
                     project_id: None,
                     worktree: None,
+                    last_path: None,
+                    stdout_path: None,
                     session_path: dir.path().join("held.babysitter.jsonl"),
                     driver_config: tmux::inert_config(),
                     babysitter_target: Some("external-target".into()),
@@ -3950,6 +3980,8 @@ mod tests {
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join("TASK-082.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -4022,6 +4054,8 @@ mod tests {
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join("TASK-083-BS-FIRST.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -4113,6 +4147,8 @@ mod tests {
             role: "implementer".into(),
             project_id: Some("orgasmic".into()),
             worktree: None,
+            last_path: None,
+            stdout_path: None,
             session_path: dir.path().join("TASK-083-DOUBLE.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,

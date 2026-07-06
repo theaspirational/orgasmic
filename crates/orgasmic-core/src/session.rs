@@ -266,6 +266,15 @@ pub enum Lifecycle {
         project_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         worktree: Option<PathBuf>,
+        /// Dispatch artifact paths (CLI-derived from the brief filename stem),
+        /// so a boot reattach can reconstruct a `DispatchCompletion` and
+        /// respawn the completion watcher that died with the old daemon
+        /// process. `None` for non-dispatch runs (manager, recovery, stage
+        /// launches) and for pre-upgrade session JSONL.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        last_path: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stdout_path: Option<PathBuf>,
         driver_config: Value,
     },
     Attach,
