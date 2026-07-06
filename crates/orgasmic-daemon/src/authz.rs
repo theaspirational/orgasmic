@@ -146,7 +146,11 @@ impl std::error::Error for Forbidden {}
 /// `project` is `None` only for actions that are never project-scoped; no
 /// action in the v1 member vocabulary qualifies, so a member identity with
 /// `project: None` always fails closed.
-pub fn require(identity: &Identity, project: Option<&str>, action: Action) -> Result<(), Forbidden> {
+pub fn require(
+    identity: &Identity,
+    project: Option<&str>,
+    action: Action,
+) -> Result<(), Forbidden> {
     if matches!(identity, Identity::Admin) {
         return Ok(());
     }
@@ -359,7 +363,15 @@ mod tests {
     #[test]
     fn event_visible_passes_project_less_payloads_when_topic_allowed() {
         let id = member(&[("proj-a", "viewer")]);
-        assert!(event_visible(&id, Topic::Board, &EventPayload::BoardRefreshed));
-        assert!(!event_visible(&id, Topic::Daemon, &EventPayload::DaemonHeartbeat));
+        assert!(event_visible(
+            &id,
+            Topic::Board,
+            &EventPayload::BoardRefreshed
+        ));
+        assert!(!event_visible(
+            &id,
+            Topic::Daemon,
+            &EventPayload::DaemonHeartbeat
+        ));
     }
 }

@@ -285,7 +285,9 @@ pub fn find_member_by_name(home: &Home, name: &str) -> Result<Option<MemberEntry
 /// password-hash lookup).
 pub fn find_member_by_token(home: &Home, token: &str) -> Result<Option<MemberEntry>> {
     let hash = sha256_hex(token.trim().as_bytes());
-    Ok(read_members(home)?.into_iter().find(|e| e.token_hash == hash))
+    Ok(read_members(home)?
+        .into_iter()
+        .find(|e| e.token_hash == hash))
 }
 
 #[cfg(test)]
@@ -303,12 +305,18 @@ mod tests {
         let entries = read_members(&home).unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].name, "alice");
-        assert_eq!(entries[0].grants, vec![("*".to_string(), "editor".to_string())]);
+        assert_eq!(
+            entries[0].grants,
+            vec![("*".to_string(), "editor".to_string())]
+        );
         assert_eq!(entries[0].token_hash, sha256_hex(token.as_bytes()));
         assert_ne!(entries[0].token_hash, token);
 
         let raw = std::fs::read_to_string(members_path(&home)).unwrap();
-        assert!(!raw.contains(&token), "plaintext token must never be persisted");
+        assert!(
+            !raw.contains(&token),
+            "plaintext token must never be persisted"
+        );
     }
 
     #[test]
@@ -335,7 +343,10 @@ mod tests {
         let token = add_member(&home, "alice", &[("*".into(), "editor".into())]).unwrap();
         let entries = read_members(&home).unwrap();
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].grants, vec![("*".to_string(), "editor".to_string())]);
+        assert_eq!(
+            entries[0].grants,
+            vec![("*".to_string(), "editor".to_string())]
+        );
         assert_eq!(entries[0].token_hash, sha256_hex(token.as_bytes()));
     }
 

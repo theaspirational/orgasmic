@@ -51,8 +51,8 @@ pub use marker::{
     should_skip_marker_path,
 };
 pub use members::{
-    add_member, find_member_by_name, find_member_by_token, read_members, revoke_member,
-    sha256_hex, MemberEntry,
+    add_member, find_member_by_name, find_member_by_token, read_members, revoke_member, sha256_hex,
+    MemberEntry,
 };
 pub use org::{
     wrap_raw_body, Heading, OrgError, OrgFile, OrgRewriter, PropertyDrawer, PropertyEntry,

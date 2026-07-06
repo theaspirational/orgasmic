@@ -171,8 +171,7 @@ mod tests {
 
     #[test]
     fn role_and_grant_combine_in_order() {
-        let grants =
-            build_grants(Some(RoleArg::Viewer), &["proj-a=editor".to_string()]).unwrap();
+        let grants = build_grants(Some(RoleArg::Viewer), &["proj-a=editor".to_string()]).unwrap();
         assert_eq!(
             grants,
             vec![

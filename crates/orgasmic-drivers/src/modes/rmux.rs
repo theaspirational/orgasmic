@@ -2319,7 +2319,10 @@ mod tests {
                 break;
             }
         }
-        assert!(saw_marker, "expected the rendered screen to carry the EOT marker");
+        assert!(
+            saw_marker,
+            "expected the rendered screen to carry the EOT marker"
+        );
         assert!(
             !saw_complete,
             "persistent run must not emit RunComplete when the marker appears"
@@ -2498,12 +2501,11 @@ mod tests {
     #[tokio::test]
     async fn wait_for_input_ready_returns_input_not_ready_on_timeout() {
         let timeout = Duration::from_millis(50);
-        let err =
-            wait_for_input_ready_with_capture(timeout, Duration::from_millis(10), || async {
-                Ok("streaming assistant output\n".to_string())
-            })
-            .await
-            .unwrap_err();
+        let err = wait_for_input_ready_with_capture(timeout, Duration::from_millis(10), || async {
+            Ok("streaming assistant output\n".to_string())
+        })
+        .await
+        .unwrap_err();
         assert!(matches!(err, DriverError::InputNotReady(_)));
     }
 
@@ -2524,7 +2526,8 @@ mod tests {
         const INITIAL: &str = "ORGASMIC_INITIAL_SENTINEL";
         const FOLLOWUP: &str = "ORGASMIC_FOLLOWUP_SENTINEL";
         let run_id = "run-send-input";
-        let harness = "while true; do echo '> ready'; IFS= read -r line || exit 0; echo \"ECHO:$line\"; done";
+        let harness =
+            "while true; do echo '> ready'; IFS= read -r line || exit 0; echo \"ECHO:$line\"; done";
         let d = driver();
         let cfg = DriverConfig::from_value(json!({
             "command": "sh",
@@ -2538,7 +2541,9 @@ mod tests {
             panic!("expected Ready, got {ev:?}");
         };
         if capabilities["inert"] == true {
-            eprintln!("skipping live_rmux_send_input_delivers_followup_turn: SDK degraded to inert");
+            eprintln!(
+                "skipping live_rmux_send_input_delivers_followup_turn: SDK degraded to inert"
+            );
             s.control.release("cleanup").await.unwrap();
             return;
         }
@@ -2548,16 +2553,18 @@ mod tests {
         let deadline = std::time::Instant::now() + Duration::from_secs(20);
         let mut pane = String::new();
         while std::time::Instant::now() < deadline {
-            pane = rmux_capture_pane(bin, &session_name).await.unwrap_or_default();
-            let dispatch_done = pane.contains("ECHO:run_id:") || pane.contains("ECHO:ORGASMIC_INITIAL");
+            pane = rmux_capture_pane(bin, &session_name)
+                .await
+                .unwrap_or_default();
+            let dispatch_done =
+                pane.contains("ECHO:run_id:") || pane.contains("ECHO:ORGASMIC_INITIAL");
             if dispatch_done && pane.lines().any(pane_has_input_prompt) {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
         assert!(
-            pane.contains(INITIAL)
-                && pane.lines().any(pane_has_input_prompt),
+            pane.contains(INITIAL) && pane.lines().any(pane_has_input_prompt),
             "harness should finish dispatch and show composer prompt, got {pane}"
         );
 
@@ -2574,7 +2581,9 @@ mod tests {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
-            pane = rmux_capture_pane(bin, &session_name).await.unwrap_or_default();
+            pane = rmux_capture_pane(bin, &session_name)
+                .await
+                .unwrap_or_default();
             if pane.contains(FOLLOWUP) {
                 break;
             }

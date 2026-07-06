@@ -5,8 +5,8 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:GOAL_ID:          goal-20260703-cut-the-graph
-:LIVENESS:         75ddb4e7c3ab9109833a2407b1dd6e11b7737ac8
+:GOAL_ID:          goal-20260706-drain-the-full
+:LIVENESS:         660858ec5a520a9b987232b62a408f15538dc898
 :LIVENESS_AT:      [2026-07-06]
 :UPDATED_AT:       [2026-07-06]
 :END:
@@ -49,14 +49,13 @@ Manager-owned snapshot at the start of goal-20260703-cut-the-graph. Prior goal g
 - [2026-07-06 Mon] TASK-VXXQC DONE (commit 75ddb4e, no active goal -- ad hoc operator-directed fix outside goal-20260703-cut-the-graph which is CLEARED). Root cause: stop_macos_launch_agent (crates/orgasmic-cli/src/daemon_service.rs) discarded launchctl bootout's result; a failed/slow unload left the LaunchAgent loaded+KeepAlive-supervised so killing the pid let launchd respawn it before the restart's own bootstrap, losing the EADDRINUSE race against orgasmic update. Ruled out the SO_REUSEADDR theory from the original filing (tokio's TcpListener::bind already sets it by default on this host, empirically verified). Fix: bootout is now required to succeed and its completion is verified with a bounded 5s poll before returning, failing loudly instead of racing a respawn; not-currently-loaded daemons (bare orgasmic serve) are untouched. 2 new unit tests. Gates green (build, targeted+workspace tests modulo the pre-existing TASK-SJQ9V flake, clippy -D warnings, fmt). LIVE VERIFICATION (operator-approved, real production host): published nightly 0.0.8-nightly.20260706.1783321648 via scripts/publish-runtime.sh --channel nightly (dry-run then live, 4 targets + smoke green), then ran orgasmic update --channel nightly for real -- exit 0, no manual intervention, daemon returned on a new pid/boot_id, tx_count preserved, parse_errors 0, single clean launchd job, port bound once. New gotcha recorded (gotchas.org + memory): overwriting an in-use codesigned macOS binary IN PLACE silently SIGKILLs all later execs of that path (fresh inode via rm+cp fixes it) -- hit only during manual pre-nightly verification, unrelated to the shipped fix.
 
 ** Next likely actions
-- GOAL goal-20260703-cut-the-graph is REACHED and CLEARED [2026-07-06] (tx-20260706-orgasmic-1406) — clear-and-pause, NO active goal. The final Reached-When (live two-browser two-member LLM smoke) PASSED; see the newest bullet at the top-level ** Done so far.
-- NEXT RECALL/RESUME: goal.org has no active heading -> STOP and ask the operator to set the next goal (orgasmic goal set). Do not auto-advance a task.
-- Post-goal backlog awaiting a goal to slot into: TASK-KTRHZ (rustfmt --all drift, 6 non-EDQPG files), TASK-A22TB (renderer fidelity), TASK-F9N5F (hot-session idle-timeout), TASK-567JG (reattach completion-watcher), TASK-X0ZVE (rmux flake), TASK-KBHAN (#+begin_ hardening), TASK-SJQ9V (doctor workspace flake), TASK-ZNQ8F (shipped-worker count); plus DJGM5 non-blocking follow-ups (write-affordance gating audit for read-only viewers; member live-session viewing UI).
-- [2026-07-06] Post-finalize: operator requested a nightly RUNTIME release (scripts/publish-runtime.sh --channel nightly) right after this handoff commit+push. If interrupted mid-release, resume there.
-- [2026-07-06 Mon] TASK-VXXQC closed. Still NO active goal (goal-20260703-cut-the-graph is CLEARED). Same standing post-goal backlog awaiting a goal to slot into: TASK-KTRHZ (rustfmt --all drift), TASK-A22TB (renderer fidelity), TASK-F9N5F (hot-session idle-timeout), TASK-567JG (reattach completion-watcher), TASK-X0ZVE (rmux flake), TASK-KBHAN (#+begin_ hardening), TASK-SJQ9V (doctor workspace flake), TASK-ZNQ8F (shipped-worker count); plus DJGM5 non-blocking follow-ups (write-affordance gating audit; member live-session viewing UI). NEXT RECALL/RESUME: still stop and ask the operator for the next goal; do not auto-advance a task.
+- [2026-07-06 Mon] NEW GOAL set: goal-20260706-drain-the-full (tx-20260706-orgasmic-1421) — drain all 10 open backlog tasks, one in flight at a time. Prior goal goal-20260703-cut-the-graph was REACHED+CLEARED. Relevance audit at goal-set: all 10 tasks verified as real, unfixed gaps (nothing stale/dropped); two are RED gates on main (ZNQ8F test panic 20 vs 19; KTRHZ rustfmt --all drift).
+- NEXT ACTION (task 1/10): TASK-ZNQ8F — confirm the 20th shipped worker (reviewer-claude-rmux.org, added with the template modernization) is intended-valid, then bump fixtures.rs:543 assertion 19->20; verify cargo test -p orgasmic-core green. Trivial, manager-inline candidate.
+- Queue order: 1 ZNQ8F, 2 KTRHZ (fmt), 3 TASK-567JG (reattach watcher, MEDIUM), 4 TASK-KBHAN (#+begin_ injection, LOW), 5 TASK-SJQ9V (doctor workspace flake), 6 TASK-X0ZVE (rmux render flake serial guard), 7 TASK-F9N5F (hot-session idle-timeout), 8 TASK-KNENN (docs: dispatch-through-workers rule), 9 TASK-A22TB (renderer fidelity, large/LOW), 10 TASK-P8ZSP (native Windows PATH, large — relevance contingent on Windows being a target; last so operator can reprioritize/cancel).
+- Implementer = implementer-claude-rmux (claude-sonnet-5 high); review = reviewer-claude-rmux (opus-4-8 xhigh) or manager inline opus review (accepted per 2026-07-04 ruling). Trivial housekeeping (ZNQ8F, KTRHZ) may be manager-inline.
 
 ** In flight
-- Nothing in flight. TASK-EDQPG (6/6) closed DONE [2026-07-05 Sun]; no open dispatches (dispatch-status empty), no worktrees but main, parse_errors 0.
+- Starting goal-20260706-drain-the-full [2026-07-06 Mon]. Nothing dispatched yet; first action is TASK-ZNQ8F (task 1/10). No open dispatches (dispatch-status empty), no worktrees but main, parse_errors 0.
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.

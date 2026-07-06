@@ -2,6 +2,34 @@
 #+orgasmic_version: 1
 #+scope: project
 
+* GOAL Drain the full backlog: 10 tasks, relevance-checked, one at a time :goal:
+:PROPERTIES:
+:ID:               goal-20260706-drain-the-full
+:SET_AT:           [2026-07-06 Mon]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:END:
+
+** Statement
+All 10 open backlog tasks were relevance-checked at goal-set [2026-07-06] — every one describes a real, unfixed gap (code/tests verified; none stale, none dropped). Two are RED gates on main right now (ZNQ8F test panic, KTRHZ rustfmt drift). Drain them in the order below, ONE task in flight at a time per the manager-dispatch convention, keeping WRITE_SCOPEs disjoint. Implementer = implementer-claude-rmux (claude-sonnet-5 high); review = reviewer-claude-rmux (claude-opus-4-8 xhigh) OR manager inline opus review (accepted per the 2026-07-04 ruling), manager's call per task by risk. Trivial housekeeping (ZNQ8F, KTRHZ) may be done inline by the manager.
+
+Order (green the baseline, then correctness, then flakes, then features/polish, heaviest last):
+1. TASK-ZNQ8F  green cargo test -p orgasmic-core: confirm the 20th shipped worker is legit, bump the count assertion 19->20 (fixtures.rs:543).
+2. TASK-KTRHZ  green cargo fmt --all --check: one cargo fmt --all housekeeping commit (6 files, no logic).
+3. TASK-567JG  (MEDIUM) respawn dispatch completion watcher on boot reattach; persist last_path/stdout_path/worktree in RunMeta so reattached runs write last.txt/stdout.log.
+4. TASK-KBHAN  (LOW) neutralize #+begin_/#+end_ block-marker injection in reviews.org comment bodies (escape_comment_message); keep escape invertible; round-trip test.
+5. TASK-SJQ9V  fix/harden doctor daemon-staleness test under cargo test --workspace concurrency; workspace green 3x.
+6. TASK-X0ZVE  serialize the live rmux/tmux render/paste tests (#[serial] or shared guard).
+7. TASK-F9N5F  hot-session artifactor idle-timeout (D3): reset-on-send_input release timer, config-defaulted.
+8. TASK-KNENN  docs: rule in orgasmic-tooling.org/contributing.org routing implement/dispatch requests through orgasmic workers, never raw provider CLIs; provider-model-effort -> worker-id mapping table.
+9. TASK-A22TB  (LOW, large) artifact renderer fidelity polish: spatial Canvas board, full wireframe icon set, inline AnnotatedCode bubbles, token-driven Mermaid themes, exercised rough.js.
+10. TASK-P8ZSP (large) native Windows PATH support (PowerShell/cmd, %USERPROFILE%). Relevance is contingent on Windows being a supported target — placed last so the operator can reprioritize or cancel before we reach it.
+
+For each: inspect the heading first, implement/dispatch only that task, verify its gates, update Evidence, close or cancel, then move to the next. parse_errors stays 0 throughout.
+
+** Reached When
+All 10 tasks (TASK-ZNQ8F, TASK-KTRHZ, TASK-567JG, TASK-KBHAN, TASK-SJQ9V, TASK-X0ZVE, TASK-F9N5F, TASK-KNENN, TASK-A22TB, TASK-P8ZSP) are DONE with per-task gates green, or explicitly CANCELLED/re-scoped with rationale in the heading. Baseline gates restored and staying green: cargo test -p orgasmic-core passes (ZNQ8F), cargo fmt --all --check clean (KTRHZ), cargo test --workspace green 3x consecutive from the dogfood checkout with the production daemon live (SJQ9V + X0ZVE). No task remains in TODO/IN_PROGRESS/IN_REVIEW. orgasmic status reports parse_errors 0.
+
 * CLEARED Cut the Graph page; ship the artifact review loop as the framework's visual surface :goal:
 :PROPERTIES:
 :ID:               goal-20260703-cut-the-graph

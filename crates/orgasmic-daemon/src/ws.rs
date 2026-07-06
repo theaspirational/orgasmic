@@ -136,7 +136,14 @@ pub async fn tmux_handler(
         match (target, force_mock) {
             (Some((kind, bin, session)), _) => {
                 serve_mux_session_socket(
-                    socket, kind, bin, session, run_id, allow_input, supervisor, shutdown,
+                    socket,
+                    kind,
+                    bin,
+                    session,
+                    run_id,
+                    allow_input,
+                    supervisor,
+                    shutdown,
                 )
                 .await
             }
