@@ -59,7 +59,7 @@ use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, DiffSummarizer, Supervisor,
+    BabysitterAutoSpawn, DiffSummarizer, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
@@ -2112,6 +2112,7 @@ async fn post_manager_launch(
                 // stalled worker. 0 disables both detectors.
                 stall_timeout_secs: Some(0),
                 max_run_duration_secs: Some(0),
+                idle_timeout_secs: None,
                 babysitter: None,
             },
         )
@@ -2465,6 +2466,7 @@ async fn post_stage(
                 babysitter_target: None,
                 stall_timeout_secs: worker.stall_timeout_secs,
                 max_run_duration_secs: worker.max_run_duration_secs,
+                idle_timeout_secs: None,
                 babysitter: None,
             },
         )
@@ -3552,6 +3554,14 @@ async fn spawn_worker_run(
                 babysitter_target: None,
                 stall_timeout_secs: worker.stall_timeout_secs,
                 max_run_duration_secs: worker.max_run_duration_secs,
+                // Only the persistent hot-session artifactor (rmux) spawn
+                // opts into idle release; every other dispatch (one-shot
+                // implementer/reviewer/etc.) stays exempt. Mirrors the same
+                // `persistent` condition `stage_driver_config_with_overrides`
+                // uses to flag the rmux driver_config as persistent.
+                idle_timeout_secs: (worker.kind == WorkerKind::Artifactor
+                    && worker.driver == "rmux")
+                    .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
                 babysitter,
             },
         )
@@ -5569,6 +5579,7 @@ async fn post_run_recover(
                         babysitter_target: None,
                         stall_timeout_secs: None,
                         max_run_duration_secs: None,
+                        idle_timeout_secs: None,
                         babysitter: None,
                     },
                 )
@@ -11195,6 +11206,7 @@ mod tests {
                     babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
+                    idle_timeout_secs: None,
                     babysitter: None,
                 },
             )
@@ -11233,6 +11245,7 @@ mod tests {
                     babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
+                    idle_timeout_secs: None,
                     babysitter: None,
                 },
             )
@@ -11271,6 +11284,7 @@ mod tests {
                     babysitter_target: None,
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
+                    idle_timeout_secs: None,
                     babysitter: None,
                 },
             )

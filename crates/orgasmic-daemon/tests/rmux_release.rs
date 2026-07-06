@@ -139,6 +139,7 @@ fn request(
         babysitter_target: None,
         stall_timeout_secs,
         max_run_duration_secs: Some(0),
+        idle_timeout_secs: None,
         babysitter: None,
     }
 }

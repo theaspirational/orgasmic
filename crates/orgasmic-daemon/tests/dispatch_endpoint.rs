@@ -2636,6 +2636,7 @@ async fn continuation_early_exit_auto_releases_stuck_lease() {
         babysitter_target: None,
         stall_timeout_secs: None,
         max_run_duration_secs: None,
+        idle_timeout_secs: None,
         babysitter: None,
     };
 
