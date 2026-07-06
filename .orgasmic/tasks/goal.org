@@ -2,12 +2,15 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Cut the Graph page; ship the artifact review loop as the framework's visual surface :goal:
+* CLEARED Cut the Graph page; ship the artifact review loop as the framework's visual surface :goal:
 :PROPERTIES:
 :ID:               goal-20260703-cut-the-graph
 :SET_AT:           [2026-07-03 Fri]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         goal-20260615-ship-the-editable
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-06 Mon]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
 :END:
 
 ** Statement

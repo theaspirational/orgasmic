@@ -4095,3 +4095,94 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       cargo fmt --all --check red on main independent of EDQPG; found at EDQPG integration 2026-07-05
 :END:
+
+* TX 2026-07-06 Mon 00:45:27 manager.clear_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1406
+:TIME:         [2026-07-06 Mon 00:45:27]
+:TYPE:         manager.clear_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       reached [2026-07-06]: all 6 artifact-queue tasks (M6146, ZEFEY, 2ZQSB, T25XQ, DJGM5, EDQPG) DONE with gates green + manager reviews (operator accepted inline reviews as the reviewer gate 2026-07-04); arch revised, drift clean, parse_errors 0. The final Reached-When condition — the live two-BROWSER two-MEMBER end-to-end smoke with a real LLM-driven regenerate — PASSED, manager-driven on an isolated daemon: editor(alice) generated a real artifactor artifact (v1 Sprint Board), viewer(bob) + editor pinned named comments live over WS, Regenerate archived v1 with consumed comments + extra prompt and rendered v2 clean (Blocked column + assignee names), version switcher browses archived v1 with its own consumed thread, capability gating held (viewer had no Regenerate), commenting locked live in both browsers during regen, tx log tells the story in order (created->submitted v1->2x comment.added->regenerated{consumed 2 CIDs,extra_prompt}->submitted v2). Operator chose clear-and-pause; no next goal set yet.
+:GOAL_ID:      goal-20260703-cut-the-graph
+:END:
+
+* TX 2026-07-06 Mon 00:46:37 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1407
+:TIME:         [2026-07-06 Mon 00:46:37]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 00:47:08 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1408
+:TIME:         [2026-07-06 Mon 00:47:08]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 00:47:08 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1409
+:TIME:         [2026-07-06 Mon 00:47:08]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 00:47:08 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1410
+:TIME:         [2026-07-06 Mon 00:47:08]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 00:47:09 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1411
+:TIME:         [2026-07-06 Mon 00:47:09]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-06 Mon 00:47:21 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1412
+:TIME:         [2026-07-06 Mon 00:47:21]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
