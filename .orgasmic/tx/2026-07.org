@@ -4186,3 +4186,17 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+
+* TX 2026-07-06 Mon 06:14:37 task.created TASK-VXXQC
+:PROPERTIES:
+:TX_ID:        tx-20260706-orgasmic-1413
+:TIME:         [2026-07-06 Mon 06:14:37]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VXXQC
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       File bug: orgasmic update not launchd-aware (KeepAlive + EADDRINUSE port race), observed updating local runtime to nightly 20260706; recovered via manual bootout/repoint-current/bootstrap.
+:END:
