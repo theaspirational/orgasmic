@@ -1,23 +1,6 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-P8ZSP Native Windows PATH support for the CLI (PowerShell/cmd, %USERPROFILE%)    :install:path:windows:platform:
-:PROPERTIES:
-:ID: TASK-P8ZSP
-:END:
-
-Extends dec_CKMW3 and dec_YKFZX. The current PATH-hardening is a POSIX-shell mechanism (env file sourced from ~/.*rc); native Windows shells do not read it. Make the CLI reachable on native Windows.
-
-Work required:
-- Home resolution: orgasmic-core Home::from_env uses $HOME; add %USERPROFILE% (and/or %ORGASMIC_HOME%) fallback for Windows.
-- Installer: install.sh is bash-only; provide a Windows install path (install.ps1 or equivalent) that downloads/places the runtime bundle.
-- PATH wiring: instead of a sourced sh env file, set the user PATH via PowerShell $PROFILE and/or setx / the User-PATH registry value; make it idempotent and reversible.
-- Binary linking: Windows symlinks need Developer Mode/privilege — fall back to copying the binary or a shim .cmd/.exe launcher into a bin dir on PATH.
-- CLI surfaces: path_env::relink_source_binary currently bails on non-unix; add Windows variants for `orgasmic path ensure`, `orgasmic doctor --fix`, and the doctor 'cli on PATH' finding.
-- Verification: confirm `orgasmic` resolves in a fresh PowerShell and cmd session.
-
-Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specifically native PowerShell/cmd.
-
 * BACKLOG TASK-KNENN Harden default instructions: route implementation through orgasmic workers, not raw provider CLIs    :conventions:agent-dx:
 :PROPERTIES:
 :ID: TASK-KNENN
@@ -52,20 +35,6 @@ TASK-Y2ZQJ hardened leading-* injection in comment bodies (escape_comment_messag
 Fix direction: extend the comment-body escaper (escape_comment_message / trim_and_unescape_comment_body in crates/orgasmic-daemon/src/artifacts.rs) to also neutralize lines beginning with #+begin_ / #+end_ (comma-prefix like the leading-* handling), or validate/reject them on write. Add a round-trip unit test with a comment body containing a #+begin_src ... #+end_src block and assert later comments in the same reviews.org still parse. Keep the escape invertible.
 
 Severity LOW: requires a member to author a comment containing a bare org block marker, and only hides subsequent comments (no privilege/flag escalation).
-
-* BACKLOG TASK-567JG Respawn dispatch completion watcher on boot reattach (no last.txt after daemon restart)    :daemon:dispatch:reattach:
-:PROPERTIES:
-:ID: TASK-567JG
-:SEVERITY: medium
-:END:
-
-Distinct second failure mode discovered while fixing TASK-B05AM (the stall-clobber, fixed in ed6a6fc). When the daemon restarts MID-RUN, the run is reattached (boot reconciliation, api::reattach_live_runs_on_boot) but the dispatch completion watcher — a tokio task spawned only at dispatch time (api.rs spawn_dispatch_completion_watcher, called only from the dispatch handler ~3453) — died with the old daemon process. No watcher is respawned for the reattached run, so when it later releases, write_dispatch_completion_artifacts is never called and NEITHER last.txt NOR stdout.log is written. Observed on TASK-Y2ZQJ (session had a 'reattach' lifecycle event; 15053 assistant chunks + run_complete present, yet no last.txt).
-
-Root cause: the session's RunMeta lifecycle event carries transport/harness/project_id/worktree/driver_config but NOT last_path/stdout_path (the dispatch artifact paths, derived CLI-side from the brief filename stem). So on reattach the daemon cannot reconstruct where to write the artifacts.
-
-Fix direction: persist last_path + stdout_path (and worktree_path) in the RunMeta lifecycle event at dispatch time; on boot reattach (reattach_live_runs_on_boot), reconstruct a DispatchCompletion from RunMeta and call spawn_dispatch_completion_watcher for each reattached worker/reviewer run. Add a test: reattach a run with RunMeta artifact paths, release it, assert last.txt is written. Until then, the harness transcript remains the rescue source for restart-mid-run dispatches.
-
-Workaround already in effect: prefer in-process agent reviewers over rmux dispatches while the report path is fragile; rescue from harness transcript when a dispatch loses its report.
 
 * BACKLOG TASK-X0ZVE Live rmux tests flake under parallel load (render_stream sentinel timing)    :tests:runtime:
 :PROPERTIES:

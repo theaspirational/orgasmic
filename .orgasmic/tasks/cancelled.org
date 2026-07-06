@@ -184,3 +184,23 @@ code expected unless gaps surface.
 - Existing repo documentation already describes the remote Linux path: install the daemon on the Linux host, supervise with =systemd --user=, keep daemon bind on =127.0.0.1=, connect from macOS by SSH tunnel, and treat remote project paths as owned by the remote daemon host. Prior TASK-GFKFW evidence also records this as documented-path-only and explicitly says the live Linux smoke was not run.
 - Current environment does not provide a designated remote Linux smoke target, token, or operator approval for one of the available SSH aliases. Running the smoke against an arbitrary host would be unsafe and outside the task evidence contract.
 - No code/doc gap surfaced inside the task scope; the missing ingredient is operator-provided remote infrastructure. Closing this queued item as CANCELLED rather than leaving an unactionable in-progress task.
+
+* CANCELLED TASK-P8ZSP Native Windows PATH support for the CLI (PowerShell/cmd, %USERPROFILE%) :install:path:windows:platform:
+:PROPERTIES:
+:ID: TASK-P8ZSP
+:END:
+
+Extends dec_CKMW3 and dec_YKFZX. The current PATH-hardening is a POSIX-shell mechanism (env file sourced from ~/.*rc); native Windows shells do not read it. Make the CLI reachable on native Windows.
+
+Work required:
+- Home resolution: orgasmic-core Home::from_env uses $HOME; add %USERPROFILE% (and/or %ORGASMIC_HOME%) fallback for Windows.
+- Installer: install.sh is bash-only; provide a Windows install path (install.ps1 or equivalent) that downloads/places the runtime bundle.
+- PATH wiring: instead of a sourced sh env file, set the user PATH via PowerShell $PROFILE and/or setx / the User-PATH registry value; make it idempotent and reversible.
+- Binary linking: Windows symlinks need Developer Mode/privilege — fall back to copying the binary or a shim .cmd/.exe launcher into a bin dir on PATH.
+- CLI surfaces: path_env::relink_source_binary currently bails on non-unix; add Windows variants for `orgasmic path ensure`, `orgasmic doctor --fix`, and the doctor 'cli on PATH' finding.
+- Verification: confirm `orgasmic` resolves in a fresh PowerShell and cmd session.
+
+Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specifically native PowerShell/cmd.
+** Evidence
+[2026-07-06 Mon] CANCELLED by operator decision during goal-20260706-drain-the-full. The task is technically valid (path_env::relink_source_binary still bails on non-unix; Home::from_env uses $HOME only), but native Windows (PowerShell/cmd) is NOT a supported target right now — WSL and Git-Bash/MSYS2 already work via the unix path. Re-file if/when native Windows becomes a target. No code shipped.
+
