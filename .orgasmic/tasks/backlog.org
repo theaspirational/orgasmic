@@ -14,25 +14,6 @@ Fix: add an explicit rule to `conventions/orgasmic-tooling.org` (and/or `contrib
 
 Scope: docs/conventions only; a worded rule + a short mapping table from "provider model effort" to worker id. No code. Consider whether the daemon should also surface workers more discoverably to agents.
 
-* BACKLOG TASK-X0ZVE Live rmux tests flake under parallel load (render_stream sentinel timing)    :tests:runtime:
-:PROPERTIES:
-:ID: TASK-X0ZVE
-:END:
-
-live_rmux_render_path_streams_screen_and_completes (modes/rmux.rs) failed once
-during the full orgasmic-drivers suite ("expected the rendered screen to carry
-the sentinel over render_stream", rmux.rs:2232), then passed 5/5 on re-run (3
-isolated + 2 full-suite at 122/122). Not a code regression — RCWFF did not touch
-the render path. The failure is real-rmux-daemon render_stream timing starved
-under concurrent live tests; RCWFF added two more live rmux tests
-(live_rmux_send_input_*) which raise concurrent daemon load and likely bump the
-trigger rate. Same CLASS as TASK-SJQ9V (parallel-only flake).
-
-Fix direction: serialize the live rmux/tmux tests (a shared serial guard / mutex,
-or a #[serial] attribute) so real-daemon render/paste tests don't contend, or
-raise the render sentinel wait deadline. Low priority; gate green single-threaded
-and on re-run.
-
 * BACKLOG TASK-F9N5F Hot-session artifactor: idle-timeout session lifetime (D3, deferred from TASK-RH4M5)    :artifacts:daemon:runtime:
 :PROPERTIES:
 :DEPENDS_ON: TASK-RH4M5

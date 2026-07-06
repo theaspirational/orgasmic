@@ -11546,3 +11546,24 @@ Acceptance: root cause identified and fixed (or the test hardened against worksp
 ** Evidence
 [2026-07-06 Mon] DONE (goal-20260706-drain-the-full 5/10; manager-rescue after aborting a runaway dispatch, then inline). Committed ce0a483. FIRST dispatch (run-20260706T123658, implementer-claude-rmux) was ABORTED (tx-1461): the brief over-emphasized 'reproduce first' against a rare stochastic flake, sending the worker into a runaway repro loop (112MB session, only DIAG scaffolding, no fix after ~1h) -- manager killed it. ROOT CAUSE (found by running cargo test --workspace and reading the actual failures): a cross-module env-var race in orgasmic-cli tests (TASK-BRXGG class), NOT just the one named test. (a) named test daemon_staleness_warns_for_git_commits_since_boot flaked on recent_daemon_code_commits's git subprocess under load -> fixed load-invariant: pinned GIT_AUTHOR/COMMITTER_DATE + started_at from a fixed instant (no wall clock), git env isolation in run_git (GIT_CONFIG_GLOBAL/SYSTEM=/dev/null, GIT_TERMINAL_PROMPT=0), bounded retry absorbing transient git-spawn failures. (b) the real cluster: env is process-global but daemon_client tests serialized env with a PRIVATE Mutex poisoning on panic (.lock().unwrap() -> PoisonError cascade), while 6 daemon-booting doctor tests read the same ORGASMIC_DAEMON_URL/token vars via production paths under NO guard -> concurrent daemon_client env mutations bled into doctor reads (Unavailable vs Unauthorized, home-token vs file-token). FIX: new src/test_support.rs = ONE poison-resilient env_guard (unwrap_or_else into_inner) + ScopedEnv, shared by both modules; the 6 doctor daemon-tests now take the shared guard + ScopedEnv::clear the daemon env. VERIFIED: 6x cargo test --workspace with production daemon live -> ZERO orgasmic-cli env-race failures (was ~1/3); cli suite 80 lib + integration green; clippy --workspace -D clean; fmt --all --check clean. The workspace is NOT yet green-3x -- remaining intermittent failures are a DIFFERENT family (live-tmux/rmux contention: real_tmux_early_exit_before_eot_is_failure, live_rmux_render_path_streams_screen_and_completes, real_tmux_prompt_bundle_is_consumed, tmux_ws_member_denied_stream_admin_allowed) = TASK-X0ZVE's domain. The goal reached-when pairs SJQ9V+X0ZVE for the final workspace-green-3x, verified after X0ZVE lands.
 
+* DONE TASK-X0ZVE Live rmux tests flake under parallel load (render_stream sentinel timing) :tests:runtime:
+:PROPERTIES:
+:ID: TASK-X0ZVE
+:END:
+
+live_rmux_render_path_streams_screen_and_completes (modes/rmux.rs) failed once
+during the full orgasmic-drivers suite ("expected the rendered screen to carry
+the sentinel over render_stream", rmux.rs:2232), then passed 5/5 on re-run (3
+isolated + 2 full-suite at 122/122). Not a code regression — RCWFF did not touch
+the render path. The failure is real-rmux-daemon render_stream timing starved
+under concurrent live tests; RCWFF added two more live rmux tests
+(live_rmux_send_input_*) which raise concurrent daemon load and likely bump the
+trigger rate. Same CLASS as TASK-SJQ9V (parallel-only flake).
+
+Fix direction: serialize the live rmux/tmux tests (a shared serial guard / mutex,
+or a #[serial] attribute) so real-daemon render/paste tests don't contend, or
+raise the render sentinel wait deadline. Low priority; gate green single-threaded
+and on re-run.
+** Evidence
+Merged d70af6f (worker e4bd43f). Cross-process advisory flock (fs2::FileExt::lock_exclusive on $TMPDIR/orgasmic-live-session-tests.lock) added as first stmt of all live tmux/rmux tests across 4 modules: orgasmic-drivers modes/tmux.rs (7 real_tmux_*), modes/rmux.rs (9 live_rmux_*), orgasmic-daemon api.rs (boot_reattach/recovery/post_artifact_regenerate x3/artifact_release_watcher/tmux_ws_member_denied) + supervisor.rs (tmux_terminal_event_releases). fs2 added to drivers dev-deps; .truncate(false) for clippy. Verify: cargo test -p orgasmic-drivers 125+5+25 pass; clippy --workspace --all-targets -D warnings clean; fmt clean. Worker ran cargo test --workspace 14x: X0ZVE flake class (real-tmux/rmux contention) GONE — zero failures across all 24 guarded tests every run. Residual workspace redness is 3 pre-existing out-of-scope orgasmic-cli flakes (dispatch_close_prunes_stem_dir_leaving_brief reproduces at baseline 88c0e94; doctor daemon_staleness_warns_for_git_commits_since_boot; content_lifecycle hub_install_list_remove) — tracked separately.
+
