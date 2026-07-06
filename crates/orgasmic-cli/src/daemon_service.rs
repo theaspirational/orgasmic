@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 
@@ -336,16 +337,68 @@ fn start_macos_launch_agent(home: &Home) -> Result<()> {
     Ok(())
 }
 
+// TASK-VXXQC: `bootout` used to be fire-and-forget (`let _ =`), so a failed or
+// slow unload left the LaunchAgent loaded and KeepAlive-supervised. The
+// caller then killed the pid directly, and launchd immediately respawned it
+// (RunAtLoad/KeepAlive) before our own restart got to `bootstrap`, so the new
+// binary lost the EADDRINUSE race. Verify the unload actually completed
+// (bounded poll) and fail loudly instead of racing a respawn.
+const MACOS_UNLOAD_TIMEOUT: Duration = Duration::from_secs(5);
+const MACOS_UNLOAD_POLL: Duration = Duration::from_millis(150);
+
 fn stop_macos_launch_agent(_home: &Home) -> Result<()> {
     let plist = macos_plist_path()?;
     let uid = current_uid();
     let domain = format!("gui/{uid}");
     let service = format!("{domain}/{MACOS_LABEL}");
-    let _ = run_command(
+
+    if !macos_service_loaded(&service) {
+        // Not currently launchd-managed (e.g. a bare `orgasmic serve`
+        // process, or a prior stop already unloaded it) — nothing to bootout.
+        let _ = run_command("launchctl", &["disable", &service]);
+        return Ok(());
+    }
+
+    run_command(
         "launchctl",
         &["bootout", &domain, plist.to_string_lossy().as_ref()],
-    );
+    )
+    .context("launchctl bootout")?;
+    wait_until_unloaded(
+        || macos_service_loaded(&service),
+        MACOS_UNLOAD_TIMEOUT,
+        MACOS_UNLOAD_POLL,
+    )
+    .with_context(|| {
+        format!(
+            "launchd still reports {service} loaded {}s after bootout; \
+             KeepAlive would respawn the old daemon and race the next bind",
+            MACOS_UNLOAD_TIMEOUT.as_secs()
+        )
+    })?;
     let _ = run_command("launchctl", &["disable", &service]);
+    Ok(())
+}
+
+fn macos_service_loaded(service: &str) -> bool {
+    command_success("launchctl", &["print", service])
+}
+
+/// Poll `is_loaded` until it reports false or `timeout` elapses. Takes a
+/// closure (rather than calling `launchctl` directly) so the bounded-wait
+/// logic is unit-testable without a real launchd.
+fn wait_until_unloaded(
+    mut is_loaded: impl FnMut() -> bool,
+    timeout: Duration,
+    poll: Duration,
+) -> Result<()> {
+    let deadline = Instant::now() + timeout;
+    while is_loaded() {
+        if Instant::now() >= deadline {
+            bail!("timed out after {}s", timeout.as_secs());
+        }
+        std::thread::sleep(poll);
+    }
     Ok(())
 }
 
@@ -676,6 +729,29 @@ mod tests {
             stderr: PathBuf::from("/Users/tester/Orgasmic Home/logs/daemon.err.log"),
             path: "/opt/homebrew/bin:/Users/tester/.cargo/bin:/Users/tester/.local/bin:/Users/tester/.npm-global/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".to_string(),
         }
+    }
+
+    #[test]
+    fn wait_until_unloaded_returns_once_probe_reports_unloaded() {
+        let mut calls = 0;
+        let result = wait_until_unloaded(
+            || {
+                calls += 1;
+                calls < 3
+            },
+            Duration::from_secs(5),
+            Duration::from_millis(1),
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn wait_until_unloaded_times_out_when_still_loaded() {
+        let result =
+            wait_until_unloaded(|| true, Duration::from_millis(20), Duration::from_millis(5));
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("timed out"), "{err}");
     }
 
     #[test]
