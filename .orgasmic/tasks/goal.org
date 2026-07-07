@@ -2,12 +2,32 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Harden the agent surface: battle-test queue, security first :goal:
+* CLEARED Worker-driven dispatch finalization: kill rmux report-loss at the root :goal:
+:PROPERTIES:
+:ID:               goal-20260707-worker-driven-dispatch-finalization-
+:SET_AT:           [2026-07-07 Tue]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-07 Tue]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
+:END:
+
+** Statement
+The rmux dispatch lane finalizes by scraping the TUI pane and guessing done-ness (EOT-marker scrollback + stall detection), which lost worker reports and stalled at commit prompts repeatedly across the hardening drain. Move finalization INSIDE the worker: give it an 'orgasmic dispatch finalize' CLI verb (per dec_3M7M0) that reports completion + summary + commit sha over the existing worker→daemon channel, and demote TUI-scrape/stall-guess to a fallback only. Implement TASK-WFW1N first.
+
+** Reached When
+TASK-WFW1N done: 'orgasmic dispatch finalize' verb exists (worker→daemon), dispatch records the worker-reported sha/summary/status without scraping; rmux scrape+stall demoted to fallback; a dispatch closes cleanly with the report intact (no transcript-recovery needed) on a live smoke; gates green; reviewer closed. Then reassess remaining backlog (TASK-KSD6D).
+
+* CLEARED Harden the agent surface: battle-test queue, security first :goal:
 :PROPERTIES:
 :ID:               goal-20260707-harden-the-agent
 :SET_AT:           [2026-07-07 Tue]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         goal-20260706-drain-the-full
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-07 Tue]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
 :END:
 
 ** Statement

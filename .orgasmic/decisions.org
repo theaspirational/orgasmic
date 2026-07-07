@@ -1876,3 +1876,25 @@ Grants, not a role column; actions, not role checks.
 - Deferred but cheap later through the same seam: custom role definitions (data-driven capability table, e.g. a roles.org), grant-edit CLI verbs (re-mint or hand-edit the host-local members.org for now), per-event fine-grained WS filtering, multiple roles per project (set union; the schema already tolerates it), groups/teams, per-artifact ACLs.
 
 Rejected: a global role scalar (cannot express per-project access at all); a rank ladder viewer<editor<admin (cannot express artifacts-only -- access shapes are sets, not ranks); gating only /artifacts/* (leaves the rest of the UI either open or needing a second mechanism later).
+
+* dec_3M7M0 Worker-driven dispatch finalization (worker calls orgasmic dispatch finalize; daemon stops scraping the TUI)
+:PROPERTIES:
+:ID: dec_3M7M0
+:END:
+
+Context
+TUI-driver dispatch (rmux, tmux) finalizes a run by inference: the daemon spawns the harness into a detached PTY pane and, from outside, (a) GUESSES "is it done?" from an EOT marker the agent is asked to print (with stall-detection as backup), (b) SCRAPES the report from the pane scrollback at release, and (c) has NO way to confirm the worktree commit landed. rmux is explicitly documented as an interactive probe, not a production dispatch lane, yet it is the claude dispatch lane. Three failure modes observed in the 2026-07-07 harden-the-agent session, all in FINALIZATION (never in the actual work, which was always correct + gates-green): total report loss (JJ9RD: no last.txt AND no stdout.log, run ended abnormally), commit-stall (4T80X: gates green + report written, but the git commit sat queued at the prompt unexecuted -> manager-rescued), and host resource-pressure process kills. TASK-B05AM (release-echo shadowing the transcript) and TASK-567JG (reattach persistence) fixed sub-cases; the CLASS remains because completion is inferred, not declared.
+
+Key observation: the worker ALREADY talks to the daemon for every write it makes (decision create, node prop set, tx record, artifact submit — the daemon is its write authority). Completion is the ONE fact the worker does not tell the daemon; the daemon is left watching the screen to infer it.
+
+Decision
+Move dispatch finalization INSIDE the worker. Add a worker-side CLI verb, orgasmic dispatch finalize (the worker-driven counterpart to the manager-side dispatch-close), which the worker calls as its terminal action. In one daemon call it: (1) commits the worktree (--commit) so commit-stall cannot exist (the commit is part of finalization); (2) writes last.txt from worker-authored --summary-file text (authoritative, not scraped scrollback); (3) emits the completion event (implementer.done / reviewer.done) and releases the lease over the same daemon channel the worker uses for all other writes. Bake "your contract ends with orgasmic dispatch finalize" into the worker PROMPT SPEC (implementer/reviewer personas), not just per-task briefs, so it is universal. Demote stall-detection + scrollback-scraping from PRIMARY completion signal to FALLBACK: if a finalize event arrived, do not scrape; stall-detection only fires "worker never finalized -> mark orphan for manager rescue". Optionally add a harness stop-hook that calls finalize if the worker forgot (belt-and-suspenders).
+
+This removes all three inferences ("is it done?", "what did it say?", "did it commit?") and gives ACP-grade determinism without migrating drivers. Applies to all TUI drivers (rmux/tmux); ACP drivers (codex-acp, claude-acp) already have a protocol lifecycle and remain the alternative long-term lane.
+
+Consequences
++ Deterministic finalization; commit-stall structurally impossible; report is authoritative worker text, never truncated scrollback.
++ Reuses the existing worker->daemon write channel; no new transport.
+- Does NOT help if the host KILLS the worker before it reaches finalize (resource-pressure deaths) — but nothing inside the worker can, and this BOUNDS the damage: reached finalize => everything durable; killed before => no finalize event (detectable) + uncommitted worktree (the rescuable state, not a silent loss). The daemon-side fallback + manager rescue remain the safety net for this residual.
+- Requires prompt-spec changes to every dispatched worker persona and a demotion of the current stall/scrape primary path.
+Complements the B05AM/567JG lineage by attacking the root (inference) rather than sub-cases.
