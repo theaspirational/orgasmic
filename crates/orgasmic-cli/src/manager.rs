@@ -734,6 +734,37 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         }
     }
 
+    // Order matters (reviewer #2): the terminal `*.done` tx is the LAST thing
+    // we emit, only after the durable artifacts (commit above, last.txt) and
+    // the lease release have all succeeded. If any earlier step fails or the
+    // process dies, no `done` tx is on record — the run stalls and is flagged
+    // orphan (rescuable), never a "done" claim with no report + a held lease.
+
+    // 1. Write last.txt verbatim — the run's own artifact path, resolved from
+    //    the daemon's live run record, never scraped scrollback.
+    let last_path = run.last_path.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "live run {} has no last_path (not a CLI dispatch run?)",
+            run.run_id
+        )
+    })?;
+    if let Some(parent) = last_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(&last_path, &summary)
+        .with_context(|| format!("write {}", last_path.display()))?;
+
+    // 2. Release the lease, marked finalized_by_worker so the completion
+    //    watcher suppresses its fallback scrape.
+    runtime.block_on(release_dispatch_run_with_reason(
+        &client,
+        &run.run_id,
+        &format!("worker finalize for {task}"),
+        &task,
+        true,
+    ))?;
+
+    // 3. Emit the terminal tx last.
     let tx_request = TxAppendRequest {
         request_id: Some(format!(
             "dispatch-finalize-{}-{}",
@@ -755,28 +786,6 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         tx_path: None,
     };
     let tx_response: TxAppendResponse = runtime.block_on(client.post_json("/tx", &tx_request))?;
-
-    // Write last.txt verbatim — the run's own artifact path, resolved from
-    // the daemon's live run record, never scraped scrollback.
-    let last_path = run.last_path.clone().ok_or_else(|| {
-        anyhow::anyhow!(
-            "live run {} has no last_path (not a CLI dispatch run?)",
-            run.run_id
-        )
-    })?;
-    if let Some(parent) = last_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    std::fs::write(&last_path, &summary)
-        .with_context(|| format!("write {}", last_path.display()))?;
-
-    runtime.block_on(release_dispatch_run_with_reason(
-        &client,
-        &run.run_id,
-        &format!("worker finalize for {task}"),
-        &task,
-        true,
-    ))?;
 
     println!(
         "finalized: {} {} tx={} run={} last={}",
@@ -912,10 +921,31 @@ async fn resolve_finalize_run(
 ) -> Result<LiveRunInfo> {
     let live = client.get::<LiveRunsResponse>("/runs").await?.live;
     if let Some(run_id) = run_id {
-        return live
+        let run = live
             .into_iter()
             .find(|run| run.run_id == run_id)
-            .ok_or_else(|| anyhow::anyhow!("no live run {run_id}; already released?"));
+            .ok_or_else(|| anyhow::anyhow!("no live run {run_id}; already released?"))?;
+        // Guard against finalizing a run that belongs to a different task or
+        // project than the one this invocation resolved (cross-run confusion /
+        // forge vector): the tx is stamped with `task`, so the target run's
+        // own task/project must agree before we write its last.txt + release
+        // its lease.
+        if run.task_id != task {
+            bail!(
+                "run {} belongs to task {}, not {task}; refusing to finalize",
+                run.run_id,
+                run.task_id
+            );
+        }
+        if let Some(run_project) = run.project_id.as_deref() {
+            if run_project != project_id {
+                bail!(
+                    "run {} belongs to project {run_project}, not {project_id}; refusing to finalize",
+                    run.run_id
+                );
+            }
+        }
+        return Ok(run);
     }
     let mut matches: Vec<LiveRunInfo> = live
         .into_iter()

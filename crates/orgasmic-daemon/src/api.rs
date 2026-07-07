@@ -4326,20 +4326,31 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 );
                 return;
             }
-            // The worker never finalized and the run stalled: do NOT
-            // synthesize a last.txt that would make this look like a normal
-            // completion. Flag it orphan instead so the manager can rescue
-            // it (acceptance #5, dec_3M7M0). This check must run BEFORE
-            // `dispatch_terminal_reached`: a stall release itself carries
+            // The worker never finalized and the run was killed by a timeout:
+            // do NOT synthesize a last.txt that would make this look like a
+            // normal completion. Flag it orphan instead so the manager can
+            // rescue it (acceptance #5, dec_3M7M0). This check must run BEFORE
+            // `dispatch_terminal_reached`: a timeout release carries
             // `ReleaseOutcome::Failed`, which `dispatch_terminal_reached`
             // treats as terminal, so nesting this inside the
             // `!dispatch_terminal_reached` branch (as originally written)
-            // made it unreachable — the stall release always short-circuited
+            // made it unreachable — the timeout release always short-circuited
             // straight to `write_dispatch_completion_artifacts` below.
-            if dispatch_release_reason(&envelopes).as_deref() == Some("stall_timeout_exceeded") {
+            //
+            // Key on ANY timeout reason, not just the stall string:
+            // `timed_out_run` also emits `max_run_duration_exceeded` and
+            // `idle_timeout_exceeded` (both `ReleaseOutcome::Failed`), and the
+            // persistent artifactor-rmux path disables stall entirely and uses
+            // idle — so matching only `stall_timeout_exceeded` would silently
+            // scrape those into a fabricated "done" report.
+            if dispatch_release_reason(&envelopes)
+                .as_deref()
+                .is_some_and(is_timeout_release_reason)
+            {
                 tracing::warn!(
                     run_id = %completion.run_id,
-                    "dispatch completion watcher: stall timeout with no worker finalize, flagging orphan"
+                    reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                    "dispatch completion watcher: timeout with no worker finalize, flagging orphan"
                 );
                 record_dispatch_orphaned(&state, &completion).await;
                 return;
@@ -4362,8 +4373,19 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
     });
 }
 
-/// Last `Lifecycle::Release` event's `reason`, if any — used to tell a stall
-/// timeout release apart from every other release path.
+/// True for every `timed_out_run` release reason (supervisor.rs): the run was
+/// killed by a deadline, not by the worker completing. All three are released
+/// as `ReleaseOutcome::Failed`, so the completion watcher must treat any of
+/// them (absent a worker finalize) as orphan rather than scrape a fake report.
+fn is_timeout_release_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
+    )
+}
+
+/// Last `Lifecycle::Release` event's `reason`, if any — used to tell a timeout
+/// release apart from every other release path.
 fn dispatch_release_reason(envelopes: &[SessionEnvelope]) -> Option<String> {
     envelopes.iter().rev().find_map(|envelope| {
         if envelope.kind != SessionEventKind::Lifecycle {
@@ -12561,6 +12583,26 @@ mod tests {
     /// `finalized_by_worker: false`).
     #[tokio::test]
     async fn stall_without_worker_finalize_flags_orphan_not_done() {
+        assert_timeout_without_finalize_flags_orphan("stall_timeout_exceeded").await;
+    }
+
+    /// Reviewer #1 regression: the orphan branch keyed on the literal
+    /// `"stall_timeout_exceeded"`, but `timed_out_run` also emits
+    /// `idle_timeout_exceeded` (the ONLY timeout the persistent artifactor-rmux
+    /// path can hit — it disables stall) and `max_run_duration_exceeded`. Those
+    /// were falling through to a synthesized last.txt (silently "done"). Assert
+    /// a non-stall timeout without finalize is also flagged orphan.
+    #[tokio::test]
+    async fn idle_timeout_without_worker_finalize_flags_orphan_not_done() {
+        assert_timeout_without_finalize_flags_orphan("idle_timeout_exceeded").await;
+    }
+
+    #[tokio::test]
+    async fn max_run_duration_without_worker_finalize_flags_orphan_not_done() {
+        assert_timeout_without_finalize_flags_orphan("max_run_duration_exceeded").await;
+    }
+
+    async fn assert_timeout_without_finalize_flags_orphan(release_reason: &str) {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -12574,7 +12616,7 @@ mod tests {
         std::fs::create_dir_all(&worktree).unwrap();
 
         let identity = RuntimeIdentity {
-            run_id: "run-orphan-test".into(),
+            run_id: format!("run-orphan-{release_reason}"),
             runtime_id: "rt-orphan-test".into(),
             boot_id: "boot-orphan-test".into(),
         };
@@ -12604,13 +12646,13 @@ mod tests {
             .unwrap();
         // No `Lifecycle::Release { finalized_by_worker: true, .. }` ever
         // lands — the worker never called `orgasmic dispatch finalize`.
-        // Instead the stall timeout releases the run itself, exactly as
+        // Instead a timeout releases the run itself, exactly as
         // `Supervisor::release_first_timed_out_run_after_candidate` does.
         writer
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::Release {
-                    reason: "stall_timeout_exceeded".into(),
+                    reason: release_reason.into(),
                     outcome: ReleaseOutcome::Failed,
                     finalized_by_worker: false,
                 })
@@ -12647,7 +12689,7 @@ mod tests {
         }
         assert!(
             tx_raw.contains("manager.dispatch_orphaned"),
-            "stall without worker finalize must record manager.dispatch_orphaned, got tx log: {tx_raw:?}"
+            "{release_reason} without worker finalize must record manager.dispatch_orphaned, got tx log: {tx_raw:?}"
         );
         assert!(
             tx_raw.contains(":TASK:         TASK-ORPHAN"),
@@ -12655,12 +12697,23 @@ mod tests {
         );
         assert!(
             !last_path.exists(),
-            "stall without worker finalize must never synthesize a last.txt (not silently marked done)"
+            "{release_reason} without worker finalize must never synthesize a last.txt (not silently marked done)"
         );
         assert!(
             !stdout_path.exists(),
-            "stall without worker finalize must never synthesize a stdout.log"
+            "{release_reason} without worker finalize must never synthesize a stdout.log"
         );
+    }
+
+    #[test]
+    fn is_timeout_release_reason_covers_all_timed_out_run_reasons() {
+        // Must stay in sync with `timed_out_run` (supervisor.rs).
+        assert!(is_timeout_release_reason("stall_timeout_exceeded"));
+        assert!(is_timeout_release_reason("idle_timeout_exceeded"));
+        assert!(is_timeout_release_reason("max_run_duration_exceeded"));
+        // A clean worker finalize / dispatch-close release is NOT a timeout.
+        assert!(!is_timeout_release_reason("worker finalize for TASK-ABC"));
+        assert!(!is_timeout_release_reason(""));
     }
 
     #[test]
