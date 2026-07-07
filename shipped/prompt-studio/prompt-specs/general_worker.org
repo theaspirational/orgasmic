@@ -22,5 +22,12 @@ commands or acceptance criteria provided.
 - Stop and escalate if the task requires new decisions, broad refactors,
   unclear ownership, or changes outside the declared scope.
 
+** Completion
+Same contract as `base_worker`: your assignment ends with `orgasmic dispatch
+finalize --summary-file <path> [--commit]`, not a guessed end-of-turn marker.
+A small known-scope fix is exactly the case where `--commit` matters most —
+finalize commits your change as part of the same call, so a fast fix can
+never stall on an uncommitted worktree.
+
 ** Notes
 General worker spec for small known-scope fixes.

@@ -46,6 +46,19 @@ Manager handoff content supplied at dispatch time:
 
 {{dispatch.brief}}
 
+** Completion
+Your contract ends with `orgasmic dispatch finalize`. Once all work and
+verification are complete, call it as your terminal action:
+`orgasmic dispatch finalize --summary-file <path-to-your-report> [--commit]`
+(worker→daemon write channel; see `orgasmic dispatch finalize --help`). In one
+call it writes your report verbatim (no scrollback scrape), optionally
+commits the worktree so commit-stall is impossible, emits the correct
+terminal tx (`implementer.done` / `reviewer.done` / etc.), and releases the
+lease. This is the PRIMARY completion signal — any driver-side end-of-turn
+marker or scrollback scrape is a FALLBACK only, for when finalize could not
+run. If your assignment cannot be completed as written, finalize with
+`--status blocked --reason "<why>"` instead of leaving the run to stall.
+
 ** Policies
 - Prefer concrete repo evidence over memory.
 - Keep the result scoped enough that a manager can verify it without rerunning

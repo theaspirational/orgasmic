@@ -685,9 +685,8 @@ struct LiveRunsResponse {
 pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<()> {
     let project_root = find_project_root()?;
     let project_id = read_project_id(&project_root)?;
-    let summary = std::fs::read_to_string(&args.summary_file).with_context(|| {
-        format!("read --summary-file {}", args.summary_file.display())
-    })?;
+    let summary = std::fs::read_to_string(&args.summary_file)
+        .with_context(|| format!("read --summary-file {}", args.summary_file.display()))?;
     if args.status == FinalizeStatus::Blocked
         && args
             .reason
@@ -766,8 +765,7 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         )
     })?;
     if let Some(parent) = last_path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("create {}", parent.display()))?;
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     std::fs::write(&last_path, &summary)
         .with_context(|| format!("write {}", last_path.display()))?;

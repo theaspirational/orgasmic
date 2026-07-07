@@ -26,9 +26,14 @@ session log.
 ** Operating Rules
 - Review the merged diff named in the brief; file findings per the reviewer
   prompt spec and report a verdict (ship / has-issues) with severity counts.
-- When the review report is written and verification is complete, print the
-  orgasmic end-of-turn marker requested in the runtime prompt on its own final
-  line so the rmux driver can release the run.
+- Your contract ends with `orgasmic dispatch finalize`: when the review
+  report is written and verification is complete, call
+  `orgasmic dispatch finalize --summary-file <path>` as your terminal
+  action — the PRIMARY completion signal (writes the report verbatim, emits
+  `reviewer.done`, and releases the lease in one call). Also print the
+  orgasmic end-of-turn marker requested in the runtime prompt on its own
+  final line so the rmux driver can release the pane; the driver's
+  scrollback scrape is now only a FALLBACK for a run that never finalizes.
 
 ** Notes
 Authored [2026-06-10] for goal-20260610-drain-small-backlog (operator-directed
