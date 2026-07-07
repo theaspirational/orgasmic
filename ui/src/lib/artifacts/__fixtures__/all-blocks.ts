@@ -184,7 +184,7 @@ Save --> Done([Widget re-renders])
       <option selected>Dark</option>
     </select>
   </label>
-  <div class="wf-card" style="display:flex;align-items:center;gap:8px">
+  <div class="wf-card" data-rough style="display:flex;align-items:center;gap:8px">
     <span data-icon="check"></span>
     <small class="wf-muted">Saved a moment ago</small>
   </div>

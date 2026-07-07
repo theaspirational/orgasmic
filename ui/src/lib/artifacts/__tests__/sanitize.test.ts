@@ -53,6 +53,29 @@ describe('substituteWireframeIcons', () => {
     const out = substituteWireframeIcons('<span data-icon="not-a-real-icon"></span>');
     expect(out).not.toContain('<svg');
   });
+
+  it('sources the mail icon path data from lucide-react, not the old hand-authored stand-in', () => {
+    const out = substituteWireframeIcons('<span data-icon="mail"></span>');
+    // lucide's "mail" icon (dist/esm/icons/mail.mjs): an envelope flap path
+    // starting "m22 7-8.991..." plus a 20x16 rx2 body rect — distinct from
+    // the previous hand-drawn "m3 7 9 6 9-6" / 18x14 rect stand-in.
+    expect(out).toContain('m22 7');
+    expect(out).toContain('width="20" height="16"');
+    expect(out).not.toContain('m3 7 9 6 9-6');
+  });
+
+  it('is case-insensitive and resolves every documented wireframe.md alias to a real icon', () => {
+    const names = [
+      'mail', 'email', 'lock', 'password', 'search', 'plus', 'add', 'x', 'close', 'check',
+      'chevronDown', 'chevronUp', 'chevronLeft', 'chevronRight', 'dots', 'more',
+      'chevron', 'caret', 'dropdown', 'user', 'settings', 'calendar', 'bell', 'send',
+      'edit', 'arrowLeft', 'arrowRight',
+    ];
+    for (const name of names) {
+      const out = substituteWireframeIcons(`<span data-icon="${name}"></span>`);
+      expect(out, `expected an svg for data-icon="${name}"`).toContain('<svg');
+    }
+  });
 });
 
 describe('renderableFragment (sanitize + icon substitution pipeline)', () => {
