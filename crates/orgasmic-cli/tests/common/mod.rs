@@ -20,6 +20,7 @@ pub fn write(path: &Path, contents: &str) {
     std::fs::write(path, contents).unwrap();
 }
 
+#[allow(dead_code)]
 const REQUIRED_SHIPPED: &[&str] = &[
     "project.org",
     "schema/tx.org",
@@ -44,6 +45,7 @@ const REQUIRED_SHIPPED: &[&str] = &[
     "skills/orgasmic/scaffold/conventions/orgasmic-tooling.org",
 ];
 
+#[allow(dead_code)]
 pub fn seed_required_shipped(source: &Path) {
     for rel in REQUIRED_SHIPPED {
         write(&source.join("shipped").join(rel), "# test fixture\n");
