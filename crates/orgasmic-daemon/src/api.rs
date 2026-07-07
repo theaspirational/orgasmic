@@ -7029,6 +7029,11 @@ pub struct GraphActionRequest {
     pub properties: BTreeMap<String, String>,
     #[serde(default)]
     pub reason: Option<String>,
+    /// Skip the write-time reference-token check (dec_4T80X / TASK-KSD6D)
+    /// for intentional forward references. The index-time dangling lint
+    /// still catches it.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -7407,6 +7412,18 @@ async fn mutate_graph_heading(
     req: GraphActionRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
     let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
+    if !req.force {
+        let known_ids = known_reference_ids(state, &project_id).await;
+        for (key, value) in &req.properties {
+            // Decision PARENT already has dedicated existence/class/cycle
+            // validation below (validate_decision_parent_property_update);
+            // don't double-reject it here with a weaker generic check.
+            if layer == GraphLayer::Decision && key == "PARENT" {
+                continue;
+            }
+            reject_unresolved_reference_token(&known_ids, key, value)?;
+        }
+    }
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
@@ -8485,6 +8502,11 @@ struct TaskCreateRequest {
     reason: Option<String>,
     #[serde(default)]
     request_id: Option<String>,
+    /// Skip the write-time reference-token check (dec_4T80X / TASK-KSD6D)
+    /// for intentional forward references. The index-time dangling lint
+    /// still catches it.
+    #[serde(default)]
+    force: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -8617,6 +8639,12 @@ async fn post_task_create(
     let project = snap
         .project(&project_id)
         .ok_or_else(|| project_not_found_error(&snap, &project_id))?;
+    if !req.force {
+        let known_ids = known_reference_ids(&state, &project_id).await;
+        for (key, value) in &req.properties {
+            reject_unresolved_reference_token(&known_ids, key, value)?;
+        }
+    }
     let task_id = resolve_task_create_id(&req)?;
     let stage = task_create_lifecycle_stage(&req)?;
     let path = task_create_target_path(&project.root);
@@ -13960,6 +13988,351 @@ mod tests {
             after
                 .lines()
                 .any(|line| line.contains("RELATES_TO") && line.contains("dec_002")),
+            "{after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// TASK-KSD6D sink 1: `mutate_graph_heading` (decision/architecture/
+    /// glossary revise) must front-run the same unresolvable-reference-token
+    /// class TASK-4T80X guarded on create + node-prop-set, write-nothing on
+    /// reject.
+    #[tokio::test]
+    async fn decision_revise_rejects_unresolved_reference_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice\n:PROPERTIES:\n:ID:                 dec_001\n:END:\n",
+        );
+        let original = std::fs::read_to_string(&decisions_path).unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/decisions/dec_001"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "properties": { "RELATES_TO": "some unresolvable prose" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(message.contains("RELATES_TO"), "{message}");
+        assert!(message.contains("some"), "{message}");
+        assert!(message.contains("space-separated node ids"), "{message}");
+
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert_eq!(after, original, "write-nothing on reject");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn decision_revise_force_writes_unresolved_reference_token_anyway() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice\n:PROPERTIES:\n:ID:                 dec_001\n:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/decisions/dec_001"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "force": true,
+                "properties": { "RELATES_TO": "dec_FAKE99" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "force write: {status} {body}");
+
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("RELATES_TO") && line.contains("dec_FAKE99")),
+            "{after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn decision_revise_accepts_resolvable_reference_and_non_reference_property() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n\
+* dec_001 Choice\n\
+:PROPERTIES:\n\
+:ID:                 dec_001\n\
+:END:\n\
+\n\
+* dec_002 Other choice\n\
+:PROPERTIES:\n\
+:ID:                 dec_002\n\
+:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/decisions/dec_001"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "properties": { "RELATES_TO": "dec_002", "PRIORITY": "P1" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(
+            status.is_success(),
+            "resolvable ref + plain property: {status} {body}"
+        );
+
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("RELATES_TO") && line.contains("dec_002")),
+            "{after}"
+        );
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("PRIORITY") && line.contains("P1")),
+            "{after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn architecture_revise_rejects_unresolved_reference_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let architecture_path = project_root.join(".orgasmic/architecture.org");
+        write(
+            architecture_path.clone(),
+            "#+title: architecture\n#+orgasmic_version: 1\n\n* arch_001 Component\n:PROPERTIES:\n:ID:                 arch_001\n:DEPENDS_ON:\n:MOTIVATED_BY:\n:END:\n",
+        );
+        let original = std::fs::read_to_string(&architecture_path).unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/architecture/arch_001"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "properties": { "DEPENDS_ON": "Expanded Routing Graph" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(message.contains("DEPENDS_ON"), "{message}");
+        assert!(message.contains("space-separated node ids"), "{message}");
+
+        let after = std::fs::read_to_string(&architecture_path).unwrap();
+        assert_eq!(after, original, "write-nothing on reject");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// TASK-KSD6D sink 2: `post_task_create` must front-run the same
+    /// unresolvable-reference-token class on DEPENDS_ON/IMPLEMENTS at
+    /// creation time, write-nothing on reject.
+    #[tokio::test]
+    async fn task_create_rejects_unresolved_reference_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let backlog_path = task_file_path(&project_root, "backlog.org");
+        let original = std::fs::read_to_string(&backlog_path).unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "title": "New task",
+                "properties": { "DEPENDS_ON": "TASK-FAKE1" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(message.contains("DEPENDS_ON"), "{message}");
+        assert!(message.contains("TASK-FAKE1"), "{message}");
+        assert!(message.contains("space-separated node ids"), "{message}");
+
+        let after = std::fs::read_to_string(&backlog_path).unwrap();
+        assert_eq!(after, original, "write-nothing on reject");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn task_create_force_writes_unresolved_reference_token_anyway() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let backlog_path = task_file_path(&project_root, "backlog.org");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "title": "New task",
+                "force": true,
+                "properties": { "DEPENDS_ON": "TASK-FAKE1" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "force write: {status} {body}");
+
+        let after = std::fs::read_to_string(&backlog_path).unwrap();
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("DEPENDS_ON") && line.contains("TASK-FAKE1")),
+            "{after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn task_create_accepts_resolvable_reference_and_non_reference_property() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let backlog_path = task_file_path(&project_root, "backlog.org");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/projects/orgasmic/tasks"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "title": "New task",
+                "properties": { "DEPENDS_ON": "TASK-PRE", "PRIORITY": "P1" }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(
+            status.is_success(),
+            "resolvable ref + plain property: {status} {body}"
+        );
+
+        let after = std::fs::read_to_string(&backlog_path).unwrap();
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("DEPENDS_ON") && line.contains("TASK-PRE")),
+            "{after}"
+        );
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("PRIORITY") && line.contains("P1")),
             "{after}"
         );
 
