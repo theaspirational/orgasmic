@@ -219,7 +219,7 @@ pub(crate) struct DispatchResponse {
     pub dispatch_tx_id: String,
 }
 
-fn path_segment(value: &str) -> String {
+pub(crate) fn path_segment(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {

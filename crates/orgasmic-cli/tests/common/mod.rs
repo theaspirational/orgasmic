@@ -52,6 +52,7 @@ pub fn seed_required_shipped(source: &Path) {
     }
 }
 
+#[allow(dead_code)]
 pub fn init_git_repo(repo: &Path) {
     std::fs::create_dir_all(repo).unwrap();
     run_git(repo, &["init"]);
@@ -59,6 +60,7 @@ pub fn init_git_repo(repo: &Path) {
     run_git(repo, &["config", "user.name", "Test User"]);
 }
 
+#[allow(dead_code)]
 pub fn run_git(repo: &Path, args: &[&str]) -> String {
     let output = Command::new("git")
         .arg("-C")
