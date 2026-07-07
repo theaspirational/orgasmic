@@ -34,8 +34,10 @@ export const BLOCK_TYPE_SET: ReadonlySet<string> = new Set(BLOCK_TYPES);
 
 /** Structural wrapper tags recognized only when nested inside a specific
  * parent block (Column inside Columns, Tab inside Tabs, Screen inside Canvas
- * or Prototype). Never valid at the document top level. */
-export const STRUCTURAL_WRAPPERS = ['Column', 'Tab', 'Screen'] as const;
+ * or Prototype, Connector/Annotation inside Canvas only — board-mode
+ * connectors between `<Screen id="...">` artboards and notes anchored to
+ * one). Never valid at the document top level. */
+export const STRUCTURAL_WRAPPERS = ['Column', 'Tab', 'Screen', 'Connector', 'Annotation'] as const;
 export type StructuralWrapper = (typeof STRUCTURAL_WRAPPERS)[number];
 
 export type AttrValue = string | number | boolean | null | AttrValue[] | { [key: string]: AttrValue };

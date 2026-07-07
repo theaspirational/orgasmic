@@ -81,6 +81,21 @@ export function isWireframeSurface(value: unknown): value is WireframeSurface {
   return typeof value === 'string' && value in SURFACE_FRAME;
 }
 
+/** Fixed pixel footprint per surface, used only by Canvas board mode (see
+ * Canvas.tsx). SURFACE_FRAME's `max-w-*`/responsive classes give a fluid
+ * gallery layout no fixed box to anchor connectors/annotations to, so board
+ * mode needs a deterministic width up front; height follows the same
+ * aspect ratio SURFACE_FRAME uses for browser/desktop/mobile, and is an
+ * estimate for popover/panel (content-sized surfaces) used only to size the
+ * board container before the real DOM rect is measured post-mount. */
+export const SURFACE_BOARD_SIZE: Record<WireframeSurface, { width: number; height: number }> = {
+  browser: { width: 460, height: 288 },
+  desktop: { width: 520, height: 325 },
+  mobile: { width: 220, height: 464 },
+  popover: { width: 200, height: 140 },
+  panel: { width: 240, height: 220 },
+};
+
 /** The chrome around a wireframe/canvas artboard: the surface preset picks
  * footprint + aspect (never author-controlled width/height/coordinates, per
  * wireframe.md), with a minimal browser/mobile chrome bar and no decorative
