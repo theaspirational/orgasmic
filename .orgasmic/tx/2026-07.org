@@ -8430,3 +8430,207 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-07 Tue 23:20:48 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1688
+:TIME:         [2026-07-07 Tue 23:20:48]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 23:20:48 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1689
+:TIME:         [2026-07-07 Tue 23:20:48]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 23:24:52 task.state_transitioned TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1690
+:TIME:         [2026-07-07 Tue 23:24:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-DWJVH to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-07 Tue 23:24:52 manager.dispatch_started TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1691
+:TIME:         [2026-07-07 Tue 23:24:52]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-dwjvh/worktree
+:BRANCH:       task-dwjvh-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-dwjvh/task-dwjvh-brief.md
+:STARTED_AT:   [2026-07-07 Tue 23:24:52]
+:LIVENESS:     1ca63bd81dc4460bc21bbaf90a2cd2debde0ae4a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-sonnet-5
+:EFFORT:       high
+:REASON_INITIAL: Drain backlog goal: DWJVH code items — finalize caller-identity ownership check + stall-race resilience + blocked-status test; part-1 live smoke publish-deferred
+:END:
+
+* TX 2026-07-07 Tue 23:24:52 run.created TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1692
+:TIME:         [2026-07-07 Tue 23:24:52]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DWJVH-implementer-20260707T232452.jsonl
+:REASON:       Drain backlog goal: DWJVH code items — finalize caller-identity ownership check + stall-race resilience + blocked-status test; part-1 live smoke publish-deferred
+:RUN_ID:       run-20260707T232452-e0144e377b564e8f99dd490ac6433360
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-dwjvh/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-dwjvh/task-dwjvh-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-dwjvh/task-dwjvh-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-dwjvh/task-dwjvh-stdout.log
+:DISPATCH_TX:  tx-20260707-orgasmic-1691
+:MODEL_OVERRIDE: claude-sonnet-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-07 Tue 23:25:01 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1693
+:TIME:         [2026-07-07 Tue 23:25:01]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 23:49:08 implementer.commit_pending TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1694
+:TIME:         [2026-07-07 Tue 23:49:08]
+:TYPE:         implementer.commit_pending
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-DWJVH-implementer-20260707T232452.jsonl
+:REASON:       implementer dispatch completed with uncommitted worktree
+:RUN_ID:       run-20260707T232452-e0144e377b564e8f99dd490ac6433360
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-dwjvh/worktree
+:HAS_UNCOMMITTED: yes
+:END:
+
+* TX 2026-07-07 Tue 23:49:11 implementer.done TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1695
+:TIME:         [2026-07-07 Tue 23:49:11]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:MODEL:        claude-sonnet-5
+:EFFORT:       high
+:MERGE_SHA:    14a79c0
+:BRANCH:       task-dwjvh-impl
+:CLOSED_TX:    tx-20260707-orgasmic-1691
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-07 Tue 23:49:11 task.state_transitioned TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1696
+:TIME:         [2026-07-07 Tue 23:49:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-DWJVH to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-07 Tue 23:49:12 task.created TASK-SQE9P
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1697
+:TIME:         [2026-07-07 Tue 23:49:12]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SQE9P
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-SQE9P
+:END:
+
+* TX 2026-07-07 Tue 23:49:22 task.state_transitioned TASK-DWJVH
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1698
+:TIME:         [2026-07-07 Tue 23:49:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DWJVH
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged 14a79c0. Code items DONE: (A) finalize caller-identity ownership check via shared check_ownership (send_input parity, 409 on mismatch); (B) stall-sweep race resilience — already-released (404) run whose worker committed+wrote last.txt still records done, no done+orphan contradiction; (C) --status blocked (manager.dispatch_aborted) + reason-required integration tests. Gates green (daemon 3 ownership tests, cli 2 integration + classifier, clippy -D, fmt) independently on merged main. Part-1 live rmux prompt-spec smoke re-scoped to TASK-SQE9P (publish-gated, deferred until runtime publish).
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-07 Tue 23:49:44 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1699
+:TIME:         [2026-07-07 Tue 23:49:44]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 23:49:44 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1700
+:TIME:         [2026-07-07 Tue 23:49:44]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
