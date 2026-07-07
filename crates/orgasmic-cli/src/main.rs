@@ -44,7 +44,7 @@ use crate::daemon_client::DaemonClient;
 use crate::doctor::Finding;
 use crate::goal::{cmd_goal, GoalCmd};
 use crate::home::Home;
-use crate::manager::{DispatchArgs, DispatchCloseArgs, DispatchStatusArgs};
+use crate::manager::{DispatchArgs, DispatchCloseArgs, DispatchFinalizeArgs, DispatchStatusArgs};
 use crate::member::{cmd_member, MemberCmd};
 use crate::node::{cmd_node, NodeCmd};
 
@@ -225,6 +225,12 @@ Examples:
     Manager {
         #[command(subcommand)]
         cmd: ManagerCmd,
+    },
+    /// Worker-driven dispatch surface (dec_3M7M0) — the worker-authority
+    /// counterpart to `manager dispatch-close`'s manager authority.
+    Dispatch {
+        #[command(subcommand)]
+        cmd: DispatchCmd,
     },
     /// Tx append/list through the daemon.
     Tx {
@@ -766,6 +772,15 @@ enum ManagerCmd {
 }
 
 #[derive(Subcommand, Debug)]
+enum DispatchCmd {
+    /// Worker-declared dispatch completion (dec_3M7M0): commits the worktree
+    /// (--commit), writes last.txt verbatim from --summary-file, emits the
+    /// terminal tx, and releases the lease — in one daemon call, over the
+    /// same channel the worker uses for every other write.
+    Finalize(DispatchFinalizeArgs),
+}
+
+#[derive(Subcommand, Debug)]
 enum QuestionCmd {
     /// Ask a blocking question through the daemon.
     Ask {
@@ -911,6 +926,7 @@ fn main() -> Result<()> {
         Cmd::Optional { cmd } => cmd_optional(&home, cmd),
         Cmd::Hub { cmd } => cmd_hub(&home, cmd),
         Cmd::Manager { cmd } => cmd_manager(&home, cmd),
+        Cmd::Dispatch { cmd } => cmd_dispatch_top(&home, cmd),
         Cmd::Tx { cmd } => cmd_tx(&home, cmd),
         Cmd::Goal { cmd } => cmd_goal(&home, cmd),
         Cmd::Recovery { cmd } => match cmd.unwrap_or(RecoveryCmd::Status) {
@@ -2399,6 +2415,12 @@ fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
                 Ok::<(), anyhow::Error>(())
             })
         }
+    }
+}
+
+fn cmd_dispatch_top(home: &Home, cmd: DispatchCmd) -> Result<()> {
+    match cmd {
+        DispatchCmd::Finalize(args) => manager::cmd_dispatch_finalize(home, args),
     }
 }
 

@@ -17,6 +17,15 @@
 :VERSION:                     1
 :END:
 
+** Operating Rules
+- Your contract ends with `orgasmic dispatch finalize`: when all work and
+  verification are complete, call
+  `orgasmic dispatch finalize --summary-file <path> [--commit]` as your
+  terminal action — the PRIMARY completion signal (writes the report
+  verbatim, optionally commits, emits `implementer.done`, and releases the
+  lease in one call). The rmux driver's own end-of-turn detection is now
+  only a FALLBACK for a run that never finalizes.
+
 ** Notes
 The =rmux= driver is a bounded smoke proof (TASK-AJZCK), not a production
 replacement for =tmux=. It requires a separately provisioned =rmux= daemon

@@ -263,6 +263,16 @@ struct RunRecord {
     identity: RuntimeIdentity,
     session_path: PathBuf,
     babysitter_target: Option<String>,
+    /// Dispatch artifact paths (`orgasmic dispatch` CLI-derived), mirroring
+    /// [`AcquireRequest::last_path`]/[`AcquireRequest::stdout_path`]. Exposed
+    /// on [`RunSummary`] so `orgasmic dispatch finalize` can resolve the
+    /// exact report path for the current run without scanning `.orgasmic/tx`
+    /// (which a worker's worktree checkout cannot see live daemon writes to).
+    /// `None` for non-dispatch runs and for reattached runs (no `AcquireRequest`
+    /// carries them across a reattach; `set_dispatch_artifact_paths` backfills
+    /// them for boot reattach when the persisted `RunMeta` event has them).
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -804,6 +814,7 @@ impl Supervisor {
                 let release = Lifecycle::Release {
                     reason: "driver stream closed".into(),
                     outcome: terminal_outcome.unwrap_or(ReleaseOutcome::Interrupted),
+                    finalized_by_worker: false,
                 };
                 let _ = writer
                     .append_session(SessionAppend {
@@ -833,6 +844,8 @@ impl Supervisor {
             identity: identity.clone(),
             session_path: req.session_path.clone(),
             babysitter_target: req.babysitter_target.clone(),
+            last_path: req.last_path.clone(),
+            stdout_path: req.stdout_path.clone(),
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1060,6 +1073,8 @@ impl Supervisor {
             identity: identity.clone(),
             session_path: std::mem::take(&mut req.session_path),
             babysitter_target: req.babysitter_target.clone(),
+            last_path: req.last_path.clone(),
+            stdout_path: req.stdout_path.clone(),
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1377,6 +1392,12 @@ impl Supervisor {
             identity: identity.clone(),
             session_path,
             babysitter_target: None,
+            // Reattach carries no `AcquireRequest`, so these start empty; the
+            // boot auto-reattach caller backfills them via
+            // `set_dispatch_artifact_paths` when the persisted `RunMeta` event
+            // has dispatch artifact paths.
+            last_path: None,
+            stdout_path: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1615,11 +1636,37 @@ impl Supervisor {
         reason: &str,
         outcome: ReleaseOutcome,
     ) -> Result<(), SupervisorError> {
-        let released = self.release_one(run_id, reason, outcome).await?;
+        self.release_with_finalization(run_id, reason, outcome, false)
+            .await
+    }
+
+    /// Same as [`Supervisor::release`], but lets the caller record that the
+    /// worker itself declared completion (`orgasmic dispatch finalize`,
+    /// dec_3M7M0) before this release, over the same daemon channel used for
+    /// every other write. Persisted on the `Lifecycle::Release` event so the
+    /// dispatch completion watcher — which may not observe the release until
+    /// after this call returns — can tell a worker-declared completion apart
+    /// from every other release path (stall timeout, manual cancel, driver
+    /// terminal event) and skip its scrollback-scrape fallback.
+    pub async fn release_with_finalization(
+        &self,
+        run_id: &str,
+        reason: &str,
+        outcome: ReleaseOutcome,
+        finalized_by_worker: bool,
+    ) -> Result<(), SupervisorError> {
+        let released = self
+            .release_one(run_id, reason, outcome, finalized_by_worker)
+            .await?;
         if released.kind == RunKind::Worker {
             if let Some(bs_run_id) = released.babysitter_run_id {
                 let cascade_reason = format!("cascade from implementer {run_id}");
-                if let Err(e) = self.release_one(&bs_run_id, &cascade_reason, outcome).await {
+                // The babysitter itself never finalizes; only the implementer
+                // run it observes does.
+                if let Err(e) = self
+                    .release_one(&bs_run_id, &cascade_reason, outcome, false)
+                    .await
+                {
                     if !matches!(e, SupervisorError::RunNotFound(_)) {
                         warn!(
                             error = %e,
@@ -1639,6 +1686,7 @@ impl Supervisor {
         run_id: &str,
         reason: &str,
         outcome: ReleaseOutcome,
+        finalized_by_worker: bool,
     ) -> Result<ReleasedRun, SupervisorError> {
         let (
             task_id,
@@ -1698,6 +1746,7 @@ impl Supervisor {
         let evt = Lifecycle::Release {
             reason: reason.into(),
             outcome: final_outcome,
+            finalized_by_worker,
         };
         self.writer
             .append_session(SessionAppend {
@@ -1735,11 +1784,32 @@ impl Supervisor {
                 session_path: rec.session_path.clone(),
                 babysitter_target: rec.babysitter_target.clone(),
                 event_count: rec.next_event_seq,
+                last_path: rec.last_path.clone(),
+                stdout_path: rec.stdout_path.clone(),
             })
             .collect();
         SupervisorSnapshot {
             acquisition_paused: g.acquisition_paused,
             runs,
+        }
+    }
+
+    /// Backfill dispatch artifact paths onto an already-live `RunRecord`.
+    /// `AcquireRequest` populates these at acquire time, but `reattach` takes
+    /// no `AcquireRequest`; boot auto-reattach calls this once it has read
+    /// them back out of the persisted `RunMeta` lifecycle event, so a
+    /// reattached dispatch run is still resolvable by `orgasmic dispatch
+    /// finalize`. A no-op if the run is no longer live.
+    pub async fn set_dispatch_artifact_paths(
+        &self,
+        run_id: &str,
+        last_path: PathBuf,
+        stdout_path: PathBuf,
+    ) {
+        let mut g = self.inner.lock().await;
+        if let Some(rec) = g.runs.get_mut(run_id) {
+            rec.last_path = Some(last_path);
+            rec.stdout_path = Some(stdout_path);
         }
     }
 
@@ -2213,6 +2283,15 @@ pub struct RunSummary {
     pub session_path: PathBuf,
     pub babysitter_target: Option<String>,
     pub event_count: u64,
+    /// Dispatch artifact paths, when this is a CLI-dispatched run (`None`
+    /// for manager/recovery/stage runs). `orgasmic dispatch finalize`
+    /// resolves the report path for the current run from this field rather
+    /// than scanning `.orgasmic/tx`, which a worker's own worktree checkout
+    /// cannot see live daemon writes to.
+    #[serde(default)]
+    pub last_path: Option<PathBuf>,
+    #[serde(default)]
+    pub stdout_path: Option<PathBuf>,
 }
 
 fn make_run_id(kind: &RunKind) -> String {
@@ -2380,6 +2459,7 @@ async fn finish_driver_terminal_release(writer: &WriterHandle, release: Terminal
     let evt = Lifecycle::Release {
         reason: "driver terminal event".into(),
         outcome: release.outcome,
+        finalized_by_worker: false,
     };
     let _ = writer
         .append_session(SessionAppend {

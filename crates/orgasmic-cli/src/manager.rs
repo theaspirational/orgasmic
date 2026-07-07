@@ -140,6 +140,64 @@ pub struct LeaseReleaseArgs {
     pub kind: String,
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+pub enum FinalizeStatus {
+    Done,
+    Blocked,
+}
+
+impl FinalizeStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Done => "done",
+            Self::Blocked => "blocked",
+        }
+    }
+}
+
+/// Worker-driven dispatch finalization (dec_3M7M0): the terminal action a
+/// dispatched worker takes instead of relying on the daemon to infer
+/// completion from an EOT marker + scrollback scrape. In one daemon call it
+/// commits the worktree (`--commit`), writes `last.txt` verbatim from
+/// `--summary-file`, emits the terminal tx, and releases the lease.
+#[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+Examples:
+  orgasmic dispatch finalize --summary-file /tmp/report.md --commit
+  orgasmic dispatch finalize --run-id run-20260707T211315-19f5642cbf2d4fafbc8dabf834c95f5b \\
+    --summary-file /tmp/report.md --commit
+  orgasmic dispatch finalize --status blocked --reason \"brief impossible as written\" \\
+    --summary-file /tmp/report.md")]
+pub struct DispatchFinalizeArgs {
+    /// Run id to finalize. Defaults to auto-resolving the single live run
+    /// whose task matches (see --task) via the daemon's live run list —
+    /// robust against a worker's own worktree checkout never seeing the
+    /// live `.orgasmic/tx` writes the manager's checkout has.
+    #[arg(long = "run-id")]
+    pub run_id: Option<String>,
+    /// Task id used for auto-resolving --run-id. Defaults to deriving it
+    /// from the current git branch (e.g. task-wfw1n-impl -> TASK-WFW1N).
+    #[arg(long)]
+    pub task: Option<String>,
+    /// Worker-authored report text. Written verbatim to last.txt — never
+    /// scraped scrollback (acceptance #1).
+    #[arg(long = "summary-file")]
+    pub summary_file: PathBuf,
+    /// Commit the worktree as part of finalize, so commit-stall is
+    /// structurally impossible (acceptance #2).
+    #[arg(long)]
+    pub commit: bool,
+    #[arg(long, value_enum, default_value = "done")]
+    pub status: FinalizeStatus,
+    /// Commit sha to record. Defaults to the sha `--commit` produces (or, if
+    /// the worktree was already clean, the current HEAD).
+    #[arg(long)]
+    pub sha: Option<String>,
+    /// Required when --status blocked.
+    #[arg(long)]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug)]
 pub(crate) struct DispatchPlan {
     pub(crate) project_root: PathBuf,
@@ -195,6 +253,8 @@ struct TxAppendResponse {
 struct RunReleaseRequest {
     reason: Option<String>,
     request_id: Option<String>,
+    #[serde(default)]
+    finalized_by_worker: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -597,6 +657,284 @@ pub fn cmd_lease_release(home: &Home, args: LeaseReleaseArgs) -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct LiveRunInfo {
+    run_id: String,
+    task_id: String,
+    kind: String,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    last_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct LiveRunsResponse {
+    #[serde(default)]
+    live: Vec<LiveRunInfo>,
+}
+
+/// The worker-driven counterpart to `dispatch-close` (dec_3M7M0): a
+/// dispatched worker calls this as its terminal action instead of relying on
+/// the daemon to infer completion from an EOT marker + scrollback scrape. In
+/// one daemon call it optionally commits the worktree, writes `last.txt`
+/// verbatim from `--summary-file`, emits the terminal tx
+/// (`implementer.done`/`reviewer.done`/`manager.dispatch_aborted`), and
+/// releases the lease — converging on the same `release_dispatch_run`/`/tx`
+/// plumbing `dispatch-close` uses.
+pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<()> {
+    let project_root = find_project_root()?;
+    let project_id = read_project_id(&project_root)?;
+    let summary = std::fs::read_to_string(&args.summary_file)
+        .with_context(|| format!("read --summary-file {}", args.summary_file.display()))?;
+    if args.status == FinalizeStatus::Blocked
+        && args
+            .reason
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+    {
+        bail!("--reason is required when --status blocked");
+    }
+
+    let task = resolve_finalize_task(&project_root, args.task.clone())?;
+
+    let client = DaemonClient::from_home_autostart(home)?;
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    let run = runtime.block_on(resolve_finalize_run(
+        &client,
+        &project_id,
+        &task,
+        args.run_id.clone(),
+    ))?;
+
+    let sha = if args.commit {
+        Some(commit_worktree(
+            &project_root,
+            &finalize_commit_message(&task, args.status, &summary),
+        )?)
+    } else {
+        args.sha.clone()
+    };
+
+    let tx_type = match args.status {
+        FinalizeStatus::Done => done_tx_type_for_kind(&run.kind)?,
+        FinalizeStatus::Blocked => "manager.dispatch_aborted",
+    };
+
+    let mut extra = vec![
+        ("RUN_ID".to_string(), run.run_id.clone()),
+        ("WORKTREE".to_string(), project_root.display().to_string()),
+    ];
+    if let Some(sha) = sha.as_deref() {
+        extra.push(("SHA".to_string(), sha.to_string()));
+        if matches!(tx_type, "implementer.done" | "architector.done") {
+            extra.push(("MERGE_SHA".to_string(), sha.to_string()));
+        }
+    }
+
+    let tx_request = TxAppendRequest {
+        request_id: Some(format!(
+            "dispatch-finalize-{}-{}",
+            request_slug(&task),
+            Uuid::new_v4()
+        )),
+        ty: tx_type.to_string(),
+        actor: Some(format!("agent.{}", run.kind)),
+        machine: None,
+        project: Some(project_id.clone()),
+        task: Some(task.clone()),
+        target: None,
+        reason: args
+            .reason
+            .as_ref()
+            .map(|s| sanitize_tx_value(s))
+            .filter(|s| !s.is_empty()),
+        extra,
+        tx_path: None,
+    };
+    let tx_response: TxAppendResponse = runtime.block_on(client.post_json("/tx", &tx_request))?;
+
+    // Write last.txt verbatim — the run's own artifact path, resolved from
+    // the daemon's live run record, never scraped scrollback.
+    let last_path = run.last_path.clone().ok_or_else(|| {
+        anyhow::anyhow!(
+            "live run {} has no last_path (not a CLI dispatch run?)",
+            run.run_id
+        )
+    })?;
+    if let Some(parent) = last_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(&last_path, &summary)
+        .with_context(|| format!("write {}", last_path.display()))?;
+
+    runtime.block_on(release_dispatch_run_with_reason(
+        &client,
+        &run.run_id,
+        &format!("worker finalize for {task}"),
+        &task,
+        true,
+    ))?;
+
+    println!(
+        "finalized: {} {} tx={} run={} last={}",
+        task,
+        tx_type,
+        tx_response.tx_id,
+        run.run_id,
+        last_path.display()
+    );
+    Ok(())
+}
+
+fn finalize_commit_message(task: &str, status: FinalizeStatus, summary: &str) -> String {
+    let subject: String = summary
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("worker finalize")
+        .chars()
+        .take(72)
+        .collect();
+    format!(
+        "{task}: {subject}\n\norgasmic dispatch finalize --status {}",
+        status.as_str()
+    )
+}
+
+fn worktree_has_uncommitted_changes(project_root: &Path) -> bool {
+    Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(project_root)
+        .output()
+        .map(|output| output.status.success() && !output.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// Commit the worktree if dirty (so commit-stall is structurally impossible,
+/// acceptance #2), then return the resulting HEAD sha either way.
+fn commit_worktree(project_root: &Path, message: &str) -> Result<String> {
+    if worktree_has_uncommitted_changes(project_root) {
+        let add = Command::new("git")
+            .args(["add", "-A"])
+            .current_dir(project_root)
+            .output()
+            .context("git add -A")?;
+        if !add.status.success() {
+            bail!(
+                "git add -A failed: {}",
+                String::from_utf8_lossy(&add.stderr)
+            );
+        }
+        let commit = Command::new("git")
+            .args(["commit", "-m", message])
+            .current_dir(project_root)
+            .output()
+            .context("git commit")?;
+        if !commit.status.success() {
+            bail!(
+                "git commit failed: {}",
+                String::from_utf8_lossy(&commit.stderr)
+            );
+        }
+    }
+    let sha = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(project_root)
+        .output()
+        .context("git rev-parse HEAD")?;
+    if !sha.status.success() {
+        bail!(
+            "git rev-parse HEAD failed: {}",
+            String::from_utf8_lossy(&sha.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&sha.stdout).trim().to_string())
+}
+
+fn current_git_branch(project_root: &Path) -> Result<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(project_root)
+        .output()
+        .context("git rev-parse --abbrev-ref HEAD")?;
+    if !output.status.success() {
+        bail!(
+            "git rev-parse --abbrev-ref HEAD failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// Reverse of `default_branch`/`task_slug`: `task-wfw1n-impl` -> `TASK-WFW1N`.
+fn task_from_branch(branch: &str) -> Option<String> {
+    let slug = branch
+        .strip_suffix("-impl")
+        .or_else(|| branch.strip_suffix("-review"))
+        .or_else(|| branch.strip_suffix("-arch"))
+        .unwrap_or(branch);
+    let rest = slug.strip_prefix("task-")?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!("TASK-{}", rest.to_ascii_uppercase()))
+}
+
+fn resolve_finalize_task(project_root: &Path, task_override: Option<String>) -> Result<String> {
+    if let Some(task) = task_override {
+        let task = task.trim().to_string();
+        if task.is_empty() {
+            bail!("--task must not be empty");
+        }
+        return Ok(task);
+    }
+    let branch = current_git_branch(project_root)?;
+    task_from_branch(&branch).ok_or_else(|| {
+        anyhow::anyhow!("could not derive task from branch `{branch}`; pass --task explicitly")
+    })
+}
+
+/// Resolve the live run to finalize: an explicit `--run-id` is used as-is
+/// (still fetched from `/runs` to recover its kind/last_path); otherwise the
+/// single live run matching `task` (and `project_id`, when the daemon reports
+/// one) is used. Deliberately does NOT fall back to scanning
+/// `.orgasmic/tx`: a worker's own worktree checkout cannot see the live
+/// (uncommitted) daemon writes to the manager's `.orgasmic/tx`, so the only
+/// reliable source is the daemon's in-memory live run list.
+async fn resolve_finalize_run(
+    client: &DaemonClient,
+    project_id: &str,
+    task: &str,
+    run_id: Option<String>,
+) -> Result<LiveRunInfo> {
+    let live = client.get::<LiveRunsResponse>("/runs").await?.live;
+    if let Some(run_id) = run_id {
+        return live
+            .into_iter()
+            .find(|run| run.run_id == run_id)
+            .ok_or_else(|| anyhow::anyhow!("no live run {run_id}; already released?"));
+    }
+    let mut matches: Vec<LiveRunInfo> = live
+        .into_iter()
+        .filter(|run| {
+            run.task_id == task
+                && run
+                    .project_id
+                    .as_deref()
+                    .map(|p| p == project_id)
+                    .unwrap_or(true)
+        })
+        .collect();
+    match matches.len() {
+        0 => bail!("no live run found for task {task}; pass --run-id explicitly"),
+        1 => Ok(matches.remove(0)),
+        _ => bail!("multiple live runs found for task {task}; pass --run-id explicitly"),
+    }
+}
+
 pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> {
     let project_root = find_project_root()?;
     if args.cleanup_failed {
@@ -784,13 +1122,34 @@ async fn release_dispatch_run(
     run_id: &str,
     task_property: &str,
 ) -> Result<RunReleaseResponse> {
+    release_dispatch_run_with_reason(
+        client,
+        run_id,
+        &format!("dispatch close for {task_property}"),
+        task_property,
+        false,
+    )
+    .await
+}
+
+/// Shared release call for both `dispatch-close` (manager authority) and
+/// `dispatch finalize` (worker authority, dec_3M7M0) — same terminal
+/// endpoint, differing only in reason text and `finalized_by_worker`.
+async fn release_dispatch_run_with_reason(
+    client: &DaemonClient,
+    run_id: &str,
+    reason: &str,
+    request_slug_source: &str,
+    finalized_by_worker: bool,
+) -> Result<RunReleaseResponse> {
     let request = RunReleaseRequest {
-        reason: Some(format!("dispatch close for {task_property}")),
+        reason: Some(reason.to_string()),
         request_id: Some(format!(
             "dispatch-release-{}-{}",
-            request_slug(task_property),
+            request_slug(request_slug_source),
             Uuid::new_v4()
         )),
+        finalized_by_worker,
     };
     client
         .post_json(&format!("/runs/{}/release", path_segment(run_id)), &request)
@@ -897,7 +1256,14 @@ fn close_aborted_request(
 }
 
 fn done_tx_type(open: &DispatchRecord) -> Result<&'static str> {
-    match open.kind.as_str() {
+    done_tx_type_for_kind(&open.kind)
+}
+
+/// Shared by `dispatch-close` (kind read back from a `DispatchRecord`) and
+/// `dispatch finalize` (kind read from the daemon's live `RunSummary`) so both
+/// converge on the same terminal-tx vocabulary.
+fn done_tx_type_for_kind(kind: &str) -> Result<&'static str> {
+    match kind {
         "implementer" => Ok("implementer.done"),
         "reviewer" => Ok("reviewer.done"),
         "architector" => Ok("architector.done"),

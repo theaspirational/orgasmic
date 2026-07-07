@@ -2239,3 +2239,384 @@ async fn dispatch_close_fails_when_liveness_probe_unreachable() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// Extract the `last=<path>` suffix `orgasmic dispatch finalize` prints on
+/// success (see `cmd_dispatch_finalize`'s `println!`).
+fn finalized_last_path(stdout: &str) -> PathBuf {
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("finalized:"))
+        .unwrap_or_else(|| panic!("no `finalized:` line in stdout: {stdout}"));
+    let marker = "last=";
+    let idx = line
+        .rfind(marker)
+        .unwrap_or_else(|| panic!("no `last=` in finalize output: {line}"));
+    PathBuf::from(line[idx + marker.len()..].trim())
+}
+
+/// Dispatch a sleeping-stub implementer run for TASK-DISPATCH and return its
+/// worktree path. The stub sleeps 60s so the run stays live in the
+/// supervisor while the test drives `orgasmic dispatch finalize` against it
+/// from inside the worktree, mirroring a real worker's terminal call.
+async fn dispatch_sleeping_implementer(
+    home: &Home,
+    running: &RunningDaemon,
+    project_root: &Path,
+    path_env: &std::ffi::OsString,
+    head: &str,
+    worktree: &Path,
+    brief: &Path,
+) {
+    write(brief, "stub implementer brief");
+    let dispatch_stdout = run_orgasmic(
+        home,
+        running,
+        project_root,
+        path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-dispatch-test-impl",
+            "--reason",
+            "finalize smoke",
+        ],
+    );
+    assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
+    assert!(worktree.is_dir(), "worktree should exist");
+}
+
+/// Acceptance #1 (TASK-WFW1N): `orgasmic dispatch finalize` writes last.txt
+/// byte-verbatim from `--summary-file`, never scraped scrollback. The
+/// summary content deliberately looks nothing like driver output (mixed
+/// line endings, trailing whitespace, no trailing newline, a unicode
+/// marker) so any transformation or scrape contamination would be visible.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_writes_last_txt_verbatim_no_scrollback_contamination() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    let summary_path = tmp.path().join("summary.md");
+    let summary_content =
+        "## Report\r\nline one\nline two with trailing spaces   \n\nVERBATIM-MARKER-\u{1f525}: DONE (no trailing newline)";
+    write(&summary_path, summary_content);
+
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+    let last_path = finalized_last_path(&finalize_stdout);
+    let last_bytes =
+        std::fs::read(&last_path).unwrap_or_else(|e| panic!("read {}: {e}", last_path.display()));
+    assert_eq!(
+        last_bytes,
+        summary_content.as_bytes(),
+        "last.txt must be byte-verbatim from --summary-file, no scrollback contamination"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// Acceptance #2 (TASK-WFW1N): `--commit` on a dirty worktree produces the
+/// worktree commit as part of finalize, so a finalize with uncommitted
+/// changes leaves a clean, committed worktree — commit-stall is
+/// structurally impossible.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_commit_flag_leaves_clean_committed_worktree() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    // Simulate uncommitted worker changes left in the worktree.
+    write(&worktree.join("NOTES.md"), "uncommitted worker output\n");
+    let dirty_status = run_git(&worktree, &["status", "--porcelain"]);
+    assert!(
+        !dirty_status.is_empty(),
+        "worktree should be dirty before finalize"
+    );
+    let head_before = run_git(&worktree, &["rev-parse", "HEAD"]);
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "commit-stall regression check");
+
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+
+    let clean_status = run_git(&worktree, &["status", "--porcelain"]);
+    assert!(
+        clean_status.is_empty(),
+        "worktree must be clean after --commit: {clean_status}"
+    );
+    let head_after = run_git(&worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        head_before, head_after,
+        "--commit must produce a new commit when the worktree was dirty"
+    );
+
+    let tx_raw = tx_log(&project_root);
+    assert!(
+        tx_raw
+            .lines()
+            .any(|line| line.trim_start().starts_with(":SHA:") && line.contains(&head_after)),
+        "tx should capture the sha --commit produced: {tx_raw}"
+    );
+    assert!(
+        tx_raw
+            .lines()
+            .any(|line| line.trim_start().starts_with(":MERGE_SHA:") && line.contains(&head_after)),
+        "implementer.done tx should carry MERGE_SHA: {tx_raw}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// Acceptance #3 (TASK-WFW1N): finalize emits the correct terminal tx
+/// (`implementer.done`/`reviewer.done`), releases the lease, and
+/// `manager dispatch-status` shows the run closed. Also proves the lease
+/// itself (not just the tx record) is released: a second dispatch against
+/// the same task+kind after finalize is accepted rather than rejected as
+/// overlapping.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "implementer finalize smoke");
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+
+    let tx_raw = tx_log(&project_root);
+    assert!(tx_raw.contains(":TYPE:         implementer.done"));
+    assert!(tx_raw.contains(":TASK:         TASK-DISPATCH"));
+
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.trim().is_empty(),
+        "finalized dispatch should not appear as open in dispatch-status: {status_stdout}"
+    );
+
+    // The supervisor lease itself (not just the tx record) must be
+    // released: `manager lease-release` talks directly to the daemon's
+    // (task_id, kind) lease map, independent of the tx-scan dispatch-status
+    // view, and must report nothing left to clear.
+    let lease_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "lease-release",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+        ],
+    );
+    assert!(
+        lease_stdout.contains("no lease held"),
+        "finalize must release the supervisor lease: {lease_stdout}"
+    );
+
+    // Finalize the reviewer kind too, proving the terminal-tx type follows
+    // the run's own kind (`reviewer.done`), not a hardcoded implementer path.
+    let review_worktree = tmp.path().join("worktrees/task-review");
+    let review_brief = tmp.path().join("codex/task-review-brief.md");
+    write(&review_brief, "stub reviewer brief");
+    let review_dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-REVIEW",
+            "--kind",
+            "reviewer",
+            "--brief",
+            review_brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            review_worktree.to_str().unwrap(),
+            "--branch",
+            "task-review-test-review",
+            "--reason",
+            "reviewer finalize smoke",
+        ],
+    );
+    assert!(review_dispatch_stdout.contains("dispatched: TASK-REVIEW reviewer pid="));
+    let review_summary_path = tmp.path().join("review-summary.md");
+    write(&review_summary_path, "reviewer finalize smoke");
+    let review_finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &review_worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-REVIEW",
+            "--summary-file",
+            review_summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        review_finalize_stdout.contains("finalized: TASK-REVIEW reviewer.done tx="),
+        "unexpected reviewer finalize output: {review_finalize_stdout}"
+    );
+    let review_status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-REVIEW"],
+    );
+    assert!(
+        review_status_stdout.trim().is_empty(),
+        "finalized reviewer dispatch should not appear as open: {review_status_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

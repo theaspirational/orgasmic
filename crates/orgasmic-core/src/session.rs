@@ -281,6 +281,15 @@ pub enum Lifecycle {
     Release {
         reason: String,
         outcome: ReleaseOutcome,
+        /// Set when the worker declared completion itself via
+        /// `orgasmic dispatch finalize` (dec_3M7M0) before this release, over
+        /// the same daemon channel used for every other write. The dispatch
+        /// completion watcher treats this as authoritative and skips its
+        /// scrollback-scrape fallback entirely. `#[serde(default)]` keeps
+        /// pre-existing session JSONL (written before this field existed)
+        /// parseable.
+        #[serde(default)]
+        finalized_by_worker: bool,
     },
     Continuation {
         previous_run: String,
