@@ -23,6 +23,7 @@ pub mod paths;
 pub mod projects;
 pub mod sandbox;
 pub mod schema;
+pub mod schema_examples;
 pub mod session;
 pub mod slots;
 pub mod tx;
