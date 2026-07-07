@@ -751,34 +751,11 @@ fn remove_pid_file(home: &Home) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
-
-    fn env_guard() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
-
-    struct ScopedEnv {
-        key: &'static str,
-        prior: Option<String>,
-    }
-
-    impl ScopedEnv {
-        fn set(key: &'static str, value: &str) -> Self {
-            let prior = std::env::var(key).ok();
-            std::env::set_var(key, value);
-            Self { key, prior }
-        }
-    }
-
-    impl Drop for ScopedEnv {
-        fn drop(&mut self) {
-            match &self.prior {
-                Some(value) => std::env::set_var(self.key, value),
-                None => std::env::remove_var(self.key),
-            }
-        }
-    }
+    // Env is process-global: these MUST share the ONE crate-wide lock/override
+    // (test_support) that daemon_client + doctor tests use, not a private lock —
+    // a private mutex here doesn't exclude those modules' `ORGASMIC_DAEMON_URL`
+    // reads, which flaked under `cargo test --workspace` (TASK-SJQ9V residual).
+    use crate::test_support::{env_guard, ScopedEnv};
 
     #[cfg(unix)]
     struct ChildGuard(std::process::Child);
@@ -879,7 +856,7 @@ mod tests {
     #[test]
     fn repair_refuses_external_daemon_url() {
         let _guard = env_guard();
-        let _env = ScopedEnv::set("ORGASMIC_DAEMON_URL", "http://127.0.0.1:9999");
+        let _env = ScopedEnv::set(&[("ORGASMIC_DAEMON_URL", "http://127.0.0.1:9999")]);
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
 
