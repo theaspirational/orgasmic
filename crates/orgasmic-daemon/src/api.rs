@@ -6906,7 +6906,14 @@ enum NodeLayer {
     Task,
     Goal,
     Handoff,
+    Config,
 }
+
+/// Drawer properties owned by the config layer. Setting one of these under any
+/// other `--kind` used to silently write to the wrong file (e.g. `project.org`
+/// instead of `config.org`, since both scaffold the same `:ID:`); rejected in
+/// [`reject_misrouted_config_key`].
+const CONFIG_RESERVED_KEYS: &[&str] = &["TEST_CMD", "LINT_CMD", "BUILD_CMD", "PIPELINE"];
 
 impl NodeLayer {
     fn file_name(self) -> Option<&'static str> {
@@ -6915,21 +6922,14 @@ impl NodeLayer {
             Self::Architecture => Some("architecture.org"),
             Self::Glossary => Some("glossary.org"),
             Self::Project => Some("project.org"),
+            Self::Config => Some("config.org"),
             Self::Task => None,
             Self::Goal | Self::Handoff => None,
         }
     }
 
     fn layer_name(self) -> &'static str {
-        match self {
-            Self::Decision => "decision",
-            Self::Architecture => "architecture",
-            Self::Glossary => "glossary",
-            Self::Project => "project",
-            Self::Task => "task",
-            Self::Goal => "goal",
-            Self::Handoff => "handoff",
-        }
+        orgasmic_core::NodeKind::from(self).as_str()
     }
 
     fn artifact_name(self) -> &'static str {
@@ -6938,6 +6938,7 @@ impl NodeLayer {
             Self::Architecture => "architecture file",
             Self::Glossary => "glossary file",
             Self::Project => "project file",
+            Self::Config => "config file",
             Self::Task => "task file",
             Self::Goal => "goal file",
             Self::Handoff => "handoff file",
@@ -6946,8 +6947,9 @@ impl NodeLayer {
 
     /// Infer the org-node layer that owns a node id: `TASK-*` -> task,
     /// `dec_*` -> decisions, `arch_*` -> architecture, `handoff-current` ->
-    /// handoff, `goal-*` -> goal, anything else -> glossary. The project layer
-    /// has no distinctive id prefix, so it can only be selected explicitly via
+    /// handoff, `goal-*` -> goal, anything else -> glossary. The project and
+    /// config layers have no distinctive id prefix (and share the same
+    /// `:ID:`), so they can only be selected explicitly via
     /// [`NodeLayer::from_kind`].
     fn for_id(id: &str) -> Self {
         if id.starts_with("TASK-") {
@@ -6965,20 +6967,64 @@ impl NodeLayer {
         }
     }
 
-    /// Resolve an explicit `kind` selector (the `layer_name` value) back to a
-    /// layer. Used when the node id alone cannot identify the owning file.
+    /// Resolve an explicit `kind` selector back to a layer. Used when the node
+    /// id alone cannot identify the owning file. The accepted set is the
+    /// single-sourced [`orgasmic_core::NodeKind`] registry so the CLI's
+    /// `--kind` enum can be parity-tested against it.
     fn from_kind(kind: &str) -> Option<Self> {
+        orgasmic_core::NodeKind::parse(kind).map(NodeLayer::from)
+    }
+}
+
+impl From<orgasmic_core::NodeKind> for NodeLayer {
+    fn from(kind: orgasmic_core::NodeKind) -> Self {
         match kind {
-            "decision" => Some(Self::Decision),
-            "architecture" => Some(Self::Architecture),
-            "glossary" => Some(Self::Glossary),
-            "project" => Some(Self::Project),
-            "task" => Some(Self::Task),
-            "goal" => Some(Self::Goal),
-            "handoff" => Some(Self::Handoff),
-            _ => None,
+            orgasmic_core::NodeKind::Decision => Self::Decision,
+            orgasmic_core::NodeKind::Architecture => Self::Architecture,
+            orgasmic_core::NodeKind::Glossary => Self::Glossary,
+            orgasmic_core::NodeKind::Project => Self::Project,
+            orgasmic_core::NodeKind::Task => Self::Task,
+            orgasmic_core::NodeKind::Goal => Self::Goal,
+            orgasmic_core::NodeKind::Handoff => Self::Handoff,
+            orgasmic_core::NodeKind::Config => Self::Config,
         }
     }
+}
+
+impl From<NodeLayer> for orgasmic_core::NodeKind {
+    fn from(layer: NodeLayer) -> Self {
+        match layer {
+            NodeLayer::Decision => Self::Decision,
+            NodeLayer::Architecture => Self::Architecture,
+            NodeLayer::Glossary => Self::Glossary,
+            NodeLayer::Project => Self::Project,
+            NodeLayer::Task => Self::Task,
+            NodeLayer::Goal => Self::Goal,
+            NodeLayer::Handoff => Self::Handoff,
+            NodeLayer::Config => Self::Config,
+        }
+    }
+}
+
+/// Kinds this daemon accepts for `--kind` on `node prop/body get/set`. Exposed
+/// so the CLI can parity-test its `--kind` enum against the daemon's actual
+/// acceptance set instead of duplicating the list by hand (TASK-JJ9RD).
+pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
+    &orgasmic_core::NodeKind::ALL
+}
+
+/// Reject a `set_property`/`SetProperty` op that would write a CONFIG-owned
+/// key to a non-config layer — the bug that made `node prop set <project-id>
+/// TEST_CMD ... --kind project` silently succeed against `project.org` instead
+/// of `config.org` (both share the project's `:ID:`).
+fn reject_misrouted_config_key(layer: NodeLayer, key: &str) -> Result<(), ApiError> {
+    if layer != NodeLayer::Config && CONFIG_RESERVED_KEYS.contains(&key) {
+        return Err(ApiError::bad_request(format!(
+            "{key} is a config-file property; use --kind config to write it to config.org (got --kind {})",
+            layer.layer_name()
+        )));
+    }
+    Ok(())
 }
 
 async fn create_graph_heading(
@@ -7550,6 +7596,11 @@ async fn post_org_node_edit(
         return Err(ApiError::bad_request(
             "goal nodes are read-only through /org/node; use goal set/clear/supersede",
         ));
+    }
+    for op in &req.ops {
+        if let NodeEditOp::SetProperty { key, .. } = op {
+            reject_misrouted_config_key(layer, key)?;
+        }
     }
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
@@ -12992,6 +13043,146 @@ mod tests {
         let after = std::fs::read_to_string(&project_path).unwrap();
         assert!(after.contains("** Mission\nCoordinate AI-agent work.\n"));
         assert!(after.contains("** Operating Constraints\n- Stay greenfield.\n"));
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn org_node_config_layer_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        // config.org shares the project's :ID:, so — like `project` — it is
+        // only reachable via an explicit `kind=config` selector.
+        let project_path = project_root.join(".orgasmic/project.org");
+        let config_path = project_root.join(".orgasmic/config.org");
+        write(
+            config_path.clone(),
+            "#+title: orgasmic config\n#+orgasmic_version: 1\n\n\
+* CONFIG orgasmic\n:PROPERTIES:\n:ID:                  orgasmic\n:DEFAULT_BRANCH:      main\n:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let doc: Value = client
+            .get(format!("{base}/api/org/node"))
+            .bearer_auth(&token)
+            .query(&[
+                ("project", "orgasmic"),
+                ("id", "orgasmic"),
+                ("kind", "config"),
+            ])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(doc["kind"], "config");
+        assert_eq!(doc["source"]["file"], ".orgasmic/config.org");
+        let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
+
+        let resp = client
+            .post(format!("{base}/api/org/node/orgasmic/edit"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "kind": "config",
+                "base_version": base_version,
+                "ops": [
+                    { "op": "set_property", "key": "TEST_CMD", "value": "cargo test" }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let updated: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "edit config node: {status} {updated}");
+
+        let config_after = std::fs::read_to_string(&config_path).unwrap();
+        assert!(config_after.contains(":TEST_CMD:"));
+        assert!(config_after.contains("cargo test"));
+        let project_after = std::fs::read_to_string(&project_path).unwrap();
+        assert!(
+            !project_after.contains("TEST_CMD"),
+            "TEST_CMD leaked into project.org: {project_after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn org_node_config_reserved_key_rejected_on_project_layer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let project_path = project_root.join(".orgasmic/project.org");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let doc: Value = client
+            .get(format!("{base}/api/org/node"))
+            .bearer_auth(&token)
+            .query(&[
+                ("project", "orgasmic"),
+                ("id", "orgasmic"),
+                ("kind", "project"),
+            ])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
+
+        // This is the exact silent-wrong-file-write regression (TASK-JJ9RD):
+        // a CONFIG-owned key must not land in project.org just because the id
+        // resolved there under an explicit `--kind project`.
+        let resp = client
+            .post(format!("{base}/api/org/node/orgasmic/edit"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "kind": "project",
+                "base_version": base_version,
+                "ops": [
+                    { "op": "set_property", "key": "TEST_CMD", "value": "cargo test" }
+                ]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: Value = resp.json().await.unwrap();
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(
+            message.contains("--kind config"),
+            "error should name --kind config as the fix: {message}"
+        );
+
+        let project_after = std::fs::read_to_string(&project_path).unwrap();
+        assert!(
+            !project_after.contains("TEST_CMD"),
+            "TEST_CMD leaked into project.org: {project_after}"
+        );
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
