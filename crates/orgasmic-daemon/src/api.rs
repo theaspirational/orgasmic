@@ -1273,10 +1273,9 @@ async fn get_task(
     Path((project_id, task_id)): Path<(String, String)>,
 ) -> Result<Json<crate::index::TaskDetail>, ApiError> {
     let snap = state.index.snapshot().await;
-    let project = snap.project(&project_id).ok_or_else(|| {
-        tracing::warn!(project_id = %project_id, "project not found");
-        ApiError::not_found("project not found")
-    })?;
+    let project = snap
+        .project(&project_id)
+        .ok_or_else(|| project_not_found_error(&snap, &project_id))?;
     authz::require(&identity, Some(&project_id), Action::TasksRead)?;
     if !project.tasks.iter().any(|task| task.id == task_id) {
         tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
@@ -8046,6 +8045,26 @@ fn reject_glossary_implementation_detail(req: &GraphCreateRequest) -> Result<(),
     Ok(())
 }
 
+/// 404 for a project id absent from the loaded index. Distinguishes the
+/// residual window right after a project appears on the board (registered
+/// but not yet loaded/watched) from a genuinely unknown id, so operators
+/// don't chase a stale-daemon hypothesis on the former (TASK-GERBB).
+fn project_not_found_error(snap: &IndexSnapshot, project_id: &str) -> ApiError {
+    if snap.board.iter().any(|entry| entry.id == project_id) {
+        tracing::warn!(
+            project_id = %project_id,
+            "project registered on board but not yet loaded"
+        );
+        return ApiError::not_found(format!(
+            "project {project_id} is registered on the board but not yet loaded \
+             (registered after daemon boot); it will load on the next reindex, \
+             or run `orgasmic restart`"
+        ));
+    }
+    tracing::warn!(project_id = %project_id, "project not found");
+    ApiError::not_found("project not found")
+}
+
 fn select_graph<'a>(
     snap: &'a IndexSnapshot,
     project: Option<&str>,
@@ -8275,10 +8294,9 @@ async fn post_task_create(
         ));
     }
     let snap = state.index.snapshot().await;
-    let project = snap.project(&project_id).ok_or_else(|| {
-        tracing::warn!(project_id = %project_id, "project not found");
-        ApiError::not_found("project not found")
-    })?;
+    let project = snap
+        .project(&project_id)
+        .ok_or_else(|| project_not_found_error(&snap, &project_id))?;
     let task_id = resolve_task_create_id(&req)?;
     let stage = task_create_lifecycle_stage(&req)?;
     let path = task_create_target_path(&project.root);
@@ -8961,10 +8979,9 @@ async fn update_task_state(
     let to_state = LifecycleStage::from_str(req.state.as_deref().unwrap_or(""))
         .map_err(|_| ApiError::bad_request("unknown task state"))?;
     let snap = state.index.snapshot().await;
-    let project = snap.project(project_id).ok_or_else(|| {
-        tracing::warn!(project_id = %project_id, "project not found");
-        ApiError::not_found("project not found")
-    })?;
+    let project = snap
+        .project(project_id)
+        .ok_or_else(|| project_not_found_error(&snap, project_id))?;
     let task = project
         .tasks
         .iter()
@@ -9120,10 +9137,9 @@ async fn update_task_properties(
     req: TaskUpdateRequest,
 ) -> Result<Json<crate::index::TaskDetail>, ApiError> {
     let snap = state.index.snapshot().await;
-    let project = snap.project(project_id).ok_or_else(|| {
-        tracing::warn!(project_id = %project_id, "project not found");
-        ApiError::not_found("project not found")
-    })?;
+    let project = snap
+        .project(project_id)
+        .ok_or_else(|| project_not_found_error(&snap, project_id))?;
     let task = project
         .tasks
         .iter()
@@ -12532,6 +12548,42 @@ mod tests {
 
         assert_eq!(detail.body.description, "Last-good detail.");
         assert_eq!(detail.body.acceptance_criteria.len(), 1);
+    }
+
+    #[test]
+    fn project_not_found_error_names_cause_when_board_lists_but_index_lacks_project() {
+        let mut snap = IndexSnapshot::default();
+        snap.board.push(BoardEntry {
+            id: "proj-ghost".to_string(),
+            path: PathBuf::from("/tmp/proj-ghost"),
+            branch: "main".to_string(),
+            status: "active".to_string(),
+        });
+
+        let err = project_not_found_error(&snap, "proj-ghost");
+
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+        assert!(
+            err.message
+                .contains("registered on the board but not yet loaded"),
+            "message should name the cause: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("orgasmic restart"),
+            "message should name the fix: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn project_not_found_error_stays_bare_when_id_absent_from_board() {
+        let snap = IndexSnapshot::default();
+
+        let err = project_not_found_error(&snap, "proj-missing");
+
+        assert_eq!(err.status, StatusCode::NOT_FOUND);
+        assert_eq!(err.message, "project not found");
     }
 
     struct TmuxSessionGuard(String);
