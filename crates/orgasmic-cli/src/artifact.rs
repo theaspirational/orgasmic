@@ -12,11 +12,29 @@ use orgasmic_daemon::BLOCK_TYPES;
 use crate::daemon_client::DaemonClient;
 use crate::home::Home;
 
+/// Where the full per-block shapes and the raw-text conventions (opposite
+/// rules for `Code`'s `code={`...`}` attribute vs. `Wireframe`/`Mermaid`'s
+/// children) are authored — the source `artifact blocks --full` points at
+/// rather than duplicating (TASK-SPBTA), so the two can't drift apart.
+pub(crate) const BLOCK_CONTRACT_SPEC_PATH: &str =
+    "shipped/prompt-studio/prompt-specs/artifact-generator.org";
+/// Fixture exercising all 22 registered block types with real shapes.
+pub(crate) const BLOCK_CONTRACT_FIXTURE_PATH: &str =
+    "ui/src/lib/artifacts/__fixtures__/all-blocks.ts";
+
 #[derive(Subcommand, Debug)]
 pub enum ArtifactCmd {
     /// List the Agent-Native block vocabulary accepted in artifact.mdx.
-    Blocks,
+    Blocks {
+        /// Also print per-block shapes and the raw-text conventions (or, if
+        /// not inlined, where they're authoritatively documented).
+        #[arg(long)]
+        full: bool,
+    },
     /// Submit (create or update) an artifact from an MDX file.
+    ///
+    /// Block contract: `orgasmic artifact blocks --full` (or read
+    /// shipped/prompt-studio/prompt-specs/artifact-generator.org directly).
     Submit {
         /// Artifact id: ART-<5-char-Crockford-stem> (e.g. ART-XYZAB). Mint a
         /// fresh one with `orgasmic id mint --class artifact`.
@@ -61,7 +79,7 @@ pub enum ArtifactCmd {
 
 pub fn cmd_artifact(home: &Home, cmd: ArtifactCmd) -> Result<()> {
     match cmd {
-        ArtifactCmd::Blocks => cmd_blocks(),
+        ArtifactCmd::Blocks { full } => cmd_blocks(full),
         ArtifactCmd::Submit {
             id,
             file,
@@ -89,10 +107,20 @@ pub fn cmd_artifact(home: &Home, cmd: ArtifactCmd) -> Result<()> {
     }
 }
 
-fn cmd_blocks() -> Result<()> {
+fn cmd_blocks(full: bool) -> Result<()> {
     println!("Agent-Native block types ({} total):", BLOCK_TYPES.len());
     for ty in BLOCK_TYPES {
         println!("  <{ty}>");
+    }
+    if full {
+        println!();
+        println!("Per-block shapes, attributes, and the raw-text conventions (the");
+        println!("opposite rules for Code's `code={{`...`}}` attribute vs.");
+        println!("Wireframe/Mermaid/SequenceDiagram/FlowChart's children) are the");
+        println!("same contract the artifact generator prompt reads from — not");
+        println!("duplicated here so the two can't drift apart:");
+        println!("  {BLOCK_CONTRACT_SPEC_PATH}");
+        println!("  {BLOCK_CONTRACT_FIXTURE_PATH}");
     }
     Ok(())
 }

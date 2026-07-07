@@ -515,6 +515,10 @@ enum GlossaryCmd {
         #[arg(long = "allow-marker")]
         allow_marker: bool,
     },
+    /// Print one canonical glossary term showing its property vocabulary
+    /// (no daemon needed) — the pattern `artifact blocks` establishes for
+    /// the block registry, extended to glossary nodes.
+    Schema,
 }
 
 #[derive(Subcommand, Debug)]
@@ -555,6 +559,10 @@ enum DecisionCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Print one canonical decision node showing its property vocabulary
+    /// (no daemon needed) — the pattern `artifact blocks` establishes for
+    /// the block registry, extended to decision nodes.
+    Schema,
 }
 
 #[derive(Subcommand, Debug)]
@@ -601,6 +609,10 @@ enum ArchitectureCmd {
         #[arg(long)]
         force: bool,
     },
+    /// Print one canonical architecture node showing its property vocabulary
+    /// (no daemon needed) — the pattern `artifact blocks` establishes for
+    /// the block registry, extended to architecture nodes.
+    Schema,
 }
 
 #[derive(Subcommand, Debug)]
@@ -1711,6 +1723,12 @@ fn cmd_id(cmd: IdCmd) -> Result<()> {
 }
 
 fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
+    if let GlossaryCmd::Schema = cmd {
+        return print_node_schema(
+            orgasmic_core::schema_examples::glossary_schema_example(),
+            orgasmic_core::schema_examples::glossary_schema_legend(),
+        );
+    }
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
@@ -1730,6 +1748,7 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
         }
         let value: serde_json::Value = match cmd {
             GlossaryCmd::List { .. } => unreachable!("handled above"),
+            GlossaryCmd::Schema => unreachable!("handled before daemon client"),
             GlossaryCmd::Get { id, project } => {
                 client
                     .get(&path_with_project_query(
@@ -1789,10 +1808,17 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
 }
 
 fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
+    if let DecisionCmd::Schema = cmd {
+        return print_node_schema(
+            orgasmic_core::schema_examples::decision_schema_example(),
+            orgasmic_core::schema_examples::decision_schema_legend(),
+        );
+    }
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         match cmd {
+            DecisionCmd::Schema => unreachable!("handled before daemon client"),
             DecisionCmd::List { project, ids } => {
                 let value: serde_json::Value = client
                     .get(&path_with_project_query("/decisions", project))
@@ -1972,6 +1998,12 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
         }
         return Ok(());
     }
+    if let ArchitectureCmd::Schema = cmd {
+        return print_node_schema(
+            orgasmic_core::schema_examples::architecture_schema_example(),
+            orgasmic_core::schema_examples::architecture_schema_legend(),
+        );
+    }
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
@@ -2000,6 +2032,7 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
                     .await?
             }
             ArchitectureCmd::Drift { .. } => unreachable!("handled before daemon client"),
+            ArchitectureCmd::Schema => unreachable!("handled before daemon client"),
             ArchitectureCmd::Create {
                 id,
                 project,
@@ -2081,6 +2114,18 @@ fn path_with_project_query(path: &str, project: Option<String>) -> String {
 
 fn print_json(value: &serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
+/// Shared renderer for `architecture|decision|glossary schema` (TASK-SPBTA):
+/// a parseable canonical node followed by its property legend. Both pieces
+/// come from `orgasmic_core::schema_examples`, which parity-tests them
+/// against the real schema structs, so this function only formats.
+fn print_node_schema(example: String, legend: String) -> Result<()> {
+    print!("{example}");
+    println!();
+    println!("Property legend:");
+    print!("{legend}");
     Ok(())
 }
 
