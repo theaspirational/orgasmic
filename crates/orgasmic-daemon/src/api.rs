@@ -4314,8 +4314,33 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 tokio::time::sleep(poll).await;
                 continue;
             };
+            // dec_3M7M0: a worker-declared finalize (`orgasmic dispatch
+            // finalize`) is the PRIMARY completion signal. If it landed, the
+            // worker already wrote last.txt/stdout.log verbatim and emitted
+            // its own terminal tx — this watcher's scrollback-scrape is a
+            // FALLBACK and must never scrape or overwrite that report.
+            if dispatch_release_finalized_by_worker(&envelopes) {
+                tracing::info!(
+                    run_id = %completion.run_id,
+                    "dispatch completion watcher: worker finalized via `orgasmic dispatch finalize`, skipping scrape"
+                );
+                return;
+            }
             if !dispatch_terminal_reached(&envelopes) {
                 if grace_elapsed {
+                    if dispatch_release_reason(&envelopes).as_deref() == Some("stall_timeout_exceeded")
+                    {
+                        // The worker never finalized and the run stalled: do
+                        // NOT synthesize a last.txt that would make this look
+                        // like a normal completion. Flag it orphan instead so
+                        // the manager can rescue it (acceptance #5, dec_3M7M0).
+                        tracing::warn!(
+                            run_id = %completion.run_id,
+                            "dispatch completion watcher: stall timeout with no worker finalize, flagging orphan"
+                        );
+                        record_dispatch_orphaned(&state, &completion).await;
+                        return;
+                    }
                     tracing::info!(
                         run_id = %completion.run_id,
                         "dispatch completion watcher writing artifacts after post-release grace without terminal session marker"
@@ -4332,26 +4357,102 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
     });
 }
 
+/// Last `Lifecycle::Release` event's `reason`, if any — used to tell a stall
+/// timeout release apart from every other release path.
+fn dispatch_release_reason(envelopes: &[SessionEnvelope]) -> Option<String> {
+    envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()) {
+            Ok(Lifecycle::Release { reason, .. }) => Some(reason),
+            _ => None,
+        }
+    })
+}
+
+/// Whether the run's `Lifecycle::Release` event carries `finalized_by_worker`
+/// (set by `orgasmic dispatch finalize`, dec_3M7M0).
+fn dispatch_release_finalized_by_worker(envelopes: &[SessionEnvelope]) -> bool {
+    envelopes.iter().rev().any(|envelope| {
+        envelope.kind == SessionEventKind::Lifecycle
+            && matches!(
+                serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                Ok(Lifecycle::Release {
+                    finalized_by_worker: true,
+                    ..
+                })
+            )
+    })
+}
+
+/// Flag a dispatch run that stalled without the worker ever calling
+/// `orgasmic dispatch finalize` (dec_3M7M0): distinct from a normal
+/// completion tx so the manager can rescue it rather than mistake it for
+/// silent success.
+async fn record_dispatch_orphaned(state: &ApiState, completion: &DispatchCompletion) {
+    let extra = vec![
+        ("RUN_ID".to_string(), completion.run_id.clone()),
+        (
+            "WORKTREE".to_string(),
+            completion.worktree_path.display().to_string(),
+        ),
+    ];
+    if let Err(e) = record_api_tx(
+        state,
+        ApiTxRequest {
+            ty: "manager.dispatch_orphaned".to_string(),
+            actor: None,
+            project: Some(completion.project_id.clone()),
+            task: Some(completion.task_id.clone()),
+            target: Some(tx_safe_path(&completion.session_path, None, &state.home)),
+            reason: "worker never called `orgasmic dispatch finalize` before the stall window elapsed"
+                .to_string(),
+            request_id: None,
+            extra,
+        },
+    )
+    .await
+    {
+        tracing::warn!(
+            run_id = %completion.run_id,
+            error = ?e,
+            "manager.dispatch_orphaned tx failed"
+        );
+    }
+}
+
 async fn write_dispatch_completion_artifacts(
     state: &ApiState,
     completion: &DispatchCompletion,
     envelopes: &[SessionEnvelope],
 ) {
-    if let Err(e) = write_dispatch_last_path(&completion.last_path, envelopes) {
-        tracing::warn!(
+    // Belt-and-suspenders: the watcher loop already returns before calling
+    // this function when the worker finalized, but callers that reach here
+    // directly (e.g. the post-release grace path) must not overwrite an
+    // authoritative worker-written report either (regression, dec_3M7M0).
+    if dispatch_release_finalized_by_worker(envelopes) {
+        tracing::info!(
             run_id = %completion.run_id,
-            path = %completion.last_path.display(),
-            error = %e,
-            "dispatch last_path write failed"
+            "dispatch completion artifact write skipped: worker finalized via `orgasmic dispatch finalize`"
         );
-    }
-    if let Err(e) = write_dispatch_stdout_path(&completion.stdout_path, envelopes) {
-        tracing::warn!(
-            run_id = %completion.run_id,
-            path = %completion.stdout_path.display(),
-            error = %e,
-            "dispatch stdout_path write failed"
-        );
+    } else {
+        if let Err(e) = write_dispatch_last_path(&completion.last_path, envelopes) {
+            tracing::warn!(
+                run_id = %completion.run_id,
+                path = %completion.last_path.display(),
+                error = %e,
+                "dispatch last_path write failed"
+            );
+        }
+        if let Err(e) = write_dispatch_stdout_path(&completion.stdout_path, envelopes) {
+            tracing::warn!(
+                run_id = %completion.run_id,
+                path = %completion.stdout_path.display(),
+                error = %e,
+                "dispatch stdout_path write failed"
+            );
+        }
     }
     if state.auto_commit_signal {
         let dirty = worktree_has_uncommitted_changes(&completion.worktree_path);
@@ -5127,6 +5228,13 @@ pub struct RunReleaseRequest {
     pub reason: Option<String>,
     #[serde(default)]
     pub request_id: Option<String>,
+    /// Set by `orgasmic dispatch finalize` (dec_3M7M0): the worker itself
+    /// declared completion over this same authenticated call, so the
+    /// dispatch completion watcher must not scrape/overwrite the report it
+    /// already wrote verbatim. `false` for every other caller (manager
+    /// dispatch-close, manual cancel, etc.).
+    #[serde(default)]
+    pub finalized_by_worker: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -5271,7 +5379,12 @@ async fn post_run_release(
     let reason = req.reason.unwrap_or_else(|| "run released".to_string());
     state
         .supervisor
-        .release(&id, &reason, ReleaseOutcome::Cancelled)
+        .release_with_finalization(
+            &id,
+            &reason,
+            ReleaseOutcome::Cancelled,
+            req.finalized_by_worker,
+        )
         .await
         .map_err(|e| match e {
             crate::supervisor::SupervisorError::RunNotFound(_) => {
@@ -5869,6 +5982,16 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                             task_id = %c.task_id,
                             "boot reattach: respawning dispatch completion watcher"
                         );
+                        // Backfill RunRecord so `orgasmic dispatch finalize`
+                        // can resolve this reattached run's artifact paths
+                        // via `/runs`, same as a freshly acquired dispatch.
+                        supervisor
+                            .set_dispatch_artifact_paths(
+                                &c.run_id,
+                                last_path.clone(),
+                                stdout_path.clone(),
+                            )
+                            .await;
                         spawn_dispatch_completion_watcher(
                             state.clone(),
                             DispatchCompletion {
@@ -11820,6 +11943,7 @@ mod tests {
             serde_json::to_value(Lifecycle::Release {
                 reason: "done".into(),
                 outcome: ReleaseOutcome::Completed,
+                finalized_by_worker: false,
             })
             .unwrap(),
         );
@@ -12001,6 +12125,7 @@ mod tests {
                 serde_json::to_value(Lifecycle::Release {
                     reason: "stall_timeout_exceeded".into(),
                     outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
                 })
                 .unwrap(),
             ),
@@ -12035,6 +12160,7 @@ mod tests {
                 serde_json::to_value(Lifecycle::Release {
                     reason: "driver terminal event".into(),
                     outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: false,
                 })
                 .unwrap(),
             ),
@@ -14519,6 +14645,7 @@ mod tests {
                 serde_json::to_value(Lifecycle::Release {
                     reason: "early-exit subprocess with no work envelopes".into(),
                     outcome: ReleaseOutcome::Interrupted,
+                    finalized_by_worker: false,
                 })
                 .unwrap(),
             )
