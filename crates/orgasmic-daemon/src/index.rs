@@ -377,6 +377,35 @@ impl IndexSnapshot {
         }
         files.into_iter().collect()
     }
+
+    /// Project owning `error.path`, derived by prefix match against each
+    /// project's root (TASK-V8WY9: `parse_errors` carries no `project_id`
+    /// field, so attribution is derived at query time rather than threaded
+    /// through every `push_parse_error` call site). `None` for board- or
+    /// home-tx-level errors that aren't under any registered project root.
+    pub fn parse_error_project_id(&self, error: &ParseError) -> Option<&str> {
+        self.projects
+            .values()
+            .find(|project| is_under(&error.path, &project.root))
+            .map(|project| project.project_id.as_str())
+    }
+
+    /// Per-project parse-error counts for the current snapshot (arch_C87Z9.4
+    /// / TASK-V8WY9): lets `reindex` report fresh per-project counts without
+    /// a daemon restart.
+    pub fn parse_error_counts_by_project(&self) -> BTreeMap<String, usize> {
+        let mut counts: BTreeMap<String, usize> = self
+            .projects
+            .keys()
+            .map(|id| (id.clone(), 0usize))
+            .collect();
+        for error in &self.parse_errors {
+            if let Some(project_id) = self.parse_error_project_id(error) {
+                *counts.entry(project_id.to_string()).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -496,14 +525,16 @@ impl Index {
                 }
             }
             Err(err) => {
-                warn!(path = %path.display(), error = %err, "board parse failed");
-                snap.parse_errors.push(ParseError {
-                    path,
-                    kind: ParseErrorKind::WorkingFile,
-                    message: err,
-                    line: None,
-                    at: Utc::now(),
-                });
+                if !parse_error_already_recorded(snap, &path, &err) {
+                    warn!(path = %path.display(), error = %err, "board parse failed");
+                    snap.parse_errors.push(ParseError {
+                        path,
+                        kind: ParseErrorKind::WorkingFile,
+                        message: err,
+                        line: None,
+                        at: Utc::now(),
+                    });
+                }
             }
         }
     }
@@ -573,14 +604,16 @@ impl Index {
                     }
                 }
                 Err(err) => {
-                    warn!(project = %board_entry.id, path = %path.display(), error = %err, "project file parse failed");
-                    snap.parse_errors.push(ParseError {
-                        path,
-                        kind: ParseErrorKind::WorkingFile,
-                        message: err,
-                        line: None,
-                        at: Utc::now(),
-                    });
+                    if !parse_error_already_recorded(snap, &path, &err) {
+                        warn!(project = %board_entry.id, path = %path.display(), error = %err, "project file parse failed");
+                        snap.parse_errors.push(ParseError {
+                            path,
+                            kind: ParseErrorKind::WorkingFile,
+                            message: err,
+                            line: None,
+                            at: Utc::now(),
+                        });
+                    }
                 }
             }
         }
@@ -1128,25 +1161,31 @@ fn collect_tx_dir(dir: &Path, project_id: Option<&str>, snap: &mut IndexSnapshot
                     }
                 }
                 Err(err) => {
-                    warn!(path = %path.display(), error = %err, "tx parse failed");
-                    snap.parse_errors.push(ParseError {
-                        path: path.clone(),
-                        kind: ParseErrorKind::HistoricalTx,
-                        message: err.to_string(),
-                        line: tx_parse_error_line(&err, &contents),
-                        at: Utc::now(),
-                    });
+                    let message = err.to_string();
+                    if !parse_error_already_recorded(snap, &path, &message) {
+                        warn!(path = %path.display(), error = %message, "tx parse failed");
+                        snap.parse_errors.push(ParseError {
+                            path: path.clone(),
+                            kind: ParseErrorKind::HistoricalTx,
+                            line: tx_parse_error_line(&err, &contents),
+                            message,
+                            at: Utc::now(),
+                        });
+                    }
                 }
             },
             Err(err) => {
-                warn!(path = %path.display(), error = %err, "tx read failed");
-                snap.parse_errors.push(ParseError {
-                    path: path.clone(),
-                    kind: ParseErrorKind::HistoricalTx,
-                    message: err.to_string(),
-                    line: None,
-                    at: Utc::now(),
-                });
+                let message = err.to_string();
+                if !parse_error_already_recorded(snap, &path, &message) {
+                    warn!(path = %path.display(), error = %message, "tx read failed");
+                    snap.parse_errors.push(ParseError {
+                        path: path.clone(),
+                        kind: ParseErrorKind::HistoricalTx,
+                        message,
+                        line: None,
+                        at: Utc::now(),
+                    });
+                }
             }
         }
     }
@@ -1162,7 +1201,21 @@ fn lint_project_identity_state(
     }
 }
 
+/// True when an identical `(path, message)` parse error is already recorded
+/// this pass. A watcher-driven refresh can otherwise re-warn the same
+/// unresolved issue on every debounced event even though nothing changed
+/// (TASK-V8WY9): callers use this to log — and record — each distinct
+/// finding once per rebuild/refresh pass instead of spamming the log.
+fn parse_error_already_recorded(snap: &IndexSnapshot, path: &Path, message: &str) -> bool {
+    snap.parse_errors
+        .iter()
+        .any(|e| e.path == path && e.message == message)
+}
+
 fn push_parse_error(snap: &mut IndexSnapshot, path: PathBuf, message: String) {
+    if parse_error_already_recorded(snap, &path, &message) {
+        return;
+    }
     warn!(path = %path.display(), error = %message, "graph parse failed");
     snap.parse_errors.push(ParseError {
         path,
@@ -1764,6 +1817,20 @@ mod tests {
         );
     }
 
+    #[test]
+    fn push_parse_error_dedups_identical_path_and_message_within_a_pass() {
+        let mut snap = IndexSnapshot::default();
+        let path = PathBuf::from("/proj/.orgasmic/glossary.org");
+        let message = "dangling reference `x` (:RELATES_TO: on term_A)".to_string();
+        push_parse_error(&mut snap, path.clone(), message.clone());
+        push_parse_error(&mut snap, path, message);
+        assert_eq!(
+            snap.parse_errors.len(),
+            1,
+            "identical (path, message) must record once per pass, not N times"
+        );
+    }
+
     #[tokio::test]
     async fn rebuild_loads_board_and_tasks() {
         let (tmp, home) = make_home();
@@ -1938,6 +2005,111 @@ mod tests {
             error.message.contains("dangling target dec_GONE99")
                 && matches!(error.kind, ParseErrorKind::WorkingFile)
         }));
+    }
+
+    #[tokio::test]
+    async fn dangling_reference_property_is_attributable_to_project_file_node_and_property() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        let glossary = project_root.join(".orgasmic/glossary.org");
+        write(
+            &glossary,
+            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let error = snap
+            .parse_errors
+            .iter()
+            .find(|e| e.message.contains("dangling reference `missing-slug`"))
+            .expect("dangling RELATES_TO reference surfaces as a parse error");
+        assert_eq!(error.path, glossary, "file attribution");
+        assert!(
+            error.message.contains(":RELATES_TO: on term_A"),
+            "property/node attribution embedded in message: {}",
+            error.message
+        );
+        assert_eq!(
+            snap.parse_error_project_id(error),
+            Some("proj-x"),
+            "project attribution derived from the error's path"
+        );
+    }
+
+    #[tokio::test]
+    async fn duplicate_dangling_edge_tokens_are_recorded_once_per_pass_not_n_times() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        write(
+            &project_root.join(".orgasmic/tasks/backlog.org"),
+            "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-BKC12 Blocked task :work:\n:PROPERTIES:\n:ID:               TASK-BKC12\n:DEPENDS_ON:       TASK-MSS12 TASK-MSS12\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        let matching = |errors: &[ParseError]| {
+            errors
+                .iter()
+                .filter(|e| e.message.contains("dangling target TASK-MSS12"))
+                .count()
+        };
+        assert_eq!(
+            matching(&snap.parse_errors),
+            1,
+            "a repeated identical dangling-edge token must be recorded once per pass, not N times"
+        );
+
+        // A second reindex pass over the same unfixed content still records
+        // it exactly once — dedup is per-pass, not a one-time suppression
+        // (TASK-V8WY9).
+        index.refresh_project("proj-x").await.unwrap();
+        let snap = index.snapshot().await;
+        assert_eq!(
+            matching(&snap.parse_errors),
+            1,
+            "second pass must still record it exactly once"
+        );
+    }
+
+    #[tokio::test]
+    async fn reindex_clears_project_parse_error_count_after_fix_without_restart() {
+        let (tmp, home) = make_home();
+        let project_root = tmp.path().join("proj");
+        seed_project(&project_root);
+        seed_board(&home, &project_root, "proj-x");
+        let glossary = project_root.join(".orgasmic/glossary.org");
+        write(
+            &glossary,
+            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+        );
+
+        let index = Index::new(home);
+        index.rebuild().await;
+        let snap = index.snapshot().await;
+        assert_eq!(
+            snap.parse_error_counts_by_project().get("proj-x").copied(),
+            Some(1)
+        );
+
+        // Fix the dangling reference on disk and reindex just this project —
+        // no daemon restart — and confirm the count drops to zero.
+        write(
+            &glossary,
+            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
+        );
+        index.refresh_project("proj-x").await.unwrap();
+        let snap = index.snapshot().await;
+        assert_eq!(
+            snap.parse_error_counts_by_project().get("proj-x").copied(),
+            Some(0)
+        );
     }
 
     #[tokio::test]

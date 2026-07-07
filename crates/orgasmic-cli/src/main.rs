@@ -139,10 +139,31 @@ Bearer token path (created when the daemon first starts): ~/.orgasmic/user/auth/
     #[command(after_help = "\
 Examples:
   orgasmic status
+  orgasmic status --errors
 
 Emits a [warn] prefix when the running daemon predates a newer binary or recent
-daemon-code commits (same check as orgasmic doctor).")]
-    Status,
+daemon-code commits (same check as orgasmic doctor).
+
+--errors lists every parse error with project/file/node/property/reason
+attribution instead of the global count — no daemon-log grep required.")]
+    Status {
+        /// List parse errors with project/file/node/property/reason
+        /// attribution instead of the plain status summary.
+        #[arg(long)]
+        errors: bool,
+    },
+    /// Force a fresh reindex and report per-project parse-error counts.
+    #[command(after_help = "\
+Examples:
+  orgasmic reindex                     # reindex every registered project
+  orgasmic reindex --project orgasmic  # reindex just one project
+
+Confirms a parse-error fix without a daemon restart.")]
+    Reindex {
+        /// Reindex only this project id (default: every registered project).
+        #[arg(long)]
+        project: Option<String>,
+    },
     /// Restart the local daemon process.
     Restart(DaemonRestartArgs),
     /// Manage the local daemon lifecycle without a desktop app.
@@ -832,7 +853,14 @@ fn main() -> Result<()> {
         },
         Cmd::Board => cmd_project_list(&home),
         Cmd::Serve { bind, port } => cmd_serve(&home, bind, port),
-        Cmd::Status => cmd_status(&home),
+        Cmd::Status { errors } => {
+            if errors {
+                cmd_status_errors(&home)
+            } else {
+                cmd_status(&home)
+            }
+        }
+        Cmd::Reindex { project } => cmd_reindex(&home, project.as_deref()),
         Cmd::Restart(args) => cmd_daemon_restart(&home, args),
         Cmd::Daemon { cmd } => cmd_daemon(&home, cmd),
         Cmd::Ui { print_url } => cmd_ui(&home, print_url),
@@ -1287,6 +1315,85 @@ fn cmd_status(home: &Home) -> Result<()> {
         if let Some(message) = staleness {
             eprintln!("[warn] {message}");
         }
+        Ok::<(), anyhow::Error>(())
+    })
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
+struct ParseErrorView {
+    #[serde(default)]
+    project_id: Option<String>,
+    path: PathBuf,
+    message: String,
+}
+
+/// Best-effort node/property attribution parsed out of a parse-error
+/// message. Covers the two dangling-reference detectors the daemon emits
+/// today (`identity_lint::lint_dangling_references` and
+/// `index::lint_dangling_graph_edges`) so `status --errors` never forces an
+/// agent to grep the raw message to find the offending node (TASK-V8WY9).
+fn attribute_parse_error_message(message: &str) -> (Option<String>, Option<String>) {
+    if let Some(rest) = message.strip_prefix("dangling reference `") {
+        if let Some((_token, tail)) = rest.split_once("` (") {
+            if let Some(context) = tail.strip_suffix(')') {
+                if let Some((prop_part, owner)) = context.split_once(" on ") {
+                    let property = prop_part.trim_matches(':').to_string();
+                    return (Some(owner.to_string()), Some(property));
+                }
+            }
+        }
+    }
+    if let Some(rest) = message.strip_prefix("graph edge ") {
+        let mut parts = rest.splitn(2, ' ');
+        let kind = parts.next().unwrap_or_default().to_string();
+        if let Some(tail) = parts.next() {
+            if let Some((from, _)) = tail.split_once(" -> ") {
+                return (Some(from.to_string()), Some(kind));
+            }
+        }
+    }
+    (None, None)
+}
+
+fn cmd_status_errors(home: &Home) -> Result<()> {
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    runtime.block_on(async {
+        let client = DaemonClient::from_home_autostart_async(home).await?;
+        let errors: Vec<ParseErrorView> = client.get("/graph/parse-errors").await?;
+        if errors.is_empty() {
+            println!("0 parse errors");
+            return Ok(());
+        }
+        println!("{} parse error(s)", errors.len());
+        println!(
+            "{:<16} {:<48} {:<14} {:<12} REASON",
+            "PROJECT", "FILE", "NODE", "PROPERTY"
+        );
+        for error in &errors {
+            let (node, property) = attribute_parse_error_message(&error.message);
+            println!(
+                "{:<16} {:<48} {:<14} {:<12} {}",
+                error.project_id.as_deref().unwrap_or("-"),
+                error.path.display(),
+                node.as_deref().unwrap_or("-"),
+                property.as_deref().unwrap_or("-"),
+                error.message,
+            );
+        }
+        Ok::<(), anyhow::Error>(())
+    })
+}
+
+fn cmd_reindex(home: &Home, project: Option<&str>) -> Result<()> {
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    runtime.block_on(async {
+        let client = DaemonClient::from_home_autostart_async(home).await?;
+        let path = match project {
+            Some(id) => format!("/reindex/{}", daemon_client::path_segment(id)),
+            None => "/reindex".to_string(),
+        };
+        let value: serde_json::Value = client.post_json(&path, &serde_json::json!({})).await?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
         Ok::<(), anyhow::Error>(())
     })
 }

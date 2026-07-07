@@ -175,6 +175,8 @@ pub fn router(state: ApiState) -> Router {
             post(post_filesystem_validate_project),
         )
         .route("/graph/parse-errors", get(get_parse_errors))
+        .route("/reindex", post(post_reindex))
+        .route("/reindex/:project", post(post_reindex_project))
         .route("/graph/edges", get(get_graph_edges))
         .route("/org/file", get(get_org_file).post(post_org_file))
         .route("/org/node", get(get_org_node))
@@ -6442,8 +6444,73 @@ async fn get_whoami(State(state): State<ApiState>) -> Json<Value> {
     }))
 }
 
-async fn get_parse_errors(State(state): State<ApiState>) -> Json<Vec<crate::index::ParseError>> {
-    Json(state.index.snapshot().await.parse_errors)
+/// `/graph/parse-errors` view: the raw `ParseError` plus the project it was
+/// attributed to (TASK-V8WY9), so a caller never has to grep the daemon log
+/// to learn which project owns a dangling reference or parse failure.
+#[derive(Debug, Serialize)]
+struct ParseErrorView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_id: Option<String>,
+    path: PathBuf,
+    kind: crate::index::ParseErrorKind,
+    message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    line: Option<usize>,
+    at: chrono::DateTime<Utc>,
+}
+
+fn parse_error_views(snap: &IndexSnapshot) -> Vec<ParseErrorView> {
+    snap.parse_errors
+        .iter()
+        .map(|error| ParseErrorView {
+            project_id: snap.parse_error_project_id(error).map(str::to_string),
+            path: error.path.clone(),
+            kind: error.kind.clone(),
+            message: error.message.clone(),
+            line: error.line,
+            at: error.at,
+        })
+        .collect()
+}
+
+async fn get_parse_errors(State(state): State<ApiState>) -> Json<Vec<ParseErrorView>> {
+    let snap = state.index.snapshot().await;
+    Json(parse_error_views(&snap))
+}
+
+/// `orgasmic reindex [--project <id>]` response (TASK-V8WY9): fresh
+/// per-project parse-error counts after forcing a rebuild, so a battle-tester
+/// can confirm a fix without a daemon restart.
+#[derive(Debug, Serialize)]
+struct ReindexResponse {
+    projects: BTreeMap<String, usize>,
+    total_parse_errors: usize,
+}
+
+fn reindex_response(snap: &IndexSnapshot) -> ReindexResponse {
+    ReindexResponse {
+        projects: snap.parse_error_counts_by_project(),
+        total_parse_errors: snap.parse_errors.len(),
+    }
+}
+
+async fn post_reindex(State(state): State<ApiState>) -> Json<ReindexResponse> {
+    state.index.rebuild().await;
+    let snap = state.index.snapshot().await;
+    Json(reindex_response(&snap))
+}
+
+async fn post_reindex_project(
+    State(state): State<ApiState>,
+    Path(project_id): Path<String>,
+) -> Result<Json<ReindexResponse>, ApiError> {
+    state
+        .index
+        .refresh_project(&project_id)
+        .await
+        .map_err(ApiError::not_found)?;
+    let snap = state.index.snapshot().await;
+    Ok(Json(reindex_response(&snap)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -12893,6 +12960,164 @@ mod tests {
             }
         }
         assert!(tx_text.contains("graph.decision.reparent"), "{tx_text}");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    /// Battle-test F5: `/graph/parse-errors` must name which project a
+    /// dangling reference belongs to (not just a global count), and
+    /// `/reindex/:project` must clear the per-project count after a fix
+    /// without a daemon restart.
+    #[tokio::test]
+    async fn parse_errors_route_attributes_project_and_reindex_clears_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let glossary_path = project_root.join(".orgasmic/glossary.org");
+        write(
+            glossary_path.clone(),
+            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:RELATES_TO:       missing-slug\n:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let errors: Value = client
+            .get(format!("{base}/api/graph/parse-errors"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let errors = errors.as_array().expect("parse-errors array");
+        let found = errors
+            .iter()
+            .find(|e| {
+                e["message"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("dangling reference `missing-slug`")
+            })
+            .expect("dangling reference surfaces as a parse error");
+        assert_eq!(found["project_id"], "orgasmic");
+        assert!(found["path"]
+            .as_str()
+            .unwrap_or_default()
+            .ends_with("glossary.org"));
+
+        let status: Value = client
+            .get(format!("{base}/api/daemon/status"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            status["parse_errors"].as_u64().unwrap_or(0) >= 1,
+            "global aggregate count is unchanged by the enrichment: {status}"
+        );
+
+        // Fix the dangling reference on disk, then reindex just this
+        // project — no daemon restart — and confirm the count drops to zero.
+        write(
+            glossary_path,
+            "#+title: glossary\n#+orgasmic_version: 1\n\n* term_A A term\n:PROPERTIES:\n:ID:               term_A\n:END:\n",
+        );
+        let reindexed: Value = client
+            .post(format!("{base}/api/reindex/orgasmic"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(reindexed["projects"]["orgasmic"], 0, "{reindexed}");
+
+        let errors_after: Value = client
+            .get(format!("{base}/api/graph/parse-errors"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(errors_after.as_array().unwrap().iter().all(|e| {
+            !e["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("missing-slug")
+        }));
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn reindex_all_route_rebuilds_and_reports_per_project_counts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let reindexed: Value = client
+            .post(format!("{base}/api/reindex"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(reindexed["projects"]["orgasmic"], 0, "{reindexed}");
+        assert_eq!(reindexed["total_parse_errors"], 0, "{reindexed}");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn reindex_unknown_project_is_not_found() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/reindex/does-not-exist"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
