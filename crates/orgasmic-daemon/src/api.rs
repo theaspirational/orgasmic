@@ -6788,6 +6788,10 @@ pub struct GraphCreateRequest {
     pub properties: BTreeMap<String, String>,
     #[serde(default)]
     pub body: Option<String>,
+    /// Skip the write-time reference-token check (dec_4T80X) for intentional
+    /// forward references. The index-time dangling lint still catches it.
+    #[serde(default)]
+    pub force: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -7027,12 +7031,61 @@ fn reject_misrouted_config_key(layer: NodeLayer, key: &str) -> Result<(), ApiErr
     Ok(())
 }
 
+/// The known node id universe for a project, mirroring the id set
+/// `lint_dangling_graph_edges` (index.rs) resolves edges against. Used by the
+/// write-time reference-property guard below so a token either resolves here
+/// or would also dangle at index time — the two never disagree.
+async fn known_reference_ids(state: &ApiState, project_id: &str) -> BTreeSet<String> {
+    let snap = state.index.snapshot().await;
+    snap.project(project_id)
+        .map(|project| {
+            project
+                .graph
+                .nodes
+                .iter()
+                .map(|node| node.id.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Reject a reference-valued property (dec_HJENQ vocabulary) whose value
+/// names a token that isn't a known node id — front-running the index-time
+/// dangling-reference lint that previously only surfaced this as an opaque
+/// global parse-error count (TASK-4T80X battle-test F4: prose accepted as
+/// `--relates-to` at write time poisoned the whole index).
+fn reject_unresolved_reference_token(
+    known_ids: &BTreeSet<String>,
+    key: &str,
+    value: &str,
+) -> Result<(), ApiError> {
+    let unresolved = orgasmic_core::unresolved_reference_tokens(key, value, known_ids);
+    if let Some(token) = unresolved.first() {
+        return Err(ApiError::bad_request(format!(
+            "{key} references unresolvable id `{token}`; expected space-separated node ids (use --force to write anyway)"
+        )));
+    }
+    Ok(())
+}
+
 async fn create_graph_heading(
     state: &ApiState,
     layer: GraphLayer,
     req: GraphCreateRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
     let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
+    if !req.force {
+        let known_ids = known_reference_ids(state, &project_id).await;
+        for (key, value) in &req.properties {
+            // Decision PARENT already has dedicated existence/class/cycle
+            // validation below (validate_decision_create_parent); don't
+            // double-reject it here with a weaker generic check.
+            if layer == GraphLayer::Decision && key == "PARENT" {
+                continue;
+            }
+            reject_unresolved_reference_token(&known_ids, key, value)?;
+        }
+    }
     let node_id = resolve_graph_create_id(layer, &req)?;
     let mut source = read_or_seed_graph_file(&path, layer)?;
     if layer == GraphLayer::Decision {
@@ -7410,6 +7463,10 @@ pub struct NodeEditRequest {
     pub kind: Option<String>,
     pub base_version: String,
     pub ops: Vec<NodeEditOp>,
+    /// Skip the write-time reference-token check (dec_4T80X) for intentional
+    /// forward references. The index-time dangling lint still catches it.
+    #[serde(default)]
+    pub force: bool,
 }
 
 /// FNV-1a/64 over the bytes, as 16-char lowercase hex. Dependency-free and
@@ -7604,6 +7661,20 @@ async fn post_org_node_edit(
     }
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
+    if !req.force {
+        let known_ids = known_reference_ids(&state, &project_id).await;
+        for op in &req.ops {
+            if let NodeEditOp::SetProperty { key, value } = op {
+                // Decision PARENT already has dedicated existence/class/cycle
+                // validation below (validate_decision_parent_ops); don't
+                // double-reject it here with a weaker generic check.
+                if layer == NodeLayer::Decision && key == "PARENT" {
+                    continue;
+                }
+                reject_unresolved_reference_token(&known_ids, key, value)?;
+            }
+        }
+    }
     let source = read_artifact(&path, layer.artifact_name())?;
     let file = OrgFile::parse(source, path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
@@ -12775,6 +12846,246 @@ mod tests {
         let _ = running.join.await;
     }
 
+    /// Battle-test F4 regression: `glossary create --relates-to "Semantic
+    /// Routing Model, Expanded Routing Graph"` (prose, not ids) used to be
+    /// accepted at write time and then poisoned the whole index with one
+    /// dangling-ref parse error per word. It must now be rejected at write
+    /// time, naming the property, an offending token, and the expected
+    /// format, with nothing written to glossary.org.
+    #[tokio::test]
+    async fn glossary_create_rejects_prose_relates_to_at_write_time() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let glossary_path = project_root.join(".orgasmic/glossary.org");
+        assert!(!glossary_path.exists());
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let resp = client
+            .post(format!("{base}/api/glossary"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "title": "Semantic Routing Model",
+                "properties": {
+                    "RELATES_TO": "Semantic Routing Model, Expanded Routing Graph"
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(message.contains("RELATES_TO"), "{message}");
+        assert!(message.contains("Semantic"), "{message}");
+        assert!(message.contains("space-separated node ids"), "{message}");
+
+        assert!(
+            !glossary_path.exists(),
+            "write-time rejection must not create glossary.org"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn node_prop_set_rejects_unresolved_reference_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice\n:PROPERTIES:\n:ID:                 dec_001\n:END:\n",
+        );
+        let original = std::fs::read_to_string(&decisions_path).unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let doc: Value = client
+            .get(format!("{base}/api/org/node"))
+            .bearer_auth(&token)
+            .query(&[("project", "orgasmic"), ("id", "dec_001")])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let base_version = doc["source"]["base_version"].as_str().unwrap();
+
+        let resp = client
+            .post(format!("{base}/api/org/node/dec_001/edit"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "base_version": base_version,
+                "ops": [{ "op": "set_property", "key": "RELATES_TO", "value": "dec_FAKE99" }]
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert_eq!(status, reqwest::StatusCode::BAD_REQUEST, "{body}");
+        let message = body["error"].as_str().unwrap_or_default();
+        assert!(message.contains("RELATES_TO"), "{message}");
+        assert!(message.contains("dec_FAKE99"), "{message}");
+        assert!(message.contains("space-separated node ids"), "{message}");
+
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert_eq!(after, original, "write-nothing on reject");
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn node_prop_set_force_writes_unresolved_reference_token_anyway() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n* dec_001 Choice\n:PROPERTIES:\n:ID:                 dec_001\n:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let doc: Value = client
+            .get(format!("{base}/api/org/node"))
+            .bearer_auth(&token)
+            .query(&[("project", "orgasmic"), ("id", "dec_001")])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let base_version = doc["source"]["base_version"].as_str().unwrap();
+
+        let resp = client
+            .post(format!("{base}/api/org/node/dec_001/edit"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "base_version": base_version,
+                "force": true,
+                "ops": [{ "op": "set_property", "key": "RELATES_TO", "value": "dec_FAKE99" }]
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "force write: {status} {body}");
+
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("RELATES_TO") && line.contains("dec_FAKE99")),
+            "{after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn node_prop_set_accepts_resolvable_reference_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let decisions_path = project_root.join(".orgasmic/decisions.org");
+        write(
+            decisions_path.clone(),
+            "#+title: decisions\n#+orgasmic_version: 1\n\n\
+* dec_001 Choice\n\
+:PROPERTIES:\n\
+:ID:                 dec_001\n\
+:END:\n\
+\n\
+* dec_002 Other choice\n\
+:PROPERTIES:\n\
+:ID:                 dec_002\n\
+:END:\n",
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let base = format!("http://{}", running.addr);
+
+        let doc: Value = client
+            .get(format!("{base}/api/org/node"))
+            .bearer_auth(&token)
+            .query(&[("project", "orgasmic"), ("id", "dec_001")])
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let base_version = doc["source"]["base_version"].as_str().unwrap();
+
+        let resp = client
+            .post(format!("{base}/api/org/node/dec_001/edit"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "project": "orgasmic",
+                "base_version": base_version,
+                "ops": [{ "op": "set_property", "key": "RELATES_TO", "value": "dec_002" }]
+            }))
+            .send()
+            .await
+            .unwrap();
+        let status = resp.status();
+        let body: Value = resp.json().await.unwrap();
+        assert!(status.is_success(), "resolvable ref: {status} {body}");
+
+        let after = std::fs::read_to_string(&decisions_path).unwrap();
+        assert!(
+            after
+                .lines()
+                .any(|line| line.contains("RELATES_TO") && line.contains("dec_002")),
+            "{after}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
     #[tokio::test]
     async fn org_node_read_and_edit_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
@@ -12827,7 +13138,10 @@ mod tests {
         let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
         assert!(!base_version.is_empty());
 
-        // Apply a batch of edit ops: section body, glossary refs, tags.
+        // Apply a batch of edit ops: section body, glossary refs, tags. The
+        // glossary refs are placeholder tokens (not real node ids), so this
+        // uses --force (TASK-4T80X write-time reference guard) to keep
+        // testing the unrelated edit-round-trip mechanics unchanged.
         let resp = client
             .post(format!("{base}/api/org/node/dec_001/edit"))
             .bearer_auth(&token)
@@ -12835,6 +13149,7 @@ mod tests {
                 "project": "orgasmic",
                 "request_id": "node-edit-test",
                 "base_version": base_version,
+                "force": true,
                 "ops": [
                     { "op": "set_section_body", "title": "Context", "body": "New context body." },
                     { "op": "set_property", "key": "GLOSSARY_REFS", "value": "alpha beta gamma" },

@@ -44,7 +44,7 @@ pub use id_repair::{repair_id_collisions, repair_id_collisions_with_incoming, Id
 pub use identity_lint::{
     collect_identity_occurrences, duplicate_id_groups, lint_arch_heading_id_token,
     lint_decision_heading_id_token, lint_project_identities, lint_task_heading_id_token,
-    IdentityLintFinding, IdentityLintKind,
+    unresolved_reference_tokens, IdentityLintFinding, IdentityLintKind, REFERENCE_PROPERTY_KEYS,
 };
 pub use marker::{
     has_comment_token_before_marker, is_marker_id_byte, is_structured_marker_payload,

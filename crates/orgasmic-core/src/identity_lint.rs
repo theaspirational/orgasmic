@@ -97,6 +97,37 @@ fn tokenize_property(value: Option<&str>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The reference-valued property vocabulary ([[dec_HJENQ]]): every value is
+/// whitespace-separated node id tokens that must resolve against the known id
+/// universe. Shared by index-time dangling-reference linting and the
+/// daemon's write-time guards so the two never drift apart.
+pub const REFERENCE_PROPERTY_KEYS: &[&str] = &[
+    "RELATES_TO",
+    "GLOSSARY_REFS",
+    "MOTIVATED_BY",
+    "DEPENDS_ON",
+    "IMPLEMENTS",
+    "PARENT",
+];
+
+/// Tokens in `value` for reference property `key` that don't resolve against
+/// `known_ids`. Empty when `key` isn't in [`REFERENCE_PROPERTY_KEYS`] or every
+/// token resolves. Uses [`tokenize_property`] so tokenization never diverges
+/// between the write-time guard and the index-time lint.
+pub fn unresolved_reference_tokens(
+    key: &str,
+    value: &str,
+    known_ids: &BTreeSet<String>,
+) -> Vec<String> {
+    if !REFERENCE_PROPERTY_KEYS.contains(&key) {
+        return Vec::new();
+    }
+    tokenize_property(Some(value))
+        .into_iter()
+        .filter(|token| !known_ids.contains(token))
+        .collect()
+}
+
 fn push_identity(
     out: &mut Vec<IdentityOccurrence>,
     id: &str,
