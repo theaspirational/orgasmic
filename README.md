@@ -41,21 +41,25 @@ connect to a remote daemon, or use Android app for mobile access.
 ### 1. Install orgasmic once
 In a terminal:
 
+Install the latest stable release:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/theaspirational/orgasmic/main/scripts/install.sh | bash
 ```
 
+Install the latest nightly build (new features, bug fixes, and breaking changes):
+```bash
+curl -fsSL https://raw.githubusercontent.com/theaspirational/orgasmic/main/scripts/install.sh | bash -s -- --channel nightly
+```
+
 The installer creates `~/.orgasmic`, unpacks orgasmic runtime under
 `~/.orgasmic/runtimes/`, links orgasmic CLI tool at `~/.orgasmic/bin/orgasmic`, and links the shipped
-`/orgasmic` skill into `~/.agents/skills/orgasmic`. The default
-channel is `stable`; pass
-`--channel nightly` to track nightly builds.
+`/orgasmic` skill into `~/.agents/skills/orgasmic`.
 
 Agents that read the shared `~/.agents/skills/` path discover `/orgasmic`
 automatically. If yours keeps skills somewhere else (Claude, Codex, Hermes, …), paste this to your agent and let it wire the skill into that
 harness:
 
-```text
+```md
 Make the orgasmic skill available to you as the `/orgasmic` command. It is
 installed at `~/.agents/skills/orgasmic` — a folder containing `SKILL.md`.
 Symlink it (preferred, so future updates flow automatically) — or copy it if
