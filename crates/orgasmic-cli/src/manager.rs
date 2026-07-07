@@ -14,7 +14,7 @@ use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
     dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
-    projects, LifecycleStage, OrgFile, ProjectFile, TaskHeading, TxEntry,
+    projects, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity, TaskHeading, TxEntry,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -255,6 +255,12 @@ struct RunReleaseRequest {
     request_id: Option<String>,
     #[serde(default)]
     finalized_by_worker: bool,
+    /// Only `orgasmic dispatch finalize` sends this — the resolved run's own
+    /// identity, so the daemon can reject a stale/reclaimed-slot release
+    /// (TASK-DWJVH item A). `None` for dispatch-close/lease-release (human
+    /// manager path, unauthenticated release unchanged).
+    #[serde(default)]
+    caller_identity: Option<RuntimeIdentity>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -666,6 +672,11 @@ struct LiveRunInfo {
     project_id: Option<String>,
     #[serde(default)]
     last_path: Option<PathBuf>,
+    /// The run's own `RuntimeIdentity`, always present on `/runs.live`
+    /// (`RunSummary::identity`). Presented back on the finalize release call
+    /// (TASK-DWJVH item A) so the daemon can reject a stale/reclaimed-slot
+    /// release.
+    identity: RuntimeIdentity,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -755,14 +766,35 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         .with_context(|| format!("write {}", last_path.display()))?;
 
     // 2. Release the lease, marked finalized_by_worker so the completion
-    //    watcher suppresses its fallback scrape.
-    runtime.block_on(release_dispatch_run_with_reason(
+    //    watcher suppresses its fallback scrape. Presents this run's own
+    //    identity so the daemon can reject a stale/reclaimed-slot release
+    //    (TASK-DWJVH item A). Resilient to the stall-sweep race (item B):
+    //    the commit + last.txt write above already made this run's work
+    //    durable, so if the stall sweep released this same run in the
+    //    window between `resolve_finalize_run` and here, "already released"
+    //    is a success-with-warning, not a hard error — otherwise the run
+    //    would end up a done-less orphan despite an intact report.
+    if let Some(delay) = finalize_release_delay_for_tests() {
+        std::thread::sleep(delay);
+    }
+    if let Err(e) = runtime.block_on(release_dispatch_run_with_reason(
         &client,
         &run.run_id,
         &format!("worker finalize for {task}"),
         &task,
         true,
-    ))?;
+        Some(&run.identity),
+    )) {
+        if is_release_run_not_found_error(&e) {
+            eprintln!(
+                "warning: run {} was already released before finalize's own release call \
+                 (stall-sweep race); proceeding — commit and last.txt are already durable",
+                run.run_id
+            );
+        } else {
+            return Err(e);
+        }
+    }
 
     // 3. Emit the terminal tx last.
     let tx_request = TxAppendRequest {
@@ -1158,19 +1190,22 @@ async fn release_dispatch_run(
         &format!("dispatch close for {task_property}"),
         task_property,
         false,
+        None,
     )
     .await
 }
 
 /// Shared release call for both `dispatch-close` (manager authority) and
 /// `dispatch finalize` (worker authority, dec_3M7M0) — same terminal
-/// endpoint, differing only in reason text and `finalized_by_worker`.
+/// endpoint, differing only in reason text, `finalized_by_worker`, and
+/// `caller_identity` (only `dispatch finalize` presents one; TASK-DWJVH item A).
 async fn release_dispatch_run_with_reason(
     client: &DaemonClient,
     run_id: &str,
     reason: &str,
     request_slug_source: &str,
     finalized_by_worker: bool,
+    caller_identity: Option<&RuntimeIdentity>,
 ) -> Result<RunReleaseResponse> {
     let request = RunReleaseRequest {
         reason: Some(reason.to_string()),
@@ -1180,10 +1215,32 @@ async fn release_dispatch_run_with_reason(
             Uuid::new_v4()
         )),
         finalized_by_worker,
+        caller_identity: caller_identity.cloned(),
     };
     client
         .post_json(&format!("/runs/{}/release", path_segment(run_id)), &request)
         .await
+}
+
+/// Whether `err` is the daemon's "run not found" response to a release call
+/// — i.e. some other party (the stall sweep, in practice) already released
+/// this run before this call landed. Distinct from every other release
+/// failure (in particular an ownership mismatch, meaning a *different* run
+/// reclaimed this run_id), which must still hard-error (TASK-DWJVH item B).
+fn is_release_run_not_found_error(err: &anyhow::Error) -> bool {
+    err.to_string().contains("daemon returned 404")
+}
+
+/// Test-only: artificial delay between writing last.txt and releasing the
+/// lease in `cmd_dispatch_finalize`, so integration tests can deterministically
+/// land a concurrent stall-sweep release inside the window the release step
+/// is resilient to (TASK-DWJVH item B). Unset in production — zero effect.
+fn finalize_release_delay_for_tests() -> Option<std::time::Duration> {
+    std::env::var("ORGASMIC_TEST_FINALIZE_RELEASE_DELAY_MS")
+        .ok()
+        .and_then(|raw| raw.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(std::time::Duration::from_millis)
 }
 
 fn close_done_request(
@@ -2470,6 +2527,27 @@ mod tests {
             default_worktree(&project_root, "TASK-086", DispatchKind::Architector),
             default_worktree(&project_root, "TASK-086", DispatchKind::Reviewer)
         );
+    }
+
+    #[test]
+    fn classifies_release_not_found_vs_other_release_errors() {
+        // TASK-DWJVH item B: only a 404 ("already released", e.g. the
+        // stall sweep won the race) is treated as success-with-warning.
+        // Everything else — in particular a 409 ownership mismatch, meaning
+        // a *different* run reclaimed this run_id — must still hard-error.
+        let not_found = anyhow::anyhow!(
+            "daemon returned 404 Not Found: {{\"error\":\"active run run-x not found\"}}"
+        );
+        assert!(is_release_run_not_found_error(&not_found));
+
+        let ownership_conflict = anyhow::anyhow!(
+            "conflict — node changed on disk; reload base_version and retry: {{\"error\":\"runtime ownership mismatch\"}}"
+        );
+        assert!(!is_release_run_not_found_error(&ownership_conflict));
+
+        let unreachable =
+            anyhow::anyhow!("daemon request failed: connection refused — is the daemon reachable?");
+        assert!(!is_release_run_not_found_error(&unreachable));
     }
 
     #[test]

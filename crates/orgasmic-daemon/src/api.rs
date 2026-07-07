@@ -5263,6 +5263,15 @@ pub struct RunReleaseRequest {
     /// dispatch-close, manual cancel, etc.).
     #[serde(default)]
     pub finalized_by_worker: bool,
+    /// Set by `orgasmic dispatch finalize` (TASK-DWJVH, review #4): the
+    /// run's own `RuntimeIdentity` as the worker resolved it, so the release
+    /// can be rejected if a different run has since reclaimed this run_id or
+    /// the identity is otherwise stale (same self-consistency guard
+    /// `send_input`/`transition_state` already apply). `None` for every
+    /// other caller — preserves today's unauthenticated release for the
+    /// human manager path (dispatch-close, lease-release).
+    #[serde(default)]
+    pub caller_identity: Option<RuntimeIdentity>,
 }
 
 #[derive(Debug, Serialize)]
@@ -5412,12 +5421,25 @@ async fn post_run_release(
             &reason,
             ReleaseOutcome::Cancelled,
             req.finalized_by_worker,
+            req.caller_identity.as_ref(),
         )
         .await
         .map_err(|e| match e {
             crate::supervisor::SupervisorError::RunNotFound(_) => {
                 ApiError::not_found(format!("active run {id}"))
             }
+            crate::supervisor::SupervisorError::OwnershipMismatch {
+                run_id,
+                field,
+                expected,
+                got,
+            } => ApiError::conflict_json(json!({
+                "error": "runtime ownership mismatch",
+                "run_id": run_id,
+                "field": field,
+                "expected": expected,
+                "got": got,
+            })),
             other => supervisor_release_error(&id, other),
         })?;
     Ok(Json(RunReleaseResponse {
