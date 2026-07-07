@@ -17,6 +17,7 @@ pub mod marker;
 // arch: arch_003 — see decisions dec_017 dec_019
 pub mod home;
 pub mod members;
+pub mod node_kind;
 pub mod org;
 pub mod paths;
 pub mod projects;
@@ -54,6 +55,7 @@ pub use members::{
     add_member, find_member_by_name, find_member_by_token, read_members, revoke_member, sha256_hex,
     MemberEntry,
 };
+pub use node_kind::NodeKind;
 pub use org::{
     wrap_raw_body, Heading, OrgError, OrgFile, OrgRewriter, PropertyDrawer, PropertyEntry,
 };

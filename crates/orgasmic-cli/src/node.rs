@@ -6,6 +6,41 @@ use crate::daemon_client::DaemonClient;
 use crate::home::Home;
 use crate::manager::resolve_project;
 
+/// `--kind` selector for `node body`/`node prop`. Mirrors
+/// [`orgasmic_core::NodeKind`] one variant at a time (parity-tested in
+/// `node_kind_parity` below) so `--help` lists exactly what the daemon
+/// accepts, including `handoff`, `goal`, and `config` (TASK-JJ9RD).
+#[derive(clap::ValueEnum, Clone, Copy, Debug)]
+pub enum NodeKindArg {
+    Decision,
+    Architecture,
+    Glossary,
+    Project,
+    Task,
+    Goal,
+    Handoff,
+    Config,
+}
+
+impl From<NodeKindArg> for orgasmic_core::NodeKind {
+    fn from(value: NodeKindArg) -> Self {
+        match value {
+            NodeKindArg::Decision => Self::Decision,
+            NodeKindArg::Architecture => Self::Architecture,
+            NodeKindArg::Glossary => Self::Glossary,
+            NodeKindArg::Project => Self::Project,
+            NodeKindArg::Task => Self::Task,
+            NodeKindArg::Goal => Self::Goal,
+            NodeKindArg::Handoff => Self::Handoff,
+            NodeKindArg::Config => Self::Config,
+        }
+    }
+}
+
+fn kind_str(kind: Option<NodeKindArg>) -> Option<&'static str> {
+    kind.map(|kind| orgasmic_core::NodeKind::from(kind).as_str())
+}
+
 #[derive(Subcommand, Debug)]
 pub enum NodeCmd {
     /// Read/write node bodies through the daemon org-node editor.
@@ -27,9 +62,9 @@ pub enum NodeBodyCmd {
         id: String,
         #[arg(long)]
         project: Option<String>,
-        /// Explicit layer (`decision`, `architecture`, `glossary`, `project`, `task`).
-        #[arg(long)]
-        kind: Option<String>,
+        /// Explicit layer selector; see daemon registry for the accepted set.
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
@@ -49,8 +84,8 @@ pub enum NodeBodyCmd {
         id: String,
         #[arg(long)]
         project: Option<String>,
-        #[arg(long)]
-        kind: Option<String>,
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
@@ -75,8 +110,8 @@ pub enum NodePropCmd {
         value: String,
         #[arg(long)]
         project: Option<String>,
-        #[arg(long)]
-        kind: Option<String>,
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
         #[arg(long = "base-version")]
         base_version: Option<String>,
         #[arg(long = "request-id")]
@@ -88,8 +123,8 @@ pub enum NodePropCmd {
         key: String,
         #[arg(long)]
         project: Option<String>,
-        #[arg(long)]
-        kind: Option<String>,
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
         #[arg(long = "base-version")]
         base_version: Option<String>,
         #[arg(long = "request-id")]
@@ -133,14 +168,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     request_id,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
+                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
                             .await?;
                     let body_format = if raw { "raw" } else { "default" };
                     let op = body_op(section.as_deref(), &body, body_format);
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind.as_deref(), &base_version, &request_id, op),
+                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -162,7 +197,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     }
                     let project = Some(resolve_project(project)?);
                     let doc: NodeDoc = client
-                        .get(&node_get_path(&id, project.as_deref(), kind.as_deref()))
+                        .get(&node_get_path(&id, project.as_deref(), kind_str(kind)))
                         .await?;
                     let base_version = base_version
                         .filter(|value| !value.trim().is_empty())
@@ -193,7 +228,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind.as_deref(), &base_version, &request_id, op),
+                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -210,13 +245,13 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     request_id,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
+                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
                             .await?;
                     let op = serde_json::json!({ "op": "set_property", "key": key, "value": value });
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind.as_deref(), &base_version, &request_id, op),
+                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -230,13 +265,13 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     request_id,
                 } => {
                     let (base_version, project) =
-                        resolve_base_version(&client, project, &id, kind.as_deref(), base_version)
+                        resolve_base_version(&client, project, &id, kind_str(kind), base_version)
                             .await?;
                     let op = serde_json::json!({ "op": "remove_property", "key": key });
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind.as_deref(), &base_version, &request_id, op),
+                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -307,4 +342,30 @@ fn node_get_path(id: &str, project: Option<&str>, kind: Option<&str>) -> String 
         path.push_str(kind);
     }
     path
+}
+
+#[cfg(test)]
+mod node_kind_parity {
+    use super::NodeKindArg;
+    use clap::ValueEnum;
+    use std::collections::BTreeSet;
+
+    /// Anti-drift guarantee (TASK-JJ9RD): the CLI `--kind` enum must offer
+    /// exactly the kinds the daemon accepts (`orgasmic_daemon::api::
+    /// accepted_node_kinds`, itself sourced from `orgasmic_core::NodeKind`).
+    #[test]
+    fn cli_kind_arg_matches_daemon_registry() {
+        let cli_kinds: BTreeSet<&str> = NodeKindArg::value_variants()
+            .iter()
+            .map(|arg| orgasmic_core::NodeKind::from(*arg).as_str())
+            .collect();
+        let daemon_kinds: BTreeSet<&str> = orgasmic_daemon::api::accepted_node_kinds()
+            .iter()
+            .map(|kind| kind.as_str())
+            .collect();
+        assert_eq!(
+            cli_kinds, daemon_kinds,
+            "CLI --kind enum and daemon-accepted kinds drifted apart"
+        );
+    }
 }
