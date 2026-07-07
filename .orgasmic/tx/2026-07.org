@@ -8264,3 +8264,169 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-07 Tue 23:05:15 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1678
+:TIME:         [2026-07-07 Tue 23:05:15]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       Operator directive 2026-07-08: set a goal to implement all backlog/todo tasks (+ any new arising) and go to dispatch.
+:GOAL_ID:      goal-20260707-drain-the-backlog-
+:REPLACES:     —
+:END:
+
+* TX 2026-07-07 Tue 23:05:27 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1679
+:TIME:         [2026-07-07 Tue 23:05:27]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 23:07:21 task.state_transitioned TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1680
+:TIME:         [2026-07-07 Tue 23:07:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-KSD6D to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-07 Tue 23:07:22 manager.dispatch_started TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1681
+:TIME:         [2026-07-07 Tue 23:07:22]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ksd6d/worktree
+:BRANCH:       task-ksd6d-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-ksd6d/task-ksd6d-brief.md
+:STARTED_AT:   [2026-07-07 Tue 23:07:22]
+:LIVENESS:     8f8c786aef6e2e64d9221a276b8ec267c5a2c54d
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-sonnet-5
+:EFFORT:       high
+:REASON_INITIAL: Drain backlog goal: KSD6D extend 4T80X ref-validation to revise + task-create sinks (security/correctness first)
+:END:
+
+* TX 2026-07-07 Tue 23:07:22 run.created TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1682
+:TIME:         [2026-07-07 Tue 23:07:22]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-KSD6D-implementer-20260707T230722.jsonl
+:REASON:       Drain backlog goal: KSD6D extend 4T80X ref-validation to revise + task-create sinks (security/correctness first)
+:RUN_ID:       run-20260707T230722-24ef2220a3e24beab97e3b6adeb47508
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ksd6d/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-ksd6d/task-ksd6d-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-ksd6d/task-ksd6d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-ksd6d/task-ksd6d-stdout.log
+:DISPATCH_TX:  tx-20260707-orgasmic-1681
+:MODEL_OVERRIDE: claude-sonnet-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-07 Tue 23:07:34 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1683
+:TIME:         [2026-07-07 Tue 23:07:34]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 23:20:16 implementer.commit_pending TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1684
+:TIME:         [2026-07-07 Tue 23:20:16]
+:TYPE:         implementer.commit_pending
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-KSD6D-implementer-20260707T230722.jsonl
+:REASON:       implementer dispatch completed with uncommitted worktree
+:RUN_ID:       run-20260707T230722-24ef2220a3e24beab97e3b6adeb47508
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ksd6d/worktree
+:HAS_UNCOMMITTED: yes
+:END:
+
+* TX 2026-07-07 Tue 23:20:19 implementer.done TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1685
+:TIME:         [2026-07-07 Tue 23:20:19]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:MODEL:        claude-sonnet-5
+:EFFORT:       high
+:MERGE_SHA:    f291a86
+:BRANCH:       task-ksd6d-impl
+:CLOSED_TX:    tx-20260707-orgasmic-1681
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-07 Tue 23:20:19 task.state_transitioned TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1686
+:TIME:         [2026-07-07 Tue 23:20:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-KSD6D to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-07 Tue 23:20:20 task.state_transitioned TASK-KSD6D
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1687
+:TIME:         [2026-07-07 Tue 23:20:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KSD6D
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged f291a86; both residual ref-validation sinks (mutate_graph_heading revise route + post_task_create) guarded via the landed 4T80X helper + --force; 7 regression tests; gates green (daemon/cli/clippy/fmt) independently on merged main.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

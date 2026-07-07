@@ -1,26 +1,6 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-KSD6D Extend write-time ref validation to revise + task-create sinks (4T80X residual)    :daemon:hardening:fix:
-:PROPERTIES:
-:ID: TASK-KSD6D
-:PRIORITY: high
-:RELATES_TO: TASK-4T80X
-:END:
-
-TASK-4T80X validated reference-valued properties (RELATES_TO/GLOSSARY_REFS/MOTIVATED_BY/DEPENDS_ON/IMPLEMENTS/PARENT) at write time in exactly its two briefed sinks: create_graph_heading (graph create) and post_org_node_edit (node prop set). The implementer flagged TWO more write sinks that still accept unresolvable ref tokens (same index-poisoning class, different path):
-
-1. mutate_graph_heading — the decision/architecture/glossary REVISE/action route (e.g. `orgasmic decision revise --property RELATES_TO=...`) upserts arbitrary properties without the guard.
-2. Task create (POST /tasks, separate from render_graph_heading) can set DEPENDS_ON/IMPLEMENTS at creation time unguarded.
-
-Fix: call the existing shared guard (reject_unresolved_reference_token / orgasmic_core::unresolved_reference_tokens, already landed in 4T80X) at these two sinks too, threading the same --force escape hatch. No new validation logic — reuse the 4T80X helper. 
-
-** Acceptance Criteria
-- [ ] `decision/architecture/glossary revise --property RELATES_TO=<prose>` → 400 naming property+token+format, write-nothing; --force writes anyway.
-- [ ] Task create with an unresolvable DEPENDS_ON/IMPLEMENTS token → 400 (write-nothing) unless --force.
-- [ ] Regression tests for both sinks. Reuses the 4T80X core helper (no parallel logic).
-- [ ] gates: daemon + cli green, clippy -D, fmt.
-
 * BACKLOG TASK-DWJVH dispatch finalize residuals: live rmux prompt-spec smoke + caller-identity auth + finalize/stall race    :dispatch:hardening:followup:
 :PROPERTIES:
 :ID: TASK-DWJVH

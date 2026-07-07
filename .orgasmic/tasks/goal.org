@@ -2,6 +2,25 @@
 #+orgasmic_version: 1
 #+scope: project
 
+* GOAL Drain the backlog: ref-validation residuals + dispatch-finalize hardening :goal:
+:PROPERTIES:
+:ID:               goal-20260707-drain-the-backlog-
+:SET_AT:           [2026-07-07 Tue]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:END:
+
+** Statement
+Drain the open backlog one task at a time per the manager-dispatch convention, security/correctness first, plus any new task that arises during implementation. Both prior 2026-07-07 goals (harden-the-agent, worker-driven-dispatch-finalization) are cleared; todo/in_progress/in_review are empty. Two tasks stand open:
+
+1. TASK-KSD6D (HIGH, ready now) — extend the 4T80X write-time reference-validation guard to the two residual write sinks it missed: mutate_graph_heading (decision/architecture/glossary revise route) and task-create (POST /tasks DEPENDS_ON/IMPLEMENTS). Reuses the landed reject_unresolved_reference_token / unresolved_reference_tokens helper — no new validation logic, same --force escape hatch. Index-poisoning correctness class → goes first.
+2. TASK-DWJVH — dispatch-finalize residuals, three parts of mixed readiness: (2) caller-identity authorization on 'orgasmic dispatch finalize' (bind to the run's RuntimeIdentity/ownership like send_input) and (3) the finalize/stall release race + a --status blocked regression test are CODE, implementable now; (1) the live rmux prompt-spec-adherence smoke is PUBLISH-GATED (the finalize verb is not in the deployed 0.0.8-nightly.20260706 daemon, so a live smoke before runtime publish is moot) and stays deferred until the operator publishes the runtime.
+
+Implementer = implementer-claude-rmux (sonnet-5 high); review = manager-inline opus for the small ref-validation change, reviewer-claude-rmux or inline for DWJVH by risk — manager's call per task. Worker-driven 'orgasmic dispatch finalize' is now the finalization contract; scrape+stall is fallback. parse_errors stays at its current baseline (2 external orsl glossary comma-refs; no orgasmic-owned errors) throughout — no new orgasmic parse errors.
+
+** Reached When
+TASK-KSD6D DONE with per-task gates green (daemon+cli tests, clippy -D, fmt) and both residual sinks rejecting unresolvable ref tokens write-nothing / honoring --force, with regression tests reusing the 4T80X helper. TASK-DWJVH code items (2 caller-identity auth, 3 finalize/stall race + --status blocked test) DONE with gates green; its part-1 live rmux smoke either DONE (if the operator publishes the runtime this session) or explicitly deferred with rationale in the heading pending runtime publish. Any new task that arises is filed, and either DONE or explicitly deferred/cancelled with rationale. No task left in TODO/IN_PROGRESS/IN_REVIEW except an explicitly publish-deferred DWJVH remainder. orgasmic status reports no orgasmic-owned parse errors.
+
 * CLEARED Worker-driven dispatch finalization: kill rmux report-loss at the root :goal:
 :PROPERTIES:
 :ID:               goal-20260707-worker-driven-dispatch-finalization-
