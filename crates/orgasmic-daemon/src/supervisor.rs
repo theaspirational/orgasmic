@@ -65,6 +65,12 @@ const BABYSITTER_SUMMARY_EVENT_THRESHOLD: usize = 50;
 const BABYSITTER_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFAULT_MAX_RUN_DURATION: Duration = Duration::from_secs(14_400);
+/// Default idle window for persistent (hot-session) artifactor runs: 15
+/// minutes of no accepted `send_input` before self-release. Long enough to
+/// survive an operator reading a diff or drafting review feedback between
+/// grilling/regenerate rounds; short enough that an abandoned hot session
+/// doesn't hold its `artifact.generate:{id}` lease and pane indefinitely.
+pub(crate) const DEFAULT_IDLE_TIMEOUT_SECS: u32 = 900;
 
 /// Task-id prefix for interactive manager sessions (see
 /// `post_manager_launch`). Manager runs are operator-paced — they idle at a
@@ -145,6 +151,14 @@ pub struct AcquireRequest {
     /// disables the ceiling (interactive manager sessions outlive any sane
     /// worker bound).
     pub max_run_duration_secs: Option<u32>,
+    /// Opt-in idle release window in seconds for persistent (hot-session)
+    /// runs: if no `send_input` is accepted for this long, the run is
+    /// released. Unlike `stall_timeout_secs`/`max_run_duration_secs`, this is
+    /// disabled by default — `None` or `Some(0)` means no idle release.
+    /// Only the persistent artifactor spawn path sets an explicit value;
+    /// every other caller (one-shot dispatch, manager, reviewer, babysitter)
+    /// must leave this `None`.
+    pub idle_timeout_secs: Option<u32>,
     /// When set on an implementer acquire, spawn this babysitter worker after
     /// the implementer run is live.
     pub babysitter: Option<BabysitterAutoSpawn>,
@@ -253,10 +267,17 @@ struct RunRecord {
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
     run_started_at: Instant,
+    /// Instant of the last `send_input` accepted by the driver. Reset on
+    /// every accepted `send_input` — unlike `last_driver_event_at`, which
+    /// resets on any driver event. Initialized to `run_started_at`.
+    last_input_at: Instant,
     /// `None` = stall detection disabled (interactive manager runs).
     stall_timeout: Option<Duration>,
     /// `None` = no absolute ceiling (interactive manager runs).
     max_run_duration: Option<Duration>,
+    /// `None` = idle-release disabled (default for everything except
+    /// persistent artifactor runs).
+    idle_timeout: Option<Duration>,
     next_event_seq: u64,
     terminal_outcome: Option<ReleaseOutcome>,
     control: Box<dyn DriverControl>,
@@ -815,11 +836,13 @@ impl Supervisor {
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
+            last_input_at: run_started_at,
             stall_timeout: resolve_timeout_secs(req.stall_timeout_secs, DEFAULT_STALL_TIMEOUT),
             max_run_duration: resolve_timeout_secs(
                 req.max_run_duration_secs,
                 DEFAULT_MAX_RUN_DURATION,
             ),
+            idle_timeout: resolve_idle_timeout_secs(req.idle_timeout_secs),
             next_event_seq: 0,
             terminal_outcome: None,
             control: session.control,
@@ -1040,11 +1063,13 @@ impl Supervisor {
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
+            last_input_at: run_started_at,
             stall_timeout: resolve_timeout_secs(req.stall_timeout_secs, DEFAULT_STALL_TIMEOUT),
             max_run_duration: resolve_timeout_secs(
                 req.max_run_duration_secs,
                 DEFAULT_MAX_RUN_DURATION,
             ),
+            idle_timeout: resolve_idle_timeout_secs(req.idle_timeout_secs),
             next_event_seq: 0,
             terminal_outcome: None,
             control: session.control,
@@ -1355,12 +1380,18 @@ impl Supervisor {
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
+            last_input_at: run_started_at,
             // Reattach has no caller-provided thresholds; managers stay
             // exempt across daemon restarts.
             stall_timeout: (!is_interactive_manager_task(&task_id))
                 .then_some(DEFAULT_STALL_TIMEOUT),
             max_run_duration: (!is_interactive_manager_task(&task_id))
                 .then_some(DEFAULT_MAX_RUN_DURATION),
+            // Reattach carries no persistence signal (no AcquireRequest is
+            // threaded through it), so idle release stays disabled — a
+            // reattached run is never idle-released even if it was
+            // originally a persistent artifactor session.
+            idle_timeout: None,
             next_event_seq: 0,
             terminal_outcome: None,
             control: session.control,
@@ -1416,6 +1447,7 @@ impl Supervisor {
             babysitter_target: Some(target_run.into()),
             stall_timeout_secs: run_timeouts.0,
             max_run_duration_secs: run_timeouts.1,
+            idle_timeout_secs: None,
             babysitter: None,
         };
         let resp = self.acquire_impl(driver, req).await?;
@@ -1522,11 +1554,20 @@ impl Supervisor {
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
             self.check_ownership(rec, caller_identity)?;
-            rec.control
+            let ack = rec
+                .control
                 .send_input(UserInputRequest {
                     input: input.clone(),
                 })
-                .await?
+                .await?;
+            // Idle timer resets on every accepted send_input — independent
+            // of last_driver_event_at (stall), which resets on driver
+            // events instead. Reset while still holding the guard that
+            // fetched `rec` so this can't race a concurrent idle sweep.
+            if ack.accepted {
+                rec.last_input_at = Instant::now();
+            }
+            ack
         };
         // Shared recording path (TASK-102 / dec_052): a durable composer_send
         // lifecycle event for every accepted operator send. Best-effort — a
@@ -2206,6 +2247,18 @@ fn resolve_timeout_secs(value: Option<u32>, default: Duration) -> Option<Duratio
     }
 }
 
+/// Idle-release resolution — deliberately the inverse default of
+/// [`resolve_timeout_secs`]: `None` means idle detection stays OFF (every
+/// caller except the persistent artifactor spawn path), not "apply the
+/// default". `Some(0)` also disables it, matching the stall/max `Some(0)`
+/// convention; only an explicit positive value enables it.
+fn resolve_idle_timeout_secs(value: Option<u32>) -> Option<Duration> {
+    match value {
+        None | Some(0) => None,
+        Some(secs) => Some(Duration::from_secs(u64::from(secs))),
+    }
+}
+
 fn spawn_run_timeout_monitor(supervisor: Supervisor) {
     let Ok(handle) = tokio::runtime::Handle::try_current() else {
         return;
@@ -2245,17 +2298,25 @@ fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeo
             deadline: rec.run_started_at + threshold,
         })
     });
-    match (stall, max) {
-        (None, None) => None,
-        (Some(candidate), None) | (None, Some(candidate)) => Some(candidate),
-        // Both exceeded: report the one whose deadline passed first (stall
-        // wins ties, matching the pre-Option behavior).
-        (Some(stall), Some(max)) => Some(if stall.deadline <= max.deadline {
-            stall
-        } else {
-            max
-        }),
-    }
+    // Idle is a THIRD, independent timeout keyed on the last accepted
+    // `send_input` rather than driver events (stall) or run start (max).
+    let idle = rec.idle_timeout.and_then(|threshold| {
+        let elapsed = now.saturating_duration_since(rec.last_input_at);
+        (elapsed > threshold).then(|| RunTimeoutCandidate {
+            run_id: run_id.to_string(),
+            reason: "idle_timeout_exceeded",
+            threshold,
+            elapsed,
+            deadline: rec.last_input_at + threshold,
+        })
+    });
+    // Earliest deadline wins; ties fall to whichever candidate is first in
+    // this list (stall, then max, then idle), matching the pre-existing
+    // stall-wins-ties behavior.
+    [stall, max, idle]
+        .into_iter()
+        .flatten()
+        .min_by_key(|candidate| candidate.deadline)
 }
 
 fn terminal_outcome_for_event(evt: &DriverEvent) -> Option<ReleaseOutcome> {
@@ -2459,7 +2520,10 @@ mod tests {
     use crate::events::EventBus;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::WorkerKind;
-    use orgasmic_drivers::{modes::tmux, ClaudeAcpDriver, TmuxTuiDriver};
+    use orgasmic_drivers::{
+        modes::tmux, BabysitterAck, BabysitterRequest, ClaudeAcpDriver, DriverError, DriverSession,
+        TmuxTuiDriver, TransitionAck, UserInputAck,
+    };
     use serde_json::json;
 
     /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
@@ -2477,6 +2541,78 @@ mod tests {
         // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
         fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
         LiveSessionGuard(file)
+    }
+
+    /// Minimal in-process driver whose control always accepts `send_input` —
+    /// none of the real drivers used elsewhere in these tests (`TmuxTuiDriver`)
+    /// implement `send_input` (it's tmux-tui's unimplemented trait default),
+    /// so idle-reset tests need a control that actually accepts input to
+    /// exercise `Supervisor::send_input`'s accepted branch.
+    struct AcceptingInputDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for AcceptingInputDriver {
+        fn transport(&self) -> &'static str {
+            "test-accepting-input"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                // The sender must outlive acquire() — dropping it here would
+                // close the channel and make the drain task see stream-end
+                // immediately, auto-releasing the run before the idle sweep
+                // ever runs. Keeping it on the control ties its lifetime to
+                // the run's control handle instead.
+                control: Box::new(AcceptingInputControl { _events: tx }),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct AcceptingInputControl {
+        _events: tokio::sync::mpsc::Sender<DriverEvent>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for AcceptingInputControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn send_input(
+            &mut self,
+            _req: UserInputRequest,
+        ) -> Result<UserInputAck, DriverError> {
+            Ok(UserInputAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            Ok(())
+        }
     }
 
     struct LiveSessionGuard(std::fs::File);
@@ -2553,6 +2689,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: None,
         }
     }
@@ -2566,6 +2703,12 @@ mod tests {
         let mut req = impl_req(task, dir);
         req.stall_timeout_secs = stall_timeout_secs;
         req.max_run_duration_secs = max_run_duration_secs;
+        req
+    }
+
+    fn idle_req(task: &str, dir: &Path, idle_timeout_secs: Option<u32>) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.idle_timeout_secs = idle_timeout_secs;
         req
     }
 
@@ -2665,6 +2808,13 @@ mod tests {
         if let Some(age) = run_age {
             rec.run_started_at = now - age;
         }
+    }
+
+    async fn age_input(sup: &Supervisor, run_id: &str, last_input_age: Duration) {
+        let now = Instant::now();
+        let mut g = sup.inner.lock().await;
+        let rec = g.runs.get_mut(run_id).expect("run exists");
+        rec.last_input_at = now - last_input_age;
     }
 
     async fn run_is_live(sup: &Supervisor, run_id: &str) -> bool {
@@ -2798,6 +2948,80 @@ mod tests {
 
         assert!(!run_is_live(&sup, &resp.run_id).await);
         assert_release_reason(&session_path, "max_run_duration_exceeded");
+    }
+
+    /// D3 of arch_045Q0.2 (TASK-F9N5F): a persistent artifactor run idle past
+    /// its window is released, freeing the `artifact.generate:{id}` lease so
+    /// the next regenerate cold-spawns instead of hitting `LeaseHeld`.
+    #[tokio::test]
+    async fn idle_timeout_releases_persistent_run_and_frees_lease() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let req = idle_req("TASK-IDLE", dir.path(), Some(1));
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        age_input(&sup, &resp.run_id, Duration::from_millis(1_001)).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release_reason(&session_path, "idle_timeout_exceeded");
+
+        let reacquired = sup
+            .acquire(&driver, idle_req("TASK-IDLE", dir.path(), Some(1)))
+            .await
+            .expect("lease must be freed after idle release so regenerate cold-spawns");
+        assert_ne!(reacquired.run_id, resp.run_id);
+    }
+
+    /// The idle timer resets on every ACCEPTED send_input, independent of
+    /// last_driver_event_at (stall) or run_started_at (max). Without the
+    /// reset, this run would already be past its deadline when the sweep
+    /// runs and would be incorrectly released.
+    #[tokio::test]
+    async fn idle_timeout_resets_on_accepted_send_input() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let req = idle_req("TASK-IDLE-RESET", dir.path(), Some(1));
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        age_input(&sup, &resp.run_id, Duration::from_millis(1_001)).await;
+        let ack = sup
+            .send_input(&resp.run_id, "keep going".into(), &resp.identity)
+            .await
+            .unwrap();
+        assert!(ack.accepted);
+        sup.release_first_timed_out_run().await;
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "accepted send_input must reset the idle clock, pushing the deadline out"
+        );
+
+        // Advance past the window again from the reset baseline: now it fires.
+        age_input(&sup, &resp.run_id, Duration::from_millis(1_001)).await;
+        sup.release_first_timed_out_run().await;
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release_reason(&session_path, "idle_timeout_exceeded");
+    }
+
+    /// One-shot/non-artifactor runs (`idle_timeout_secs: None`) must never be
+    /// idle-released, no matter how long input has been silent — only the
+    /// persistent artifactor spawn path opts in.
+    #[tokio::test]
+    async fn non_persistent_run_never_idle_released() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = TmuxTuiDriver;
+        let req = manual_req("TASK-NOT-PERSISTENT", dir.path(), Some(0), Some(0));
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        age_input(&sup, &resp.run_id, Duration::from_secs(7 * 24 * 3600)).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "idle_timeout_secs: None must keep idle detection disabled"
+        );
     }
 
     #[test]
@@ -3418,6 +3642,7 @@ mod tests {
             babysitter_target: Some(r1.run_id.clone()),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: None,
         };
         let r2 = sup.acquire(&driver, bs_req).await.unwrap();
@@ -3696,6 +3921,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: None,
         };
         let seed = ContinuationSeed {
@@ -3748,6 +3974,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: None,
         };
         let err = sup.acquire(&driver, req).await.unwrap_err();
@@ -3829,6 +4056,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
                 mode: "tmux".into(),
@@ -3872,6 +4100,7 @@ mod tests {
                 babysitter_target: None,
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
+                idle_timeout_secs: None,
                 babysitter: Some(BabysitterAutoSpawn {
                     worker_id: "babysitter-stall-detector".into(),
                     mode: "tmux".into(),
@@ -3918,6 +4147,7 @@ mod tests {
                     babysitter_target: Some("external-target".into()),
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
+                    idle_timeout_secs: None,
                     babysitter: None,
                 },
             )
@@ -4012,6 +4242,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
                 mode: "tmux".into(),
@@ -4086,6 +4317,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
                 mode: "tmux".into(),
@@ -4179,6 +4411,7 @@ mod tests {
             babysitter_target: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
+            idle_timeout_secs: None,
             babysitter: Some(BabysitterAutoSpawn {
                 worker_id: "babysitter-stall-detector".into(),
                 mode: "tmux".into(),
