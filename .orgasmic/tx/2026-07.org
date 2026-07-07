@@ -5372,3 +5372,174 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-07 Tue 08:19:20 task.created TASK-3K9ZG
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1494
+:TIME:         [2026-07-07 Tue 08:19:20]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3K9ZG
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F6 + traversal hole found in verification
+:END:
+
+* TX 2026-07-07 Tue 08:19:32 task.created TASK-JJ9RD
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1495
+:TIME:         [2026-07-07 Tue 08:19:32]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JJ9RD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F7/F8, worst bug of the session
+:END:
+
+* TX 2026-07-07 Tue 08:19:32 task.created TASK-4T80X
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1496
+:TIME:         [2026-07-07 Tue 08:19:32]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4T80X
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F4 index poisoning
+:END:
+
+* TX 2026-07-07 Tue 08:20:19 task.created TASK-V8WY9
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1497
+:TIME:         [2026-07-07 Tue 08:20:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-V8WY9
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F5
+:END:
+
+* TX 2026-07-07 Tue 08:20:19 task.created TASK-GERBB
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1498
+:TIME:         [2026-07-07 Tue 08:20:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GERBB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F1
+:END:
+
+* TX 2026-07-07 Tue 08:20:27 task.created TASK-SPBTA
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1499
+:TIME:         [2026-07-07 Tue 08:20:27]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SPBTA
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F9/F10
+:END:
+
+* TX 2026-07-07 Tue 08:20:27 task.created TASK-MTB56
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1500
+:TIME:         [2026-07-07 Tue 08:20:27]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MTB56
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: friction report F3/F11/F12/F13/F14
+:END:
+
+* TX 2026-07-07 Tue 08:20:45 task.created TASK-DHYXQ
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1501
+:TIME:         [2026-07-07 Tue 08:20:45]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DHYXQ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       battle-test hardening: regression net for the F1/F2/F7/F8/F13 class
+:END:
+
+* TX 2026-07-07 Tue 08:21:20 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1502
+:TIME:         [2026-07-07 Tue 08:21:20]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       shipped/skills/orgasmic/scaffold/tasks/backlog.org
+:REASON:       Inline fix (battle-test F2): scaffold bootstrap task no longer instructs sequential dec_NNN ids; now says daemon mints ids, capture returned id, create decisions before referencing them. Companion: error-message house-style bullet added to conventions/contributing.org. 8 hardening tasks filed from the 2026-07-06 orsl friction report (TASK-3K9ZG JJ9RD 4T80X V8WY9 GERBB SPBTA MTB56 DHYXQ).
+:END:
+
+* TX 2026-07-07 Tue 08:33:48 task.state_transitioned TASK-F9N5F
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1503
+:TIME:         [2026-07-07 Tue 08:33:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-F9N5F
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       state repair: no live run or lease attached (run list live=[]); reverting stale IN_PROGRESS before goal re-prioritization
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-07 Tue 08:34:12 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1504
+:TIME:         [2026-07-07 Tue 08:34:12]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       operator-directed re-prioritization: fold 2026-07-06 battle-test hardening queue in; drain-the-full was 8/10 with only F9N5F+A22TB left
+:GOAL_ID:      goal-20260707-harden-the-agent
+:REPLACES:     goal-20260706-drain-the-full
+:END:
+
+* TX 2026-07-07 Tue 08:34:24 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1505
+:TIME:         [2026-07-07 Tue 08:34:24]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-07 Tue 08:34:33 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260707-orgasmic-1506
+:TIME:         [2026-07-07 Tue 08:34:33]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

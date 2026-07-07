@@ -1,3 +1,17 @@
 #+title: Todo
 #+orgasmic_version: 1
 
+* TODO TASK-F9N5F Hot-session artifactor: idle-timeout session lifetime (D3, deferred from TASK-RH4M5) :artifacts:daemon:runtime:
+:PROPERTIES:
+:DEPENDS_ON: TASK-RH4M5
+:ID: TASK-F9N5F
+:IMPLEMENTS: arch_045Q0.2
+:PRIORITY: low
+:END:
+
+Deferred D3 from TASK-RH4M5 (hot-session was landed without it; explicit POST /runs/:id/release + daemon-restart cold-spawn already cover teardown).
+
+Add a config-defaulted idle timeout to a persistent artifactor rmux session: if no followup (send_input) arrives for the configured duration, release the run (free the artifact.generate:{id} lease, tear down the pane). The timer RESETS on each accepted send_input — unlike the existing stall/ceiling timeouts (resolve_timeout_secs / is_interactive_manager_task at supervisor.rs), which are not reset-on-input. This is the one part of arch_045Q0.2's session-lifetime clause not yet shipped.
+
+Likely needs new supervisor machinery: a per-run last-input instant updated in supervisor.send_input on ack.accepted, plus a sweep (reuse release_first_timed_out_run's shape) that releases persistent runs idle past the threshold. Config default alongside the other timeout knobs. Acceptance: a persistent artifactor run with no followup for the idle window is released (lease freed, next regenerate cold-spawns); a run receiving periodic followups is never idle-released.
+

@@ -2,12 +2,42 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Drain the full backlog: 10 tasks, relevance-checked, one at a time :goal:
+* GOAL Harden the agent surface: battle-test queue, security first :goal:
+:PROPERTIES:
+:ID:               goal-20260707-harden-the-agent
+:SET_AT:           [2026-07-07 Tue]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         goal-20260706-drain-the-full
+:END:
+
+** Statement
+Supersedes goal-20260706-drain-the-full at 8/10 drained (ZNQ8F, KTRHZ, 567JG, KBHAN, SJQ9V, X0ZVE, KNENN done; residual workspace-concurrency flakes fixed 86d6bb6; P8ZSP cancelled). The two remainders (F9N5F, A22TB) carry into this queue, re-prioritized against the 8 hardening tasks filed [2026-07-07] from the 2026-07-06 orsl battle-test friction report.
+
+Order (security first, then correctness traps, then the regression net, then carried work, observability, ergonomics; heaviest last), ONE task in flight at a time per the manager-dispatch convention:
+1. TASK-3K9ZG  artifact id sanitization (path traversal on submit; daemon is LAN-bound + publicly tunneled, so authenticated-write traversal is the sharpest open edge) + artifact minting.
+2. TASK-JJ9RD  config node write path + kind registry single-source (silent wrong-file write, worst battle-test bug).
+3. TASK-4T80X  write-time validation of reference-valued properties (index-poisoning class).
+4. TASK-GERBB  load freshly registered projects live (small; unblocks the smoke).
+5. TASK-DHYXQ  greenfield bootstrap e2e smoke (DEPENDS_ON JJ9RD+GERBB; pins scaffold text to daemon policy permanently).
+6. TASK-F9N5F  carried: hot-session artifactor idle-timeout (D3) — reverted to todo this session (stale IN_PROGRESS, no live run/lease).
+7. TASK-V8WY9  parse-error observability: status --errors, doctor --project, reindex verb.
+8. TASK-MTB56  agent-ergonomics batch (guard word-boundaries, compact mutations, porcelain lists, F13 repro, goal-handoff sync).
+9. TASK-SPBTA  contract discoverability: artifact blocks --full + node schema examples.
+10. TASK-A22TB carried: artifact renderer fidelity polish (LOW, large — heaviest last).
+
+Implementer = implementer-claude-rmux (sonnet-5 high); review = reviewer-claude-rmux (opus-4-8 xhigh) or manager inline opus review, manager's call per task by risk. Small items (GERBB, SPBTA) may be manager-inline. parse_errors stays 0 throughout.
+
+** Reached When
+All 10 queue tasks DONE with per-task gates green, or explicitly CANCELLED/re-scoped with rationale in the heading. The bootstrap smoke (TASK-DHYXQ) runs green in the workspace suite. Baseline stays green: cargo test --workspace green 3x consecutive from the dogfood checkout with the production daemon live (the drain-the-full bar, carried — final verification was deferred pending no-worker-running). No task in TODO/IN_PROGRESS/IN_REVIEW. orgasmic status reports parse_errors 0.
+
+* SUPERSEDED Drain the full backlog: 10 tasks, relevance-checked, one at a time :goal:
 :PROPERTIES:
 :ID:               goal-20260706-drain-the-full
 :SET_AT:           [2026-07-06 Mon]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         —
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-07-07 Tue]
 :END:
 
 ** Statement

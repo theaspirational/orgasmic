@@ -17,3 +17,162 @@ Fidelity simplifications the T25XQ renderer shipped with (all documented inline;
 - rough.js: the sketch overlay is implemented and defensively wrapped but unexercised — add data-rough coverage to the fixture and verify the overlay renders in both themes.
 NOT here: Prototype cross-screen data-goto and QuestionForm answering (TASK-EDQPG); comments (TASK-DJGM5).
 
+* BACKLOG TASK-3K9ZG Sanitize artifact ids on submit + add artifact to id mint    :artifacts:daemon:security:hardening:
+:PROPERTIES:
+:ID: TASK-3K9ZG
+:PRIORITY: high
+:END:
+
+** Description
+Two coupled gaps in artifact id handling, one a security hole (found while verifying the 2026-07-06 orsl battle-test friction report, F6):
+
+1. =post_artifact_submit= (crates/orgasmic-daemon/src/api.rs:9182) passes the caller-supplied =art_id= path segment unsanitized into =artifact_dir()='s plain =join= (crates/orgasmic-daemon/src/artifacts.rs:105). No =ART-= shape check, no traversal guard — a crafted id can escape the artifacts dir. Same applies to every artifact route taking =Path(art_id)=.
+2. Artifacts are the one node type outside the minting system: =orgasmic id mint --class artifact= is rejected, yet =artifact submit= demands a caller-invented id. Fresh ids exist server-side (=new_artifact_id=, artifacts.rs:661, ART- + 5-char Crockford) but are unreachable from the CLI.
+
+Fix: validate id shape (the =new_artifact_id= grammar) on all artifact routes, rejecting traversal with an error that names the accepted shape; add =artifact= to =id mint --class= (unify =new_artifact_id= with =NodeIdClass= in orgasmic-core/src/id.rs) or mint-and-print when the id is omitted on first submit; document the accepted shape in =artifact submit --help=.
+
+** Acceptance Criteria
+- [ ] Traversal / malformed ids rejected on every artifact route, with a test proving an escape attempt 400s and writes nothing.
+- [ ] A lawful way to obtain a fresh artifact id from the CLI (mint class or optional-id submit that prints the minted id).
+- [ ] =artifact submit --help= documents the accepted id shape.
+- [ ] Error message names the fix (accepted shape + how to mint), house style.
+
+* BACKLOG TASK-JJ9RD Config node write path + kind registry single-source (silent wrong-file write)    :daemon:cli:hardening:
+:PROPERTIES:
+:ID: TASK-JJ9RD
+:PRIORITY: high
+:END:
+
+** Description
+Worst bug of the 2026-07-06 orsl battle-test (friction report F7+F8): =project.org= (=* PROJECT=) and =config.org= (=* CONFIG=) both scaffold =:ID: {{PROJECT_ID}}=, and the daemon's =NodeLayer= enum (crates/orgasmic-daemon/src/api.rs:6883) has no =Config= variant. Consequences: config.org has zero CLI write surface (violating the "no hand-edits" convention — an agent filling TEST_CMD/LINT_CMD/BUILD_CMD has no lawful path), and the natural attempt =node prop set <project> TEST_CMD ... --kind project= silently succeeds against the wrong file (project.org). Separately, the CLI =--kind= flag is a free-form =Option<String>= (crates/orgasmic-cli/src/node.rs:32) — no enum in =--help= at all; the accepted set lives only in =NodeLayer::from_kind= (api.rs:6953), which under-documents =handoff=/=goal= and cannot express =config=.
+
+Fix:
+- Add =NodeLayer::Config= with kind-scoped id resolution (kind+id → file via =org_node_path=, api.rs:7468, routing to config.org). Kind-scoping avoids migrating existing projects' files.
+- Reject CONFIG-reserved keys (TEST_CMD/LINT_CMD/BUILD_CMD/PIPELINE) under =--kind project= with an error naming =--kind config=.
+- Single-source the kind registry (expose from a shared location) so the CLI derives a real clap enum: =--help= lists exactly the daemon-accepted kinds, including =handoff=, =goal=, =config=.
+
+** Acceptance Criteria
+- [ ] =node prop set --kind config= / =node body set --kind config= write config.org; round-trip test.
+- [ ] CONFIG-reserved key under =--kind project= → 400 naming =--kind config= (regression test for the silent wrong-file write).
+- [ ] CLI =--kind= help enumeration generated from / parity-tested against the daemon registry.
+- [ ] Existing projects (shared =:ID:=) work without file migration.
+
+* BACKLOG TASK-4T80X Write-time validation of reference-valued properties    :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-4T80X
+:PRIORITY: high
+:END:
+
+** Description
+Battle-test F4: =glossary create --relates-to "Semantic Routing Model, Expanded Routing Graph"= (prose, not ids) was accepted at write time, then poisoned the whole index — one dangling-ref parse error per whitespace-separated word, surfaced only as an opaque global counter, root-causable only by grepping daemon logs. Reference-valued properties are validated exclusively at index time (=lint_dangling_graph_edges=, crates/orgasmic-daemon/src/index.rs:1060; =collect_dangling_reference_tokens=, orgasmic-core/src/identity_lint.rs:184); =render_graph_heading= (api.rs:7850) and =node prop set= write property values verbatim.
+
+Fix: validate ref-valued properties (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON, IMPLEMENTS, PARENT — the dec_HJENQ vocabulary) at write time in graph create handlers and =node prop set=: every token must resolve against the index snapshot. Reject with an error naming the property, the offending token, and the expected format (space-separated node ids); =--force= escape hatch for intentional forward references. Document the value format in the =--relates-to= / =--property= help text. Write-time rejection costs one retry; index-time poisoning cost a debugging session.
+
+** Acceptance Criteria
+- [ ] Create/prop-set with an unresolvable ref token → 400 naming property + token + expected format; nothing written.
+- [ ] =--force= writes anyway (dangling lint still catches it later).
+- [ ] Help documents the space-separated-ids format.
+- [ ] Regression test reproducing the battle-test prose case end to end.
+
+* BACKLOG TASK-V8WY9 Parse-error observability: status --errors, doctor --project, reindex verb    :daemon:cli:hardening:
+:PROPERTIES:
+:ID: TASK-V8WY9
+:PRIORITY: medium
+:END:
+
+** Description
+Battle-test F5 (and the observability half of F4): =parse_errors= reaches agents only as a global opaque count in =/daemon/status= — aggregated across all registered projects, with no project/file/node/reason attribution and no way to tell whether it reflects live reindexing. The structured list already exists (=IndexSnapshot.parse_errors=, crates/orgasmic-daemon/src/index.rs:350, populated via =push_parse_error= with file+reason) but is never exposed. =orgasmic doctor= (crates/orgasmic-cli/src/doctor.rs:35) checks install health only. No reindex verb exists — only boot-time =Index::rebuild= — so the battle-tester restarted the daemon just to confirm a fix. Repeated identical index WARNs spam the daemon log on every pass.
+
+Fix:
+- =orgasmic status --errors= (and/or =doctor --project <id>=): list parse errors with project / file / node / property / reason.
+- =orgasmic reindex [--project <id>]= verb triggering a rebuild and returning fresh per-project counts.
+- Deduplicate repeated identical index WARNs in the daemon log.
+
+An agent should never need to grep ANSI-colored daemon logs to find its own mistake.
+
+** Acceptance Criteria
+- [ ] An induced dangling ref is fully attributable (project/file/node/reason) from the CLI alone.
+- [ ] =reindex= clears the count after a fix without a daemon restart; per-project counts in output.
+- [ ] Identical WARNs emitted once per rebuild, not once per pass.
+
+* BACKLOG TASK-GERBB Load freshly registered projects into the running daemon (watch on board refresh)    :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-GERBB
+:PRIORITY: medium
+:END:
+
+** Description
+Battle-test F1: a freshly registered project 404s ("project not found") on every daemon-backed call until =orgasmic restart=, while the file-backed =orgasmic board= lists it fine — a flat contradiction that cost 3 failed calls plus the time to form the stale-daemon hypothesis. Code confirms a narrow gap: =project init= is file-only (crates/orgasmic-cli/src/main.rs:1155 → orgasmic-core/src/projects.rs:335); the board file IS watched and =refresh_board= (crates/orgasmic-daemon/src/watcher.rs:343, index.rs:455) reloads the project list — but nothing calls =watcher.watch_project= for the new root (per-project watches registered only at boot, lib.rs:273-277), so the new project's files go unwatched/unloaded until restart.
+
+Fix:
+- On board refresh, register the filesystem watch + index load for newly appearing projects (canonicalize paths per the /private/var vs /var gotcha in gotchas.org).
+- Make the 404 diagnostic for the residual window: when the id exists on the board but is not loaded, say so ("registered after daemon boot — reindex/restart") instead of a bare "project not found".
+
+** Acceptance Criteria
+- [ ] Integration test: =project init= against a running daemon → immediate =task update= succeeds, no restart.
+- [ ] File edits in the newly registered project trigger reindex (watch actually registered).
+- [ ] Board-listed-but-unloaded id → diagnostic 404 naming the cause and fix.
+
+* BACKLOG TASK-SPBTA Contract discoverability: artifact blocks --full + node schema examples    :cli:hardening:
+:PROPERTIES:
+:ID: TASK-SPBTA
+:PRIORITY: low
+:END:
+
+** Description
+Battle-test F9+F10: the contracts agents must satisfy are undiscoverable from the CLI. =artifact blocks= prints 22 tag names with no shapes; the load-bearing MDX conventions (opposite raw-text rules for Code vs Mermaid/Wireframe, per-block attribute shapes, QuestionForm schema) live in shipped/prompt-studio/prompt-specs/artifact-generator.org — found in the battle-test only by grepping the shipped tree. Architecture/decision/glossary property vocabulary (:SOURCE_PATHS:, :MOTIVATED_BY:, :GLOSSARY_REFS:, typed edges, :TESTS:) is likewise invisible from =architecture create --help=; the tester read another project's architecture.org as the de-facto schema.
+
+Fix:
+- =artifact blocks --full=: per-block shapes + raw-text conventions from the =BLOCK_TYPES= registry (crates/orgasmic-daemon/src/artifacts.rs:28), or print the prompt-spec + all-blocks.mdx fixture paths; one pointer line in =artifact submit --help=.
+- =architecture schema= / =--example= (and decision/glossary siblings) printing one canonical node with the property vocabulary — the pattern =artifact blocks= already establishes, extended to org-graph node types.
+
+** Acceptance Criteria
+- [ ] An agent can author a conformant artifact and architecture/decision/glossary node from CLI output alone (no shipped-tree grep).
+- [ ] =artifact submit --help= points at the block contract.
+- [ ] Examples stay in sync with the real registries (derived or parity-tested, not hand-copied).
+
+* BACKLOG TASK-MTB56 Agent-ergonomics batch: guard word-boundaries, compact mutations, porcelain lists, goal-handoff sync    :cli:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-MTB56
+:PRIORITY: medium
+:END:
+
+** Description
+Batch of agent-ergonomics fixes from the 2026-07-06 battle-test (F3, F11, F12, F13, F14) — none blocking, all context-economy or dead-end costs on hot paths:
+
+- F3 glossary marker guard false positives: =reject_glossary_implementation_detail= (crates/orgasmic-daemon/src/api.rs:7890) substring-matches "struct " so ordinary English ("construct holding…") is rejected. Match on word boundaries/tokens; add =--allow-marker= override. A glossary about a language legitimately contains construct/class/function.
+- F12 mutation output volume: =task update= returns the full TaskDetail (api.rs:8804) ~1.5 KB per state flip; =node body set= echoes the whole node. Default to the compact =GraphMutationResponse=-style shape ({id, changed field → value, tx_id}); =--json= for the full node.
+- F13 silent-empty listing: =tasks --project X= printed zero stdout in the battle-test despite 9+ tasks. Daemon returns ALL states unfiltered (api.rs:1254) and empty prints =[]= — so the observed zero-output is likely an unreproduced error path, not a filter. Repro + fix; listings never empty-and-silent (print "0 tasks" + hint).
+- F14 machine-consumable lists: =--ids=/=--porcelain= mode (one id per line, stable) across list commands; related-term ids in =glossary list= currently break naive grep counting.
+- F11 stale goal linkage: =goal set= mints the new goal but =handoff-current.GOAL_ID= keeps the old value; sync it on =goal set= (or derive from goal.org).
+
+** Acceptance Criteria
+- [ ] "construct"/"reconstruction" pass the glossary guard; real markers still rejected; override flag works.
+- [ ] =task update= default output is compact; =--json= restores full node.
+- [ ] F13 root-caused with a regression test; no list command can produce empty-and-silent output.
+- [ ] =--ids= mode on task/glossary/decision/architecture list verbs.
+- [ ] =goal set= leaves handoff GOAL_ID consistent.
+
+* BACKLOG TASK-DHYXQ Greenfield bootstrap e2e smoke: project init through first artifact, CLI-only    :tests:hardening:
+:PROPERTIES:
+:DEPENDS_ON: TASK-JJ9RD TASK-GERBB
+:ID: TASK-DHYXQ
+:PRIORITY: high
+:END:
+
+** Description
+The regression net for the whole battle-test class: no end-to-end bootstrap smoke exists today — the closest are the crates/orgasmic-cli/tests/init.rs registration tests and the live dispatch tests. The 2026-07-06 orsl battle-test hit F1/F2/F7/F8/F13 precisely on the greenfield path no unit test exercises: an agent discovering contracts from --help, error strings, and shipped files.
+
+Add one integration test that does what the battle-tester did, CLI-only, against a running isolated test daemon (existing harness: crates/orgasmic-cli/tests/common/mod.rs seeding + the cross-process live_session_guard flock; port-isolation gotcha applies):
+
+=project init= in a temp git repo → immediately drive the shipped bootstrap backlog's own instructions: create decisions (minted ids, per the corrected scaffold text), glossary terms with =--relates-to= refs, architecture nodes with typed edges + MOTIVATED_BY, fill config.org verification commands via CLI, create+update a task, mint + submit a minimal artifact.
+
+Assert at the end: =parse_errors == 0=; every scaffolded .orgasmic file was writable through the CLI (zero hand-edits); no silent-empty listing.
+
+This turns the scaffold prose into a tested contract — scaffold text and daemon policy can no longer drift apart (the F2 class), and every future regression in the bootstrap path fails a named test instead of a downstream user session.
+
+** Acceptance Criteria
+- [ ] Integration test boots an isolated daemon, inits a fresh project, drives the full bootstrap flow through the CLI only.
+- [ ] Asserts parse_errors == 0 and a lawful CLI write path for every scaffolded file.
+- [ ] Red on reintroduction of: post-boot registration 404 (F1), config write-path gap (F7), scaffold/policy id contradiction (F2).
+- [ ] Serialized under the shared live-session flock; workspace-concurrency safe.

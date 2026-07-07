@@ -111,14 +111,16 @@ Grill: for each candidate, confirm Context (what forced the choice), Decision
 (what was chosen), and Consequences (what it commits the project to). Drop
 anything the operator calls incidental rather than a real decision.
 
-Write: append ADR-style records to `.orgasmic/decisions.org` after the
-scaffolded `dec_K1DR7` bootstrap decision. Use sequential `dec_NNN` ids, each
-carrying `:ID:`, `:DECIDED_AT:`, topic tags, and `** Context` / `** Decision` /
+Write: create ADR-style records with `orgasmic decision create` — the daemon
+mints each `dec_XXXXX` id; capture the returned id before writing any prose
+that references it (create decisions first, reference them after; invented
+sequential ids like `dec_001` are rejected on create). Each record carries
+`:ID:`, `:DECIDED_AT:`, topic tags, and `** Context` / `** Decision` /
 `** Consequences`. Presence means accepted — there is no status field. Seed any
 new domain terms you rely on into `.orgasmic/glossary.org`.
 
 ** Acceptance Criteria
-- [ ] At least 3 repo-specific `dec_NNN` records beyond `dec_K1DR7`, each
+- [ ] At least 3 repo-specific decision records beyond `dec_K1DR7`, each
       grounded in code or an operator answer (no speculative decisions).
 - [ ] Each record has Context / Decision / Consequences plus topic tags.
 - [ ] Domain terms referenced by the decisions exist in `glossary.org`.
@@ -150,7 +152,8 @@ feature and not a cross-cutting concern.
 Write: author `.orgasmic/architecture.org` as top-level subsystems with nested
 leaf nodes carrying `:SOURCE_PATHS:` and typed edges (READS / WRITES /
 EXPOSES_REST / EXPOSES_WS / SUBSCRIBES_TO / SPAWNS / CALLS, with DEPENDS_ON as
-the escape hatch). Link nodes to the `dec_NNN` records they implement. Prefer a
+the escape hatch). Link nodes to the decision records they implement via their
+minted `dec_XXXXX` ids. Prefer a
 faithful map of what exists over an aspirational one.
 
 ** Acceptance Criteria
