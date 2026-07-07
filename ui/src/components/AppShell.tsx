@@ -391,7 +391,13 @@ export function AppShell() {
           />
           <ConnectionBanner wsState={wsState} />
           <div className="flex-1 min-h-0 overflow-auto p-4 pb-24 md:pb-28">
-            <Outlet />
+            {/* Hold the routed content until the bearer gate is satisfied.
+                Mounting the Outlet under the open ConnectGate fires the route's
+                initial fetches with no token yet — they 401, and useResource
+                caches that error without re-running once the token lands, so a
+                stale "401 missing or invalid bearer token" would persist after a
+                first-time connect. */}
+            {needsToken ? null : <Outlet />}
           </div>
         </SidebarInset>
         {/* The run dock is an admin/manager surface — it polls admin-only
