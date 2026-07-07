@@ -455,15 +455,24 @@ enum GlossaryCmd {
         canonical: Option<String>,
         #[arg(long)]
         avoid: Option<String>,
+        /// Node ids this term relates to, space/repeat-separated (e.g.
+        /// `--relates-to term_ABCDE term_FGHIJ`), NOT free-text names — every
+        /// id must already exist or the write is rejected (see --force).
         #[arg(long = "relates-to")]
         relates_to: Vec<String>,
         #[arg(long, allow_hyphen_values = true)]
         body: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
-        /// Additional `KEY=VALUE` properties; repeatable.
+        /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
+        /// keys (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON,
+        /// IMPLEMENTS, PARENT) take space-separated node ids, not prose.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
+        /// Skip the write-time check that every reference-valued property
+        /// resolves to a known node id (for intentional forward references).
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -492,8 +501,15 @@ enum DecisionCmd {
         body: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
+        /// keys (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON,
+        /// IMPLEMENTS, PARENT) take space-separated node ids, not prose.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
+        /// Skip the write-time check that every reference-valued property
+        /// resolves to a known node id (for intentional forward references).
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -528,8 +544,15 @@ enum ArchitectureCmd {
         body: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
+        /// keys (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON,
+        /// IMPLEMENTS, PARENT) take space-separated node ids, not prose.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
+        /// Skip the write-time check that every reference-valued property
+        /// resolves to a known node id (for intentional forward references).
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -1568,6 +1591,7 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
                 body,
                 request_id,
                 properties,
+                force,
             } => {
                 let mut properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
@@ -1594,6 +1618,7 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
                             "title": title,
                             "properties": properties,
                             "body": body,
+                            "force": force,
                         }),
                     )
                     .await?
@@ -1630,6 +1655,7 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
                 body,
                 request_id,
                 properties,
+                force,
             } => {
                 let properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
@@ -1644,6 +1670,7 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
                             "title": title,
                             "properties": properties,
                             "body": body,
+                            "force": force,
                         }),
                     )
                     .await?;
@@ -1802,6 +1829,7 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
                 body,
                 request_id,
                 properties,
+                force,
             } => {
                 let properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
@@ -1816,6 +1844,7 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
                             "title": title,
                             "properties": properties,
                             "body": body,
+                            "force": force,
                         }),
                     )
                     .await?

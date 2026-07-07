@@ -103,7 +103,10 @@ pub enum NodeBodyCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum NodePropCmd {
-    /// Set (insert or update) one drawer property.
+    /// Set (insert or update) one drawer property. Reference-valued keys
+    /// (RELATES_TO, GLOSSARY_REFS, MOTIVATED_BY, DEPENDS_ON, IMPLEMENTS,
+    /// PARENT) take space-separated node ids, not prose — an unresolvable
+    /// token is rejected at write time (use --force to skip the check).
     Set {
         id: String,
         key: String,
@@ -116,6 +119,10 @@ pub enum NodePropCmd {
         base_version: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Skip the write-time check that a reference-valued property
+        /// resolves to a known node id (for intentional forward references).
+        #[arg(long)]
+        force: bool,
     },
     /// Remove one drawer property.
     Unset {
@@ -175,7 +182,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
+                            &edit_request(
+                                &project,
+                                kind_str(kind),
+                                &base_version,
+                                &request_id,
+                                op,
+                                false,
+                            ),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -228,7 +242,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
+                            &edit_request(
+                                &project,
+                                kind_str(kind),
+                                &base_version,
+                                &request_id,
+                                op,
+                                false,
+                            ),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -243,6 +264,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     kind,
                     base_version,
                     request_id,
+                    force,
                 } => {
                     let (base_version, project) =
                         resolve_base_version(&client, project, &id, kind_str(kind), base_version)
@@ -251,7 +273,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
+                            &edit_request(
+                                &project,
+                                kind_str(kind),
+                                &base_version,
+                                &request_id,
+                                op,
+                                force,
+                            ),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -271,7 +300,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let response: serde_json::Value = client
                         .post_json(
                             &format!("/org/node/{id}/edit"),
-                            &edit_request(&project, kind_str(kind), &base_version, &request_id, op),
+                            &edit_request(
+                                &project,
+                                kind_str(kind),
+                                &base_version,
+                                &request_id,
+                                op,
+                                false,
+                            ),
                         )
                         .await?;
                     println!("{}", serde_json::to_string_pretty(&response)?);
@@ -304,6 +340,7 @@ fn edit_request(
     base_version: &str,
     request_id: &Option<String>,
     op: serde_json::Value,
+    force: bool,
 ) -> serde_json::Value {
     serde_json::json!({
         "project": project,
@@ -311,6 +348,7 @@ fn edit_request(
         "base_version": base_version,
         "request_id": request_id,
         "ops": [op],
+        "force": force,
     })
 }
 
