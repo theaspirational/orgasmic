@@ -2079,6 +2079,106 @@ async fn daemon_watcher_refreshes_after_direct_sprint_write() {
 }
 
 #[tokio::test]
+async fn board_refresh_live_loads_freshly_registered_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let existing_root = tmp.path().join("proj-existing");
+    seed_project(&home, &existing_root, "proj-existing");
+
+    // Boots with the real `notify` backend: this test asserts on
+    // watcher-driven live-load of a project registered after boot.
+    let running = boot_with_watcher(home.clone()).await;
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    // Simulate `orgasmic project init` against a running daemon: a
+    // file-only write of the new project's board entry + task files, with
+    // no API call and no daemon restart (TASK-GERBB).
+    let new_root = tmp.path().join("proj-new");
+    write(
+        &new_root.join(".orgasmic/project.org"),
+        "#+title: proj-new\n#+orgasmic_version: 1\n\n* PROJECT proj-new\n:PROPERTIES:\n:ID:               proj-new\n:END:\n",
+    );
+    write(
+        &new_root.join(".orgasmic/tasks/backlog.org"),
+        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New task :work:\n:PROPERTIES:\n:ID:               TASK-NEW\n:END:\n",
+    );
+    write(
+        &home.board(),
+        format!(
+            "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj-existing\n:PROPERTIES:\n:ID:               proj-existing\n:PATH:             {}\n:BRANCH:           main\n:END:\n\n* PROJECT proj-new\n:PROPERTIES:\n:ID:               proj-new\n:PATH:             {}\n:BRANCH:           main\n:END:\n",
+            existing_root.display(),
+            new_root.display(),
+        ),
+    );
+
+    // No restart: poll a `task update` (property write) against the freshly
+    // registered project until the watcher-driven live-load lands.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut last_status = None;
+    let mut updated_priority = None;
+    while tokio::time::Instant::now() < deadline {
+        let resp = client
+            .post(format!(
+                "http://{}/api/projects/proj-new/tasks/TASK-NEW",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "priority": "high" }))
+            .send()
+            .await
+            .unwrap();
+        last_status = Some(resp.status());
+        if resp.status().is_success() {
+            let detail: serde_json::Value = resp.json().await.unwrap();
+            updated_priority = detail["priority"].as_str().map(str::to_string);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(
+        last_status,
+        Some(reqwest::StatusCode::OK),
+        "task update against a freshly registered project should succeed with no restart"
+    );
+    assert_eq!(updated_priority.as_deref(), Some("high"));
+
+    // Watch actually registered: a further file edit inside the new
+    // project's tasks dir reindexes without any additional API call.
+    write(
+        &new_root.join(".orgasmic/tasks/backlog.org"),
+        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NEW New task :work:\n:PROPERTIES:\n:ID:               TASK-NEW\n:END:\n\n* BACKLOG TASK-SECOND Second task :work:\n:PROPERTIES:\n:ID:               TASK-SECOND\n:END:\n",
+    );
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let mut saw_second_task = false;
+    while tokio::time::Instant::now() < deadline {
+        let resp = client
+            .get(format!(
+                "http://{}/api/projects/proj-new/tasks/TASK-SECOND",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        if resp.status().is_success() {
+            saw_second_task = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    assert!(
+        saw_second_task,
+        "file edit inside the newly registered project should trigger reindex, proving its fs watch was registered"
+    );
+}
+
+#[tokio::test]
 async fn stub_routes_return_501_with_tracking_task() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));

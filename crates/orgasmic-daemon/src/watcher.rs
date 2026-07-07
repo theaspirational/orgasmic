@@ -151,7 +151,22 @@ pub fn spawn(
         raw_tx_for_cmd,
     ));
 
-    tokio::spawn(debounce_loop(raw_rx, index, home, events, cfg.debounce));
+    // The debounce loop needs to be able to register a watch for a project
+    // that appears on the board after boot (dec_YYMSK follow-up). It only
+    // sends `WatcherCommand`s over this handle, which `command_loop` (a
+    // separate task) drains — it never calls back into its own event loop,
+    // so this is not re-entrant.
+    let handle_for_flush = WatcherHandle {
+        cmd: cmd_tx.clone(),
+    };
+    tokio::spawn(debounce_loop(
+        raw_rx,
+        index,
+        home,
+        events,
+        cfg.debounce,
+        handle_for_flush,
+    ));
 
     Ok(WatcherHandle { cmd: cmd_tx })
 }
@@ -208,6 +223,7 @@ async fn debounce_loop(
     home: Home,
     events: EventBus,
     debounce: Duration,
+    watcher: WatcherHandle,
 ) {
     let mut pending: HashSet<PathBuf> = HashSet::new();
     loop {
@@ -224,7 +240,7 @@ async fn debounce_loop(
                 maybe_event = raw.recv() => {
                     let Some(event) = maybe_event else {
                         // Channel closed mid-batch; process and exit after.
-                        flush(&mut pending, &index, &home, &events).await;
+                        flush(&mut pending, &index, &home, &events, &watcher).await;
                         return;
                     };
                     record_event(&mut pending, &event);
@@ -234,7 +250,7 @@ async fn debounce_loop(
                 }
             }
         }
-        flush(&mut pending, &index, &home, &events).await;
+        flush(&mut pending, &index, &home, &events, &watcher).await;
     }
 }
 
@@ -284,7 +300,13 @@ fn record_event(pending: &mut HashSet<PathBuf>, event: &Event) {
     }
 }
 
-async fn flush(pending: &mut HashSet<PathBuf>, index: &Index, home: &Home, events: &EventBus) {
+async fn flush(
+    pending: &mut HashSet<PathBuf>,
+    index: &Index,
+    home: &Home,
+    events: &EventBus,
+    watcher: &WatcherHandle,
+) {
     if pending.is_empty() {
         return;
     }
@@ -341,8 +363,38 @@ async fn flush(pending: &mut HashSet<PathBuf>, index: &Index, home: &Home, event
     }
 
     if touched_board {
+        let loaded_before: HashSet<String> = snap.projects.keys().cloned().collect();
         index.refresh_board().await;
         events.publish(Topic::Board, EventPayload::BoardRefreshed);
+        let refreshed_board = index.snapshot().await.board;
+        for entry in refreshed_board {
+            if loaded_before.contains(&entry.id) {
+                continue;
+            }
+            // A project appeared on the board after boot (e.g. `orgasmic
+            // project init` against a live daemon): register its fs watch
+            // and load its index now instead of waiting for a restart.
+            if let Err(err) = watcher.watch_project(entry.path.clone()).await {
+                warn!(project = %entry.id, error = %err, "watch newly registered project failed");
+            }
+            if let Err(err) = index.refresh_project(&entry.id).await {
+                warn!(project = %entry.id, error = %err, "load newly registered project failed");
+                continue;
+            }
+            events.publish(
+                Topic::Board,
+                EventPayload::ProjectIndexed {
+                    project_id: entry.id.clone(),
+                },
+            );
+            events.publish(
+                Topic::Task,
+                EventPayload::TaskUpdated {
+                    project_id: entry.id,
+                    task_id: "*".into(),
+                },
+            );
+        }
     }
     if touched_home_tx {
         index.refresh_home_tx().await;
@@ -578,7 +630,14 @@ mod tests {
         let mut pending = HashSet::new();
         record_event(&mut pending, &event);
 
-        flush(&mut pending, &fixture.index, &fixture.home, &fixture.bus).await;
+        flush(
+            &mut pending,
+            &fixture.index,
+            &fixture.home,
+            &fixture.bus,
+            &fixture._handle,
+        )
+        .await;
         let snap = fixture.index.snapshot().await;
         assert!(
             snap.task("proj-x", "TASK-002").is_some(),
