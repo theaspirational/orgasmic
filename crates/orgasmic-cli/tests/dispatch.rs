@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
+use reqwest::header::AUTHORIZATION;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -2615,6 +2616,285 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
     assert!(
         review_status_stdout.trim().is_empty(),
         "finalized reviewer dispatch should not appear as open: {review_status_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// Item C (TASK-DWJVH): the previously-untested `--status blocked` finalize
+/// path, beside the WFW1N `--status done` coverage above. Asserts both
+/// halves of `cmd_dispatch_finalize`'s blocked branch: `--reason` is
+/// required (bails before ever touching the live run), and, when given,
+/// finalize writes last.txt verbatim, releases the lease, and emits
+/// `manager.dispatch_aborted` — never a `*.done` tx.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_blocked_status_emits_dispatch_aborted_and_requires_reason() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "brief impossible as written");
+
+    // Without --reason: bails fast, before touching the live run or writing
+    // any artifacts.
+    let failure_stderr = run_orgasmic_failure(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--status",
+            "blocked",
+        ],
+    );
+    assert!(
+        failure_stderr.contains("--reason is required when --status blocked"),
+        "unexpected failure output: {failure_stderr}"
+    );
+
+    // With --reason: succeeds, writes last.txt verbatim, releases the lease,
+    // and emits manager.dispatch_aborted (not a done tx).
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--status",
+            "blocked",
+            "--reason",
+            "brief impossible as written",
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH manager.dispatch_aborted tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+
+    let last_path = finalized_last_path(&finalize_stdout);
+    let last_bytes =
+        std::fs::read(&last_path).unwrap_or_else(|e| panic!("read {}: {e}", last_path.display()));
+    assert_eq!(
+        last_bytes,
+        "brief impossible as written".as_bytes(),
+        "last.txt must be written verbatim on the blocked path too"
+    );
+
+    let tx_raw = tx_log(&project_root);
+    assert!(tx_raw.contains(":TYPE:         manager.dispatch_aborted"));
+    assert!(
+        !tx_raw.contains(":TYPE:         implementer.done"),
+        "blocked finalize must not emit a done tx: {tx_raw}"
+    );
+
+    let lease_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "lease-release",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+        ],
+    );
+    assert!(
+        lease_stdout.contains("no lease held"),
+        "blocked finalize must release the supervisor lease: {lease_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// Item B (TASK-DWJVH, WFW1N review #5 residual): the stall sweep and the
+/// worker's own finalize can race — the sweep releases the run in the
+/// window between the worker resolving it (`resolve_finalize_run`) and the
+/// worker's own release call landing, after the commit + last.txt write
+/// already made the work durable. Finalize must not hard-error on that:
+/// the terminal `*.done` tx must still land from the intact report, instead
+/// of leaving the run a done-less orphan.
+///
+/// `ORGASMIC_TEST_FINALIZE_RELEASE_DELAY_MS` (test-only knob added beside
+/// this fix in manager.rs) opens a deterministic window between the
+/// last.txt write and finalize's own release call; a background task races
+/// a raw release call — mirroring exactly what the stall sweep does
+/// (no caller identity, `finalized_by_worker: false`, a timeout reason) —
+/// into that window as soon as last.txt exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_survives_stall_sweep_race_and_still_records_done() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let http = reqwest::Client::new();
+    let runs: serde_json::Value = http
+        .get(format!("http://{}/api/runs", running.addr))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let live = runs["live"].as_array().expect("live runs array");
+    let run = live
+        .iter()
+        .find(|run| run["task_id"] == "TASK-DISPATCH")
+        .expect("live run for TASK-DISPATCH");
+    let run_id = run["run_id"].as_str().unwrap().to_string();
+    let last_path = PathBuf::from(run["last_path"].as_str().expect("last_path"));
+
+    let summary_path = tmp.path().join("summary.md");
+    let summary_content = "race smoke: durable despite stall-sweep race";
+    write(&summary_path, summary_content);
+
+    let racer_http = http.clone();
+    let racer_addr = running.addr;
+    let racer_token = token.clone();
+    let racer_run_id = run_id.clone();
+    let racer_last_path = last_path.clone();
+    let racer = tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while !racer_last_path.exists() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for {} before racing the release",
+                racer_last_path.display()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        racer_http
+            .post(format!(
+                "http://{racer_addr}/api/runs/{racer_run_id}/release"
+            ))
+            .header(AUTHORIZATION, format!("Bearer {racer_token}"))
+            .json(&serde_json::json!({
+                "reason": "stall_timeout_exceeded",
+                "finalized_by_worker": false,
+            }))
+            .send()
+            .await
+            .expect("racer release request")
+    });
+
+    let finalize_output = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+        &[("ORGASMIC_TEST_FINALIZE_RELEASE_DELAY_MS", "300")],
+    );
+
+    let racer_response = racer.await.expect("racer task panicked");
+    assert!(
+        racer_response.status().is_success(),
+        "racer release against the still-live run should have succeeded: {}",
+        racer_response.status()
+    );
+
+    let stdout = String::from_utf8_lossy(&finalize_output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&finalize_output.stderr).to_string();
+    assert!(
+        finalize_output.status.success(),
+        "finalize must not hard-error on the stall-sweep race\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "expected a done tx despite the race: stdout={stdout} stderr={stderr}"
+    );
+    assert!(
+        stderr.contains("already released"),
+        "expected the already-released resilience warning on stderr: {stderr}"
+    );
+
+    let last_bytes = std::fs::read(&last_path).unwrap();
+    assert_eq!(
+        last_bytes,
+        summary_content.as_bytes(),
+        "the worker's report must survive the race intact, not be clobbered by orphan handling"
+    );
+
+    let tx_raw = tx_log(&project_root);
+    assert!(
+        tx_raw.contains(":TYPE:         implementer.done"),
+        "a run whose worker committed + wrote its report must be recorded done, \
+         never left a bare orphan: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());

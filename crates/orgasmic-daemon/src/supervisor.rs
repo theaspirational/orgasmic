@@ -1636,7 +1636,7 @@ impl Supervisor {
         reason: &str,
         outcome: ReleaseOutcome,
     ) -> Result<(), SupervisorError> {
-        self.release_with_finalization(run_id, reason, outcome, false)
+        self.release_with_finalization(run_id, reason, outcome, false, None)
             .await
     }
 
@@ -1648,23 +1648,41 @@ impl Supervisor {
     /// after this call returns — can tell a worker-declared completion apart
     /// from every other release path (stall timeout, manual cancel, driver
     /// terminal event) and skip its scrollback-scrape fallback.
+    ///
+    /// `caller_identity` (TASK-DWJVH, review #4 residual): when present, the
+    /// same self-consistency guard `send_input`/`transition_state` already
+    /// apply — the live run's identity must match before it is released.
+    /// This is not a new trust boundary (the localhost+bearer model is
+    /// unchanged); it defends against a stale/reattached identity or a
+    /// different run having reclaimed this run_id between the caller
+    /// resolving the run and this call landing. `None` preserves today's
+    /// unauthenticated release for the human manager path
+    /// (dispatch-close/lease-release).
     pub async fn release_with_finalization(
         &self,
         run_id: &str,
         reason: &str,
         outcome: ReleaseOutcome,
         finalized_by_worker: bool,
+        caller_identity: Option<&RuntimeIdentity>,
     ) -> Result<(), SupervisorError> {
         let released = self
-            .release_one(run_id, reason, outcome, finalized_by_worker)
+            .release_one(
+                run_id,
+                reason,
+                outcome,
+                finalized_by_worker,
+                caller_identity,
+            )
             .await?;
         if released.kind == RunKind::Worker {
             if let Some(bs_run_id) = released.babysitter_run_id {
                 let cascade_reason = format!("cascade from implementer {run_id}");
                 // The babysitter itself never finalizes; only the implementer
-                // run it observes does.
+                // run it observes does, so the cascade release carries no
+                // caller identity of its own.
                 if let Err(e) = self
-                    .release_one(&bs_run_id, &cascade_reason, outcome, false)
+                    .release_one(&bs_run_id, &cascade_reason, outcome, false, None)
                     .await
                 {
                     if !matches!(e, SupervisorError::RunNotFound(_)) {
@@ -1687,6 +1705,7 @@ impl Supervisor {
         reason: &str,
         outcome: ReleaseOutcome,
         finalized_by_worker: bool,
+        caller_identity: Option<&RuntimeIdentity>,
     ) -> Result<ReleasedRun, SupervisorError> {
         let (
             task_id,
@@ -1700,6 +1719,16 @@ impl Supervisor {
             cleared_babysitter_backoff,
         ) = {
             let mut g = self.inner.lock().await;
+            // Ownership check happens before the remove, under the same lock
+            // guard, so there is no window between "checked" and "removed"
+            // for a different run to reclaim `run_id`.
+            if let Some(caller) = caller_identity {
+                let rec = g
+                    .runs
+                    .get(run_id)
+                    .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+                self.check_ownership(rec, caller)?;
+            }
             let rec = g
                 .runs
                 .remove(run_id)
@@ -3955,6 +3984,149 @@ mod tests {
             &stale.runtime_id,
             &stale.run_id,
         );
+    }
+
+    // TASK-DWJVH item A: `release_with_finalization` gains the same
+    // self-consistency `caller_identity` guard `transition_state`/`send_input`
+    // already have (dec_3M7M0 residual, review #4).
+
+    #[tokio::test]
+    async fn release_with_matching_caller_identity_succeeds() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = TmuxTuiDriver;
+        let resp = sup
+            .acquire(&driver, impl_req("TASK-REL-MATCH", dir.path()))
+            .await
+            .unwrap();
+        sup.release_with_finalization(
+            &resp.run_id,
+            "worker finalize",
+            ReleaseOutcome::Completed,
+            true,
+            Some(&resp.identity),
+        )
+        .await
+        .unwrap();
+        let snapshot = sup.snapshot().await;
+        assert!(
+            snapshot.runs.iter().all(|run| run.run_id != resp.run_id),
+            "run should be released"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_with_mismatched_caller_identity_is_rejected() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = TmuxTuiDriver;
+        let resp = sup
+            .acquire(&driver, impl_req("TASK-REL-MISMATCH", dir.path()))
+            .await
+            .unwrap();
+        let stale = RuntimeIdentity {
+            run_id: resp.run_id.clone(),
+            runtime_id: "stale-runtime".into(),
+            boot_id: resp.identity.boot_id.clone(),
+        };
+        let err = sup
+            .release_with_finalization(
+                &resp.run_id,
+                "worker finalize",
+                ReleaseOutcome::Completed,
+                true,
+                Some(&stale),
+            )
+            .await
+            .unwrap_err();
+        assert_ownership_mismatch(
+            err,
+            "runtime_id",
+            &resp.identity.runtime_id,
+            &stale.runtime_id,
+            &stale.run_id,
+        );
+        // Rejected release must not have removed the run.
+        let snapshot = sup.snapshot().await;
+        assert!(
+            snapshot.runs.iter().any(|run| run.run_id == resp.run_id),
+            "run must still be live after a rejected release"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_with_no_caller_identity_still_releases() {
+        // The human manager path (dispatch-close/lease-release) sends no
+        // identity at all — must keep working exactly as before.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = TmuxTuiDriver;
+        let resp = sup
+            .acquire(&driver, impl_req("TASK-REL-NONE", dir.path()))
+            .await
+            .unwrap();
+        sup.release_with_finalization(
+            &resp.run_id,
+            "manager release",
+            ReleaseOutcome::Completed,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let snapshot = sup.snapshot().await;
+        assert!(
+            snapshot.runs.iter().all(|run| run.run_id != resp.run_id),
+            "run should be released"
+        );
+    }
+
+    // TASK-DWJVH item B: the finalize-vs-stall-sweep race. The stall sweep
+    // releases the run (Failed/stall_timeout_exceeded) in the window between
+    // the worker resolving the run and the worker's own finalize release
+    // landing. At the supervisor layer this must stay a plain, well-formed
+    // `RunNotFound` — no panic, no corrupted lease/run state — so the CLI
+    // layer (`cmd_dispatch_finalize`) can treat "already released" as
+    // success-with-warning instead of a hard error (review #5 residual).
+    #[tokio::test]
+    async fn release_after_stall_sweep_already_released_is_clean_run_not_found() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = TmuxTuiDriver;
+        let resp = sup
+            .acquire(&driver, impl_req("TASK-REL-RACE", dir.path()))
+            .await
+            .unwrap();
+        // Simulate the stall sweep: it releases with no caller identity and
+        // `finalized_by_worker: false`, exactly like `release_first_timed_out_run`.
+        sup.release(
+            &resp.run_id,
+            "stall_timeout_exceeded",
+            ReleaseOutcome::Failed,
+        )
+        .await
+        .unwrap();
+        assert_release_reason(
+            &dir.path().join("TASK-REL-RACE.jsonl"),
+            "stall_timeout_exceeded",
+        );
+
+        // The worker's own finalize call — its commit + last.txt write are
+        // already durable by this point — now finds the run gone.
+        let err = sup
+            .release_with_finalization(
+                &resp.run_id,
+                "worker finalize for TASK-REL-RACE",
+                ReleaseOutcome::Completed,
+                true,
+                Some(&resp.identity),
+            )
+            .await
+            .unwrap_err();
+        let err_display = err.to_string();
+        assert!(
+            matches!(err, SupervisorError::RunNotFound(ref id) if *id == resp.run_id),
+            "expected a plain RunNotFound for the already-released run, got {err_display:?}"
+        );
+        // No leftover lease or run state from the failed second release.
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }
 
     #[tokio::test]
