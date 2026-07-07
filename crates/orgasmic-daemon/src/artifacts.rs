@@ -658,24 +658,25 @@ pub fn new_cid() -> String {
     format!("CID-{}", &id[..8])
 }
 
-/// Mint a fresh artifact id: `ART-` plus a 5-char Crockford base32 stem, the
-/// same minting convention `mint_node_id` uses for task/decision/architecture
-/// ids (orgasmic_core::id::NodeIdClass has no `Artifact` variant — artifacts
-/// aren't part of that parent-tree graph, so this reuses just the alphabet
-/// rather than widening that enum).
+/// Mint a fresh artifact id: `ART-` plus a 5-char Crockford base32 stem.
+/// Delegates to `orgasmic_core::mint_node_id` so the minter and
+/// [`orgasmic_core::is_valid_greenfield_artifact_id`] validator share one
+/// grammar definition (`NodeIdClass::Artifact`).
 pub fn new_artifact_id() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    loop {
-        let stem: String = (0..5)
-            .map(|_| {
-                let idx = rng.gen_range(0..orgasmic_core::CROCKFORD.len());
-                orgasmic_core::CROCKFORD.as_bytes()[idx] as char
-            })
-            .collect();
-        if stem.chars().any(|c| c.is_ascii_alphabetic()) {
-            return format!("ART-{stem}");
-        }
+    orgasmic_core::mint_node_id(orgasmic_core::NodeIdClass::Artifact)
+}
+
+/// Validate an incoming `art_id` path segment against the minted-artifact
+/// grammar (`ART-<5-char-Crockford-stem>`) before it reaches [`artifact_dir`]
+/// or any fs/index touch. Rejects traversal, wrong prefix, and malformed
+/// stems in one choke point shared by every artifact route.
+pub fn validate_art_id(art_id: &str) -> Result<(), String> {
+    if orgasmic_core::is_valid_greenfield_artifact_id(art_id) {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid artifact id {art_id:?}: expected ART-<5-char-Crockford-stem> (e.g. ART-8KX2M); mint one with `orgasmic id mint --class artifact`"
+        ))
     }
 }
 
@@ -983,6 +984,29 @@ mod tests {
                 "{id}"
             );
             assert!(stem.chars().any(|c| c.is_ascii_alphabetic()), "{id}");
+            // Minter and validator must not diverge (one grammar, dec_073a).
+            assert!(
+                orgasmic_core::is_valid_greenfield_artifact_id(&id),
+                "minted id failed the core validator: {id}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_art_id_accepts_minted_and_rejects_traversal() {
+        assert!(validate_art_id(&new_artifact_id()).is_ok());
+        assert!(validate_art_id("ART-8KX2M").is_ok());
+        for bad in [
+            "../../etc/passwd",
+            "ART-../..",
+            "ART-/etc/passwd",
+            "ART-AAAA/",
+            "art-8kx2m",
+            "",
+        ] {
+            let err = validate_art_id(bad).expect_err(bad);
+            assert!(err.contains("ART-"), "{err}");
+            assert!(err.contains("orgasmic id mint --class artifact"), "{err}");
         }
     }
 

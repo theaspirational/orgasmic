@@ -18,7 +18,8 @@ pub enum ArtifactCmd {
     Blocks,
     /// Submit (create or update) an artifact from an MDX file.
     Submit {
-        /// Artifact id (e.g. ART-XYZAB).
+        /// Artifact id: ART-<5-char-Crockford-stem> (e.g. ART-XYZAB). Mint a
+        /// fresh one with `orgasmic id mint --class artifact`.
         id: String,
         /// Path to the MDX file to submit.
         #[arg(long)]

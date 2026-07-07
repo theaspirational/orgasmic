@@ -47,8 +47,8 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
-    new_cid, reviews_org_header, update_artifact_org, validate_mdx, versions_dir, ArtifactDetail,
-    ArtifactLoadError, ArtifactSummary, NewComment,
+    new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_mdx, versions_dir,
+    ArtifactDetail, ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
@@ -9155,6 +9155,13 @@ fn resolve_artifact_project<'a>(
         .ok_or_else(|| ApiError::not_found("project not found"))
 }
 
+/// Shared choke point for every artifact route taking `Path(art_id)`: rejects
+/// traversal/malformed ids with a house-style 400 before the id reaches
+/// `artifact_dir()` or any fs/index touch (TASK-3K9ZG).
+fn require_valid_art_id(art_id: &str) -> Result<(), ApiError> {
+    validate_art_id(art_id).map_err(ApiError::bad_request)
+}
+
 async fn get_artifacts(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
@@ -9176,6 +9183,7 @@ async fn get_artifact(
     Path(id): Path<String>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<ArtifactDetail>, ApiError> {
+    require_valid_art_id(&id)?;
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
     authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;
@@ -9196,6 +9204,7 @@ async fn post_artifact_submit(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactSubmitRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    require_valid_art_id(&art_id)?;
     // Validate block registry before any write.
     let errs = validate_mdx(&body.content);
     if !errs.is_empty() {
@@ -9448,6 +9457,7 @@ async fn post_artifact_add_comment(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactCommentRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    require_valid_art_id(&art_id)?;
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
     authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
@@ -9590,6 +9600,7 @@ async fn post_artifact_comment_resolve(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactCommentResolveRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    require_valid_art_id(&art_id)?;
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
     authz::require(&identity, Some(&entry.id), Action::ArtifactsComment)?;
@@ -10358,6 +10369,7 @@ async fn post_artifact_regenerate(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactRegenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
+    require_valid_art_id(&art_id)?;
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?.clone();
     authz::require(&identity, Some(&entry.id), Action::ArtifactsGenerate)?;
@@ -13819,6 +13831,126 @@ mod tests {
         }
     }
 
+    // Traversal/malformed art_id must 400 on every artifact route and write
+    // nothing — the accepted-shape guard is a choke point ahead of
+    // artifact_dir(), not a per-handler afterthought (TASK-3K9ZG).
+    #[tokio::test]
+    async fn artifact_routes_reject_traversal_art_id_and_write_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let artifacts_root = crate::artifacts::artifacts_dir(&project_root);
+        assert!(
+            !artifacts_root.exists(),
+            "artifacts dir must not exist before any lawful submit"
+        );
+        // Escape target this traversal attempt would land on if the guard
+        // failed to fire: project_root/.orgasmic/artifacts/../../evil
+        // resolves (one ".." per intervening directory) to project_root/evil.
+        let escape_target = project_root.join("evil");
+
+        let evil = "../../evil";
+
+        let submit_err = post_artifact_submit(
+            State(state.clone()),
+            Path(evil.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>x</RichText>\n".into(),
+                title: Some("Evil".into()),
+                subject_nodes: None,
+                prompt: None,
+            }),
+        )
+        .await
+        .expect_err("traversal submit must be rejected");
+        assert_eq!(submit_err.status, StatusCode::BAD_REQUEST);
+        assert!(
+            submit_err.message.contains("ART-"),
+            "{}",
+            submit_err.message
+        );
+        assert!(
+            submit_err
+                .message
+                .contains("orgasmic id mint --class artifact"),
+            "{}",
+            submit_err.message
+        );
+
+        let get_err = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(evil.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect_err("traversal get must be rejected");
+        assert_eq!(get_err.status, StatusCode::BAD_REQUEST);
+
+        let comment_err = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(evil.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "should not land".into(),
+                anchor: None,
+                resolution_target: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect_err("traversal comment must be rejected");
+        assert_eq!(comment_err.status, StatusCode::BAD_REQUEST);
+
+        let resolve_err = post_artifact_comment_resolve(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path((evil.to_string(), "CID-fake0001".to_string())),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentResolveRequest { resolved: true }),
+        )
+        .await
+        .expect_err("traversal resolve must be rejected");
+        assert_eq!(resolve_err.status, StatusCode::BAD_REQUEST);
+
+        let regenerate_err = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(evil.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest { extra_prompt: None }),
+        )
+        .await
+        .expect_err("traversal regenerate must be rejected");
+        assert_eq!(regenerate_err.status, StatusCode::BAD_REQUEST);
+
+        // Write-nothing: the escape attempt must not have touched disk, and
+        // no tx entry must have been appended for it.
+        assert!(
+            !artifacts_root.exists(),
+            "traversal attempt must leave the artifacts dir untouched"
+        );
+        assert!(
+            !escape_target.exists(),
+            "traversal attempt must not have escaped the artifacts dir"
+        );
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        let tx_contents = std::fs::read_to_string(&tx_path).unwrap_or_default();
+        assert!(
+            !tx_contents.contains("evil"),
+            "rejected traversal id must not reach any tx entry: {tx_contents}"
+        );
+    }
+
     #[tokio::test]
     async fn artifact_create_submit_feedback_consume_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
@@ -14172,7 +14304,7 @@ mod tests {
         let token = read_token(&home);
         let client = reqwest::Client::new();
         let base = format!("http://{}/api", running.addr);
-        let art_id = "ART-HTTPLV";
+        let art_id = "ART-HTTPV";
 
         // --- v1: create, over real HTTP ---
         let submit1 = client
@@ -14315,7 +14447,7 @@ mod tests {
         seed_project(&home, &project_root, "test-proj");
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-RESOLV";
+        let art_id = "ART-RSVAX";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -14517,7 +14649,7 @@ mod tests {
         seed_project(&home, &project_root, "test-proj");
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-RESUB";
+        let art_id = "ART-RSBM1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -14600,7 +14732,7 @@ mod tests {
         let missing_artifact = get_artifact(
             State(state.clone()),
             Extension(Identity::Admin),
-            Path("ART-NOPE".to_string()),
+            Path("ART-MSSNG".to_string()),
             Query(artifact_query("test-proj")),
         )
         .await
@@ -14634,7 +14766,7 @@ mod tests {
         seed_project(&home, &project_root, "test-proj");
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-ATOM1";
+        let art_id = "ART-ATMC1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -14698,7 +14830,7 @@ mod tests {
         seed_project(&home, &project_root, "test-proj");
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-ATOM2";
+        let art_id = "ART-ATMC2";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -15176,7 +15308,7 @@ mod tests {
         seed_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-NODE0";
+        let art_id = "ART-NDES0";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -15233,7 +15365,7 @@ mod tests {
         seed_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-HOT1";
+        let art_id = "ART-HTSS1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -15399,7 +15531,7 @@ mod tests {
         seed_busy_harness_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-BUSY";
+        let art_id = "ART-BSYH1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -15501,7 +15633,7 @@ mod tests {
         seed_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-COLD";
+        let art_id = "ART-CDRS1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -15626,7 +15758,7 @@ mod tests {
         seed_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-REVERT2";
+        let art_id = "ART-RVRT2";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),
@@ -15737,7 +15869,7 @@ mod tests {
         seed_broken_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
-        let art_id = "ART-BADWK1";
+        let art_id = "ART-BDWK1";
         let _ = post_artifact_submit(
             State(state.clone()),
             Path(art_id.to_string()),

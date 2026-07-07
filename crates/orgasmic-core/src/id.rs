@@ -20,6 +20,7 @@ pub enum NodeIdClass {
     Decision,
     Architecture,
     Term,
+    Artifact,
 }
 
 impl NodeIdClass {
@@ -29,6 +30,7 @@ impl NodeIdClass {
             Self::Decision => "dec_",
             Self::Architecture => "arch_",
             Self::Term => "term_",
+            Self::Artifact => "ART-",
         }
     }
 
@@ -38,6 +40,7 @@ impl NodeIdClass {
             Self::Decision => id.starts_with("dec_"),
             Self::Architecture => id.starts_with("arch_"),
             Self::Term => id.starts_with("term_") || id.starts_with("term:"),
+            Self::Artifact => id.starts_with("ART-"),
         }
     }
 }
@@ -54,6 +57,8 @@ pub fn node_id_class_by_prefix(id: &str) -> Option<NodeIdClass> {
         Some(NodeIdClass::Architecture)
     } else if id.starts_with("term_") || id.starts_with("term:") {
         Some(NodeIdClass::Term)
+    } else if id.starts_with("ART-") {
+        Some(NodeIdClass::Artifact)
     } else {
         None
     }
@@ -404,6 +409,7 @@ pub fn is_legacy_sequential_create_id(class: NodeIdClass, id: &str) -> bool {
                 && id[5..].chars().all(|c| c.is_ascii_digit())
         }
         NodeIdClass::Term => false,
+        NodeIdClass::Artifact => false,
     }
 }
 
@@ -471,6 +477,16 @@ pub fn is_valid_greenfield_term_id(value: &str) -> bool {
     is_minted_stem(stem)
 }
 
+/// Artifact identity: `ART-<minted-stem>` only. Artifacts have no legacy
+/// sequential form, so this is the sole accepted shape (no separate
+/// "greenfield" relaxation needed).
+pub fn is_valid_greenfield_artifact_id(value: &str) -> bool {
+    let Some(stem) = value.strip_prefix("ART-") else {
+        return false;
+    };
+    is_minted_stem(stem)
+}
+
 /// True when `id` is a well-formed post-migration node identity.
 pub fn is_valid_greenfield_identity(id: &str) -> bool {
     if id.starts_with("TASK-") {
@@ -481,6 +497,8 @@ pub fn is_valid_greenfield_identity(id: &str) -> bool {
         is_valid_greenfield_arch_id(id)
     } else if id.starts_with("term_") {
         is_valid_greenfield_term_id(id)
+    } else if id.starts_with("ART-") {
+        is_valid_greenfield_artifact_id(id)
     } else {
         false
     }
@@ -497,6 +515,7 @@ mod tests {
             NodeIdClass::Decision,
             NodeIdClass::Architecture,
             NodeIdClass::Term,
+            NodeIdClass::Artifact,
         ] {
             for _ in 0..10_000 {
                 let id = mint_node_id(class);
@@ -580,6 +599,37 @@ mod tests {
         assert!(!is_valid_greenfield_arch_id("arch_001"));
         assert!(is_valid_greenfield_arch_id("arch_8KX2M"));
         assert!(is_valid_greenfield_arch_id("arch_8KX2M.3"));
+    }
+
+    #[test]
+    fn greenfield_artifact_id_accepts_only_minted_stem() {
+        assert!(is_valid_greenfield_artifact_id(&mint_node_id(
+            NodeIdClass::Artifact
+        )));
+        assert!(is_valid_greenfield_artifact_id("ART-8KX2M"));
+        assert!(!is_valid_greenfield_artifact_id("ART-"));
+        assert!(!is_valid_greenfield_artifact_id("ART-1234"));
+        assert!(!is_valid_greenfield_artifact_id("ART-123456"));
+        assert!(!is_valid_greenfield_artifact_id("ART-00000"));
+        assert!(!is_valid_greenfield_artifact_id("dec_8KX2M"));
+    }
+
+    #[test]
+    fn greenfield_artifact_id_rejects_traversal_and_malformed_shapes() {
+        for bad in [
+            "ART-../..",
+            "ART-..%2F",
+            "../../etc/passwd",
+            "ART-/etc/passwd",
+            "ART-AAAA/",
+            "art-8kx2m",
+            "ART-8KX2M/../secret",
+        ] {
+            assert!(
+                !is_valid_greenfield_artifact_id(bad),
+                "expected rejection: {bad}"
+            );
+        }
     }
 
     #[test]

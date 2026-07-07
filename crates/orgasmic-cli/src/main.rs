@@ -412,6 +412,7 @@ enum MintClassArg {
     Decision,
     Architecture,
     Term,
+    Artifact,
 }
 
 impl From<MintClassArg> for orgasmic_core::NodeIdClass {
@@ -421,6 +422,7 @@ impl From<MintClassArg> for orgasmic_core::NodeIdClass {
             MintClassArg::Decision => Self::Decision,
             MintClassArg::Architecture => Self::Architecture,
             MintClassArg::Term => Self::Term,
+            MintClassArg::Artifact => Self::Artifact,
         }
     }
 }

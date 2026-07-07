@@ -32,6 +32,7 @@ fn id_mint_all_classes_use_crockford_alphabet() {
         (NodeIdClass::Decision, "dec_"),
         (NodeIdClass::Architecture, "arch_"),
         (NodeIdClass::Term, "term_"),
+        (NodeIdClass::Artifact, "ART-"),
     ] {
         let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
             .args([
@@ -42,6 +43,7 @@ fn id_mint_all_classes_use_crockford_alphabet() {
                     NodeIdClass::Decision => "decision",
                     NodeIdClass::Architecture => "architecture",
                     NodeIdClass::Term => "term",
+                    NodeIdClass::Artifact => "artifact",
                     NodeIdClass::Task => unreachable!(),
                 },
             ])
