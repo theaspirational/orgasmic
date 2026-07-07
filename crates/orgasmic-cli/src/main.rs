@@ -405,6 +405,10 @@ enum TaskCmd {
         /// Additional `KEY=VALUE` properties; repeatable.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
+        /// Skip the write-time check that every reference-valued property
+        /// resolves to a known node id (for intentional forward references).
+        #[arg(long)]
+        force: bool,
     },
     /// Show one task.
     Get {
@@ -1671,6 +1675,7 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                 reason,
                 request_id,
                 properties,
+                force,
             } => {
                 let project = manager::resolve_project(project)?;
                 let properties: std::collections::BTreeMap<_, _> =
@@ -1687,6 +1692,7 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                             "reason": reason,
                             "request_id": request_id,
                             "properties": properties,
+                            "force": force,
                         }),
                     )
                     .await?
