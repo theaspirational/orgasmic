@@ -357,7 +357,11 @@ Examples:
         path: Option<PathBuf>,
     },
     /// List projects registered on the global board.
-    List,
+    List {
+        /// Print only project ids, one per line, nothing else.
+        #[arg(long)]
+        ids: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -366,6 +370,9 @@ enum TasksCmd {
     List {
         #[arg(long)]
         project: Option<String>,
+        /// Print only task ids, one per line, nothing else.
+        #[arg(long)]
+        ids: bool,
     },
 }
 
@@ -415,6 +422,10 @@ enum TaskCmd {
         /// Additional `KEY=VALUE` properties; repeatable.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
+        /// Print the full task detail instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -454,6 +465,11 @@ enum GlossaryCmd {
     List {
         #[arg(long)]
         project: Option<String>,
+        /// Print only glossary term ids, one per line, nothing else — unlike
+        /// the human output, related-term ids (e.g. RELATES_TO) never
+        /// appear, so naive line-counting/grep stays accurate.
+        #[arg(long)]
+        ids: bool,
     },
     /// Show one glossary term.
     Get {
@@ -494,6 +510,10 @@ enum GlossaryCmd {
         /// resolves to a known node id (for intentional forward references).
         #[arg(long)]
         force: bool,
+        /// Skip the implementation-detail marker guard, for a glossary that
+        /// legitimately defines language constructs (e.g. "struct", "trait").
+        #[arg(long = "allow-marker")]
+        allow_marker: bool,
     },
 }
 
@@ -503,6 +523,9 @@ enum DecisionCmd {
     List {
         #[arg(long)]
         project: Option<String>,
+        /// Print only decision ids, one per line, nothing else.
+        #[arg(long)]
+        ids: bool,
     },
     /// Show one decision node.
     Get {
@@ -540,6 +563,9 @@ enum ArchitectureCmd {
     List {
         #[arg(long)]
         project: Option<String>,
+        /// Print only architecture node ids, one per line, nothing else.
+        #[arg(long)]
+        ids: bool,
     },
     /// Show one architecture node.
     Get {
@@ -849,9 +875,9 @@ fn main() -> Result<()> {
                 no_register,
             } => cmd_project_init(&home, path, name, default_branch, force, no_register),
             ProjectCmd::Add { path } => cmd_project_add(&home, path),
-            ProjectCmd::List => cmd_project_list(&home),
+            ProjectCmd::List { ids } => cmd_project_list(&home, ids),
         },
-        Cmd::Board => cmd_project_list(&home),
+        Cmd::Board => cmd_project_list(&home, false),
         Cmd::Serve { bind, port } => cmd_serve(&home, bind, port),
         Cmd::Status { errors } => {
             if errors {
@@ -1258,8 +1284,14 @@ fn cmd_project_add(home: &Home, path: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_project_list(home: &Home) -> Result<()> {
+fn cmd_project_list(home: &Home, ids: bool) -> Result<()> {
     let entries = projects::read_board(home)?;
+    if ids {
+        for e in entries {
+            println!("{}", e.id);
+        }
+        return Ok(());
+    }
     if entries.is_empty() {
         println!("(no projects registered — run `orgasmic project init`)");
         return Ok(());
@@ -1582,13 +1614,18 @@ fn cmd_tasks(home: &Home, cmd: TasksCmd) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
-        let value: serde_json::Value = match cmd {
-            TasksCmd::List { project } => {
+        match cmd {
+            TasksCmd::List { project, ids } => {
                 let project = manager::resolve_project(project)?;
-                client.get(&format!("/projects/{project}/tasks")).await?
+                let value: serde_json::Value =
+                    client.get(&format!("/projects/{project}/tasks")).await?;
+                if ids {
+                    print_ids_only(&value, "tasks")
+                } else {
+                    print_list_or_empty(&value, "tasks", "run `orgasmic task create` to file one")
+                }
             }
-        };
-        print_json(&value)
+        }
     })
 }
 
@@ -1640,6 +1677,7 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                 reason,
                 request_id,
                 properties,
+                json,
             } => {
                 let project = manager::resolve_project(project)?;
                 let properties: std::collections::BTreeMap<_, _> =
@@ -1651,9 +1689,12 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                     "request_id": request_id,
                     "properties": properties,
                 });
-                client
-                    .post_json(&format!("/projects/{project}/tasks/{id}"), &body)
-                    .await?
+                let path = if json {
+                    format!("/projects/{project}/tasks/{id}?json=true")
+                } else {
+                    format!("/projects/{project}/tasks/{id}")
+                };
+                client.post_json(&path, &body).await?
             }
         };
         print_json(&value)
@@ -1673,12 +1714,22 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
+        if let GlossaryCmd::List { project, ids } = cmd {
+            let value: serde_json::Value = client
+                .get(&path_with_project_query("/glossary", project))
+                .await?;
+            return if ids {
+                print_ids_only(&value, "glossary terms")
+            } else {
+                print_list_or_empty(
+                    &value,
+                    "glossary terms",
+                    "run `orgasmic glossary create` to add one",
+                )
+            };
+        }
         let value: serde_json::Value = match cmd {
-            GlossaryCmd::List { project } => {
-                client
-                    .get(&path_with_project_query("/glossary", project))
-                    .await?
-            }
+            GlossaryCmd::List { .. } => unreachable!("handled above"),
             GlossaryCmd::Get { id, project } => {
                 client
                     .get(&path_with_project_query(
@@ -1699,6 +1750,7 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
                 request_id,
                 properties,
                 force,
+                allow_marker,
             } => {
                 let mut properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
@@ -1726,6 +1778,7 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
                             "properties": properties,
                             "body": body,
                             "force": force,
+                            "allow_marker": allow_marker,
                         }),
                     )
                     .await?
@@ -1740,11 +1793,15 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
         match cmd {
-            DecisionCmd::List { project } => {
+            DecisionCmd::List { project, ids } => {
                 let value: serde_json::Value = client
                     .get(&path_with_project_query("/decisions", project))
                     .await?;
-                print_decision_outline(&value)
+                if ids {
+                    print_ids_only(&value, "decisions")
+                } else {
+                    print_decision_outline(&value)
+                }
             }
             DecisionCmd::Get { id, project } => {
                 let value: serde_json::Value = client
@@ -1802,6 +1859,10 @@ fn print_decision_outline(value: &serde_json::Value) -> Result<()> {
         .as_array()
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("daemon returned non-list decision response"))?;
+    if rows.is_empty() {
+        println!("0 decisions (run `orgasmic decision create` to add one)");
+        return Ok(());
+    }
     rows.sort_by(|a, b| {
         decision_path_key(a)
             .cmp(&decision_path_key(b))
@@ -1914,12 +1975,22 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
+        if let ArchitectureCmd::List { project, ids } = cmd {
+            let value: serde_json::Value = client
+                .get(&path_with_project_query("/architecture", project))
+                .await?;
+            return if ids {
+                print_ids_only(&value, "architecture nodes")
+            } else {
+                print_list_or_empty(
+                    &value,
+                    "architecture nodes",
+                    "run `orgasmic architecture create` to add one",
+                )
+            };
+        }
         let value: serde_json::Value = match cmd {
-            ArchitectureCmd::List { project } => {
-                client
-                    .get(&path_with_project_query("/architecture", project))
-                    .await?
-            }
+            ArchitectureCmd::List { .. } => unreachable!("handled above"),
             ArchitectureCmd::Get { id, project } => {
                 client
                     .get(&path_with_project_query(
@@ -2011,6 +2082,39 @@ fn path_with_project_query(path: &str, project: Option<String>) -> String {
 fn print_json(value: &serde_json::Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
+}
+
+/// Porcelain mode for list verbs (F14, TASK-MTB56): one node id per line,
+/// stable order, nothing else — safe for naive `grep`/line-counting even
+/// when human output would interleave related-node ids (e.g. glossary
+/// `RELATES_TO`) into the same payload.
+fn print_ids_only(value: &serde_json::Value, noun: &str) -> Result<()> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("daemon returned non-list {noun} response"))?;
+    for row in rows {
+        let id = row
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("{noun} entry missing id field"))?;
+        println!("{id}");
+    }
+    Ok(())
+}
+
+/// Human list output that never prints nothing (F13, TASK-MTB56): a
+/// genuinely empty list says so plus a hint, instead of silently printing
+/// `[]` (or, if some upstream error path swallowed it, printing nothing at
+/// all with no way to distinguish that from "no results").
+fn print_list_or_empty(value: &serde_json::Value, noun: &str, hint: &str) -> Result<()> {
+    let rows = value
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("daemon returned non-list {noun} response"))?;
+    if rows.is_empty() {
+        println!("0 {noun} ({hint})");
+        return Ok(());
+    }
+    print_json(value)
 }
 
 fn cmd_recovery(home: &Home) -> Result<()> {

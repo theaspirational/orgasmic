@@ -78,6 +78,10 @@ pub enum NodeBodyCmd {
         base_version: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Print the full node document instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
     },
     /// Append to a node's free prose body.
     Append {
@@ -98,6 +102,10 @@ pub enum NodeBodyCmd {
         base_version: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Print the full node document instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -123,6 +131,10 @@ pub enum NodePropCmd {
         /// resolves to a known node id (for intentional forward references).
         #[arg(long)]
         force: bool,
+        /// Print the full node document instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
     },
     /// Remove one drawer property.
     Unset {
@@ -136,6 +148,10 @@ pub enum NodePropCmd {
         base_version: Option<String>,
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Print the full node document instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -173,6 +189,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     raw,
                     base_version,
                     request_id,
+                    json,
                 } => {
                     let (base_version, project) =
                         resolve_base_version(&client, project, &id, kind_str(kind), base_version)
@@ -181,7 +198,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let op = body_op(section.as_deref(), &body, body_format);
                     let response: serde_json::Value = client
                         .post_json(
-                            &format!("/org/node/{id}/edit"),
+                            &edit_path(&id, json),
                             &edit_request(
                                 &project,
                                 kind_str(kind),
@@ -203,6 +220,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     raw,
                     base_version,
                     request_id,
+                    json,
                 } => {
                     if raw {
                         anyhow::bail!(
@@ -241,7 +259,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let op = body_op(section.as_deref(), &merged, "default");
                     let response: serde_json::Value = client
                         .post_json(
-                            &format!("/org/node/{id}/edit"),
+                            &edit_path(&id, json),
                             &edit_request(
                                 &project,
                                 kind_str(kind),
@@ -265,6 +283,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     base_version,
                     request_id,
                     force,
+                    json,
                 } => {
                     let (base_version, project) =
                         resolve_base_version(&client, project, &id, kind_str(kind), base_version)
@@ -272,7 +291,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let op = serde_json::json!({ "op": "set_property", "key": key, "value": value });
                     let response: serde_json::Value = client
                         .post_json(
-                            &format!("/org/node/{id}/edit"),
+                            &edit_path(&id, json),
                             &edit_request(
                                 &project,
                                 kind_str(kind),
@@ -292,6 +311,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     kind,
                     base_version,
                     request_id,
+                    json,
                 } => {
                     let (base_version, project) =
                         resolve_base_version(&client, project, &id, kind_str(kind), base_version)
@@ -299,7 +319,7 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     let op = serde_json::json!({ "op": "remove_property", "key": key });
                     let response: serde_json::Value = client
                         .post_json(
-                            &format!("/org/node/{id}/edit"),
+                            &edit_path(&id, json),
                             &edit_request(
                                 &project,
                                 kind_str(kind),
@@ -316,6 +336,14 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
         }
         Ok::<(), anyhow::Error>(())
     })
+}
+
+fn edit_path(id: &str, want_full: bool) -> String {
+    if want_full {
+        format!("/org/node/{id}/edit?json=true")
+    } else {
+        format!("/org/node/{id}/edit")
+    }
 }
 
 fn body_op(section: Option<&str>, body: &str, body_format: &str) -> serde_json::Value {

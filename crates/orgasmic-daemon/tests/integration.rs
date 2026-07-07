@@ -2133,7 +2133,7 @@ async fn board_refresh_live_loads_freshly_registered_project() {
         last_status = Some(resp.status());
         if resp.status().is_success() {
             let detail: serde_json::Value = resp.json().await.unwrap();
-            updated_priority = detail["priority"].as_str().map(str::to_string);
+            updated_priority = detail["changed"]["PRIORITY"].as_str().map(str::to_string);
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -2473,7 +2473,7 @@ async fn org_node_leaf_architecture_tests_round_trip() {
 
     // Editing the leaf node's :TESTS: writes only that nested heading.
     let resp = client
-        .post(format!("{base}/api/org/node/arch_006.3/edit"))
+        .post(format!("{base}/api/org/node/arch_006.3/edit?json=true"))
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "project": "orgasmic",
@@ -2564,7 +2564,7 @@ async fn org_node_handoff_get_section_and_property_round_trip() {
     let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
 
     let section_resp = client
-        .post(format!("{base}/api/org/node/handoff-current/edit"))
+        .post(format!("{base}/api/org/node/handoff-current/edit?json=true"))
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "project": "handoffnode",
@@ -2598,7 +2598,9 @@ async fn org_node_handoff_get_section_and_property_round_trip() {
     assert_ne!(next_version, base_version);
 
     let prop_resp = client
-        .post(format!("{base}/api/org/node/handoff-current/edit"))
+        .post(format!(
+            "{base}/api/org/node/handoff-current/edit?json=true"
+        ))
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "project": "handoffnode",
@@ -3153,6 +3155,85 @@ async fn goal_lifecycle_set_clear_supersede_round_trip() {
     let _ = running.join.await;
 }
 
+/// F11 (TASK-MTB56): `goal set` used to mint the new goal but leave
+/// `handoff-current`'s `:GOAL_ID:` pointing at the superseded one. It must
+/// now sync in the same operation.
+#[tokio::test]
+async fn goal_set_syncs_handoff_goal_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    write(
+        &home.config(),
+        "bind_host: 127.0.0.1\nbind_port: 4848\ntx:\n  commit_to_project: true\nmanager:\n  actor: manager@example.com\n",
+    );
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "orgasmic");
+    write(
+        &project_root.join(".orgasmic/tasks/goal.org"),
+        "#+title: Goal\n#+orgasmic_version: 1\n#+scope: project\n\n* GOAL Bootstrap goal :goal:\n:PROPERTIES:\n:ID:               goal-bootstrap\n:SET_AT:           [2026-06-01 Sat]\n:SET_BY:           seed@example.com\n:REPLACES:         —\n:END:\n\n** Statement\nBootstrap.\n",
+    );
+    write(
+        &project_root.join(".orgasmic/tasks/handoff.org"),
+        "#+title: Handoff\n#+orgasmic_version: 1\n\n* HANDOFF current :handoff:\n:PROPERTIES:\n:ID:               handoff-current\n:GOAL_ID:          goal-bootstrap\n:LIVENESS:         base-sha\n:END:\n\n** Done so far\nNothing yet.\n",
+    );
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+    let base = format!("http://{}", running.addr);
+
+    let set: serde_json::Value = client
+        .post(format!("{base}/api/projects/orgasmic/goal/set"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "request_id": "goal-set-handoff-sync",
+            "id": "goal-fresh",
+            "title": "Fresh goal",
+            "statement": "Do the fresh thing.",
+            "reason": "integration handoff sync"
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(set["goal_id"], "goal-fresh");
+
+    let handoff_after_set =
+        std::fs::read_to_string(project_root.join(".orgasmic/tasks/handoff.org")).unwrap();
+    assert!(
+        handoff_after_set.contains(":GOAL_ID:          goal-fresh"),
+        "handoff-current GOAL_ID should sync to the new goal: {handoff_after_set}"
+    );
+    assert!(
+        !handoff_after_set.contains("goal-bootstrap"),
+        "stale goal id should not remain in handoff.org: {handoff_after_set}"
+    );
+
+    let doc: serde_json::Value = client
+        .get(format!("{base}/api/org/node"))
+        .bearer_auth(&token)
+        .query(&[("project", "orgasmic"), ("id", "handoff-current")])
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let goal_id_prop = doc["properties"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["key"] == "GOAL_ID")
+        .expect("GOAL_ID property present");
+    assert_eq!(goal_id_prop["value"], "goal-fresh");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 #[tokio::test]
 async fn project_tx_record_survives_daemon_restart() {
     let tmp = tempfile::tempdir().unwrap();
@@ -3244,7 +3325,7 @@ async fn task_state_flip_persists_through_daemon_writer() {
     let client = reqwest::Client::new();
     let updated: serde_json::Value = client
         .post(format!(
-            "http://{}/api/projects/orgasmic/tasks/TASK-STATE",
+            "http://{}/api/projects/orgasmic/tasks/TASK-STATE?json=true",
             running.addr
         ))
         .bearer_auth(&token)
@@ -3280,7 +3361,7 @@ async fn task_state_flip_persists_through_daemon_writer() {
 
     let property_updated: serde_json::Value = client
         .post(format!(
-            "http://{}/api/projects/orgasmic/tasks/TASK-STATE",
+            "http://{}/api/projects/orgasmic/tasks/TASK-STATE?json=true",
             running.addr
         ))
         .bearer_auth(&token)
@@ -3307,6 +3388,66 @@ async fn task_state_flip_persists_through_daemon_writer() {
         .map(|entry| std::fs::read_to_string(entry.path()).unwrap())
         .collect::<String>();
     assert!(tx_raw_after_property.contains("task.property_updated"));
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// F12 (TASK-MTB56): `task update` defaults to a compact
+/// `{id, changed, tx_id}` shape instead of echoing the full ~1.5KB
+/// `TaskDetail`; `?json=true` restores the full detail.
+#[tokio::test]
+async fn task_update_default_output_is_compact() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "orgasmic");
+    write(
+        &project_root.join(".orgasmic/tasks/backlog.org"),
+        "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-COMPACT Compact output task :work:\n:PROPERTIES:\n:ID:               TASK-COMPACT\n:END:\n",
+    );
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let client = reqwest::Client::new();
+
+    let compact: serde_json::Value = client
+        .post(format!(
+            "http://{}/api/projects/orgasmic/tasks/TASK-COMPACT",
+            running.addr
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "priority": "P2" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(compact["id"], "TASK-COMPACT");
+    assert_eq!(compact["changed"]["PRIORITY"], "P2");
+    assert!(compact["tx_id"].as_str().is_some_and(|s| !s.is_empty()));
+    // The compact shape carries only id/changed/tx_id, not the full task detail.
+    assert!(compact.get("lifecycle_stage").is_none());
+    assert!(compact.get("source_file").is_none());
+
+    let full: serde_json::Value = client
+        .post(format!(
+            "http://{}/api/projects/orgasmic/tasks/TASK-COMPACT?json=true",
+            running.addr
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "priority": "P3" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(full["id"], "TASK-COMPACT");
+    assert_eq!(full["priority"], "P3");
+    assert!(full.get("lifecycle_stage").is_some());
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
