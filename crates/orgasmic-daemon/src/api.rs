@@ -3552,13 +3552,19 @@ async fn spawn_worker_run(
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
-                stall_timeout_secs: worker.stall_timeout_secs,
-                max_run_duration_secs: worker.max_run_duration_secs,
                 // Only the persistent hot-session artifactor (rmux) spawn
                 // opts into idle release; every other dispatch (one-shot
                 // implementer/reviewer/etc.) stays exempt. Mirrors the same
                 // `persistent` condition `stage_driver_config_with_overrides`
-                // uses to flag the rmux driver_config as persistent.
+                // uses to flag the rmux driver_config as persistent. That
+                // same condition must disable stall for these runs too, or
+                // the 600s stall pre-empts the 900s idle window and the run
+                // is still released before idle ever gets a chance to fire.
+                stall_timeout_secs: (worker.kind == WorkerKind::Artifactor
+                    && worker.driver == "rmux")
+                    .then_some(0)
+                    .or(worker.stall_timeout_secs),
+                max_run_duration_secs: worker.max_run_duration_secs,
                 idle_timeout_secs: (worker.kind == WorkerKind::Artifactor
                     && worker.driver == "rmux")
                     .then_some(DEFAULT_IDLE_TIMEOUT_SECS),

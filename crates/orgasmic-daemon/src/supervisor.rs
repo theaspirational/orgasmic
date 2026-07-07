@@ -2298,16 +2298,19 @@ fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeo
             deadline: rec.run_started_at + threshold,
         })
     });
-    // Idle is a THIRD, independent timeout keyed on the last accepted
-    // `send_input` rather than driver events (stall) or run start (max).
+    // Idle is a THIRD, independent timeout keyed on the more recent of the
+    // last accepted `send_input` and the last driver event, so a run that is
+    // actively streaming driver output is never idle-released even if no
+    // input has arrived — only true inactivity on BOTH clocks counts.
     let idle = rec.idle_timeout.and_then(|threshold| {
-        let elapsed = now.saturating_duration_since(rec.last_input_at);
+        let last_activity_at = rec.last_input_at.max(rec.last_driver_event_at);
+        let elapsed = now.saturating_duration_since(last_activity_at);
         (elapsed > threshold).then(|| RunTimeoutCandidate {
             run_id: run_id.to_string(),
             reason: "idle_timeout_exceeded",
             threshold,
             elapsed,
-            deadline: rec.last_input_at + threshold,
+            deadline: last_activity_at + threshold,
         })
     });
     // Earliest deadline wins; ties fall to whichever candidate is first in
@@ -2712,6 +2715,16 @@ mod tests {
         req
     }
 
+    /// Mirrors the exact shape `spawn_worker_run` (api.rs) now produces for
+    /// an Artifactor && rmux dispatch (TASK-NZ3C9): stall disabled via
+    /// `Some(0)`, idle enabled via `DEFAULT_IDLE_TIMEOUT_SECS`.
+    fn persistent_artifactor_req(task: &str, dir: &Path) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.stall_timeout_secs = Some(0);
+        req.idle_timeout_secs = Some(DEFAULT_IDLE_TIMEOUT_SECS);
+        req
+    }
+
     #[tokio::test]
     async fn snapshot_includes_driver_harness() {
         let (sup, dir, _w) = make_supervisor();
@@ -2961,7 +2974,10 @@ mod tests {
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
 
+        // Age both clocks: idle now requires last_input_at AND
+        // last_driver_event_at to be stale (TASK-NZ3C9 RULING 2).
         age_input(&sup, &resp.run_id, Duration::from_millis(1_001)).await;
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
         sup.release_first_timed_out_run().await;
 
         assert!(!run_is_live(&sup, &resp.run_id).await);
@@ -2985,6 +3001,12 @@ mod tests {
         let req = idle_req("TASK-IDLE-RESET", dir.path(), Some(1));
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
+
+        // Hold the driver-event clock stale for the whole test (no driver
+        // output at all) so only the input-clock reset behavior under test
+        // can keep the run alive — otherwise (TASK-NZ3C9 RULING 2) a fresh
+        // last_driver_event_at would mask input staleness on its own.
+        age_run(&sup, &resp.run_id, Some(Duration::from_secs(10)), None).await;
 
         age_input(&sup, &resp.run_id, Duration::from_millis(1_001)).await;
         let ack = sup
@@ -3022,6 +3044,95 @@ mod tests {
             run_is_live(&sup, &resp.run_id).await,
             "idle_timeout_secs: None must keep idle detection disabled"
         );
+    }
+
+    /// TASK-NZ3C9 (F9N5F reviewer HIGH-1): the 600s stall timeout used to
+    /// pre-empt the 900s idle window, killing a persistent artifactor run
+    /// long before idle ever got a chance to fire. With `spawn_worker_run`
+    /// now setting `stall_timeout_secs: Some(0)` for Artifactor && rmux, a
+    /// run that has gone quiet on the driver-event clock past the OLD 600s
+    /// stall point (with the idle clock still fresh) must survive the
+    /// sweep. Reverting the `Some(0)` guard in api.rs — or `resolve_timeout_secs`
+    /// treating `Some(0)` as anything but "disabled" — would make this fail.
+    #[tokio::test]
+    async fn persistent_artifactor_stall_disabled_survives_old_stall_point() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let req = persistent_artifactor_req("TASK-ARTIFACTOR-STALL", dir.path());
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        // Only the driver-event clock goes stale, past the old 600s stall
+        // threshold; last_input_at stays fresh so idle cannot be what saves
+        // this run — only stall being disabled can.
+        age_run(&sup, &resp.run_id, Some(Duration::from_secs(601)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "stall_timeout_secs: Some(0) must disable stall for persistent artifactor runs"
+        );
+    }
+
+    /// TASK-NZ3C9 (F9N5F reviewer MEDIUM-1): idle release must require BOTH
+    /// `last_input_at` and `last_driver_event_at` to be stale. A run that is
+    /// actively streaming driver output (fresh `last_driver_event_at`) must
+    /// never be idle-released even if input has gone quiet — only once both
+    /// clocks fall silent does idle fire. This fails if the idle candidate
+    /// reverts to keying on `last_input_at` alone.
+    #[tokio::test]
+    async fn idle_release_requires_both_clocks_stale() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let req = idle_req("TASK-IDLE-BOTH-CLOCKS", dir.path(), Some(1));
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        // Age only last_input_at; last_driver_event_at stays fresh, as if the
+        // driver were continuously streaming output. Must NOT release.
+        age_input(&sup, &resp.run_id, Duration::from_millis(1_001)).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "a run with fresh driver events must not be idle-released even if input is stale"
+        );
+
+        // Now age last_driver_event_at too, so BOTH clocks are stale.
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release_reason(&session_path, "idle_timeout_exceeded");
+    }
+
+    /// TASK-NZ3C9 (F9N5F reviewer LOW-1): production-shaped regression —
+    /// exercises the exact `AcquireRequest` shape `spawn_worker_run` now
+    /// builds for a persistent artifactor (stall disabled, idle enabled),
+    /// ages both clocks together past the idle window, and asserts both the
+    /// release reason and that the lease is freed for the next dispatch.
+    #[tokio::test]
+    async fn persistent_artifactor_idle_release_frees_lease_production_shaped() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let req = persistent_artifactor_req("TASK-ARTIFACTOR-IDLE", dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+
+        let past_idle_window = Duration::from_secs(u64::from(DEFAULT_IDLE_TIMEOUT_SECS) + 1);
+        age_input(&sup, &resp.run_id, past_idle_window).await;
+        age_run(&sup, &resp.run_id, Some(past_idle_window), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release_reason(&session_path, "idle_timeout_exceeded");
+
+        let reacquired = sup
+            .acquire(
+                &driver,
+                persistent_artifactor_req("TASK-ARTIFACTOR-IDLE", dir.path()),
+            )
+            .await
+            .expect("lease must be freed after idle release so regenerate cold-spawns");
+        assert_ne!(reacquired.run_id, resp.run_id);
     }
 
     #[test]
