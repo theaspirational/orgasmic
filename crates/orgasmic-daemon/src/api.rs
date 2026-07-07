@@ -6858,6 +6858,12 @@ pub struct GraphCreateRequest {
     /// forward references. The index-time dangling lint still catches it.
     #[serde(default)]
     pub force: bool,
+    /// Skip the glossary implementation-detail marker guard
+    /// (`reject_glossary_implementation_detail`) for a glossary term that
+    /// legitimately defines a language construct (e.g. a "struct" or "trait"
+    /// entry in a language glossary).
+    #[serde(default)]
+    pub allow_marker: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6879,6 +6885,42 @@ pub struct GraphMutationResponse {
     pub id: String,
     pub action: String,
     pub tx_id: String,
+}
+
+/// Default output shape for mutations that would otherwise echo an entire
+/// ~1.5KB node/task body back on every state flip or property edit
+/// (F12, TASK-MTB56): just what changed, keyed by field name, plus the tx
+/// that recorded it. Pass `?json=true` to get the full node/`TaskDetail`
+/// back instead.
+#[derive(Debug, Serialize)]
+pub struct CompactMutationResponse {
+    pub id: String,
+    pub changed: BTreeMap<String, String>,
+    pub tx_id: String,
+}
+
+/// Query flag shared by mutation endpoints that default to
+/// [`CompactMutationResponse`]: `?json=true` restores the full node/TaskDetail.
+#[derive(Debug, Deserialize)]
+pub struct MutationOutputQuery {
+    #[serde(default)]
+    pub json: bool,
+}
+
+fn compact_or_full_response<T: Serialize>(
+    want_full: bool,
+    compact: CompactMutationResponse,
+    full: T,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if want_full {
+        Ok(Json(
+            serde_json::to_value(full).map_err(|e| ApiError::internal(e.to_string()))?,
+        ))
+    } else {
+        Ok(Json(
+            serde_json::to_value(compact).map_err(|e| ApiError::internal(e.to_string()))?,
+        ))
+    }
 }
 
 async fn post_decision_create(
@@ -7712,8 +7754,9 @@ async fn get_org_node(
 async fn post_org_node_edit(
     State(state): State<ApiState>,
     Path(id): Path<String>,
+    Query(q): Query<MutationOutputQuery>,
     Json(req): Json<NodeEditRequest>,
-) -> Result<Json<NodeDoc>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let layer = resolve_node_layer(req.kind.as_deref(), &id)?;
     if layer == NodeLayer::Goal {
         return Err(ApiError::bad_request(
@@ -7765,12 +7808,14 @@ async fn post_org_node_edit(
     let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
     let mut title_override: Option<String> = None;
     let mut tags_override: Option<Vec<String>> = None;
+    let mut changed: BTreeMap<String, String> = BTreeMap::new();
     for op in req.ops {
         match op {
             NodeEditOp::SetBody { body, body_format } => {
                 let body = prepare_body_edit(&body, body_format);
                 rw.set_node_body(&id, &body)
                     .map_err(|e| org_rewriter_error("set body", &id, e))?;
+                changed.insert("body".to_string(), body);
             }
             NodeEditOp::SetSectionBody {
                 title,
@@ -7785,21 +7830,31 @@ async fn post_org_node_edit(
                 let body = prepare_body_edit(&body, body_format);
                 rw.upsert_section_text(&id, &title, &body)
                     .map_err(|e| org_rewriter_error("edit section", &id, e))?;
+                changed.insert(format!("section:{title}"), body);
             }
             NodeEditOp::RemoveSection { title } => {
                 rw.remove_section(&id, &title)
                     .map_err(|e| org_rewriter_error("remove section", &id, e))?;
+                changed.insert(format!("section:{title}"), "<removed>".to_string());
             }
             NodeEditOp::SetProperty { key, value } => {
                 rw.upsert_property(&id, &key, &value)
                     .map_err(|e| org_rewriter_error("set property", &id, e))?;
+                changed.insert(key, value);
             }
             NodeEditOp::RemoveProperty { key } => {
                 rw.remove_property(&id, &key)
                     .map_err(|e| org_rewriter_error("remove property", &id, e))?;
+                changed.insert(key, "<removed>".to_string());
             }
-            NodeEditOp::SetTitle { title } => title_override = Some(title),
-            NodeEditOp::SetTags { tags } => tags_override = Some(tags),
+            NodeEditOp::SetTitle { title } => {
+                changed.insert("title".to_string(), title.clone());
+                title_override = Some(title);
+            }
+            NodeEditOp::SetTags { tags } => {
+                changed.insert("tags".to_string(), tags.join(" "));
+                tags_override = Some(tags);
+            }
         }
     }
     if title_override.is_some() || tags_override.is_some() {
@@ -7812,7 +7867,7 @@ async fn post_org_node_edit(
     let updated = rw.finish();
     OrgFile::parse(updated.clone(), path.to_string_lossy())
         .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
-    write_org_node_edit_and_record(NodeEditWriteRequest {
+    let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
         state: &state,
         layer,
         project_id: project_id.clone(),
@@ -7831,7 +7886,13 @@ async fn post_org_node_edit(
     let heading = file
         .find_by_id(&id)
         .ok_or_else(|| ApiError::not_found(format!("node {id}")))?;
-    Ok(Json(org_node_doc(&file, heading, layer, source_file)))
+    let doc = org_node_doc(&file, heading, layer, source_file);
+    let compact = CompactMutationResponse {
+        id: id.clone(),
+        changed,
+        tx_id,
+    };
+    compact_or_full_response(q.json, compact, doc)
 }
 
 fn validate_decision_parent_ops(
@@ -8092,7 +8153,38 @@ fn render_graph_heading(
     Ok(out)
 }
 
+/// Path/symbol markers: unambiguous in prose, matched as plain substrings.
+const GLOSSARY_MARKER_SUBSTRINGS: &[&str] = &["crates/", "src/", ".rs", "::"];
+
+/// Code-keyword markers: also legitimate English words/word-fragments
+/// ("construct", "reconstruction", "implement"), so these are matched as
+/// whole word tokens only.
+const GLOSSARY_MARKER_WORDS: &[&str] = &["fn", "struct", "impl", "enum", "trait"];
+
+/// True if `text` contains `word` as a standalone token: bounded on both
+/// sides by the start/end of the string or a non-alphanumeric, non-`_`
+/// character. Prevents `struct` from matching inside `construct` or
+/// `reconstruction` while still catching `struct Foo {` or `a struct`.
+fn contains_word(text: &str, word: &str) -> bool {
+    let is_boundary = |c: Option<char>| !matches!(c, Some(c) if c.is_alphanumeric() || c == '_');
+    let bytes = text.as_bytes();
+    let word_len = word.len();
+    text.match_indices(word).any(|(start, _)| {
+        let before = text[..start].chars().next_back();
+        let after_idx = start + word_len;
+        let after = if after_idx <= bytes.len() {
+            text[after_idx..].chars().next()
+        } else {
+            None
+        };
+        is_boundary(before) && is_boundary(after)
+    })
+}
+
 fn reject_glossary_implementation_detail(req: &GraphCreateRequest) -> Result<(), ApiError> {
+    if req.allow_marker {
+        return Ok(());
+    }
     let mut text = String::new();
     if let Some(definition) = req.properties.get("DEFINITION") {
         text.push_str(definition);
@@ -8101,12 +8193,22 @@ fn reject_glossary_implementation_detail(req: &GraphCreateRequest) -> Result<(),
         text.push('\n');
         text.push_str(body);
     }
-    let forbidden = [
-        "crates/", "src/", ".rs", "::", "fn ", "struct ", "impl ", "enum ", "trait ",
-    ];
-    if let Some(marker) = forbidden.iter().find(|marker| text.contains(**marker)) {
+    if let Some(marker) = GLOSSARY_MARKER_SUBSTRINGS
+        .iter()
+        .find(|marker| text.contains(**marker))
+    {
         return Err(ApiError::bad_request(format!(
-            "glossary definition contains implementation detail marker {marker:?}"
+            "glossary definition contains implementation detail marker {marker:?} \
+             (use --allow-marker if this glossary legitimately defines language constructs)"
+        )));
+    }
+    if let Some(marker) = GLOSSARY_MARKER_WORDS
+        .iter()
+        .find(|marker| contains_word(&text, marker))
+    {
+        return Err(ApiError::bad_request(format!(
+            "glossary definition contains implementation detail marker {marker:?} \
+             (use --allow-marker if this glossary legitimately defines language constructs)"
         )));
     }
     Ok(())
@@ -8779,6 +8881,7 @@ async fn post_goal_set(
         .reason
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("set {goal_id}"));
+    let handoff_request_id = req.request_id.clone();
     let (tx_id, tx_path) = write_goal_file_and_record(GoalWriteRequest {
         state: &state,
         project_id: &project_id,
@@ -8791,11 +8894,65 @@ async fn post_goal_set(
         request_id: req.request_id,
     })
     .await?;
+    // F11 (TASK-MTB56): `goal set` used to leave handoff-current.GOAL_ID
+    // pointing at the superseded goal. Sync it here, in the same operation,
+    // so the two never drift.
+    sync_handoff_goal_id(
+        &state,
+        &project_id,
+        &entry.path,
+        &goal_id,
+        handoff_request_id,
+    )
+    .await?;
     Ok(Json(GoalMutationResponse {
         goal_id,
         tx_id,
         tx_path,
     }))
+}
+
+/// Keep `handoff-current`'s `:GOAL_ID:` property pointing at the currently
+/// active goal after `goal set` mints a new one (F11, TASK-MTB56). A no-op
+/// when there is no handoff file/node yet, or it already matches — this is
+/// best-effort continuity metadata, not load-bearing state, so a missing
+/// handoff surface never fails the goal-set call itself.
+async fn sync_handoff_goal_id(
+    state: &ApiState,
+    project_id: &str,
+    project_root: &FsPath,
+    goal_id: &str,
+    request_id: Option<String>,
+) -> Result<(), ApiError> {
+    let path = handoff_file_path(project_root);
+    if !path.exists() {
+        return Ok(());
+    }
+    let source = read_artifact(&path, "handoff file")?;
+    let file = OrgFile::parse(source, path.to_string_lossy())
+        .map_err(|e| org_parse_bad_request(&path, "handoff file", e))?;
+    let Some(heading) = file.find_by_id("handoff-current") else {
+        return Ok(());
+    };
+    if heading.property("GOAL_ID") == Some(goal_id) {
+        return Ok(());
+    }
+    let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
+    rw.upsert_property("handoff-current", "GOAL_ID", goal_id)
+        .map_err(|e| org_rewriter_error("sync handoff GOAL_ID", "handoff-current", e))?;
+    let updated = rw.finish();
+    write_org_node_edit_and_record(NodeEditWriteRequest {
+        state,
+        layer: NodeLayer::Handoff,
+        project_id: project_id.to_string(),
+        path,
+        source: updated,
+        request_id,
+        node_id: "handoff-current".to_string(),
+        action: "edited",
+    })
+    .await?;
+    Ok(())
 }
 
 async fn post_goal_clear(
@@ -9024,13 +9181,14 @@ fn prepare_cross_file_lifecycle_move(
 async fn post_task_update(
     State(state): State<ApiState>,
     Path((project_id, task_id)): Path<(String, String)>,
+    Query(q): Query<MutationOutputQuery>,
     Json(req): Json<TaskUpdateRequest>,
-) -> Result<Json<crate::index::TaskDetail>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     if req.state.is_some() {
-        return update_task_state(&state, &project_id, &task_id, req).await;
+        return update_task_state(&state, &project_id, &task_id, q.json, req).await;
     }
     if req.priority.is_some() || !req.properties.is_empty() {
-        return update_task_properties(&state, &project_id, &task_id, req).await;
+        return update_task_properties(&state, &project_id, &task_id, q.json, req).await;
     }
     Err(ApiError::bad_request(
         "task update requires at least one field",
@@ -9041,8 +9199,9 @@ async fn update_task_state(
     state: &ApiState,
     project_id: &str,
     task_id: &str,
+    want_full: bool,
     req: TaskUpdateRequest,
-) -> Result<Json<crate::index::TaskDetail>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let to_state = LifecycleStage::from_str(req.state.as_deref().unwrap_or(""))
         .map_err(|_| ApiError::bad_request("unknown task state"))?;
     let snap = state.index.snapshot().await;
@@ -9068,9 +9227,13 @@ async fn update_task_state(
             .cloned()
             .expect("task index membership checked above");
         let body = project.task_bodies.get(task_id).cloned();
-        return Ok(Json(crate::index::TaskDetail::from_indexed_body(
-            task, body,
-        )));
+        let detail = crate::index::TaskDetail::from_indexed_body(task, body);
+        let compact = CompactMutationResponse {
+            id: task_id.to_string(),
+            changed: BTreeMap::new(),
+            tx_id: String::new(),
+        };
+        return compact_or_full_response(want_full, compact, detail);
     }
     let from_path = task.source_file.clone();
     let to_file_name = lifecycle_stage_file_name(to_state);
@@ -9102,7 +9265,7 @@ async fn update_task_state(
         .reason
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("transition {task_id} to {}", to_state.as_str()));
-    let _tx_id = write_task_lifecycle_and_record(TaskLifecycleWriteRequest {
+    let tx_id = write_task_lifecycle_and_record(TaskLifecycleWriteRequest {
         state,
         project_id,
         task_id,
@@ -9134,9 +9297,15 @@ async fn update_task_state(
         .cloned()
         .ok_or_else(|| ApiError::internal("task missing from index after state flip"))?;
     let body = project.task_bodies.get(task_id).cloned();
-    Ok(Json(crate::index::TaskDetail::from_indexed_body(
-        task, body,
-    )))
+    let detail = crate::index::TaskDetail::from_indexed_body(task, body);
+    let mut changed = BTreeMap::new();
+    changed.insert("STATE".to_string(), to_state.as_str().to_string());
+    let compact = CompactMutationResponse {
+        id: task_id.to_string(),
+        changed,
+        tx_id,
+    };
+    compact_or_full_response(want_full, compact, detail)
 }
 
 struct TaskPropertyWriteRequest<'a> {
@@ -9201,8 +9370,9 @@ async fn update_task_properties(
     state: &ApiState,
     project_id: &str,
     task_id: &str,
+    want_full: bool,
     req: TaskUpdateRequest,
-) -> Result<Json<crate::index::TaskDetail>, ApiError> {
+) -> Result<Json<serde_json::Value>, ApiError> {
     let snap = state.index.snapshot().await;
     let project = snap
         .project(project_id)
@@ -9258,7 +9428,8 @@ async fn update_task_properties(
         .reason
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| format!("update properties on {task_id}"));
-    let _tx_id = write_task_property_and_record(TaskPropertyWriteRequest {
+    let changed_map: BTreeMap<String, String> = changed.iter().cloned().collect();
+    let tx_id = write_task_property_and_record(TaskPropertyWriteRequest {
         state,
         project_id,
         project_root: &project.root,
@@ -9290,9 +9461,13 @@ async fn update_task_properties(
         .cloned()
         .ok_or_else(|| ApiError::internal("task missing from index after property update"))?;
     let body = project.task_bodies.get(task_id).cloned();
-    Ok(Json(crate::index::TaskDetail::from_indexed_body(
-        task, body,
-    )))
+    let detail = crate::index::TaskDetail::from_indexed_body(task, body);
+    let compact = CompactMutationResponse {
+        id: task_id.to_string(),
+        changed: changed_map,
+        tx_id,
+    };
+    compact_or_full_response(want_full, compact, detail)
 }
 
 // ---- stubs -----------------------------------------------------------------
@@ -10810,6 +10985,63 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, contents).unwrap();
+    }
+
+    fn glossary_create_request(definition: &str, allow_marker: bool) -> GraphCreateRequest {
+        let mut properties = BTreeMap::new();
+        properties.insert("DEFINITION".to_string(), definition.to_string());
+        GraphCreateRequest {
+            project: None,
+            request_id: None,
+            id: None,
+            title: None,
+            properties,
+            body: None,
+            force: false,
+            allow_marker,
+        }
+    }
+
+    #[test]
+    fn glossary_marker_guard_allows_ordinary_english_word_fragments() {
+        let ok = [
+            "A construct holding related fields.",
+            "The reconstruction of the index happens on boot.",
+            "Enumerate every project before syncing.",
+            "This is a simple implementation of the pattern.",
+        ];
+        for definition in ok {
+            assert!(
+                reject_glossary_implementation_detail(&glossary_create_request(definition, false))
+                    .is_ok(),
+                "expected {definition:?} to pass the marker guard"
+            );
+        }
+    }
+
+    #[test]
+    fn glossary_marker_guard_rejects_real_markers() {
+        let bad = [
+            "struct Foo { field: bool }",
+            "impl Foo for Bar {}",
+            "enum Color { Red, Blue }",
+            "trait Greeter { fn greet(&self); }",
+            "Calls crates/orgasmic-core/src/schema.rs directly.",
+            "See orgasmic_core::schema for the type.",
+        ];
+        for definition in bad {
+            assert!(
+                reject_glossary_implementation_detail(&glossary_create_request(definition, false))
+                    .is_err(),
+                "expected {definition:?} to be rejected by the marker guard"
+            );
+        }
+    }
+
+    #[test]
+    fn glossary_marker_guard_allow_marker_overrides() {
+        let req = glossary_create_request("struct Foo { field: bool }", true);
+        assert!(reject_glossary_implementation_detail(&req).is_ok());
     }
 
     #[test]
@@ -13420,7 +13652,7 @@ mod tests {
         // uses --force (TASK-4T80X write-time reference guard) to keep
         // testing the unrelated edit-round-trip mechanics unchanged.
         let resp = client
-            .post(format!("{base}/api/org/node/dec_001/edit"))
+            .post(format!("{base}/api/org/node/dec_001/edit?json=true"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "project": "orgasmic",
@@ -13525,7 +13757,7 @@ mod tests {
         let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
 
         let resp = client
-            .post(format!("{base}/api/org/node/dec_FIXME/edit"))
+            .post(format!("{base}/api/org/node/dec_FIXME/edit?json=true"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "project": "orgasmic",
@@ -13608,7 +13840,7 @@ mod tests {
 
         // Edit a section through the same layer selector.
         let resp = client
-            .post(format!("{base}/api/org/node/orgasmic/edit"))
+            .post(format!("{base}/api/org/node/orgasmic/edit?json=true"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "project": "orgasmic",
@@ -13833,7 +14065,7 @@ mod tests {
         let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
 
         let resp = client
-            .post(format!("{base}/api/org/node/TASK-PRE/edit"))
+            .post(format!("{base}/api/org/node/TASK-PRE/edit?json=true"))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "project": "orgasmic",
@@ -13974,7 +14206,9 @@ mod tests {
         let base = format!("http://{}", running.addr);
 
         let resp = client
-            .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
+            .post(format!(
+                "{base}/api/projects/orgasmic/tasks/TASK-PRE?json=true"
+            ))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "priority": "P1",
@@ -14017,7 +14251,9 @@ mod tests {
         let base = format!("http://{}", running.addr);
 
         let resp = client
-            .post(format!("{base}/api/projects/orgasmic/tasks/TASK-PRE"))
+            .post(format!(
+                "{base}/api/projects/orgasmic/tasks/TASK-PRE?json=true"
+            ))
             .bearer_auth(&token)
             .json(&serde_json::json!({
                 "state": "in_progress",

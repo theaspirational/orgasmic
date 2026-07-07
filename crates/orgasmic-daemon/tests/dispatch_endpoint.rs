@@ -471,7 +471,7 @@ async fn state_flip_to_in_progress_does_not_spawn_worker() {
     let client = reqwest::Client::new();
     let resp = client
         .post(format!(
-            "http://{}/api/projects/proj-dispatch/tasks/{task_id}",
+            "http://{}/api/projects/proj-dispatch/tasks/{task_id}?json=true",
             running.addr
         ))
         .bearer_auth(&token)
