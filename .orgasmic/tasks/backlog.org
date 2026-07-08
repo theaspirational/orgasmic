@@ -1,12 +1,15 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-SQE9P Live rmux finalize prompt-spec smoke (DWJVH part-1, publish-gated)    :dispatch:hardening:followup:
+* BACKLOG TASK-QKQ3R dispatch finalize commits wrong root when worktree lacks .orgasmic (greenfield silent work-loss)    :dispatch:fix:hardening:
 :PROPERTIES:
-:ID: TASK-SQE9P
-:RELATES_TO: TASK-DWJVH
+:ID: TASK-QKQ3R
+:PRIORITY: high
+:RELATES_TO: TASK-SQE9P TASK-WFW1N
 :END:
 
-Spun out of TASK-DWJVH at its close: the DWJVH code items (A caller-identity ownership check, B stall-race resilience, C --status blocked test) are DONE (merged 14a79c0). This is the remaining part-1 verification only, deferred because it requires the finalize verb to be in a DEPLOYED daemon.
+Found by the SQE9P live smoke (2026-07-08, isolated 0.0.8 daemon). cmd_dispatch_finalize resolves its commit target via find_project_root() (crates/orgasmic-cli/src/manager.rs:1595), which walks UP from cwd looking for .orgasmic/project.org. A dispatch worktree checkout does NOT contain .orgasmic/ whenever the project's .orgasmic is uncommitted (every greenfield project between 'orgasmic project init' and its first commit — the exact DHYXQ bootstrap window). The walk then ESCAPES the worktree (nested at <repo>/.orgasmic/tmp/dispatch/<task>/worktree) and resolves the MANAGER'S live repo root. Observed consequence in the smoke: finalize --commit ran 'git add -A && git commit' in the manager repo (sweeping the unrelated uncommitted .orgasmic scaffold + AGENTS.md/CLAUDE.md onto the manager's HEAD), stamped THAT sha into the implementer.done tx as SHA/MERGE_SHA, wrote last.txt claiming success — while scripts/greet.sh sat UNCOMMITTED on the dispatch branch (task-05cy5-impl still at base). Silent wrong-target write + fabricated durable-work claim: worst class. Production orgasmic is unaffected only because its .orgasmic/ IS committed (worktrees carry project.org).
 
-At runtime-publish time: dispatch a real rmux implementer against a freshly-built ISOLATED daemon (non-4848; isolated-smoke-daemon recipe — CLAUDE_CODE env, folder-trust, rmux SDK/CLI socket gotchas) and confirm the worker, following its prompt spec, actually CALLS 'orgasmic dispatch finalize' and the dispatch closes with the report intact (no transcript recovery). NEVER boot a prod daemon from a worktree (4848 LaunchAgent hijack). The mechanism itself is already covered by the dispatch.rs integration tests + the demoted-scrape daemon log line; this verifies prompt-spec ADHERENCE in practice. RELATES_TO TASK-DWJVH.
+Fix direction: the COMMIT boundary must be the git worktree toplevel, not the project-marker walk — use 'git rev-parse --show-toplevel' from cwd (stops at the worktree boundary: .git file) for commit_worktree/current_git_branch/WORKTREE tx extra; keep find_project_root only for reading project id (or read it from the daemon's run record instead). Additionally cross-check: refuse --commit when the resolved commit root differs from the run's dispatched WORKTREE (daemon knows it; expose on RunSummary/LiveRunInfo if needed) — fail loudly, never commit a root that isn't the dispatched worktree. Regression test: dispatch-finalize fixture where the project .orgasmic is NOT committed (worktree lacks project.org) → finalize --commit commits ONLY the worktree, never the manager root. Minor bundled polish: finalize_commit_message uses the summary's first line verbatim — strip leading markdown heading markers ('# ') so subjects aren't 'TASK-X: # TASK-X (...)'.
+
+Gates: cargo test -p orgasmic-cli (+ daemon if RunSummary changes), clippy -D, fmt.

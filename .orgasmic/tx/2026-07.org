@@ -8634,3 +8634,32 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+
+* TX 2026-07-08 Wed 06:37:55 task.state_transitioned TASK-SQE9P
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1701
+:TIME:         [2026-07-08 Wed 06:37:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SQE9P
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Live smoke PASSED 2026-07-08 on isolated 0.0.8 daemon (127.0.0.1:14848, release binary + bundled shipped/ prompt specs, throwaway repo/home). Real implementer-claude-rmux worker, brief contained ZERO finalize/commit instructions: worker called 'orgasmic dispatch finalize' unprompted from the shipped prompt spec ~52s into the run. Daemon logged 'worker finalized via orgasmic dispatch finalize, skipping scrape'; implementer.done tx emitted by agent.implementer with RUN_ID; last.txt byte-verbatim worker markdown (zero scrollback); lease released (0 live runs). Prompt-spec ADHERENCE PROVEN. Bonus: the smoke caught a real bug — finalize --commit committed the MANAGER repo root instead of the dispatch worktree when the project's .orgasmic/ is uncommitted (find_project_root escapes the worktree); filed as follow-up.
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-08 Wed 06:37:55 task.created TASK-QKQ3R
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1702
+:TIME:         [2026-07-08 Wed 06:37:55]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QKQ3R
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-QKQ3R
+:END:
