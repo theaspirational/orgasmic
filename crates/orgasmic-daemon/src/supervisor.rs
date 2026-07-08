@@ -259,6 +259,11 @@ struct RunRecord {
     transport: String,
     harness: Option<String>,
     project_id: Option<String>,
+    /// The dispatched worktree root, when known (CLI dispatch acquire/reattach;
+    /// `None` for manager/recovery/stage/babysitter runs). Exposed on
+    /// [`RunSummary`] so `orgasmic dispatch finalize --commit` can refuse to
+    /// commit a git root that isn't the dispatched worktree (TASK-QKQ3R).
+    worktree: Option<PathBuf>,
     sub_state: Option<RunSubState>,
     identity: RuntimeIdentity,
     session_path: PathBuf,
@@ -840,6 +845,7 @@ impl Supervisor {
             transport,
             harness,
             project_id: req.project_id.clone(),
+            worktree: req.worktree.clone(),
             sub_state: initial_working_sub_state(&req.role),
             identity: identity.clone(),
             session_path: req.session_path.clone(),
@@ -1069,6 +1075,7 @@ impl Supervisor {
             transport,
             harness,
             project_id: req.project_id.clone(),
+            worktree: req.worktree.clone(),
             sub_state: initial_working_sub_state(&req.role),
             identity: identity.clone(),
             session_path: std::mem::take(&mut req.session_path),
@@ -1388,6 +1395,7 @@ impl Supervisor {
             transport,
             harness,
             project_id,
+            worktree: worktree.clone(),
             sub_state: initial_working_sub_state(&role),
             identity: identity.clone(),
             session_path,
@@ -1808,6 +1816,7 @@ impl Supervisor {
                 driver: rec.transport.clone(),
                 harness: rec.harness.clone(),
                 project_id: rec.project_id.clone(),
+                worktree: rec.worktree.clone(),
                 sub_state: rec.sub_state.clone(),
                 identity: rec.identity.clone(),
                 session_path: rec.session_path.clone(),
@@ -2307,6 +2316,12 @@ pub struct RunSummary {
     pub driver: String,
     pub harness: Option<String>,
     pub project_id: Option<String>,
+    /// The dispatched worktree root, when known. `orgasmic dispatch finalize
+    /// --commit` cross-checks this against the resolved git toplevel before
+    /// committing, refusing to commit a root that isn't the dispatched
+    /// worktree (TASK-QKQ3R).
+    #[serde(default)]
+    pub worktree: Option<PathBuf>,
     pub sub_state: Option<RunSubState>,
     pub identity: RuntimeIdentity,
     pub session_path: PathBuf,
