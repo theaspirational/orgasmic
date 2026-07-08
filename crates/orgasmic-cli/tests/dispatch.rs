@@ -2900,3 +2900,252 @@ async fn dispatch_finalize_survives_stall_sweep_race_and_still_records_done() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// Regression for TASK-QKQ3R: a dispatch worktree whose project has not yet
+/// committed `.orgasmic/` (the greenfield window between `orgasmic project
+/// init` and its first commit) must not let `dispatch finalize --commit`
+/// escape the worktree via the `.orgasmic/project.org` marker walk and
+/// commit the manager's live repo root instead. `.orgasmic/project.org`
+/// exists on disk at the project root but is gitignored, so the linked
+/// worktree checkout (nested at the real default
+/// `.orgasmic/tmp/dispatch/<task>/worktree` layout) carries no `.orgasmic`
+/// at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_commit_binds_to_worktree_when_orgasmic_is_uncommitted() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+
+    write(&project_root.join(".gitignore"), ".orgasmic/\n");
+    run_git(&project_root, &["init", "-b", "main"]);
+    run_git(
+        &project_root,
+        &["config", "user.email", "tester@example.com"],
+    );
+    run_git(&project_root, &["config", "user.name", "Test User"]);
+    run_git(&project_root, &["add", "."]);
+    run_git(&project_root, &["commit", "-m", "init"]);
+    let head = run_git(&project_root, &["rev-parse", "HEAD"]);
+    let manager_head_before = head.clone();
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    write(&brief, "stub implementer brief");
+
+    // Default worktree layout: nested under the project's own
+    // `.orgasmic/tmp/dispatch/<task>/worktree` — exactly the layout that
+    // escaped to the manager root pre-fix.
+    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "finalize wrong-root regression",
+        ],
+    );
+    assert!(
+        dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="),
+        "unexpected dispatch output: {dispatch_stdout}"
+    );
+    assert!(
+        worktree.is_dir(),
+        "worktree should exist at the default nested layout: {}",
+        worktree.display()
+    );
+    assert!(
+        !worktree.join(".orgasmic/project.org").exists(),
+        "worktree checkout must NOT carry .orgasmic (it was never committed)"
+    );
+
+    // Simulate the implementer's uncommitted work in the worktree.
+    write(&worktree.join("scripts/greet.sh"), "#!/bin/sh\necho hi\n");
+    let worktree_head_before = run_git(&worktree, &["rev-parse", "HEAD"]);
+
+    // The manager repo has its own uncommitted scratch state at the moment
+    // finalize runs — this must be left completely untouched.
+    write(
+        &project_root.join("scratch.txt"),
+        "unrelated manager work\n",
+    );
+
+    let summary_path = tmp.path().join("summary.md");
+    write(
+        &summary_path,
+        "TASK-QKQ3R regression: commit only the worktree",
+    );
+
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+
+    // The manager repo root must be untouched: HEAD unchanged, and the
+    // untracked scratch file is still untracked (not swept into a commit).
+    let manager_head_after = run_git(&project_root, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        manager_head_before, manager_head_after,
+        "finalize --commit must never advance the manager repo's HEAD"
+    );
+    assert!(
+        project_root.join("scratch.txt").exists(),
+        "unrelated manager scratch file must survive untouched"
+    );
+    let manager_status = run_git(&project_root, &["status", "--porcelain", "--ignored"]);
+    assert!(
+        manager_status.contains("scratch.txt"),
+        "scratch.txt must remain untracked/uncommitted in the manager repo: {manager_status}"
+    );
+
+    // The worktree itself must have advanced and be clean.
+    let worktree_head_after = run_git(&worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        worktree_head_before, worktree_head_after,
+        "finalize --commit must commit the worktree's own dirty state"
+    );
+    let worktree_status = run_git(&worktree, &["status", "--porcelain"]);
+    assert!(
+        worktree_status.is_empty(),
+        "worktree must be clean after --commit: {worktree_status}"
+    );
+    assert!(
+        run_git(&worktree, &["show", "HEAD:scripts/greet.sh"]).contains("echo hi"),
+        "the worker's file must be committed onto the worktree branch"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// Worktree-mismatch refusal (TASK-QKQ3R part B): the daemon's live run
+/// record advertises the dispatched worktree; running `dispatch finalize
+/// --commit` from an unrelated repo must hard-error and commit nothing
+/// anywhere, rather than silently committing whatever `git` resolves from
+/// the wrong cwd.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_refuses_commit_when_git_root_does_not_match_dispatched_worktree() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    // Leave uncommitted work in the real dispatched worktree — it must
+    // survive the refused finalize untouched.
+    write(&worktree.join("NOTES.md"), "uncommitted worker output\n");
+    let worktree_head_before = run_git(&worktree, &["rev-parse", "HEAD"]);
+    let worktree_status_before = run_git(&worktree, &["status", "--porcelain"]);
+
+    // A completely unrelated git repo, standing in for "an unexpected cwd".
+    let other_repo = tmp.path().join("other-repo");
+    std::fs::create_dir_all(&other_repo).unwrap();
+    run_git(&other_repo, &["init", "-b", "main"]);
+    run_git(&other_repo, &["config", "user.email", "tester@example.com"]);
+    run_git(&other_repo, &["config", "user.name", "Test User"]);
+    write(&other_repo.join("README.md"), "unrelated repo\n");
+    run_git(&other_repo, &["add", "."]);
+    run_git(&other_repo, &["commit", "-m", "init"]);
+    let other_head_before = run_git(&other_repo, &["rev-parse", "HEAD"]);
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "should never be committed anywhere");
+
+    let stderr = run_orgasmic_failure(
+        &home,
+        &running,
+        &other_repo,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+    assert!(
+        stderr.contains("refusing --commit"),
+        "expected a loud worktree-mismatch refusal: {stderr}"
+    );
+
+    // Nothing committed anywhere: neither the unrelated cwd repo...
+    let other_head_after = run_git(&other_repo, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        other_head_before, other_head_after,
+        "the unrelated repo used as cwd must never be committed to"
+    );
+    // ...nor the real dispatched worktree (finalize must bail before it
+    // ever runs `git add`/`git commit`).
+    let worktree_head_after = run_git(&worktree, &["rev-parse", "HEAD"]);
+    assert_eq!(
+        worktree_head_before, worktree_head_after,
+        "the dispatched worktree must not be committed to either"
+    );
+    let worktree_status_after = run_git(&worktree, &["status", "--porcelain"]);
+    assert_eq!(
+        worktree_status_before, worktree_status_after,
+        "the dispatched worktree's uncommitted state must be untouched"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

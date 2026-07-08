@@ -672,6 +672,13 @@ struct LiveRunInfo {
     project_id: Option<String>,
     #[serde(default)]
     last_path: Option<PathBuf>,
+    /// The dispatched worktree root, when the daemon knows it (mirrors
+    /// `RunSummary::worktree`). `orgasmic dispatch finalize --commit`
+    /// cross-checks this against the resolved git toplevel before
+    /// committing, refusing to commit a root that isn't the dispatched
+    /// worktree (TASK-QKQ3R).
+    #[serde(default)]
+    worktree: Option<PathBuf>,
     /// The run's own `RuntimeIdentity`, always present on `/runs.live`
     /// (`RunSummary::identity`). Presented back on the finalize release call
     /// (TASK-DWJVH item A) so the daemon can reject a stale/reclaimed-slot
@@ -694,8 +701,16 @@ struct LiveRunsResponse {
 /// releases the lease — converging on the same `release_dispatch_run`/`/tx`
 /// plumbing `dispatch-close` uses.
 pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<()> {
-    let project_root = find_project_root()?;
-    let project_id = read_project_id(&project_root)?;
+    // The commit/branch/worktree boundary is the git worktree toplevel, NOT
+    // the `.orgasmic/project.org` marker walk: a dispatch worktree checkout
+    // lacks `.orgasmic/` whenever the project hasn't committed it yet
+    // (greenfield window), and the marker walk then escapes the worktree and
+    // resolves the manager's live repo root instead (TASK-QKQ3R). Reading the
+    // project id is the only thing still allowed to fall back to the marker
+    // walk (harmless — no writes bind to it).
+    let cwd = std::env::current_dir().context("cwd")?;
+    let git_root = git_toplevel(&cwd)?;
+    let project_id = resolve_finalize_project_id(&git_root);
     let summary = std::fs::read_to_string(&args.summary_file)
         .with_context(|| format!("read --summary-file {}", args.summary_file.display()))?;
     if args.status == FinalizeStatus::Blocked
@@ -709,20 +724,46 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         bail!("--reason is required when --status blocked");
     }
 
-    let task = resolve_finalize_task(&project_root, args.task.clone())?;
+    let task = resolve_finalize_task(&git_root, args.task.clone())?;
 
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let run = runtime.block_on(resolve_finalize_run(
         &client,
-        &project_id,
+        project_id.as_deref(),
         &task,
         args.run_id.clone(),
     ))?;
 
+    // Authoritative cross-check (TASK-QKQ3R part B): the daemon knows the
+    // worktree it dispatched for this run. If the resolved git toplevel
+    // doesn't match it, refuse to commit a root that isn't the dispatched
+    // worktree. Without `--commit` a mismatch is a warning only — finalize
+    // `--sha` from an unexpected cwd is a legitimate rescue flow.
+    if let Some(run_worktree) = run.worktree.as_deref() {
+        if normalize_path(&git_root) != normalize_path(run_worktree) {
+            if args.commit {
+                bail!(
+                    "refusing --commit: resolved git worktree {} does not match \
+                     the dispatched worktree {} for run {}",
+                    git_root.display(),
+                    run_worktree.display(),
+                    run.run_id
+                );
+            }
+            eprintln!(
+                "warning: resolved git worktree {} does not match the dispatched \
+                 worktree {} for run {} (finalize from an unexpected cwd?)",
+                git_root.display(),
+                run_worktree.display(),
+                run.run_id
+            );
+        }
+    }
+
     let sha = if args.commit {
         Some(commit_worktree(
-            &project_root,
+            &git_root,
             &finalize_commit_message(&task, args.status, &summary),
         )?)
     } else {
@@ -736,7 +777,7 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
 
     let mut extra = vec![
         ("RUN_ID".to_string(), run.run_id.clone()),
-        ("WORKTREE".to_string(), project_root.display().to_string()),
+        ("WORKTREE".to_string(), git_root.display().to_string()),
     ];
     if let Some(sha) = sha.as_deref() {
         extra.push(("SHA".to_string(), sha.to_string()));
@@ -806,7 +847,7 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         ty: tx_type.to_string(),
         actor: Some(format!("agent.{}", run.kind)),
         machine: None,
-        project: Some(project_id.clone()),
+        project: project_id.clone(),
         task: Some(task.clone()),
         target: None,
         reason: args
@@ -830,19 +871,70 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     Ok(())
 }
 
+/// Resolve the git worktree toplevel from `cwd` via `git rev-parse
+/// --show-toplevel`. Unlike [`find_project_root`]'s `.orgasmic/project.org`
+/// marker walk, this stops at the worktree boundary (a linked worktree has
+/// its own `.git` file) rather than escaping into the manager's live repo
+/// root (TASK-QKQ3R). Canonicalized so comparisons are stable across the
+/// macOS `/var` vs `/private/var` gotcha.
+fn git_toplevel(cwd: &Path) -> Result<PathBuf> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(cwd)
+        .output()
+        .context("git rev-parse --show-toplevel")?;
+    if !output.status.success() {
+        bail!(
+            "git rev-parse --show-toplevel failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let path = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim());
+    std::fs::canonicalize(&path)
+        .with_context(|| format!("canonicalize git toplevel {}", path.display()))
+}
+
+/// Best-effort project id for finalize: try reading it from the git
+/// toplevel first, and only fall back to the `.orgasmic/project.org` marker
+/// walk (which may escape the worktree) for this READ. No git write ever
+/// binds to the marker-walk result — only `git_toplevel` does that
+/// (TASK-QKQ3R part C). `None` when neither resolves, tolerated by
+/// [`resolve_finalize_run`].
+fn resolve_finalize_project_id(git_root: &Path) -> Option<String> {
+    read_project_id(git_root).ok().or_else(|| {
+        find_project_root()
+            .ok()
+            .and_then(|root| read_project_id(&root).ok())
+    })
+}
+
 fn finalize_commit_message(task: &str, status: FinalizeStatus, summary: &str) -> String {
-    let subject: String = summary
-        .lines()
-        .map(str::trim)
-        .find(|line| !line.is_empty())
-        .unwrap_or("worker finalize")
-        .chars()
-        .take(72)
-        .collect();
+    let subject: String = strip_markdown_heading(
+        summary
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("worker finalize"),
+    )
+    .chars()
+    .take(72)
+    .collect();
     format!(
         "{task}: {subject}\n\norgasmic dispatch finalize --status {}",
         status.as_str()
     )
+}
+
+/// Strip leading markdown heading markers (`#`, `##`, ... followed by
+/// whitespace) so commit subjects don't read `TASK-X: # TASK-X (...)` when a
+/// summary's first line is a markdown heading.
+fn strip_markdown_heading(line: &str) -> &str {
+    let stripped = line.trim_start_matches('#');
+    if stripped.len() != line.len() {
+        stripped.trim_start()
+    } else {
+        line
+    }
 }
 
 fn worktree_has_uncommitted_changes(project_root: &Path) -> bool {
@@ -945,9 +1037,14 @@ fn resolve_finalize_task(project_root: &Path, task_override: Option<String>) -> 
 /// `.orgasmic/tx`: a worker's own worktree checkout cannot see the live
 /// (uncommitted) daemon writes to the manager's `.orgasmic/tx`, so the only
 /// reliable source is the daemon's in-memory live run list.
+/// `project_id` is `None` when finalize couldn't resolve one at all (neither
+/// the git toplevel nor the marker-walk fallback had a readable
+/// `project.org`, TASK-QKQ3R part C). The project filter/guard below applies
+/// only when BOTH sides know a project id; task match (plus single-live-run
+/// matching in the no-`--run-id` path) stays the backstop.
 async fn resolve_finalize_run(
     client: &DaemonClient,
-    project_id: &str,
+    project_id: Option<&str>,
     task: &str,
     run_id: Option<String>,
 ) -> Result<LiveRunInfo> {
@@ -969,7 +1066,7 @@ async fn resolve_finalize_run(
                 run.task_id
             );
         }
-        if let Some(run_project) = run.project_id.as_deref() {
+        if let (Some(run_project), Some(project_id)) = (run.project_id.as_deref(), project_id) {
             if run_project != project_id {
                 bail!(
                     "run {} belongs to project {run_project}, not {project_id}; refusing to finalize",
@@ -986,7 +1083,8 @@ async fn resolve_finalize_run(
                 && run
                     .project_id
                     .as_deref()
-                    .map(|p| p == project_id)
+                    .zip(project_id)
+                    .map(|(run_project, project_id)| run_project == project_id)
                     .unwrap_or(true)
         })
         .collect();
@@ -2646,5 +2744,46 @@ mod tests {
         assert_eq!(open[0].tx_id, "tx-start-2");
         assert_eq!(open[0].tasks, vec!["TASK-2".to_string()]);
         assert_eq!(open[0].kind, "reviewer");
+    }
+
+    #[test]
+    fn finalize_commit_message_strips_markdown_heading_prefix() {
+        let message = finalize_commit_message(
+            "TASK-QKQ3R",
+            FinalizeStatus::Done,
+            "# TASK-QKQ3R (finalize fix)\n\nbody",
+        );
+        assert!(
+            message.starts_with("TASK-QKQ3R: TASK-QKQ3R (finalize fix)"),
+            "expected stripped heading marker, got: {message}"
+        );
+        assert!(!message.contains("# TASK-QKQ3R (finalize fix)"));
+
+        // A summary with no heading marker is passed through untouched.
+        let plain = finalize_commit_message("TASK-QKQ3R", FinalizeStatus::Done, "plain subject");
+        assert!(plain.starts_with("TASK-QKQ3R: plain subject"));
+
+        // A nested heading level (`## `) strips all `#`s.
+        let nested = finalize_commit_message("TASK-QKQ3R", FinalizeStatus::Done, "## nested");
+        assert!(nested.starts_with("TASK-QKQ3R: nested"));
+    }
+
+    #[test]
+    fn resolve_finalize_run_project_filter_requires_both_sides_known() {
+        // Exercises the pure helper logic that `resolve_finalize_run`'s
+        // implicit-match filter relies on: the project id check must apply
+        // only when both the finalize invocation and the live run report a
+        // project id (TASK-QKQ3R part C tolerance for an unknown project id).
+        fn matches(run_project: Option<&str>, project_id: Option<&str>) -> bool {
+            run_project
+                .zip(project_id)
+                .map(|(run_project, project_id)| run_project == project_id)
+                .unwrap_or(true)
+        }
+        assert!(matches(Some("orgasmic"), Some("orgasmic")));
+        assert!(!matches(Some("orgasmic"), Some("other")));
+        assert!(matches(Some("orgasmic"), None));
+        assert!(matches(None, Some("orgasmic")));
+        assert!(matches(None, None));
     }
 }
