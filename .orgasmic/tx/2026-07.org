@@ -8663,3 +8663,172 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       created task TASK-QKQ3R
 :END:
+
+* TX 2026-07-08 Wed 06:39:15 task.state_transitioned TASK-QKQ3R
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1703
+:TIME:         [2026-07-08 Wed 06:39:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QKQ3R
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-QKQ3R to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-08 Wed 06:39:16 manager.dispatch_started TASK-QKQ3R
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1704
+:TIME:         [2026-07-08 Wed 06:39:16]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QKQ3R
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-qkq3r/worktree
+:BRANCH:       task-qkq3r-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qkq3r/task-qkq3r-brief.md
+:STARTED_AT:   [2026-07-08 Wed 06:39:16]
+:LIVENESS:     827131ab4221ad5aa5cb0fc874717f4eef9db6a8
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-sonnet-5
+:EFFORT:       high
+:REASON_INITIAL: Drain-backlog goal, new task from SQE9P smoke: finalize commits wrong root when worktree lacks .orgasmic (greenfield silent work-loss)
+:END:
+
+* TX 2026-07-08 Wed 06:39:16 run.created TASK-QKQ3R
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1705
+:TIME:         [2026-07-08 Wed 06:39:16]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QKQ3R
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-QKQ3R-implementer-20260708T063916.jsonl
+:REASON:       Drain-backlog goal, new task from SQE9P smoke: finalize commits wrong root when worktree lacks .orgasmic (greenfield silent work-loss)
+:RUN_ID:       run-20260708T063916-e8b0ab373d184b09b59fd4acc1be7084
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-qkq3r/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-qkq3r/task-qkq3r-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-qkq3r/task-qkq3r-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-qkq3r/task-qkq3r-stdout.log
+:DISPATCH_TX:  tx-20260708-orgasmic-1704
+:MODEL_OVERRIDE: claude-sonnet-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-08 Wed 06:39:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1706
+:TIME:         [2026-07-08 Wed 06:39:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-08 Wed 06:39:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1707
+:TIME:         [2026-07-08 Wed 06:39:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-08 Wed 06:59:15 implementer.done TASK-QKQ3R
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1708
+:TIME:         [2026-07-08 Wed 06:59:15]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QKQ3R
+:RUN_ID:       run-20260708T063916-e8b0ab373d184b09b59fd4acc1be7084
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-qkq3r/worktree
+:END:
+
+* TX 2026-07-08 Wed 07:03:36 task.state_transitioned TASK-QKQ3R
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1709
+:TIME:         [2026-07-08 Wed 07:03:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QKQ3R
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged 00da4c9. Git ops bind to git rev-parse --show-toplevel (worktree boundary); run-record worktree exposed on RunSummary/LiveRunInfo and cross-checked before any --commit (bail on mismatch; warn-only without --commit); finalize works with no .orgasmic in the checkout (project filter applies only when both sides know it); commit subjects strip markdown headings. 4 new tests; gates green independently on merged main. First production dispatch closed via worker finalize — verbatim 8KB report, no scrape, no dispatch-close needed.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-08 Wed 07:03:36 manager.clear_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1710
+:TIME:         [2026-07-08 Wed 07:03:36]
+:TYPE:         manager.clear_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       Reached 2026-07-08: backlog fully drained — TASK-KSD6D (f291a86), TASK-DWJVH code items (14a79c0), runtime 0.0.8 published to stable + deployed locally, TASK-SQE9P live smoke PASSED (prompt-spec adherence proven), and the new task it caught (TASK-QKQ3R wrong-root finalize commit) fixed + merged (00da4c9) with gates green. No task in any open state; no orgasmic-owned parse errors.
+:GOAL_ID:      goal-20260707-drain-the-backlog-
+:END:
+
+* TX 2026-07-08 Wed 07:03:37 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1711
+:TIME:         [2026-07-08 Wed 07:03:37]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-08 Wed 07:03:37 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1712
+:TIME:         [2026-07-08 Wed 07:03:37]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-08 Wed 07:03:37 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1713
+:TIME:         [2026-07-08 Wed 07:03:37]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

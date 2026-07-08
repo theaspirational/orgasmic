@@ -2,12 +2,15 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Drain the backlog: ref-validation residuals + dispatch-finalize hardening :goal:
+* CLEARED Drain the backlog: ref-validation residuals + dispatch-finalize hardening :goal:
 :PROPERTIES:
 :ID:               goal-20260707-drain-the-backlog-
 :SET_AT:           [2026-07-07 Tue]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-08 Wed]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
 :END:
 
 ** Statement

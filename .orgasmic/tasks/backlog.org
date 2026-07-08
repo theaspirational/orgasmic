@@ -1,15 +1,3 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-QKQ3R dispatch finalize commits wrong root when worktree lacks .orgasmic (greenfield silent work-loss)    :dispatch:fix:hardening:
-:PROPERTIES:
-:ID: TASK-QKQ3R
-:PRIORITY: high
-:RELATES_TO: TASK-SQE9P TASK-WFW1N
-:END:
-
-Found by the SQE9P live smoke (2026-07-08, isolated 0.0.8 daemon). cmd_dispatch_finalize resolves its commit target via find_project_root() (crates/orgasmic-cli/src/manager.rs:1595), which walks UP from cwd looking for .orgasmic/project.org. A dispatch worktree checkout does NOT contain .orgasmic/ whenever the project's .orgasmic is uncommitted (every greenfield project between 'orgasmic project init' and its first commit — the exact DHYXQ bootstrap window). The walk then ESCAPES the worktree (nested at <repo>/.orgasmic/tmp/dispatch/<task>/worktree) and resolves the MANAGER'S live repo root. Observed consequence in the smoke: finalize --commit ran 'git add -A && git commit' in the manager repo (sweeping the unrelated uncommitted .orgasmic scaffold + AGENTS.md/CLAUDE.md onto the manager's HEAD), stamped THAT sha into the implementer.done tx as SHA/MERGE_SHA, wrote last.txt claiming success — while scripts/greet.sh sat UNCOMMITTED on the dispatch branch (task-05cy5-impl still at base). Silent wrong-target write + fabricated durable-work claim: worst class. Production orgasmic is unaffected only because its .orgasmic/ IS committed (worktrees carry project.org).
-
-Fix direction: the COMMIT boundary must be the git worktree toplevel, not the project-marker walk — use 'git rev-parse --show-toplevel' from cwd (stops at the worktree boundary: .git file) for commit_worktree/current_git_branch/WORKTREE tx extra; keep find_project_root only for reading project id (or read it from the daemon's run record instead). Additionally cross-check: refuse --commit when the resolved commit root differs from the run's dispatched WORKTREE (daemon knows it; expose on RunSummary/LiveRunInfo if needed) — fail loudly, never commit a root that isn't the dispatched worktree. Regression test: dispatch-finalize fixture where the project .orgasmic is NOT committed (worktree lacks project.org) → finalize --commit commits ONLY the worktree, never the manager root. Minor bundled polish: finalize_commit_message uses the summary's first line verbatim — strip leading markdown heading markers ('# ') so subjects aren't 'TASK-X: # TASK-X (...)'.
-
-Gates: cargo test -p orgasmic-cli (+ daemon if RunSummary changes), clippy -D, fmt.

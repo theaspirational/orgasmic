@@ -5,8 +5,8 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:GOAL_ID:          goal-20260707-drain-the-backlog-
-:LIVENESS:         14a79c0
+:GOAL_ID:          cleared
+:LIVENESS:         00da4c9
 :LIVENESS_AT:      [2026-07-07]
 :UPDATED_AT:       [2026-07-07]
 :END:
@@ -80,7 +80,7 @@ PAUSED — awaiting operator direction. Open threads when resumed:
 - Non-blocking: CLI 'artifact feedback' -> renamed daemon /comments route 404 (3K9ZG flag); orsl-external glossary comma-refs (parse_errors=2, not orgasmic).
 
 ** In flight
-(none) — backlog drained. TASK-KSD6D DONE (f291a86). TASK-DWJVH code items A/B/C DONE (14a79c0); its part-1 live rmux smoke re-scoped to TASK-SQE9P (BACKLOG, publish-gated). Only remaining open item is TASK-SQE9P, which CANNOT proceed until the operator publishes the runtime (finalize verb not in deployed 0.0.8-nightly.20260706). No todo/in_progress/in_review. Goal goal-20260707-drain-the-backlog- effectively reached pending operator's publish decision.
+(none) — goal-20260707-drain-the-backlog- REACHED + CLEARED 2026-07-08. Backlog/todo/in_progress/in_review all empty. Runtime 0.0.8 published to stable + deployed (daemon pid 28581). Worker-driven finalize proven in production (QKQ3R dispatch closed via worker finalize, verbatim report). NOTE for next session: published 0.0.8 predates the QKQ3R wrong-root fix (00da4c9) — greenfield finalize --commit bug is fixed on main but NOT in the shipped stable runtime; consider a 0.0.9 stable publish (operator call).
 
 ** Divergence / Risks
 - Handoff was 44 commits stale at 2026-07-03 pickup (operator worked outside manager sessions); reconciled into Done so far, LIVENESS bumped to ad38043. Items carried from the 06-22 snapshot are UNVERIFIED since: red test crates/orgasmic-daemon/tests/integration.rs:799 (skill_routes_include_shipped_and_user_markdown_skills), cli fmt drift (daemon_service.rs/path_env.rs), arch_MK2Q2.4/.5 drift (deleted ProjectSelector/ManagerPopover). Re-check at the first TASK-M6146 gate run.
