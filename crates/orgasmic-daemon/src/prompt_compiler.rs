@@ -478,7 +478,7 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
     values.entry("project.build_cmd".to_string()).or_default();
     values
         .entry("project.default_branch".to_string())
-        .or_insert_with(|| "main".to_string());
+        .or_default();
     values.entry("task.id".to_string()).or_default();
     values.entry("task.title".to_string()).or_default();
     values

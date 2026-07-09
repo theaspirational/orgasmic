@@ -9,7 +9,7 @@ use crate::manager::resolve_project;
 /// `--kind` selector for `node body`/`node prop`. Mirrors
 /// [`orgasmic_core::NodeKind`] one variant at a time (parity-tested in
 /// `node_kind_parity` below) so `--help` lists exactly what the daemon
-/// accepts, including `handoff`, `goal`, and `config` (TASK-JJ9RD).
+/// accepts, including `handoff` and `goal` (TASK-JJ9RD).
 #[derive(clap::ValueEnum, Clone, Copy, Debug)]
 pub enum NodeKindArg {
     Decision,
@@ -19,7 +19,6 @@ pub enum NodeKindArg {
     Task,
     Goal,
     Handoff,
-    Config,
 }
 
 impl From<NodeKindArg> for orgasmic_core::NodeKind {
@@ -32,7 +31,6 @@ impl From<NodeKindArg> for orgasmic_core::NodeKind {
             NodeKindArg::Task => Self::Task,
             NodeKindArg::Goal => Self::Goal,
             NodeKindArg::Handoff => Self::Handoff,
-            NodeKindArg::Config => Self::Config,
         }
     }
 }

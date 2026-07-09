@@ -15,6 +15,7 @@ use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
     dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
     projects, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity, TaskHeading, TxEntry,
+    WorkerKind,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -37,6 +38,14 @@ impl DispatchKind {
             Self::Architector => "architector",
         }
     }
+
+    fn worker_kind(self) -> WorkerKind {
+        match self {
+            Self::Implementer => WorkerKind::Implementer,
+            Self::Reviewer => WorkerKind::Reviewer,
+            Self::Architector => WorkerKind::Architector,
+        }
+    }
 }
 
 impl fmt::Display for DispatchKind {
@@ -52,7 +61,7 @@ Examples:
     --brief /path/to/brief.md --worker implementer-cursor
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --dry-run")]
+    --brief /path/to/brief.md --worker implementer-cursor --dry-run")]
 pub struct DispatchArgs {
     #[arg(long = "task", action = ArgAction::Append, required = true)]
     pub task: Vec<String>,
@@ -1201,6 +1210,14 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let brief_path = canonical_existing_file(&args.brief)?;
     let brief_content = std::fs::read_to_string(&brief_path)
         .with_context(|| format!("read brief {}", brief_path.display()))?;
+    let worker_override = args
+        .worker
+        .as_deref()
+        .map(sanitize_tx_value)
+        .filter(|s| !s.is_empty());
+    let Some(worker_override) = worker_override else {
+        bail!("{}", missing_dispatch_worker_message(home, args.kind)?);
+    };
     let from_ref = args.from.as_deref().unwrap_or("HEAD");
     let from_sha = resolve_commit(&project_root, from_ref)?;
     let worktree_path = normalize_path(&match args.worktree {
@@ -1238,11 +1255,43 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .map(|s| sanitize_tx_value(&s))
             .filter(|s| !s.is_empty()),
         dry_run: args.dry_run,
-        worker_override: args
-            .worker
-            .map(|s| sanitize_tx_value(&s))
-            .filter(|s| !s.is_empty()),
+        worker_override: Some(worker_override),
     })
+}
+
+fn missing_dispatch_worker_message(home: &Home, kind: DispatchKind) -> Result<String> {
+    let mut candidates = orgasmic_daemon::content::list_workers(home)
+        .context("load workers")?
+        .into_iter()
+        .filter(|worker| worker.kind == kind.worker_kind())
+        .map(|worker| worker.id)
+        .collect::<Vec<_>>();
+    candidates.sort();
+    let available = if candidates.is_empty() {
+        "none".to_string()
+    } else {
+        candidates.join(", ")
+    };
+    Ok(format!(
+        "no worker specified; pass --worker. available {}: {}",
+        worker_kind_plural(kind.worker_kind()),
+        available
+    ))
+}
+
+fn worker_kind_plural(kind: WorkerKind) -> &'static str {
+    match kind {
+        WorkerKind::Implementer => "implementers",
+        WorkerKind::Reviewer => "reviewers",
+        WorkerKind::Planner => "planners",
+        WorkerKind::Analyzer => "analyzers",
+        WorkerKind::Architector => "architectors",
+        WorkerKind::Griller => "grillers",
+        WorkerKind::Glossarist => "glossarists",
+        WorkerKind::Babysitter => "babysitters",
+        WorkerKind::Manager => "managers",
+        WorkerKind::Artifactor => "artifactors",
+    }
 }
 
 fn print_dispatch_plan(plan: &DispatchPlan) {
@@ -1259,7 +1308,7 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     println!("  tx:       manager.dispatch_started on daemon dispatch");
     println!(
         "  worker:   {}{}",
-        plan.worker_override.as_deref().unwrap_or("pipeline worker"),
+        plan.worker_override.as_deref().unwrap_or("-"),
         plan.model_override
             .as_deref()
             .map(|model| format!(" --model {model}"))

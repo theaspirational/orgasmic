@@ -69,8 +69,8 @@ pub use paths::{
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};
 pub use schema::{
     ArchEdge, ArchEdgeKind, ArchEdgeTarget, ArchNode, ArchitectureNode, ArtifactNode,
-    ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, ProjectConfig, ProjectFile,
-    SchemaError, SkillMetadata, TaskHeading, TxHeadingView, WorkerKind,
+    ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, ProjectFile, SchemaError,
+    SkillMetadata, TaskHeading, TxHeadingView, WorkerKind,
 };
 pub use session::{
     read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,

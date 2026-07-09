@@ -9,6 +9,7 @@
 use std::fs::OpenOptions;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::{anyhow, bail, Context, Result};
 
@@ -35,9 +36,34 @@ impl ScaffoldInputs {
         Self {
             project_name,
             project_id,
-            default_branch: "main".to_string(),
+            default_branch: git_default_branch(project_root).unwrap_or_default(),
         }
     }
+}
+
+fn git_default_branch(project_root: &Path) -> Option<String> {
+    let origin_head = git_output(
+        project_root,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .map(|value| value.strip_prefix("origin/").unwrap_or(&value).to_string());
+    origin_head.or_else(|| {
+        git_output(project_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .filter(|value| value != "HEAD")
+    })
+}
+
+fn git_output(project_root: &Path, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn slugify(s: &str) -> String {
@@ -88,7 +114,6 @@ const SCAFFOLD_FILES: &[&str] = &[
     "entry.org",
     "project.org",
     "decisions.org",
-    "config.org",
     "tasks/backlog.org",
     "tasks/todo.org",
     "tasks/in_progress.org",
@@ -325,7 +350,7 @@ fn parse_board_entries(source: &str, path: &Path) -> Result<Vec<BoardEntry>> {
             branch: h
                 .property("BRANCH")
                 .or_else(|| h.property("DEFAULT_BRANCH"))
-                .unwrap_or("main")
+                .unwrap_or("")
                 .to_string(),
             status: h.property("STATUS").unwrap_or("active").to_string(),
         });
@@ -487,11 +512,6 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            dst.join("config.org"),
-            "#+title: {{PROJECT_NAME}} config\n#+orgasmic_version: 1\n\n* CONFIG {{PROJECT_ID}}\n:PROPERTIES:\n:ID:                  {{PROJECT_ID}}\n:DEFAULT_BRANCH:      {{DEFAULT_BRANCH}}\n:TEST_CMD:\n:LINT_CMD:\n:BUILD_CMD:\n:WRITE_SCOPE:         .orgasmic/**\n:PIPELINE:            griller planner implementer-claude-tmux reviewer\n:END:\n",
-        )
-        .unwrap();
-        std::fs::write(
             dst.join("decisions.org"),
             "#+title: {{PROJECT_NAME}} decisions\n#+orgasmic_version: 1\n#+scope: project\n\n* dec_001 Bootstrap orgasmic project state :bootstrap:\n:PROPERTIES:\n:ID:            dec_001\n:GLOSSARY_REFS:\n:DECIDED_AT:\n:SOURCE:        scaffold\n:END:\n** Context\nA freshly initialized project has only scaffold files. Agents need one explicit starting decision so they do not treat empty project memory as authoritative.\n** Decision\nBootstrap `.orgasmic/` from repository evidence and operator answers before relying on project, decision, glossary, or architecture records for downstream work.\n** Consequences\nTASK-001 is the first work item. Later workers should treat scaffold prose as incomplete until TASK-001 and its subtasks replace it with repo-specific state.\n",
         )
@@ -603,13 +623,7 @@ mod tests {
         )
         .expect("dec_001 schema-valid");
         assert_eq!(decision.title, "Bootstrap orgasmic project state");
-        let config_src = std::fs::read_to_string(proj.join(".orgasmic/config.org")).unwrap();
-        assert!(config_src.contains("* CONFIG repo"));
-        assert!(config_src.contains(":ID:                  repo"));
-        assert!(config_src.contains(":WRITE_SCOPE:         .orgasmic/**"));
-        assert!(config_src
-            .contains(":PIPELINE:            griller planner implementer-claude-tmux reviewer"));
-        assert!(!config_src.contains("STAGE_WORKER"));
+        assert!(!proj.join(".orgasmic/config.org").exists());
         let backlog_src =
             std::fs::read_to_string(proj.join(".orgasmic/tasks/backlog.org")).unwrap();
         assert!(backlog_src.contains("* BACKLOG TASK-001"));

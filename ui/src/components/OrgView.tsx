@@ -34,7 +34,6 @@ const ORG_FILES = [
   '.orgasmic/architecture.org',
   '.orgasmic/glossary.org',
   '.orgasmic/project.org',
-  '.orgasmic/config.org',
 ];
 
 type Heading = {

@@ -7,8 +7,7 @@
 //! CLI's advertised kinds match this list.
 
 /// One selectable org-node layer. Node ids that lack a distinctive prefix
-/// (`project`, `config` — both scaffold the same `:ID:`) can only be resolved
-/// through an explicit `--kind`.
+/// (`project`) can only be resolved through an explicit `--kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeKind {
     Decision,
@@ -18,12 +17,11 @@ pub enum NodeKind {
     Task,
     Goal,
     Handoff,
-    Config,
 }
 
 impl NodeKind {
     /// Every accepted kind, in the order shown in `--help`.
-    pub const ALL: [NodeKind; 8] = [
+    pub const ALL: [NodeKind; 7] = [
         NodeKind::Decision,
         NodeKind::Architecture,
         NodeKind::Glossary,
@@ -31,7 +29,6 @@ impl NodeKind {
         NodeKind::Task,
         NodeKind::Goal,
         NodeKind::Handoff,
-        NodeKind::Config,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -43,7 +40,6 @@ impl NodeKind {
             NodeKind::Task => "task",
             NodeKind::Goal => "goal",
             NodeKind::Handoff => "handoff",
-            NodeKind::Config => "config",
         }
     }
 

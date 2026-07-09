@@ -118,16 +118,10 @@ fn seed_project(
     home: &Home,
     project_root: &Path,
     project_id: &str,
-    worker_id: &str,
+    _worker_id: &str,
     task_id: &str,
 ) {
     symlink_repo_source(home);
-    write(
-        &project_root.join(".orgasmic/config.org"),
-        format!(
-            "#+title: {project_id}\n#+orgasmic_version: 1\n\n* CONFIG {project_id}\n:PROPERTIES:\n:ID:                     {project_id}\n:PIPELINE:                 {worker_id}\n:END:\n"
-        ),
-    );
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
         format!(
@@ -147,17 +141,11 @@ fn seed_project_with_task_worker(
     home: &Home,
     project_root: &Path,
     project_id: &str,
-    pipeline_worker_id: &str,
+    _pipeline_worker_id: &str,
     task_worker_id: &str,
     task_id: &str,
 ) {
     symlink_repo_source(home);
-    write(
-        &project_root.join(".orgasmic/config.org"),
-        format!(
-            "#+title: {project_id}\n#+orgasmic_version: 1\n\n* CONFIG {project_id}\n:PROPERTIES:\n:ID:                     {project_id}\n:PIPELINE:                 {pipeline_worker_id}\n:END:\n"
-        ),
-    );
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
         format!(
@@ -346,7 +334,14 @@ async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -407,7 +402,14 @@ async fn dispatch_endpoint_auto_spawns_babysitter_jsonl() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -604,12 +606,6 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
         ),
     );
     write(
-        &project_root.join(".orgasmic/config.org"),
-        format!(
-            "#+title: proj-dispatch\n#+orgasmic_version: 1\n\n* CONFIG proj-dispatch\n:PROPERTIES:\n:ID:                     proj-dispatch\n:PIPELINE:                 {worker_id}\n:END:\n"
-        ),
-    );
-    write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
         format!(
             "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Sandbox override task\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=false\n:END:\n"
@@ -636,7 +632,14 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -673,7 +676,14 @@ async fn dispatch_endpoint_lease_held_returns_409() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -687,7 +697,14 @@ async fn dispatch_endpoint_lease_held_returns_409() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert_eq!(second.status(), reqwest::StatusCode::CONFLICT);
@@ -914,7 +931,7 @@ async fn dispatch_rejects_missing_worktree_with_sanitized_error() {
             &missing_worktree,
             &last,
             &stdout,
-            None,
+            Some(worker_id),
         ),
     )
     .await;
@@ -958,7 +975,14 @@ async fn dispatch_rejects_file_worktree_with_sanitized_error() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &file_worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &file_worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     let reject = [
@@ -996,7 +1020,14 @@ async fn dispatch_override_off_list_model_passes_through_with_warn() {
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let mut body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
+    let mut body = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some(worker_id),
+    );
     body["model_override"] = serde_json::Value::String("gpt-99".into());
     let response = post_dispatch(&running, &token, "proj-dispatch", task_id, body).await;
     assert!(
@@ -1166,7 +1197,14 @@ async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -1265,7 +1303,14 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -1324,7 +1369,14 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -1437,7 +1489,14 @@ async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -1501,17 +1560,11 @@ fn seed_dual_kind_project(
     home: &Home,
     project_root: &Path,
     project_id: &str,
-    implement_worker: &str,
-    review_worker: &str,
+    _implement_worker: &str,
+    _review_worker: &str,
     task_id: &str,
 ) {
     symlink_repo_source(home);
-    write(
-        &project_root.join(".orgasmic/config.org"),
-        format!(
-            "#+title: {project_id}\n#+orgasmic_version: 1\n\n* CONFIG {project_id}\n:PROPERTIES:\n:ID:                     {project_id}\n:PIPELINE:                 {implement_worker} {review_worker}\n:END:\n"
-        ),
-    );
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
         format!(
@@ -1631,7 +1684,7 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
             &impl_worktree,
             &impl_last,
             &impl_stdout,
-            None,
+            Some(worker_id),
         ),
     )
     .await;
@@ -1671,6 +1724,7 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
             "worktree_path": review_worktree,
             "last_path": review_last,
             "stdout_path": review_stdout,
+            "worker_id": reviewer_worker_id,
             "branch": "task-backtoback-review",
             "liveness": "deadbeef",
             "reason": "dispatch endpoint test",
@@ -1768,7 +1822,7 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
             &worktree,
             &last,
             &stdout,
-            None,
+            Some(worker_id),
         ),
     )
     .await;
@@ -1816,7 +1870,14 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
         &token,
         "proj-dispatch",
         task_id,
-        dispatch_body("implementer", &brief, &worktree, &last, &stdout, None),
+        dispatch_body(
+            "implementer",
+            &brief,
+            &worktree,
+            &last,
+            &stdout,
+            Some(worker_id),
+        ),
     )
     .await;
     assert!(
@@ -1975,7 +2036,14 @@ async fn dispatch_started_tx_empty_reason_has_no_trailing_whitespace() {
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let mut body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
+    let mut body = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some(worker_id),
+    );
     if let Some(obj) = body.as_object_mut() {
         obj.insert("reason".into(), serde_json::Value::String(String::new()));
     }

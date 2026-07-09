@@ -123,7 +123,6 @@ const REQUIRED_SHIPPED: &[&str] = &[
     "skills/orgasmic/scaffold/entry.org",
     "skills/orgasmic/scaffold/project.org",
     "skills/orgasmic/scaffold/decisions.org",
-    "skills/orgasmic/scaffold/config.org",
     "skills/orgasmic/scaffold/tasks/backlog.org",
     "skills/orgasmic/scaffold/tasks/todo.org",
     "skills/orgasmic/scaffold/tasks/in_progress.org",

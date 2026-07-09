@@ -12,7 +12,7 @@ Worker route when the prompt is a strict orgasmic worker dispatch with all of:
 
 Worker startup:
 1. Read the task heading.
-2. Read `project.org`, `config.org`, and `gotchas.org`.
+2. Read `project.org` and `gotchas.org`.
 3. Read only referenced conventions and source files.
 
 Manager route for every other prompt, including arbitrary requests,
@@ -37,7 +37,6 @@ instead of dispatching a worker (single-worker setups), read
 - `glossary.org`: domain language.
 - `gotchas.org`: repeated traps; read before source edits.
 - `conventions/`: repo-local working agreements.
-- `config.org`: verification commands, default branch, stage-worker map.
 - `tx/`: agent activity log.
 
 ** Write rules

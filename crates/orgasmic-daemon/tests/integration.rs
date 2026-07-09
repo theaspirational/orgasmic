@@ -241,10 +241,6 @@ fn seed_project_scaffold(home: &Home) {
         "#+title: {{PROJECT_NAME}} decisions\n#+orgasmic_version: 1\n\n* dec_001 Bootstrap project state    :bootstrap:\n:PROPERTIES:\n:ID:               dec_001\n:DECIDED_AT:       [2026-06-09 Tue]\n:END:\n** Context\nThe project has just been scaffolded.\n** Decision\nKeep an initial bootstrap decision as an anchor for repo-specific decisions.\n** Consequences\nLater decisions continue with sequential dec_NNN records.\n",
     );
     write(
-        &dst.join("config.org"),
-        "#+title: {{PROJECT_NAME}} config\n#+orgasmic_version: 1\n\n* CONFIG {{PROJECT_ID}}\n:PROPERTIES:\n:ID:               {{PROJECT_ID}}\n:DEFAULT_BRANCH:   {{DEFAULT_BRANCH}}\n:END:\n",
-    );
-    write(
         &dst.join("tasks/backlog.org"),
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Example task\n:PROPERTIES:\n:ID:               TASK-001\n:END:\n",
     );
@@ -376,7 +372,7 @@ async fn post_projects_registers_existing_orgasmic_project_and_refreshes_index()
     let project: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(project["project_id"], "proj-existing");
     assert_eq!(project["repo_url"], "git@example.com:org/existing.git");
-    assert_eq!(project["branch"], "main");
+    assert_eq!(project["branch"], "");
 
     let resp = client
         .get(format!("http://{}/api/projects", running.addr))
@@ -456,7 +452,7 @@ async fn post_projects_scaffolds_and_registers_uninitialized_project() {
     let project: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(project["project_id"], "fresh");
     assert_eq!(project["repo_url"], "git@example.com:org/fresh.git");
-    assert_eq!(project["branch"], "main");
+    assert_eq!(project["branch"], "");
     let project_org = project_root.join(".orgasmic/project.org");
     assert!(project_org.exists());
     let raw = std::fs::read_to_string(project_org).unwrap();
@@ -2863,10 +2859,6 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
     write(
         &home.user().join("workers/implementer-codex-appserver.org"),
         "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n",
-    );
-    write(
-        &project_root.join(".orgasmic/config.org"),
-        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* CONFIG orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:PIPELINE:                 implementer-codex-appserver\n:END:\n",
     );
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),

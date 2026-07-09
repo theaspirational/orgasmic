@@ -19,7 +19,7 @@ use orgasmic_core::{
     lint_project_identities, lint_task_heading_id_token, marker_node_ids_in_line,
     should_skip_marker_path, validate_parent_tree, ArchEdgeTarget, ArchitectureNode, DecisionNode,
     GlossaryTerm, Heading, Home, LifecycleStage, NodeIdClass, OrgError, OrgFile, ParentTreeError,
-    ParentTreeNode, ProjectConfig, SandboxAllowlist, TaskHeading,
+    ParentTreeNode, SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
 use tokio::sync::RwLock;
@@ -41,9 +41,6 @@ pub struct ProjectIndex {
     pub task_bodies: BTreeMap<TaskId, TaskBody>,
     pub subtasks: BTreeMap<TaskId, Vec<TaskId>>,
     pub activity_index: BTreeMap<TaskId, Vec<ActivityEntry>>,
-    pub worker_pipeline: Vec<String>,
-    pub default_test_cmd: Option<String>,
-    pub default_write_scope: Vec<String>,
     pub graph: GraphIndex,
     pub markers: BTreeMap<String, Vec<PathBuf>>,
     /// Per-file parse errors with the source path that failed and the
@@ -518,7 +515,7 @@ impl Index {
                         branch: h
                             .property("BRANCH")
                             .or_else(|| h.property("DEFAULT_BRANCH"))
-                            .unwrap_or("main")
+                            .unwrap_or("")
                             .to_string(),
                         status: h.property("STATUS").unwrap_or("active").to_string(),
                     });
@@ -550,29 +547,12 @@ impl Index {
             task_bodies: BTreeMap::new(),
             subtasks: BTreeMap::new(),
             activity_index: BTreeMap::new(),
-            worker_pipeline: Vec::new(),
-            default_test_cmd: None,
-            default_write_scope: Vec::new(),
             graph: GraphIndex::default(),
             markers: BTreeMap::new(),
             last_loaded_at: Some(Utc::now()),
             artifacts: Vec::new(),
         };
         let mut project = project;
-        let config_org = board_entry.path.join(".orgasmic").join("config.org");
-        if config_org.exists() {
-            match read_org(&config_org) {
-                Ok(file) => match ProjectConfig::from_org(&file, &config_org.to_string_lossy()) {
-                    Ok(view) => {
-                        project.worker_pipeline = view.worker_pipeline;
-                        project.default_test_cmd = view.test_cmd.map(str::to_string);
-                        project.default_write_scope = own_vec(&view.write_scope);
-                    }
-                    Err(err) => push_parse_error(snap, config_org, err.to_string()),
-                },
-                Err(err) => push_parse_error(snap, config_org, err),
-            }
-        }
         // goal.org carries no tasks, so it is not in the task-file iteration;
         // read it just for the thin-goal lint (stale liveness vestiges).
         let goal_path = orgasmic_core::goal_file_path(&board_entry.path);

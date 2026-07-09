@@ -157,8 +157,6 @@ impl FromStr for WorkerKind {
 
 // orgasmic:arch_QFQTD
 /// Project identity and authored prose, parsed from `.orgasmic/project.org`.
-/// Machine config (dispatch + build) lives in [`ProjectConfig`] / `config.org`
-/// (dec_051).
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectFile<'a> {
     pub id: &'a str,
@@ -179,45 +177,6 @@ impl<'a> ProjectFile<'a> {
             id,
             mission: section_body(file, heading, "Mission"),
             operating_constraints: section_body(file, heading, "Operating Constraints"),
-        })
-    }
-}
-
-// orgasmic:arch_QFQTD
-/// Machine configuration for a project, parsed from `.orgasmic/config.org`.
-/// Holds the ordered worker pipeline and build commands kept out of the
-/// identity-and-prose `project.org` (dec_051).
-#[derive(Debug, Clone, Serialize)]
-pub struct ProjectConfig<'a> {
-    pub id: &'a str,
-    pub default_branch: Option<&'a str>,
-    pub test_cmd: Option<&'a str>,
-    pub lint_cmd: Option<&'a str>,
-    pub build_cmd: Option<&'a str>,
-    pub write_scope: Vec<&'a str>,
-    pub worker_pipeline: Vec<String>,
-}
-
-impl<'a> ProjectConfig<'a> {
-    pub fn from_org(file: &'a OrgFile, display: &str) -> Result<Self, SchemaError> {
-        let heading =
-            file.find_by_title_prefix("CONFIG ")
-                .ok_or_else(|| SchemaError::MissingSection {
-                    file: display.into(),
-                    heading: "CONFIG".into(),
-                })?;
-        let id = required(heading, "ID", display)?;
-        Ok(Self {
-            id,
-            default_branch: heading.property("DEFAULT_BRANCH"),
-            test_cmd: heading.property("TEST_CMD"),
-            lint_cmd: heading.property("LINT_CMD"),
-            build_cmd: heading.property("BUILD_CMD"),
-            write_scope: tokenize(heading.property("WRITE_SCOPE")),
-            worker_pipeline: tokenize(heading.property("PIPELINE"))
-                .into_iter()
-                .map(str::to_string)
-                .collect(),
         })
     }
 }

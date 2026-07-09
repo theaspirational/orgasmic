@@ -72,8 +72,8 @@ product — the product baseline and design register. Ask in small batches; keep
 known facts, inferred assumptions, and open questions separate.
 
 Write: fill `.orgasmic/project.org`, replacing the `** Mission` and
-`** Operating Constraints` placeholders with confirmed prose. Machine config
-(test/lint/build commands, branch, worker map) stays in `config.org`, not here.
+`** Operating Constraints` placeholders with confirmed prose. Capture
+repo-specific verification and branch notes there or in conventions as prose.
 
 ** Acceptance Criteria
 - [ ] `** Mission` states the real goal in 2–4 sentences.
