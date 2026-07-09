@@ -119,6 +119,7 @@ const REQUIRED_SHIPPED: &[&str] = &[
     "prompt-studio/slots.org",
     "schema/state-machine.org",
     "entry/router.org",
+    "workflows/default.org",
     "project-scaffold/.gitignore",
     "project-scaffold/entry.org",
     "project-scaffold/project.org",

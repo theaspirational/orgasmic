@@ -871,6 +871,8 @@ struct DaemonRestartArgs {
 
 // orgasmic:dec_YTJ0G
 const ENTRY_ROUTER_REL: &str = "entry/router.org";
+const ENTRY_DEFAULT_WORKFLOW: &str = "default";
+const ENTRY_DEFAULT_WORKFLOW_SECTION: &str = "** Default workflow";
 const ENTRY_SCAFFOLD_VERSION: &str = "1";
 
 fn main() -> Result<()> {
@@ -974,8 +976,9 @@ fn main() -> Result<()> {
 }
 
 fn cmd_entry(home: &Home) -> Result<()> {
-    let router = read_runtime_entry_router(home)?;
-    if let Some(project_root) = find_project_root_optional()? {
+    let project_root = find_project_root_optional()?;
+    let router = render_runtime_entry_router(home, project_root.as_deref())?;
+    if let Some(project_root) = project_root {
         if let Some(notice) = entry_version_notice(&project_root) {
             println!("{notice}");
             println!();
@@ -992,6 +995,66 @@ fn read_runtime_entry_router(home: &Home) -> Result<String> {
     let path = home.source().join("shipped").join(ENTRY_ROUTER_REL);
     std::fs::read_to_string(&path)
         .with_context(|| format!("read runtime entry router {}", path.display()))
+}
+
+// orgasmic:dec_T949W,dec_YTJ0G
+fn render_runtime_entry_router(home: &Home, project_root: Option<&Path>) -> Result<String> {
+    let router = read_runtime_entry_router(home)?;
+    let workflow = read_resolved_workflow(home, project_root, ENTRY_DEFAULT_WORKFLOW)?;
+    inject_default_workflow(&router, &workflow)
+}
+
+fn read_resolved_workflow(home: &Home, project_root: Option<&Path>, name: &str) -> Result<String> {
+    let path = resolve_workflow_path(home, project_root, name).ok_or_else(|| {
+        anyhow::anyhow!(
+            "workflow {name:?} not found in .orgasmic/workflows, user/workflows, or shipped/workflows"
+        )
+    })?;
+    std::fs::read_to_string(&path).with_context(|| format!("read workflow {}", path.display()))
+}
+
+fn resolve_workflow_path(home: &Home, project_root: Option<&Path>, name: &str) -> Option<PathBuf> {
+    let filename = format!("{name}.org");
+    if let Some(project_root) = project_root {
+        let project = project_root
+            .join(".orgasmic")
+            .join("workflows")
+            .join(&filename);
+        if project.exists() {
+            return Some(project);
+        }
+    }
+
+    let user = home.user().join("workflows").join(&filename);
+    if user.exists() {
+        return Some(user);
+    }
+
+    let shipped = home
+        .source()
+        .join("shipped")
+        .join("workflows")
+        .join(&filename);
+    shipped.exists().then_some(shipped)
+}
+
+fn inject_default_workflow(router: &str, workflow: &str) -> Result<String> {
+    let section_start = router.find(ENTRY_DEFAULT_WORKFLOW_SECTION).ok_or_else(|| {
+        anyhow::anyhow!("entry router missing {ENTRY_DEFAULT_WORKFLOW_SECTION} section")
+    })?;
+    let section_header_end = match router[section_start..].find('\n') {
+        Some(offset) => section_start + offset + 1,
+        None => router.len(),
+    };
+
+    let mut rendered = String::with_capacity(section_header_end + workflow.len() + 1);
+    rendered.push_str(&router[..section_header_end]);
+    if section_header_end == router.len() {
+        rendered.push('\n');
+    }
+    rendered.push_str(workflow.trim_end());
+    rendered.push('\n');
+    Ok(rendered)
 }
 
 fn find_project_root_optional() -> Result<Option<PathBuf>> {

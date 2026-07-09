@@ -1,0 +1,36 @@
+#+title: default workflow
+#+orgasmic_version: 1
+
+* WORKFLOW default
+:PROPERTIES:
+:ID:                 default
+:VERSION:            1
+:END:
+
+Use the smallest workflow that matches the risk and uncertainty.
+
+Trivial work is manager-direct. The manager may implement it in the current
+session on a cheap, fast tier. Keep the manager-implementer discipline while
+moving quickly: `.orgasmic/` state writes stay CLI-only, source edits stay inside
+the requested scope, code markers are added only when they materially help
+future reconciliation, and task/tx/handoff state is reconciled at natural
+pauses instead of after every small edit.
+
+Ordinary work is delegated. Dispatch an implementer with the concrete scope,
+acceptance criteria, source anchors, and verification gates, then have the
+manager review the produced diff before landing or moving the task onward.
+
+Risky work is staged. Grill or plan before implementation, dispatch the
+implementation with the resulting constraints, and run an independent reviewer
+pass before treating the result as shippable. Use a premium tier for these
+stages when judgment, safety, or difficult debugging matters.
+
+If the tier is unclear, ask the user before spending the run. Include the
+suggested tier and the reason for it so the user can approve, downgrade, or
+upgrade deliberately.
+
+Use per-dispatch `--model` and `--effort` overrides when a task needs a model or
+reasoning tier different from the worker default. Check `orgasmic worker list`
+first and choose only models and efforts the selected worker advertises. Worker
+files keep `DEFAULT_MODEL` and `DEFAULT_EFFORT` as the machine fallback; do not
+edit those defaults just to steer one dispatch.
