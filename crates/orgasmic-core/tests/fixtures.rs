@@ -12,7 +12,7 @@ use std::sync::{
 use orgasmic_core::{
     is_supported_worker_pair, org::OrgRewriter, parse_tx_file, ArchEdgeKind, ArchEdgeTarget,
     ArchitectureNode, ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, OrgFile,
-    ProjectConfig, ProjectFile, TaskHeading, Worker,
+    ProjectFile, TaskHeading, Worker,
 };
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata, Subscriber};
@@ -84,10 +84,10 @@ fn parses_real_done_tasks() {
 
 #[test]
 fn live_state_files_parse_without_legacy_worker_warnings() {
+    let mut parsed_tasks = 0;
     let warnings = count_warnings(|| {
         for rel in [".orgasmic/tasks/backlog.org", ".orgasmic/tasks/done.org"] {
             let f = parse_or_panic(rel);
-            let mut parsed_tasks = 0;
             for heading in &f.headings {
                 let looks_like_task = heading
                     .property("ID")
@@ -100,10 +100,10 @@ fn live_state_files_parse_without_legacy_worker_warnings() {
                 TaskHeading::from_heading(&f, heading, rel).unwrap();
                 parsed_tasks += 1;
             }
-            assert!(parsed_tasks > 0, "{rel} should contain tasks");
         }
     });
 
+    assert!(parsed_tasks > 0, "live task corpus should contain tasks");
     assert_eq!(warnings, 0);
 }
 
@@ -381,31 +381,6 @@ fn parses_real_project() {
 }
 
 #[test]
-fn parses_real_config() {
-    let f = parse_or_panic(".orgasmic/config.org");
-    let view = ProjectConfig::from_org(&f, ".orgasmic/config.org").unwrap();
-    assert_eq!(view.id, "orgasmic");
-    assert_eq!(view.test_cmd, Some("cargo test"));
-    assert_eq!(
-        view.worker_pipeline,
-        vec![
-            "griller".to_string(),
-            "planner".to_string(),
-            "implementer-cursor".to_string(),
-            "reviewer-codex-acp".to_string(),
-        ]
-    );
-}
-
-#[test]
-fn config_missing_pipeline_yields_empty() {
-    let source = "#+title: p config\n\n* CONFIG p\n:PROPERTIES:\n:ID: p\n:END:\n";
-    let file = OrgFile::parse(source, "config.org").unwrap();
-    let view = ProjectConfig::from_org(&file, "config.org").unwrap();
-    assert!(view.worker_pipeline.is_empty());
-}
-
-#[test]
 fn parses_real_tx_file() {
     let tx_path = std::fs::read_dir(repo_root().join(".orgasmic/tx"))
         .unwrap()
@@ -447,7 +422,6 @@ fn parses_shipped_project_scaffold() {
     // still accept it because slot syntax is not Org syntax.
     parse_or_panic("shipped/skills/orgasmic/scaffold/decisions.org");
     parse_or_panic("shipped/skills/orgasmic/scaffold/project.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/config.org");
     parse_or_panic("shipped/skills/orgasmic/scaffold/entry.org");
     parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/contributing.org");
     parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/no-skill-installed.org");

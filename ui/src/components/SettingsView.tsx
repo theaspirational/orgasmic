@@ -1,16 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { relaunch } from '@tauri-apps/plugin-process';
 import {
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
-  CheckCircle2,
   Download,
-  GitBranch,
   HardDrive,
-  Plus,
   RefreshCw,
-  Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -19,20 +12,12 @@ import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectItem,
-  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
-import {
-  fetchOrgFile,
-  fetchRecoveryStatus,
-  fetchWorkerValidation,
-  fetchWorkers,
-  postOrgFile,
-} from '@/lib/api';
+import { fetchRecoveryStatus } from '@/lib/api';
 import {
   type AppUpdateMetadata,
   type UpdateChannel,
@@ -45,46 +30,21 @@ import {
 } from '@/lib/appUpdate';
 import { useBackendProfiles } from '@/lib/backend';
 import { THEME_OPTIONS, useTheme, type ThemePreference } from '@/lib/theme';
-import { useResource } from '@/lib/useResource';
-import type { WorkerSummary, WorkerValidationResult } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 import { PageHeader } from './Primitives';
-import { type ProjectConfig, emptyConfig, parseConfig, spliceConfig } from './configSplice';
 
 type UpdateStatus = 'idle' | 'checking' | 'available' | 'not-available' | 'blocked' | 'installing' | 'error';
-
-function groupByKind(workers: WorkerSummary[]): Array<[string, WorkerSummary[]]> {
-  const out = new Map<string, WorkerSummary[]>();
-  for (const w of [...workers].sort((a, b) => a.id.localeCompare(b.id))) {
-    const list = out.get(w.kind) ?? [];
-    list.push(w);
-    out.set(w.kind, list);
-  }
-  return [...out.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-}
 
 function activeRunLabel(runId: string, index: number): string {
   return index < 3 ? runId : '';
 }
 
-export function SettingsView({ projectId }: { projectId: string | null }) {
+export function SettingsView({ projectId: _projectId }: { projectId: string | null }) {
   const { profiles, activeProfile, activeProfileId, setActiveProfile, updateProfile, addProfile, testConnection } =
     useBackendProfiles();
   const { preference, setPreference } = useTheme();
-  const refresh = useRefreshToken();
-  const configFile = useResource(
-    `settings-project:${projectId ?? 'default'}:${refresh}`,
-    () => fetchOrgFile('.orgasmic/config.org', projectId),
-    { enabled: Boolean(projectId) },
-  );
-  const workers = useResource(`settings-workers:${refresh}`, () => fetchWorkers());
-  const workerValidation = useResource(
-    `settings-worker-validation:${refresh}`,
-    () => fetchWorkerValidation(),
-  );
-  const [config, setConfig] = useState<ProjectConfig>(() => emptyConfig());
-  const [savingConfig, setSavingConfig] = useState(false);
+  useRefreshToken();
   const [testResult, setTestResult] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('http://127.0.0.1:8739');
@@ -92,26 +52,6 @@ export function SettingsView({ projectId }: { projectId: string | null }) {
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [pendingUpdate, setPendingUpdate] = useState<AppUpdateMetadata | null>(null);
   const [updateChannel, setUpdateChannel] = useState<UpdateChannel>(() => savedUpdateChannel());
-
-  const parsedConfig = useMemo(() => parseConfig(configFile.data?.contents ?? ''), [configFile.data?.contents]);
-  const dirty = useMemo(() => JSON.stringify(config) !== JSON.stringify(parsedConfig), [config, parsedConfig]);
-  const workerGroups = useMemo(() => groupByKind(workers.data ?? []), [workers.data]);
-  const knownWorkers = useMemo(() => new Set((workers.data ?? []).map((w) => w.id)), [workers.data]);
-  const validationByWorker = useMemo(() => {
-    const out = new Map<string, WorkerValidationResult>();
-    for (const result of workerValidation.data ?? []) {
-      if (result.id) out.set(result.id, result);
-    }
-    return out;
-  }, [workerValidation.data]);
-  const invalidWorkers = useMemo(
-    () => (workerValidation.data ?? []).filter((result) => !result.ok),
-    [workerValidation.data],
-  );
-
-  useEffect(() => {
-    setConfig(parsedConfig);
-  }, [parsedConfig]);
 
   useEffect(() => {
     saveUpdateChannel(updateChannel);
@@ -125,52 +65,9 @@ export function SettingsView({ projectId }: { projectId: string | null }) {
     void checkForUpdate({ silent: true });
   }, [updateChannel]);
 
-  function setPipelineWorker(index: number, value: string) {
-    setConfig((c) => ({
-      ...c,
-      pipeline: c.pipeline.map((worker, i) => (i === index ? value : worker)),
-    }));
-  }
-
-  function movePipelineWorker(index: number, direction: -1 | 1) {
-    setConfig((c) => {
-      const nextIndex = index + direction;
-      if (nextIndex < 0 || nextIndex >= c.pipeline.length) return c;
-      const pipeline = [...c.pipeline];
-      [pipeline[index], pipeline[nextIndex]] = [pipeline[nextIndex], pipeline[index]];
-      return { ...c, pipeline };
-    });
-  }
-
-  function removePipelineWorker(index: number) {
-    setConfig((c) => ({ ...c, pipeline: c.pipeline.filter((_, i) => i !== index) }));
-  }
-
-  function addPipelineWorker() {
-    setConfig((c) => ({ ...c, pipeline: [...c.pipeline, workers.data?.[0]?.id ?? ''] }));
-  }
-
   async function runTest() {
     const result = await testConnection();
     setTestResult(result.ok ? `Connected (${result.latencyMs} ms)` : result.error ?? 'Failed');
-  }
-
-  async function saveProjectConfig() {
-    if (!projectId) return;
-    setSavingConfig(true);
-    try {
-      const fresh = await fetchOrgFile('.orgasmic/config.org', projectId);
-      const contents = spliceConfig(fresh.contents, config);
-      const result = await postOrgFile('.orgasmic/config.org', contents, projectId);
-      toast.success('Project config saved', { description: result.tx_id });
-      await configFile.refresh();
-    } catch (err) {
-      toast.error('Project config save failed', {
-        description: err instanceof Error ? err.message : String(err),
-      });
-    } finally {
-      setSavingConfig(false);
-    }
   }
 
   async function checkForUpdate({ silent = false }: { silent?: boolean } = {}) {
@@ -253,221 +150,9 @@ export function SettingsView({ projectId }: { projectId: string | null }) {
     }
   }
 
-  function renderWorkerSelect(index: number) {
-    const value = config.pipeline[index] ?? '';
-    return (
-      <Select
-        value={value || '__unset__'}
-        onValueChange={(v) => setPipelineWorker(index, v === '__unset__' ? '' : v)}
-        disabled={!projectId}
-      >
-        <SelectTrigger className="h-8 w-full font-mono text-xs">
-          <SelectValue placeholder="(unset)" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__unset__" className="font-mono text-xs text-muted-foreground">
-            (unset)
-          </SelectItem>
-          {value && !knownWorkers.has(value) ? (
-            <SelectItem value={value} className="font-mono text-xs">
-              {value} · missing
-            </SelectItem>
-          ) : null}
-          {workerGroups.map(([kind, list]) => (
-            <SelectGroup key={kind}>
-              <SelectLabel className="text-[10px] uppercase tracking-wide text-muted-foreground">{kind}</SelectLabel>
-              {list.map((w) => (
-                <SelectItem key={w.id} value={w.id} className="font-mono text-xs">
-                  {w.id}
-                  {validationByWorker.get(w.id)?.ok === false ? ' · invalid' : ''}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          ))}
-        </SelectContent>
-      </Select>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Settings" description="Per-project configuration and local app preferences." />
-
-      <ScopeSection
-        tone="project"
-        icon={<GitBranch className="size-4" />}
-        title="Project"
-        badge={projectId ?? undefined}
-        provenance={
-          <>
-            Saved to <code className="rounded bg-background/70 px-1 py-0.5 font-mono text-[11px]">.orgasmic/config.org</code>{' '}
-            · versioned in this repo, shared with your team.
-          </>
-        }
-      >
-        {!projectId ? (
-          <EmptyRow>Select a project to edit its configuration.</EmptyRow>
-        ) : (
-          <>
-            <div className="px-4 py-4">
-              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                <span>Worker pipeline</span>
-                {invalidWorkers.length > 0 ? (
-                  <Badge variant="destructive" className="gap-1">
-                    <AlertTriangle className="size-3" />
-                    {invalidWorkers.length} invalid
-                  </Badge>
-                ) : workerValidation.data ? (
-                  <Badge variant="outline" className="gap-1">
-                    <CheckCircle2 className="size-3 text-emerald-600" />
-                    valid
-                  </Badge>
-                ) : null}
-              </div>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Ordered workers used for the project default <code className="font-mono">:PIPELINE:</code>.
-              </p>
-              {invalidWorkers.length > 0 ? (
-                <div className="mt-3 flex flex-col gap-2 rounded-md border border-destructive/35 bg-destructive/5 px-3 py-2">
-                  {invalidWorkers.map((result) => (
-                    <div key={result.id ?? result.source_path ?? 'unknown-worker'} className="min-w-0 text-xs">
-                      <div className="font-mono font-medium text-destructive">
-                        {result.id ?? result.source_path ?? 'unknown-worker'}
-                      </div>
-                      <div className="mt-1 flex flex-col gap-1 text-muted-foreground">
-                        {result.errors.map((error) => (
-                          <span key={`${error.code}:${error.message}`}>
-                            {error.code}: {error.message}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              <div className="mt-3 flex flex-col gap-2">
-                {config.pipeline.length === 0 ? (
-                  <div className="rounded-md border border-dashed bg-background/40 px-3 py-3 text-xs text-muted-foreground">
-                    No pipeline entries.
-                  </div>
-                ) : (
-                  <ol className="flex flex-col gap-2">
-                    {config.pipeline.map((worker, index) => (
-                      <li key={`${index}:${worker}`} className="flex items-center gap-2">
-                        <span className="w-6 text-right font-mono text-[11px] text-muted-foreground">
-                          {index + 1}.
-                        </span>
-                        <div className="min-w-0 flex-1">{renderWorkerSelect(index)}</div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-8"
-                          disabled={index === 0 || savingConfig}
-                          onClick={() => movePipelineWorker(index, -1)}
-                          aria-label={`Move pipeline entry ${index + 1} up`}
-                        >
-                          <ArrowUp className="size-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-8"
-                          disabled={index === config.pipeline.length - 1 || savingConfig}
-                          onClick={() => movePipelineWorker(index, 1)}
-                          aria-label={`Move pipeline entry ${index + 1} down`}
-                        >
-                          <ArrowDown className="size-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-8 text-destructive hover:text-destructive"
-                          disabled={savingConfig}
-                          onClick={() => removePipelineWorker(index)}
-                          aria-label={`Remove pipeline entry ${index + 1}`}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </Button>
-                      </li>
-                    ))}
-                  </ol>
-                )}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="w-fit"
-                  onClick={addPipelineWorker}
-                  disabled={savingConfig}
-                >
-                  <Plus data-icon="inline-start" />
-                  Add worker
-                </Button>
-              </div>
-            </div>
-
-            <SettingRow
-              title="Test command"
-              hint="Injected as {{project.test_cmd}} in implementer prompts."
-              htmlFor="cfg-test"
-            >
-              <input
-                id="cfg-test"
-                className="input mono"
-                placeholder="cargo test"
-                value={config.testCmd}
-                onChange={(e) => setConfig((c) => ({ ...c, testCmd: e.target.value }))}
-              />
-            </SettingRow>
-            <SettingRow title="Lint command" htmlFor="cfg-lint">
-              <input
-                id="cfg-lint"
-                className="input mono"
-                placeholder="cargo clippy"
-                value={config.lintCmd}
-                onChange={(e) => setConfig((c) => ({ ...c, lintCmd: e.target.value }))}
-              />
-            </SettingRow>
-            <SettingRow title="Build command" htmlFor="cfg-build">
-              <input
-                id="cfg-build"
-                className="input mono"
-                placeholder="cargo build"
-                value={config.buildCmd}
-                onChange={(e) => setConfig((c) => ({ ...c, buildCmd: e.target.value }))}
-              />
-            </SettingRow>
-            <SettingRow title="Default branch" htmlFor="cfg-branch">
-              <input
-                id="cfg-branch"
-                className="input mono"
-                placeholder="main"
-                value={config.defaultBranch}
-                onChange={(e) => setConfig((c) => ({ ...c, defaultBranch: e.target.value }))}
-              />
-            </SettingRow>
-
-            <div className="flex items-center justify-between gap-3 px-4 py-3">
-              <span className="text-xs text-muted-foreground">
-                {dirty ? 'Unsaved changes' : 'No changes'}
-              </span>
-              <div className="flex items-center gap-2">
-                {dirty ? (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setConfig(parsedConfig)} disabled={savingConfig}>
-                    Discard
-                  </Button>
-                ) : null}
-                <Button type="button" size="sm" onClick={() => void saveProjectConfig()} disabled={!dirty || savingConfig}>
-                  {savingConfig ? 'Saving…' : 'Save to config.org'}
-                </Button>
-              </div>
-            </div>
-          </>
-        )}
-      </ScopeSection>
+      <PageHeader title="Settings" description="Local app preferences and daemon connection." />
 
       <ScopeSection
         tone="device"
@@ -685,8 +370,4 @@ function SettingRow({
       <div className="md:w-full">{children}</div>
     </div>
   );
-}
-
-function EmptyRow({ children }: { children: ReactNode }) {
-  return <div className="px-4 py-8 text-center text-sm text-muted-foreground">{children}</div>;
 }

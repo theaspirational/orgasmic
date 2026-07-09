@@ -31,9 +31,9 @@ use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     goal_file_path, goal_file_rel, handoff_file_path, lifecycle_stage_file_name,
     project_sessions_dir, read_session_file, resolve_loader, task_file_path, task_file_rel,
-    DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectConfig,
-    ProjectFile, ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope,
-    SessionEventKind, SlotValues, Worker, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
+    ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind,
+    SlotValues, Worker, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -715,9 +715,8 @@ struct AddProjectRequest {
 }
 
 #[derive(Debug)]
-struct ExistingProjectConfig {
+struct ExistingProjectIdentity {
     project_id: String,
-    default_branch: Option<String>,
 }
 
 async fn add_project(
@@ -748,11 +747,9 @@ async fn add_project(
     let mut inputs = ScaffoldInputs::derive(&project_root, None);
 
     if has_project_org {
-        let existing = read_existing_project_config(&project_org)?;
+        let existing = read_existing_project_identity(&project_org)?;
         inputs.project_id = existing.project_id;
-        inputs.default_branch = existing
-            .default_branch
-            .unwrap_or_else(|| "main".to_string());
+        inputs.default_branch = git_default_branch(&project_root).unwrap_or_default();
     } else {
         init_project(&state.home, &project_root, &inputs, false).map_err(init_project_error)?;
     }
@@ -911,7 +908,7 @@ async fn post_filesystem_validate_project(
         if let Some(project) = probe_orgasmic_project(&root) {
             response.orgasmic_project = true;
             response.project_id = Some(project.project_id);
-            response.default_branch = project.default_branch;
+            response.default_branch = git_default_branch(&root);
         }
     }
     Ok(Json(response))
@@ -995,8 +992,8 @@ fn filesystem_entry(path: PathBuf) -> FilesystemEntry {
     }
 }
 
-fn probe_orgasmic_project(root: &FsPath) -> Option<ExistingProjectConfig> {
-    read_existing_project_config(&root.join(".orgasmic/project.org")).ok()
+fn probe_orgasmic_project(root: &FsPath) -> Option<ExistingProjectIdentity> {
+    read_existing_project_identity(&root.join(".orgasmic/project.org")).ok()
 }
 
 fn non_empty_field(value: Option<String>) -> Option<String> {
@@ -1170,7 +1167,9 @@ fn org_rewriter_error(context: &str, node_id: &str, error: impl std::fmt::Displa
     ApiError::bad_request("org file update failed")
 }
 
-fn read_existing_project_config(project_org: &FsPath) -> Result<ExistingProjectConfig, ApiError> {
+fn read_existing_project_identity(
+    project_org: &FsPath,
+) -> Result<ExistingProjectIdentity, ApiError> {
     let source = std::fs::read_to_string(project_org).map_err(|e| {
         tracing::warn!(path = %project_org.display(), error = %e, "project.org read failed");
         ApiError::bad_request("failed to read project.org")
@@ -1183,21 +1182,33 @@ fn read_existing_project_config(project_org: &FsPath) -> Result<ExistingProjectC
         tracing::warn!(path = %project_org.display(), error = %e, "project.org schema validation failed");
         ApiError::bad_request("project file is not valid orgasmic markup")
     })?;
-    Ok(ExistingProjectConfig {
+    Ok(ExistingProjectIdentity {
         project_id: project.id.to_string(),
-        default_branch: read_config_default_branch(&project_org.with_file_name("config.org")),
     })
 }
 
-/// Read `:DEFAULT_BRANCH:` from a project's `config.org`, returning `None` when
-/// the file is absent, unparseable, or carries no non-empty branch (dec_051).
-fn read_config_default_branch(config_org: &FsPath) -> Option<String> {
-    let source = std::fs::read_to_string(config_org).ok()?;
-    let file = OrgFile::parse(source, config_org.to_string_lossy()).ok()?;
-    let config = ProjectConfig::from_org(&file, config_org.to_string_lossy().as_ref()).ok()?;
-    config
-        .default_branch
-        .map(|value| value.trim().to_string())
+fn git_default_branch(project_root: &FsPath) -> Option<String> {
+    let origin_head = git_output(
+        project_root,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .map(|value| value.strip_prefix("origin/").unwrap_or(&value).to_string());
+    origin_head.or_else(|| {
+        git_output(project_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .filter(|value| value != "HEAD")
+    })
+}
+
+fn git_output(project_root: &FsPath, args: &[&str]) -> Option<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(project_root)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
@@ -1480,14 +1491,11 @@ async fn post_task_subtask(
         return Err(ApiError::not_found(format!("parent task {parent_id}")));
     }
     let subtask_id = next_subtask_id(project, &parent_id);
-    let default_worker =
-        default_dispatch_worker_id(&state.home, project, DispatchEndpointKind::Implementer);
     let heading = render_subtask_heading(
         &subtask_id,
         &parent_id,
         &req.title,
         worker,
-        default_worker.as_deref(),
         req.description.as_deref(),
     );
     // New subtasks are born BACKLOG, and file membership is canonical state
@@ -1590,7 +1598,6 @@ fn render_subtask_heading(
     _parent_id: &str,
     title: &str,
     worker: Option<&str>,
-    default_worker: Option<&str>,
     description: Option<&str>,
 ) -> String {
     let clean_title = title
@@ -1600,7 +1607,6 @@ fn render_subtask_heading(
     let worker_line = worker
         .map(str::trim)
         .filter(|worker| !worker.is_empty())
-        .filter(|worker| default_worker.map(str::trim) != Some(*worker))
         .map(|worker| format!(":WORKER:           {worker}\n"))
         .unwrap_or_default();
     let mut heading = format!(
@@ -3007,38 +3013,10 @@ struct ProjectPromptDefaults {
 }
 
 fn project_prompt_defaults(project: &crate::index::ProjectIndex) -> ProjectPromptDefaults {
-    let mut defaults = ProjectPromptDefaults {
+    ProjectPromptDefaults {
         default_branch: project.branch.clone(),
-        test_cmd: project.default_test_cmd.clone().unwrap_or_default(),
-        write_scope: project.default_write_scope.clone(),
         ..ProjectPromptDefaults::default()
-    };
-    let path = project.root.join(".orgasmic/config.org");
-    let Ok(source) = std::fs::read_to_string(&path) else {
-        return defaults;
-    };
-    let Ok(file) = OrgFile::parse(source, path.to_string_lossy()) else {
-        return defaults;
-    };
-    let Ok(config) = ProjectConfig::from_org(&file, path.to_string_lossy().as_ref()) else {
-        return defaults;
-    };
-    if let Some(value) = config.default_branch {
-        defaults.default_branch = value.to_string();
     }
-    if let Some(value) = config.test_cmd {
-        defaults.test_cmd = value.to_string();
-    }
-    if let Some(value) = config.lint_cmd {
-        defaults.lint_cmd = value.to_string();
-    }
-    if let Some(value) = config.build_cmd {
-        defaults.build_cmd = value.to_string();
-    }
-    if !config.write_scope.is_empty() {
-        defaults.write_scope = config.write_scope.into_iter().map(str::to_string).collect();
-    }
-    defaults
 }
 
 fn stage_acceptance(spec: StageSpec, reason: &str) -> String {
@@ -3649,16 +3627,9 @@ async fn post_task_dispatch(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     let task_summary = project.tasks.iter().find(|task| task.id == task_id);
     let task_sandbox_permissions = task_summary.and_then(|task| task.sandbox_permissions.clone());
-    let task_worker = task_summary.and_then(|task| task.worker.clone());
     drop(snap);
 
-    let worker_id = resolve_dispatch_worker_id(
-        &state.home,
-        &project,
-        kind,
-        req.worker_id.as_deref(),
-        task_worker.as_deref(),
-    )?;
+    let worker_id = resolve_dispatch_worker_id(&state.home, kind, req.worker_id.as_deref())?;
     let worker_for_bundle = load_stage_worker(&state.home, &worker_id)?;
     if let Some(skill) = worker_for_bundle.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
@@ -3992,41 +3963,50 @@ fn warn_dispatch_overrides(worker: &StageWorker, overrides: &DriverOverrides) {
 
 fn resolve_dispatch_worker_id(
     home: &Home,
-    project: &ProjectIndex,
     kind: DispatchEndpointKind,
     explicit: Option<&str>,
-    task_worker: Option<&str>,
 ) -> Result<String, ApiError> {
     if let Some(worker) = explicit.map(str::trim).filter(|worker| !worker.is_empty()) {
         return Ok(worker.to_string());
     }
-    if let Some(worker) = task_worker
-        .map(str::trim)
-        .filter(|worker| !worker.is_empty())
-    {
-        return Ok(worker.to_string());
-    }
     let worker_kind = kind.worker_kind();
-    first_pipeline_worker_for_kind(home, project, worker_kind)?.ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "no worker specified and no pipeline worker for {}",
-            worker_kind_name(worker_kind)
-        ))
-    })
+    let candidates = candidate_worker_ids_for_kind(home, worker_kind)?;
+    let available = if candidates.is_empty() {
+        "none".to_string()
+    } else {
+        candidates.join(", ")
+    };
+    Err(ApiError::bad_request(format!(
+        "no worker specified; pass --worker. available {}: {}",
+        worker_kind_plural(worker_kind),
+        available
+    )))
 }
 
-fn first_pipeline_worker_for_kind(
-    home: &Home,
-    project: &ProjectIndex,
-    kind: WorkerKind,
-) -> Result<Option<String>, ApiError> {
-    for worker_id in &project.worker_pipeline {
-        let worker = load_stage_worker(home, worker_id)?;
-        if worker.kind == kind {
-            return Ok(Some(worker.id));
-        }
+fn candidate_worker_ids_for_kind(home: &Home, kind: WorkerKind) -> Result<Vec<String>, ApiError> {
+    let mut ids = content::list_workers(home)
+        .map_err(|e| content_list_error(e, "workers"))?
+        .into_iter()
+        .filter(|worker| worker.kind == kind)
+        .map(|worker| worker.id)
+        .collect::<Vec<_>>();
+    ids.sort();
+    Ok(ids)
+}
+
+fn worker_kind_plural(kind: WorkerKind) -> &'static str {
+    match kind {
+        WorkerKind::Implementer => "implementers",
+        WorkerKind::Reviewer => "reviewers",
+        WorkerKind::Planner => "planners",
+        WorkerKind::Analyzer => "analyzers",
+        WorkerKind::Architector => "architectors",
+        WorkerKind::Griller => "grillers",
+        WorkerKind::Glossarist => "glossarists",
+        WorkerKind::Babysitter => "babysitters",
+        WorkerKind::Manager => "managers",
+        WorkerKind::Artifactor => "artifactors",
     }
-    Ok(None)
 }
 
 fn compile_dispatch_prompt_bundle(
@@ -7196,30 +7176,30 @@ enum NodeLayer {
     Task,
     Goal,
     Handoff,
-    Config,
 }
 
-/// Drawer properties owned by the config layer. Setting one of these under any
-/// other `--kind` used to silently write to the wrong file (e.g. `project.org`
-/// instead of `config.org`, since both scaffold the same `:ID:`); rejected in
-/// [`reject_misrouted_config_key`].
-const CONFIG_RESERVED_KEYS: &[&str] = &["TEST_CMD", "LINT_CMD", "BUILD_CMD", "PIPELINE"];
-
 impl NodeLayer {
+    fn layer_name(self) -> &'static str {
+        match self {
+            Self::Decision => "decision",
+            Self::Architecture => "architecture",
+            Self::Glossary => "glossary",
+            Self::Project => "project",
+            Self::Task => "task",
+            Self::Goal => "goal",
+            Self::Handoff => "handoff",
+        }
+    }
+
     fn file_name(self) -> Option<&'static str> {
         match self {
             Self::Decision => Some("decisions.org"),
             Self::Architecture => Some("architecture.org"),
             Self::Glossary => Some("glossary.org"),
             Self::Project => Some("project.org"),
-            Self::Config => Some("config.org"),
             Self::Task => None,
             Self::Goal | Self::Handoff => None,
         }
-    }
-
-    fn layer_name(self) -> &'static str {
-        orgasmic_core::NodeKind::from(self).as_str()
     }
 
     fn artifact_name(self) -> &'static str {
@@ -7228,7 +7208,6 @@ impl NodeLayer {
             Self::Architecture => "architecture file",
             Self::Glossary => "glossary file",
             Self::Project => "project file",
-            Self::Config => "config file",
             Self::Task => "task file",
             Self::Goal => "goal file",
             Self::Handoff => "handoff file",
@@ -7237,9 +7216,8 @@ impl NodeLayer {
 
     /// Infer the org-node layer that owns a node id: `TASK-*` -> task,
     /// `dec_*` -> decisions, `arch_*` -> architecture, `handoff-current` ->
-    /// handoff, `goal-*` -> goal, anything else -> glossary. The project and
-    /// config layers have no distinctive id prefix (and share the same
-    /// `:ID:`), so they can only be selected explicitly via
+    /// handoff, `goal-*` -> goal, anything else -> glossary. The project layer
+    /// has no distinctive id prefix, so it can only be selected explicitly via
     /// [`NodeLayer::from_kind`].
     fn for_id(id: &str) -> Self {
         if id.starts_with("TASK-") {
@@ -7276,7 +7254,6 @@ impl From<orgasmic_core::NodeKind> for NodeLayer {
             orgasmic_core::NodeKind::Task => Self::Task,
             orgasmic_core::NodeKind::Goal => Self::Goal,
             orgasmic_core::NodeKind::Handoff => Self::Handoff,
-            orgasmic_core::NodeKind::Config => Self::Config,
         }
     }
 }
@@ -7291,7 +7268,6 @@ impl From<NodeLayer> for orgasmic_core::NodeKind {
             NodeLayer::Task => Self::Task,
             NodeLayer::Goal => Self::Goal,
             NodeLayer::Handoff => Self::Handoff,
-            NodeLayer::Config => Self::Config,
         }
     }
 }
@@ -7301,20 +7277,6 @@ impl From<NodeLayer> for orgasmic_core::NodeKind {
 /// acceptance set instead of duplicating the list by hand (TASK-JJ9RD).
 pub fn accepted_node_kinds() -> &'static [orgasmic_core::NodeKind] {
     &orgasmic_core::NodeKind::ALL
-}
-
-/// Reject a `set_property`/`SetProperty` op that would write a CONFIG-owned
-/// key to a non-config layer — the bug that made `node prop set <project-id>
-/// TEST_CMD ... --kind project` silently succeed against `project.org` instead
-/// of `config.org` (both share the project's `:ID:`).
-fn reject_misrouted_config_key(layer: NodeLayer, key: &str) -> Result<(), ApiError> {
-    if layer != NodeLayer::Config && CONFIG_RESERVED_KEYS.contains(&key) {
-        return Err(ApiError::bad_request(format!(
-            "{key} is a config-file property; use --kind config to write it to config.org (got --kind {})",
-            layer.layer_name()
-        )));
-    }
-    Ok(())
 }
 
 /// The known node id universe for a project, mirroring the id set
@@ -7953,11 +7915,6 @@ async fn post_org_node_edit(
             "goal nodes are read-only through /org/node; use goal set/clear/supersede",
         ));
     }
-    for op in &req.ops {
-        if let NodeEditOp::SetProperty { key, .. } = op {
-            reject_misrouted_config_key(layer, key)?;
-        }
-    }
     let (project_id, path, source_file) =
         org_node_path(&state, req.project.as_deref(), &id, layer).await?;
     if !req.force {
@@ -8451,23 +8408,12 @@ fn select_project<'a>(
     ))
 }
 
-fn default_dispatch_worker_id(
-    home: &Home,
-    project: &ProjectIndex,
-    kind: DispatchEndpointKind,
-) -> Option<String> {
-    first_pipeline_worker_for_kind(home, project, kind.worker_kind())
-        .ok()
-        .flatten()
-}
-
 fn split_dispatch_scope(value: &str) -> Vec<&str> {
     value.split_whitespace().collect()
 }
 
 fn filter_default_dispatch_properties(
     properties: &BTreeMap<String, String>,
-    default_worker: Option<&str>,
     default_test_cmd: &str,
     default_write_scope: &[String],
 ) -> BTreeMap<String, String> {
@@ -8476,9 +8422,6 @@ fn filter_default_dispatch_properties(
         .filter_map(|(key, value)| {
             let trimmed = value.trim();
             if matches!(key.as_str(), "WORKER" | "TEST_CMD" | "WRITE_SCOPE") && trimmed.is_empty() {
-                return None;
-            }
-            if key == "WORKER" && default_worker.map(str::trim) == Some(trimmed) {
                 return None;
             }
             if key == "TEST_CMD" && default_test_cmd.trim() == trimmed {
@@ -8679,11 +8622,8 @@ async fn post_task_create(
         )
     };
     let project_defaults = project_prompt_defaults(project);
-    let default_worker =
-        default_dispatch_worker_id(&state.home, project, DispatchEndpointKind::Implementer);
     let properties = filter_default_dispatch_properties(
         &req.properties,
-        default_worker.as_deref(),
         project_defaults.test_cmd.as_str(),
         &project_defaults.write_scope,
     );
@@ -11566,9 +11506,6 @@ mod tests {
             task_bodies: BTreeMap::new(),
             subtasks: BTreeMap::new(),
             activity_index: BTreeMap::new(),
-            worker_pipeline: Vec::new(),
-            default_test_cmd: None,
-            default_write_scope: Vec::new(),
             graph,
             markers: BTreeMap::new(),
             last_loaded_at: None,
@@ -12837,15 +12774,15 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_worker_resolution_uses_pipeline_without_explicit_worker() {
+    fn dispatch_worker_resolution_requires_explicit_worker_and_lists_candidates() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         write(
-            home.user().join("workers/stage-implementer.org"),
-            "* WORKER stage-implementer
+            home.user().join("workers/implementer-a.org"),
+            "* WORKER implementer-a
 :PROPERTIES:
-:ID: stage-implementer
+:ID: implementer-a
 :KIND: implementer
 :DRIVER: acp-ws
 :HARNESS: codex
@@ -12855,35 +12792,35 @@ mod tests {
 :END:
 ",
         );
-        let mut project = test_project(tmp.path(), &[], &[], &[]);
-        project.worker_pipeline = vec!["stage-implementer".to_string()];
+        write(
+            home.user().join("workers/implementer-b.org"),
+            "* WORKER implementer-b\n:PROPERTIES:\n:ID: implementer-b\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
+        );
+        write(
+            home.user().join("workers/reviewer-a.org"),
+            "* WORKER reviewer-a\n:PROPERTIES:\n:ID: reviewer-a\n:KIND: reviewer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
+        );
 
-        let worker = resolve_dispatch_worker_id(
-            &home,
-            &project,
-            DispatchEndpointKind::Implementer,
-            None,
-            None,
-        )
-        .unwrap();
+        let err =
+            resolve_dispatch_worker_id(&home, DispatchEndpointKind::Implementer, None).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        let message = err.message;
 
-        assert_eq!(worker, "stage-implementer");
+        assert!(message.contains("no worker specified; pass --worker"));
+        assert!(message.contains("available implementers: implementer-a, implementer-b"));
+        assert!(!message.contains("reviewer-a"));
     }
 
     #[test]
-    fn dispatch_worker_resolution_explicit_worker_overrides_pipeline() {
+    fn dispatch_worker_resolution_accepts_explicit_worker() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        let mut project = test_project(tmp.path(), &[], &[], &[]);
-        project.worker_pipeline = vec!["stage-implementer".to_string()];
 
         let worker = resolve_dispatch_worker_id(
             &home,
-            &project,
             DispatchEndpointKind::Implementer,
             Some("explicit-implementer"),
-            None,
         )
         .unwrap();
 
@@ -12891,42 +12828,28 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_worker_resolution_prefers_task_heading_over_pipeline_default() {
+    fn dispatch_worker_resolution_ignores_task_worker_without_explicit_request() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         write(
-            home.user().join("workers/pipeline-implementer.org"),
-            "* WORKER pipeline-implementer\n:PROPERTIES:\n:ID: pipeline-implementer\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
+            home.user().join("workers/task-implementer.org"),
+            "* WORKER task-implementer\n:PROPERTIES:\n:ID: task-implementer\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
         );
-        let mut project = test_project(tmp.path(), &[], &[], &[]);
-        project.worker_pipeline = vec!["pipeline-implementer".to_string()];
 
-        let worker = resolve_dispatch_worker_id(
-            &home,
-            &project,
-            DispatchEndpointKind::Implementer,
-            None,
-            Some("task-implementer"),
-        )
-        .unwrap();
+        let err =
+            resolve_dispatch_worker_id(&home, DispatchEndpointKind::Implementer, None).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        let message = err.message;
 
-        assert_eq!(worker, "task-implementer");
+        assert!(message.contains("available implementers: task-implementer"));
     }
 
     #[test]
-    fn dispatch_task_slots_fall_back_to_config_defaults_and_task_overrides_win() {
+    fn dispatch_task_slots_use_empty_defaults_and_task_overrides_win() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        std::fs::create_dir_all(root.join(".orgasmic")).unwrap();
-        std::fs::write(
-            root.join(".orgasmic/config.org"),
-            "#+title: config\n#+orgasmic_version: 1\n\n* CONFIG orgasmic\n:PROPERTIES:\n:ID: orgasmic\n:TEST_CMD: cargo test --config-default\n:WRITE_SCOPE: crates/default src/default\n:PIPELINE: pipeline-implementer\n:END:\n",
-        )
-        .unwrap();
         let mut project = test_project(root, &[], &[], &[]);
-        project.default_test_cmd = Some("cargo test --indexed-default".to_string());
-        project.default_write_scope = vec!["indexed/default".to_string()];
         project.tasks.push(crate::index::TaskSummary {
             id: "TASK-DEFAULT".to_string(),
             title: "defaulted".to_string(),
@@ -12974,8 +12897,8 @@ mod tests {
 
         let mut values = SlotValues::new();
         hydrate_dispatch_task_slots(&mut values, &project, "TASK-DEFAULT").unwrap();
-        assert_eq!(values["task.write_scope"], "crates/default\nsrc/default");
-        assert_eq!(values["task.test_cmd"], "cargo test --config-default");
+        assert_eq!(values["task.write_scope"], "not set");
+        assert_eq!(values["task.test_cmd"], "not set");
 
         let mut values = SlotValues::new();
         hydrate_dispatch_task_slots(&mut values, &project, "TASK-OVERRIDE").unwrap();
@@ -12984,23 +12907,15 @@ mod tests {
     }
 
     #[test]
-    fn task_create_filters_blank_and_default_dispatch_params() {
+    fn task_create_filters_blank_dispatch_params() {
         let mut properties = BTreeMap::new();
-        properties.insert("WORKER".to_string(), "implementer-default".to_string());
-        properties.insert("TEST_CMD".to_string(), "cargo test".to_string());
-        properties.insert(
-            "WRITE_SCOPE".to_string(),
-            "crates/default src/default".to_string(),
-        );
+        properties.insert("WORKER".to_string(), String::new());
+        properties.insert("TEST_CMD".to_string(), String::new());
+        properties.insert("WRITE_SCOPE".to_string(), String::new());
         properties.insert("PROVIDER".to_string(), "".to_string());
         properties.insert("MODEL".to_string(), "gpt-5.5".to_string());
 
-        let filtered = filter_default_dispatch_properties(
-            &properties,
-            Some("implementer-default"),
-            "cargo test",
-            &["crates/default".to_string(), "src/default".to_string()],
-        );
+        let filtered = filter_default_dispatch_properties(&properties, "", &Vec::new());
 
         assert!(!filtered.contains_key("WORKER"));
         assert!(!filtered.contains_key("TEST_CMD"));
@@ -14634,146 +14549,6 @@ mod tests {
         let after = std::fs::read_to_string(&project_path).unwrap();
         assert!(after.contains("** Mission\nCoordinate AI-agent work.\n"));
         assert!(after.contains("** Operating Constraints\n- Stay greenfield.\n"));
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
-    }
-
-    #[tokio::test]
-    async fn org_node_config_layer_round_trip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        // config.org shares the project's :ID:, so — like `project` — it is
-        // only reachable via an explicit `kind=config` selector.
-        let project_path = project_root.join(".orgasmic/project.org");
-        let config_path = project_root.join(".orgasmic/config.org");
-        write(
-            config_path.clone(),
-            "#+title: orgasmic config\n#+orgasmic_version: 1\n\n\
-* CONFIG orgasmic\n:PROPERTIES:\n:ID:                  orgasmic\n:DEFAULT_BRANCH:      main\n:END:\n",
-        );
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .expect("boot daemon");
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-        let base = format!("http://{}", running.addr);
-
-        let doc: Value = client
-            .get(format!("{base}/api/org/node"))
-            .bearer_auth(&token)
-            .query(&[
-                ("project", "orgasmic"),
-                ("id", "orgasmic"),
-                ("kind", "config"),
-            ])
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        assert_eq!(doc["kind"], "config");
-        assert_eq!(doc["source"]["file"], ".orgasmic/config.org");
-        let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
-
-        let resp = client
-            .post(format!("{base}/api/org/node/orgasmic/edit"))
-            .bearer_auth(&token)
-            .json(&serde_json::json!({
-                "project": "orgasmic",
-                "kind": "config",
-                "base_version": base_version,
-                "ops": [
-                    { "op": "set_property", "key": "TEST_CMD", "value": "cargo test" }
-                ]
-            }))
-            .send()
-            .await
-            .unwrap();
-        let status = resp.status();
-        let updated: Value = resp.json().await.unwrap();
-        assert!(status.is_success(), "edit config node: {status} {updated}");
-
-        let config_after = std::fs::read_to_string(&config_path).unwrap();
-        assert!(config_after.contains(":TEST_CMD:"));
-        assert!(config_after.contains("cargo test"));
-        let project_after = std::fs::read_to_string(&project_path).unwrap();
-        assert!(
-            !project_after.contains("TEST_CMD"),
-            "TEST_CMD leaked into project.org: {project_after}"
-        );
-
-        let _ = running.shutdown.send(());
-        let _ = running.join.await;
-    }
-
-    #[tokio::test]
-    async fn org_node_config_reserved_key_rejected_on_project_layer() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-        let project_root = tmp.path().join("proj");
-        seed_project(&home, &project_root, "orgasmic");
-        let project_path = project_root.join(".orgasmic/project.org");
-
-        let running = crate::Daemon::run(home.clone(), test_options())
-            .await
-            .expect("boot daemon");
-        let token = read_token(&home);
-        let client = reqwest::Client::new();
-        let base = format!("http://{}", running.addr);
-
-        let doc: Value = client
-            .get(format!("{base}/api/org/node"))
-            .bearer_auth(&token)
-            .query(&[
-                ("project", "orgasmic"),
-                ("id", "orgasmic"),
-                ("kind", "project"),
-            ])
-            .send()
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
-        let base_version = doc["source"]["base_version"].as_str().unwrap().to_string();
-
-        // This is the exact silent-wrong-file-write regression (TASK-JJ9RD):
-        // a CONFIG-owned key must not land in project.org just because the id
-        // resolved there under an explicit `--kind project`.
-        let resp = client
-            .post(format!("{base}/api/org/node/orgasmic/edit"))
-            .bearer_auth(&token)
-            .json(&serde_json::json!({
-                "project": "orgasmic",
-                "kind": "project",
-                "base_version": base_version,
-                "ops": [
-                    { "op": "set_property", "key": "TEST_CMD", "value": "cargo test" }
-                ]
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
-        let body: Value = resp.json().await.unwrap();
-        let message = body["error"].as_str().unwrap_or_default();
-        assert!(
-            message.contains("--kind config"),
-            "error should name --kind config as the fix: {message}"
-        );
-
-        let project_after = std::fs::read_to_string(&project_path).unwrap();
-        assert!(
-            !project_after.contains("TEST_CMD"),
-            "TEST_CMD leaked into project.org: {project_after}"
-        );
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;

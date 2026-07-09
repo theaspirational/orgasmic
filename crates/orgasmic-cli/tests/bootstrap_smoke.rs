@@ -3,16 +3,14 @@
 //! Reproduces what the 2026-07-06 orsl battle-test did on the greenfield
 //! path, CLI-only, against a running isolated test daemon: `project init` in
 //! a temp git repo, then drive the shipped bootstrap the way an agent would
-//! — decisions (daemon-minted ids), glossary refs, architecture edges,
-//! config.org writes, a post-init task create/update, and an artifact
-//! submit. Every write goes through the CLI; the only direct `.org` write is
-//! the initial scaffold from `project init` itself.
+//! — decisions (daemon-minted ids), glossary refs, architecture edges, a
+//! post-init task create/update, and an artifact submit. Every write goes
+//! through the CLI; the only direct `.org` write is the initial scaffold from
+//! `project init` itself.
 //!
 //! Pins three battle-test regressions:
 //! - F1 (TASK-GERBB): a project registered after daemon boot must be usable
 //!   with no restart (exercised by the post-init task create/update).
-//! - F7 (TASK-JJ9RD): config-owned properties must land in config.org, never
-//!   project.org (exercised by the `node prop set --kind config` step).
 //! - F2 (TASK-4T80X): reference-valued properties must be daemon-minted ids,
 //!   validated at write time, not free prose or invented sequential ids
 //!   (exercised by the decision/glossary steps, plus a rejection probe).
@@ -191,6 +189,10 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
         project_root.join(".orgasmic/decisions.org").is_file(),
         "project init should scaffold decisions.org directly"
     );
+    assert!(
+        !project_root.join(".orgasmic/config.org").exists(),
+        "project init must not scaffold config.org"
+    );
     run_git(&project_root, &["add", "."]);
     run_git(&project_root, &["commit", "-m", "scaffold .orgasmic"]);
 
@@ -315,87 +317,6 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
     );
     let arch_id = extract_id(&arch_stdout);
     assert!(arch_id.starts_with("arch_"), "got {arch_id}");
-
-    // --- config: verification commands land in config.org, never
-    // project.org (TASK-JJ9RD, the F7 class). ---
-    run_cli(
-        &home,
-        &running,
-        &project_root,
-        &[
-            "node",
-            "prop",
-            "set",
-            project_id,
-            "TEST_CMD",
-            "cargo test",
-            "--kind",
-            "config",
-        ],
-    );
-    run_cli(
-        &home,
-        &running,
-        &project_root,
-        &[
-            "node",
-            "prop",
-            "set",
-            project_id,
-            "LINT_CMD",
-            "cargo clippy",
-            "--kind",
-            "config",
-        ],
-    );
-    run_cli(
-        &home,
-        &running,
-        &project_root,
-        &[
-            "node",
-            "prop",
-            "set",
-            project_id,
-            "BUILD_CMD",
-            "cargo build",
-            "--kind",
-            "config",
-        ],
-    );
-    let config_after = std::fs::read_to_string(project_root.join(".orgasmic/config.org")).unwrap();
-    assert!(config_after.contains(":TEST_CMD:") && config_after.contains("cargo test"));
-    let project_after =
-        std::fs::read_to_string(project_root.join(".orgasmic/project.org")).unwrap();
-    assert!(
-        !project_after.contains("TEST_CMD"),
-        "TEST_CMD leaked into project.org: {project_after}"
-    );
-
-    let bad_kind = run_cli_output(
-        &home,
-        &running,
-        &project_root,
-        &[
-            "node",
-            "prop",
-            "set",
-            project_id,
-            "TEST_CMD",
-            "cargo test",
-            "--kind",
-            "project",
-        ],
-    );
-    assert!(
-        !bad_kind.status.success(),
-        "TEST_CMD under --kind project should be rejected"
-    );
-    let bad_kind_stderr = String::from_utf8_lossy(&bad_kind.stderr);
-    assert!(
-        bad_kind_stderr.contains("--kind config"),
-        "rejection should name --kind config as the fix: {bad_kind_stderr}"
-    );
 
     // --- task: create + update, proving the post-boot write path TASK-GERBB
     // made work without a restart (F1). ---

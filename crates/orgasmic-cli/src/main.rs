@@ -342,16 +342,16 @@ enum PathCmd {
 enum ProjectCmd {
     /// Scaffold `.orgasmic/` in a repo and register it on the global board.
     #[command(after_help = "\
-Examples:
+	Examples:
   orgasmic project init --path ~/myrepo --name myrepo \\
-    --default-branch main")]
+    --default-branch trunk")]
     Init {
         #[arg(long)]
         path: Option<PathBuf>,
         #[arg(long)]
         name: Option<String>,
-        #[arg(long, default_value = "main")]
-        default_branch: String,
+        #[arg(long)]
+        default_branch: Option<String>,
         #[arg(long)]
         force: bool,
         #[arg(long)]
@@ -1033,10 +1033,7 @@ fn ensure_source_project_registered(home: &Home) -> Result<SourceProjectRegistra
     {
         return Ok(SourceProjectRegistration::AlreadyRegistered { id: project.id });
     }
-    let branch = git_output(&source, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .filter(|value| value != "HEAD" && !value.is_empty())
-        .or(project.default_branch)
-        .unwrap_or_else(|| "main".to_string());
+    let branch = git_default_branch(&source).unwrap_or_default();
     projects::register_project(home, &source, &project.id, &branch)?;
     Ok(SourceProjectRegistration::Registered {
         id: project.id,
@@ -1044,33 +1041,17 @@ fn ensure_source_project_registered(home: &Home) -> Result<SourceProjectRegistra
     })
 }
 
-struct ProjectConfig {
+struct ProjectRegistration {
     id: String,
-    default_branch: Option<String>,
 }
 
-fn read_project_config(path: &Path) -> Result<ProjectConfig> {
+fn read_project_config(path: &Path) -> Result<ProjectRegistration> {
     let src = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
     let file = orgasmic_core::OrgFile::parse(src, path.to_string_lossy())?;
     let project = orgasmic_core::ProjectFile::from_org(&file, path.to_string_lossy().as_ref())?;
-    Ok(ProjectConfig {
+    Ok(ProjectRegistration {
         id: project.id.to_string(),
-        default_branch: read_config_default_branch(&path.with_file_name("config.org")),
     })
-}
-
-/// Read `:DEFAULT_BRANCH:` from a sibling `config.org`; `None` if the file is
-/// absent, unparseable, or carries no non-empty branch (dec_051).
-fn read_config_default_branch(config_org: &Path) -> Option<String> {
-    let src = std::fs::read_to_string(config_org).ok()?;
-    let file = orgasmic_core::OrgFile::parse(src, config_org.to_string_lossy()).ok()?;
-    let config =
-        orgasmic_core::ProjectConfig::from_org(&file, config_org.to_string_lossy().as_ref())
-            .ok()?;
-    config
-        .default_branch
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
@@ -1083,6 +1064,18 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
         return None;
     }
     Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn git_default_branch(repo: &Path) -> Option<String> {
+    let origin_head = git_output(
+        repo,
+        &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .map(|value| value.strip_prefix("origin/").unwrap_or(&value).to_string());
+    origin_head.or_else(|| {
+        git_output(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .filter(|value| value != "HEAD" && !value.is_empty())
+    })
 }
 
 fn broken_bin_symlink(home: &Home) -> bool {
@@ -1267,7 +1260,7 @@ fn cmd_project_init(
     home: &Home,
     path: Option<PathBuf>,
     name: Option<String>,
-    default_branch: String,
+    default_branch: Option<String>,
     force: bool,
     no_register: bool,
 ) -> Result<()> {
@@ -1276,7 +1269,9 @@ fn cmd_project_init(
         None => std::env::current_dir().context("cwd")?,
     };
     let mut inputs = projects::ScaffoldInputs::derive(&project_root, name);
-    inputs.default_branch = default_branch.clone();
+    if let Some(default_branch) = default_branch {
+        inputs.default_branch = default_branch;
+    }
     let written = projects::init_project(home, &project_root, &inputs, force)?;
     println!(
         "✓ scaffolded {} files under {}/.orgasmic",
@@ -1287,7 +1282,12 @@ fn cmd_project_init(
         println!("  + {}", p.display());
     }
     if !no_register {
-        match projects::register_project(home, &project_root, &inputs.project_id, &default_branch) {
+        match projects::register_project(
+            home,
+            &project_root,
+            &inputs.project_id,
+            &inputs.default_branch,
+        ) {
             Ok(()) => println!("✓ registered {} on the global board", inputs.project_id),
             Err(e) => println!("[warn] board register skipped: {e}"),
         }
@@ -1307,10 +1307,7 @@ fn cmd_project_add(home: &Home, path: Option<PathBuf>) -> Result<()> {
             dotorg.display()
         )
     })?;
-    let branch = git_output(&project_root, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .filter(|value| value != "HEAD" && !value.is_empty())
-        .or(config.default_branch)
-        .unwrap_or_else(|| "main".to_string());
+    let branch = git_default_branch(&project_root).unwrap_or_default();
     projects::register_project(home, &project_root, &config.id, &branch)?;
     println!("✓ registered {} → {}", config.id, project_root.display());
     Ok(())

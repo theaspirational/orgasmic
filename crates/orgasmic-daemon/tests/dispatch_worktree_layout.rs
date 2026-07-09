@@ -91,10 +91,6 @@ fn seed_project(project_root: &Path) {
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID: orgasmic\n:END:\n",
     );
     write(
-        &project_root.join(".orgasmic/config.org"),
-        "#+title: config\n#+orgasmic_version: 1\n\n* CONFIG orgasmic\n:PROPERTIES:\n:ID: orgasmic\n:END:\n",
-    );
-    write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-NESTED Parent task\n:PROPERTIES:\n:ID: TASK-NESTED\n:END:\n",
     );

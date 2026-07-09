@@ -65,7 +65,10 @@ fn init_registers_source_checkout_as_default_project() {
         canonical_source.display()
     )));
     assert!(!board.contains(":REPO_URL:"));
-    assert!(board.contains(":BRANCH:           main"));
+    assert!(
+        !board.contains(":BRANCH:           main"),
+        "init must not inject a hardcoded main branch: {board}"
+    );
 
     let rerun = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
         .arg("init")

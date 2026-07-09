@@ -36,10 +36,6 @@ fn seed_board(home: &Home, project_root: &std::path::Path, project_id: &str) {
 }
 
 fn seed_project(project_root: &std::path::Path, task_org: &str) {
-    write(
-        &project_root.join(".orgasmic/config.org"),
-        "#+title: config\n#+orgasmic_version: 1\n\n* CONFIG test\n:PROPERTIES:\n:ID: test\n:END:\n",
-    );
     write(&project_root.join(".orgasmic/tasks/backlog.org"), task_org);
 }
 
