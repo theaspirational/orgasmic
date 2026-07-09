@@ -21,7 +21,8 @@ pickup/status requests, and prompts beginning with `/orgasmic`.
 Manager startup:
 1. Check `~/.agents/skills/orgasmic/SKILL.md` or the visible skill registry.
 2. If installed, read the skill and follow the selected `/orgasmic` subcommand.
-3. If absent, read `conventions/no-skill-installed.org`.
+3. If absent, offer `/orgasmic install`; keep `.orgasmic/` read-only until the
+   runtime is available.
 
 Manager-implementer: when the manager edits source directly in this session
 instead of dispatching a worker (single-worker setups), read
@@ -45,9 +46,39 @@ instead of dispatching a worker (single-worker setups), read
 - If it succeeds: write through `orgasmic ...` CLI commands.
 - If it fails: stop - install or start the runtime (`/orgasmic install`,
   `orgasmic daemon start`); do not hand-edit.
-- Read `conventions/contributing.org` before changing orgasmic state.
-- Read `conventions/orgasmic-tooling.org` before using installed tooling.
 - Add repo-specific conventions as separate files under `conventions/`.
+
+** Contributing discipline
+- Follow the constraints in `project.org`.
+- Keep personal data out of durable state: `tx/`, decisions, task evidence, and
+  worklogs may be committed or published. Use stable handles instead of personal
+  email, prefer repo-relative paths, and keep machine-specific notes in
+  gitignored `tmp/local_instructions.org`.
+- Record durable rationale in `decisions.org`; do not create stray decision
+  docs.
+- While the project is greenfield, treat decisions and architecture as a living
+  model: create genuinely new rationale through the CLI, and revise existing
+  nodes through `orgasmic node body set|append` or `orgasmic node prop set`.
+- If something about the project surprises you, add or ask for a `gotchas.org`
+  entry. When task scope changes, keep `tasks/` current through the CLI.
+
+** Tooling usage
+- Use `orgasmic ...` as the agent and human surface; treat the daemon as the CLI
+  backend and write authority for `tx/` and sessions.
+- `/orgasmic recall` means brief and stop.
+- `/orgasmic resume` means brief, then continue the next clear action.
+- Use `orgasmic --help` and the live worker list instead of stale local copies
+  when choosing commands or worker ids.
+
+** Dispatch rule
+- Implement and review work through orgasmic workers, never by shelling out to a
+  raw provider CLI such as `codex`, `claude`, or `cursor-agent` for project
+  work. Raw provider CLIs bypass daemon write authority, tx recording, worktree
+  isolation, dispatch leases, and reattach/recovery.
+- A request naming provider, model, or effort maps to
+  `orgasmic manager dispatch --kind <kind> --worker <worker-id> --model <model>
+  --effort <effort> --brief <path>`, resolving `<worker-id>` from
+  `orgasmic worker list`.
 
 ** Default workflow
 <!-- workflow: resolved by TASK-PCDA2 -->

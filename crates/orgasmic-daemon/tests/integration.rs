@@ -210,27 +210,10 @@ fn seed_unregistered_project(project_root: &Path, project_id: &str) {
 fn seed_project_scaffold(home: &Home) {
     let dst = home.source().join("shipped/skills/orgasmic/scaffold");
     std::fs::create_dir_all(dst.join("tasks")).unwrap();
-    std::fs::create_dir_all(dst.join("conventions")).unwrap();
     write(&dst.join(".gitignore"), "tmp/\n");
     write(
         &dst.join("entry.org"),
         "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
-    );
-    write(
-        &dst.join("conventions/contributing.org"),
-        "#+title: contributing\n#+orgasmic_version: 1\n\n* Convention: contributing changes\n\n- Follow `project.org`.\n",
-    );
-    write(
-        &dst.join("conventions/orgasmic-tooling.org"),
-        "#+title: orgasmic tooling\n#+orgasmic_version: 1\n\n* Convention: working with orgasmic installed (optional)\n\nOptional.\n",
-    );
-    write(
-        &dst.join("conventions/no-skill-installed.org"),
-        "#+title: no skill installed\n#+orgasmic_version: 1\n\n* Convention: manager fallback without the `/orgasmic` skill\n\nBrief from plain files.\n",
-    );
-    write(
-        &dst.join("conventions/manager-implementer.org"),
-        "#+title: manager implementer\n#+orgasmic_version: 1\n\n* Convention: manager implementer\n\nStay scoped.\n",
     );
     write(
         &dst.join("project.org"),

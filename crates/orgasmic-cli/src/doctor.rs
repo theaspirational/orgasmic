@@ -132,9 +132,6 @@ const REQUIRED_SHIPPED: &[&str] = &[
     "skills/orgasmic/scaffold/tasks/goal.org",
     "skills/orgasmic/scaffold/tasks/handoff.org",
     "skills/orgasmic/scaffold/gotchas.org",
-    "skills/orgasmic/scaffold/conventions/contributing.org",
-    "skills/orgasmic/scaffold/conventions/no-skill-installed.org",
-    "skills/orgasmic/scaffold/conventions/orgasmic-tooling.org",
 ];
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

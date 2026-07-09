@@ -424,9 +424,6 @@ fn parses_shipped_project_scaffold() {
     parse_or_panic("shipped/skills/orgasmic/scaffold/decisions.org");
     parse_or_panic("shipped/skills/orgasmic/scaffold/project.org");
     parse_or_panic("shipped/skills/orgasmic/scaffold/entry.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/contributing.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/no-skill-installed.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/orgasmic-tooling.org");
 }
 
 #[test]
