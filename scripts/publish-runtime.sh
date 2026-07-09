@@ -240,16 +240,35 @@ for entry in "${TARGETS[@]}"; do
 done
 
 # --- 5. smoke tests ----------------------------------------------------------
+DOCKER_INFO_TIMEOUT="${ORGASMIC_PUBLISH_DOCKER_TIMEOUT:-10}"
 docker_ready=0
+
+# Run `docker info` but never block longer than $DOCKER_INFO_TIMEOUT seconds.
+# A wedged Docker Desktop backend (API up, unresponsive) makes a bare
+# `docker info` hang forever and stalls the whole publish at "=== smoke tests
+# ===". There is no `timeout`/`gtimeout` binary on this host, so bound it by
+# racing the probe against a killer. Returns 0 iff docker answered in time.
+docker_info_bounded() {
+    docker info >/dev/null 2>&1 &
+    local probe=$!
+    ( sleep "$DOCKER_INFO_TIMEOUT"; kill "$probe" 2>/dev/null ) &
+    local killer=$!
+    if wait "$probe" 2>/dev/null; then
+        kill "$killer" 2>/dev/null; wait "$killer" 2>/dev/null
+        return 0
+    fi
+    wait "$killer" 2>/dev/null
+    return 1
+}
+
+# Docker is the only supported linux smoke backend. If it does not answer a
+# bounded `docker info` we SKIP the linux legs loudly rather than block — the
+# cross-built binaries already passed cargo test/clippy on this commit, so a
+# skipped `--version` smoke is a warning, not a publish blocker. We do NOT try
+# to auto-start Docker.app or retry: a wedged daemon just re-hangs every probe.
 ensure_docker() {
     command -v docker >/dev/null 2>&1 || return 1
-    if docker info >/dev/null 2>&1; then docker_ready=1; return 0; fi
-    echo "→ docker not running; attempting to start Docker.app"
-    open -a Docker >/dev/null 2>&1 || true
-    for _ in $(seq 1 30); do
-        if docker info >/dev/null 2>&1; then docker_ready=1; return 0; fi
-        sleep 3
-    done
+    if docker_info_bounded; then docker_ready=1; return 0; fi
     return 1
 }
 
@@ -294,7 +313,17 @@ if [[ "$SKIP_SMOKE" == "1" ]]; then
     echo ""; echo "→ smoke tests skipped (--skip-smoke)"
 else
     echo ""; echo "=== smoke tests ==="
-    ensure_docker || echo "warning: docker daemon not reachable; linux legs will be skipped" >&2
+    if ! ensure_docker; then
+        echo "" >&2
+        echo "############################################################" >&2
+        echo "## WARNING: docker did not answer within ${DOCKER_INFO_TIMEOUT}s" >&2
+        echo "## SKIPPING the linux smoke legs (binaries built, NOT run)." >&2
+        echo "## Quit+reopen Docker Desktop, or raise the bound via" >&2
+        echo "## ORGASMIC_PUBLISH_DOCKER_TIMEOUT=<secs>, then re-publish" >&2
+        echo "## if you need the linux --version smoke verified." >&2
+        echo "############################################################" >&2
+        echo "" >&2
+    fi
     for entry in "${TARGETS[@]}"; do
         IFS='|' read -r _triple key smoke <<<"$entry"
         smoke_one "$key" "$smoke"
