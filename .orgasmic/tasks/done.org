@@ -11881,3 +11881,109 @@ Found by the SQE9P live smoke (2026-07-08, isolated 0.0.8 daemon). cmd_dispatch_
 Fix direction: the COMMIT boundary must be the git worktree toplevel, not the project-marker walk — use 'git rev-parse --show-toplevel' from cwd (stops at the worktree boundary: .git file) for commit_worktree/current_git_branch/WORKTREE tx extra; keep find_project_root only for reading project id (or read it from the daemon's run record instead). Additionally cross-check: refuse --commit when the resolved commit root differs from the run's dispatched WORKTREE (daemon knows it; expose on RunSummary/LiveRunInfo if needed) — fail loudly, never commit a root that isn't the dispatched worktree. Regression test: dispatch-finalize fixture where the project .orgasmic is NOT committed (worktree lacks project.org) → finalize --commit commits ONLY the worktree, never the manager root. Minor bundled polish: finalize_commit_message uses the summary's first line verbatim — strip leading markdown heading markers ('# ') so subjects aren't 'TASK-X: # TASK-X (...)'.
 
 Gates: cargo test -p orgasmic-cli (+ daemon if RunSummary changes), clippy -D, fmt.
+
+* DONE TASK-Z4D3Q UX psychology pass: actionable empty states, smart defaults, progress surfaces, draft protection
+:PROPERTIES:
+:ID: TASK-Z4D3Q
+:PRIORITY: medium
+:END:
+
+Operator-directed manager-inline burst [2026-07-09]: apply UX psychology principles (smart defaults, goal gradient, reciprocity, honest loss aversion) across the UI. Scope: GenerateArtifactDialog prompt suggestions + draft preservation; RegenerateArtifactDialog draft preservation (success-aware clear); actionable empty states with CLI hints on Decisions/Architecture/Glossary/Tasks (query-vs-empty split, Show-all filter reset on Decisions); Artifacts page prompt-only Generate entry point; BoardRouteView first-run setup checklist starting 2-of-3 done; done-progress bars on Tasks toolbar + ProjectView header; update surfaces lead with release notes (Settings panel + AppShell toast). Contrast-effect principle deliberately skipped as conflicting with the product baseline (no pricing surface, no marketing framing).
+
+* DONE TASK-74TA6 orgasmic entry command + stub entry.org + root-pointer line :entry:
+:PROPERTIES:
+:DEPENDS_ON: dec_YTJ0G
+:ID: TASK-74TA6
+:PRIORITY: P1
+:WRITE_SCOPE: crates/** shipped/project-scaffold/** shipped/prompt-studio/**
+:END:
+
+** Description
+Implement dec_YTJ0G. New CLI command =orgasmic entry= printing the live router: manager route, project map, write rules, and the resolved =default= workflow body (resolution lands in the workflows subtask; print a placeholder section until it merges). Rewrite the scaffold =entry.org= template as the ~6-line stub: =#+orgasmic_version= marker, run-=orgasmic entry= instruction, detached protocol (offer install; declined → read-only for =.orgasmic/=, source edits only on explicit user confirmation with drift warning, reconcile later). Update =ROOT_POINTER_LINE= in =orgasmic-core/src/projects.rs= to the new one-liner (run =orgasmic entry=; install pointer if missing). Repoint =shipped/prompt-studio/prompt-parts/source_of_truth_inputs.org= from "Read =.orgasmic/entry.org=" to the command.
+
+** Acceptance Criteria
+- [ ] =orgasmic entry= prints router content sourced from the current runtime (no per-repo prescriptive text).
+- [ ] Scaffolded =entry.org= is the stub; parses as app-owned Org; carries the version marker and detached protocol.
+- [ ] Root pointer tests updated; =cargo test= green.
+
+* DONE TASK-CZTWD Delete config.org and PIPELINE; dispatch requires explicit worker :config:dispatch:
+:PROPERTIES:
+:DEPENDS_ON: dec_S0CPP
+:ID: TASK-CZTWD
+:PRIORITY: P1
+:WRITE_SCOPE: crates/** ui/src/** shipped/project-scaffold/**
+:END:
+
+** Description
+Implement dec_S0CPP. Remove =config.org= from =SCAFFOLD_FILES= and delete =ProjectConfig= (=schema.rs=), the =index.rs::load_project= config read, and =api.rs= config readers (=read_config_default_branch=, =project_prompt_defaults= config sourcing). Drop =first_pipeline_worker_for_kind=: a dispatch naming no worker returns the house-style 400 listing candidates ("pass worker=…; available <kind>s: …"); CLI =--worker= becomes required; UI worker picker becomes mandatory with last-used preselect. Rework =SettingsView= off its config.org splice (drop the pipeline editor; decide what remains on the page as part of this task). Change the =default_branch= prompt fallback from hardcoded "main" to git-derived or empty. Prompt slots for TEST/LINT/BUILD_CMD/WRITE_SCOPE stay but may be empty — workers read repo facts from =project.org= prose or conventions.
+
+** Acceptance Criteria
+- [ ] Fresh init emits no =config.org=; daemon indexes a project without one and without parse errors.
+- [ ] No-worker dispatch 400s with candidates named; UI and CLI updated accordingly.
+- [ ] No injected "main" for repos whose default branch differs.
+- [ ] =cargo test= + UI tests (configSplice removal) green.
+
+* DONE TASK-A8559 Relocate scaffold to shipped/project-scaffold; slim the skill :scaffold:
+:PROPERTIES:
+:DEPENDS_ON: dec_N7BM4
+:ID: TASK-A8559
+:PRIORITY: P2
+:WRITE_SCOPE: crates/** shipped/** scripts/install.sh
+:END:
+
+** Description
+Implement dec_N7BM4. Move =shipped/skills/orgasmic/scaffold/= → =shipped/project-scaffold/=; repoint =SCAFFOLD_SHIPPED_DIR= so the loader tiers are symmetric with =user/project-scaffold/=. Remove the =scaffold/= folder from the skill; update the skill layout map in SKILL.md, =references/init.md= path references, doctor =REQUIRED_SHIPPED=, fixtures parse test, and the daemon/CLI shipped-seed mirrors. Check =scripts/install.sh= and the README skill-copy prompt for scaffold-path references.
+
+** Acceptance Criteria
+- [ ] =orgasmic project init= scaffolds from the new path; user override still shadows per dec_GRDFB.
+- [ ] Skill folder contains only SKILL.md + references/.
+- [ ] doctor and fixtures tests updated; =cargo test= green.
+
+* DONE TASK-3YMVC De-scaffold conventions; fold universal guidance into orgasmic entry :conventions:entry:
+:PROPERTIES:
+:DEPENDS_ON: dec_MCM6Y TASK-74TA6
+:ID: TASK-3YMVC
+:PRIORITY: P2
+:WRITE_SCOPE: crates/** shipped/**
+:END:
+
+** Description
+Implement dec_MCM6Y. Remove the four generic conventions (=contributing.org=, =manager-implementer.org=, =no-skill-installed.org=, =orgasmic-tooling.org=) from =SCAFFOLD_FILES= and the scaffold tree; delete =no-skill-installed.org= outright. Fold their universal content — write rules, contributing discipline, tooling usage, dispatch-through-workers rule — into the =orgasmic entry= output (shipped text, update-tracked). =.orgasmic/conventions/= remains a user-extension dir the manager consults when present; verify =prompt-specs/manager.org= wording needs no change for the empty/absent case. manager-implementer content moves to =workflows/default.org= (TASK dependency via dec_T949W slice), not into entry output.
+
+** Acceptance Criteria
+- [ ] Fresh init creates no =conventions/= files (dir may be absent).
+- [ ] =orgasmic entry= output carries the universal guidance previously scaffolded.
+- [ ] No shipped reference to =no-skill-installed.org= remains (entry.org router, doctor, tests).
+
+* DONE TASK-PCDA2 Ship workflows v1: default.org + 3-tier resolution in orgasmic entry :workflows:
+:PROPERTIES:
+:DEPENDS_ON: dec_T949W TASK-74TA6
+:ID: TASK-PCDA2
+:PRIORITY: P1
+:WRITE_SCOPE: crates/** shipped/workflows/**
+:END:
+
+** Description
+Implement dec_T949W. Author =shipped/workflows/default.org= (=* WORKFLOW default= + prose guidance body): complexity routing (trivial → manager implements directly on a cheap tier, keeping CLI-only state writes, code markers, reconcile-at-pauses — absorb =conventions/manager-implementer.org=; ordinary → dispatch an implementer, manager reviews the diff; risky → grill/plan/implement + independent reviewer, premium tier; unsure → ask the user with a suggested tier) plus guidance on using per-dispatch =--model=/=--effort= overrides against worker capability lists. Add the 3-tier resolver (=.orgasmic/workflows/= → =user/workflows/= → =shipped/workflows/=) and have =orgasmic entry= print the resolved body. No daemon parsing of workflow content; no selection state.
+
+** Acceptance Criteria
+- [ ] =orgasmic entry= prints the resolved =default= workflow; a project or user shadow file wins per tier order.
+- [ ] Workers keep DEFAULT_MODEL/DEFAULT_EFFORT untouched.
+- [ ] doctor knows the new shipped file; =cargo test= green.
+
+* DONE TASK-KWD80 Migrate this repo's .orgasmic to the new shape :migration:
+:PROPERTIES:
+:DEPENDS_ON: TASK-74TA6 TASK-A8559 TASK-3YMVC TASK-PCDA2 TASK-CZTWD
+:ID: TASK-KWD80
+:PRIORITY: P2
+:WRITE_SCOPE: .orgasmic/** AGENTS.md CLAUDE.md
+:END:
+
+** Description
+Dogfood migration once the runtime slices land. Rewrite =AGENTS.md=/=CLAUDE.md= to the new one-liner; shrink =.orgasmic/entry.org= to the stub. Delete =config.org= after moving its live facts (=cargo test=/=clippy=/=build=, default branch, write scope) into =project.org= prose. Delete the four generic conventions; retain repo-specific material (edge vocabulary refs, id-migration recipe from =contributing.org=) as genuine repo conventions. Consider a =.orgasmic/workflows/default.org= shadow only if this repo needs non-default guidance (default: don't). Also serves as the template for migrating the operator's other registered projects.
+
+** Acceptance Criteria
+- [ ] =orgasmic entry= run in this repo prints a coherent router; daemon reindexes without parse errors.
+- [ ] No generic convention or config.org remains; repo-specific conventions preserved.
+- [ ] A fresh manager session (cold context) successfully routes via the new pointers.
+

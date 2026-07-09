@@ -8859,3 +8859,1478 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-08 Wed 08:35:17 artifact.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1716
+:TIME:         [2026-07-08 Wed 08:35:17]
+:TYPE:         artifact.created
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:ARTIFACT_ID:  ART-04FYD
+:TITLE:        Lifecycle cockpit — team discussion brief
+:SUBJECT_NODES: dec_K1DR7 dec_W58VM dec_ZG9B9
+:PROMPT:       Neutral team-discussion brief on the archive/grilling-session-local-first-cockpit-report.md proposal (local-first lifecycle cockpit): concept summary, tensions with recorded decisions, standalone reusable ideas, naming alternatives, and the open questions the team must answer before any adoption.
+:END:
+
+* TX 2026-07-08 Wed 08:35:17 artifact.submitted orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260708-orgasmic-1717
+:TIME:         [2026-07-08 Wed 08:35:17]
+:TYPE:         artifact.submitted
+:ACTOR:        aspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:ARTIFACT_ID:  ART-04FYD
+:VERSION:      1
+:END:
+
+* TX 2026-07-09 Thu 05:48:04 task.created TASK-Z4D3Q
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1718
+:TIME:         [2026-07-09 Thu 05:48:04]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z4D3Q
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       operator-directed UX pass
+:END:
+
+* TX 2026-07-09 Thu 05:48:13 task.state_transitioned TASK-Z4D3Q
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1719
+:TIME:         [2026-07-09 Thu 05:48:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z4D3Q
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       manager-inline implementation complete; gates green (tsc clean, vitest 160/160 incl 6 new draft-preservation/suggestion tests, vite build ok); source uncommitted pending operator call (working tree shares ArtifactView.tsx with pre-existing readable-art-id WIP)
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-09 Thu 05:48:24 manager.action TASK-Z4D3Q
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1720
+:TIME:         [2026-07-09 Thu 05:48:24]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z4D3Q
+:REASON:       Manager-inline UX psychology burst complete (TASK-Z4D3Q): 10 UI files edited + 2 test files (6 new tests). Empty states now name the next action (Decisions/Architecture/Glossary/Tasks CLI hints, Decisions Show-all reset); Generate/Regenerate dialogs preserve drafts and offer subject-shaped prompt suggestions; Artifacts page gets a prompt-only Generate entry; first-run Board shows a 2-of-3-done setup checklist; Tasks toolbar + Project header show done-progress; update toast/Settings lead with release notes. Gates: tsc clean, vitest 160/160, vite build ok. Source left uncommitted (tree shares ArtifactView.tsx with pre-existing readable-art-id WIP; commit is operator call).
+:END:
+
+* TX 2026-07-09 Thu 05:49:06 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1721
+:TIME:         [2026-07-09 Thu 05:49:06]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-09 Thu 11:43:39 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1722
+:TIME:         [2026-07-09 Thu 11:43:39]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_YTJ0G
+:NODE_ID:      dec_YTJ0G
+:END:
+
+* TX 2026-07-09 Thu 11:43:54 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1723
+:TIME:         [2026-07-09 Thu 11:43:54]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_N7BM4
+:NODE_ID:      dec_N7BM4
+:END:
+
+* TX 2026-07-09 Thu 11:44:13 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1724
+:TIME:         [2026-07-09 Thu 11:44:13]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_MCM6Y
+:NODE_ID:      dec_MCM6Y
+:END:
+
+* TX 2026-07-09 Thu 11:44:36 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1725
+:TIME:         [2026-07-09 Thu 11:44:36]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_T949W
+:NODE_ID:      dec_T949W
+:END:
+
+* TX 2026-07-09 Thu 11:44:54 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1726
+:TIME:         [2026-07-09 Thu 11:44:54]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_S0CPP
+:NODE_ID:      dec_S0CPP
+:END:
+
+* TX 2026-07-09 Thu 11:45:08 task.created TASK-VBZ24
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1727
+:TIME:         [2026-07-09 Thu 11:45:08]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VBZ24
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-VBZ24
+:END:
+
+* TX 2026-07-09 Thu 11:45:21 task.created TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1728
+:TIME:         [2026-07-09 Thu 11:45:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-74TA6
+:END:
+
+* TX 2026-07-09 Thu 11:45:33 task.created TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1729
+:TIME:         [2026-07-09 Thu 11:45:33]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-A8559
+:END:
+
+* TX 2026-07-09 Thu 11:45:47 task.created TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1730
+:TIME:         [2026-07-09 Thu 11:45:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-3YMVC
+:END:
+
+* TX 2026-07-09 Thu 11:46:01 task.created TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1731
+:TIME:         [2026-07-09 Thu 11:46:01]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-PCDA2
+:END:
+
+* TX 2026-07-09 Thu 11:46:16 task.created TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1732
+:TIME:         [2026-07-09 Thu 11:46:16]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-CZTWD
+:END:
+
+* TX 2026-07-09 Thu 11:46:30 task.created TASK-KWD80
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1733
+:TIME:         [2026-07-09 Thu 11:46:30]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWD80
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-KWD80
+:END:
+
+* TX 2026-07-09 Thu 11:46:51 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1734
+:TIME:         [2026-07-09 Thu 11:46:51]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       TASK-VBZ24
+:REASON:       Grilled and recorded the entry/workflows redesign: dec_YTJ0G (runtime mandatory, orgasmic entry command, stub entry.org + detached protocol), dec_N7BM4 (scaffold to shipped/project-scaffold), dec_MCM6Y (conventions de-scaffolded), dec_T949W (prose workflows v1, shipped default.org, shadow-the-name resolution), dec_S0CPP (config.org + PIPELINE deleted, explicit-worker dispatch). Task tree TASK-VBZ24 with subtasks TASK-74TA6 TASK-A8559 TASK-3YMVC TASK-PCDA2 TASK-CZTWD TASK-KWD80.
+:END:
+
+* TX 2026-07-09 Thu 11:56:32 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1735
+:TIME:         [2026-07-09 Thu 11:56:32]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-74TA6 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 11:56:32 manager.dispatch_started TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1736
+:TIME:         [2026-07-09 Thu 11:56:32]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74ta6/worktree
+:BRANCH:       task-74ta6-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-brief.md
+:STARTED_AT:   [2026-07-09 Thu 11:56:32]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: entry command + stub entry.org + root-pointer line (dec_YTJ0G)
+:END:
+
+* TX 2026-07-09 Thu 11:56:32 run.created TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1737
+:TIME:         [2026-07-09 Thu 11:56:32]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-74TA6-implementer-20260709T115632.jsonl
+:REASON:       entry command + stub entry.org + root-pointer line (dec_YTJ0G)
+:RUN_ID:       run-20260709T115632-aedf90593d1a4589b2d976fa461c53ae
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74ta6/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1736
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 11:56:36 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1738
+:TIME:         [2026-07-09 Thu 11:56:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CZTWD to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 11:56:37 manager.dispatch_started TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1739
+:TIME:         [2026-07-09 Thu 11:56:37]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-cztwd/worktree
+:BRANCH:       task-cztwd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:STARTED_AT:   [2026-07-09 Thu 11:56:37]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: delete config.org + PIPELINE, explicit-worker dispatch (dec_S0CPP)
+:END:
+
+* TX 2026-07-09 Thu 11:56:37 run.created TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1740
+:TIME:         [2026-07-09 Thu 11:56:37]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-CZTWD-implementer-20260709T115637.jsonl
+:REASON:       delete config.org + PIPELINE, explicit-worker dispatch (dec_S0CPP)
+:RUN_ID:       run-20260709T115637-ae32c789414546a0a7f5cdec5f09dfab
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-cztwd/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1739
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 12:06:33 manager.dispatch_orphaned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1741
+:TIME:         [2026-07-09 Thu 12:06:33]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-74TA6-implementer-20260709T115632.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the stall window elapsed
+:RUN_ID:       run-20260709T115632-aedf90593d1a4589b2d976fa461c53ae
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74ta6/worktree
+:END:
+
+* TX 2026-07-09 Thu 12:06:38 manager.dispatch_orphaned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1742
+:TIME:         [2026-07-09 Thu 12:06:38]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-CZTWD-implementer-20260709T115637.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the stall window elapsed
+:RUN_ID:       run-20260709T115637-ae32c789414546a0a7f5cdec5f09dfab
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-cztwd/worktree
+:END:
+
+* TX 2026-07-09 Thu 12:09:01 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1743
+:TIME:         [2026-07-09 Thu 12:09:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatch failed: codex-tmux driver launched stub shell, stall_timeout; resetting for re-dispatch
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-09 Thu 12:09:01 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1744
+:TIME:         [2026-07-09 Thu 12:09:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatch failed: codex-tmux driver launched stub shell, stall_timeout; resetting for re-dispatch
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-09 Thu 12:11:36 manager.dispatch_aborted TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1745
+:TIME:         [2026-07-09 Thu 12:11:36]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:REASON:       codex-tmux driver launched stub shell; stall_timeout, no output. Re-dispatching via rmux.
+:CLOSED_TX:    tx-20260709-orgasmic-1736
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74ta6/worktree
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74ta6/worktree; branch: git branch -D failed: error: branch 'task-74ta6-impl' not found
+:END:
+
+* TX 2026-07-09 Thu 12:11:38 manager.dispatch_aborted TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1746
+:TIME:         [2026-07-09 Thu 12:11:38]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:       codex-tmux driver launched stub shell; stall_timeout, no output. Re-dispatching via rmux.
+:CLOSED_TX:    tx-20260709-orgasmic-1739
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-cztwd/worktree
+:CLEANUP_STATUS: partial
+:CLEANUP_ERROR: worktree: worktree path missing: /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-cztwd/worktree; branch: git branch -D failed: error: branch 'task-cztwd-impl' not found
+:END:
+
+* TX 2026-07-09 Thu 12:11:50 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1747
+:TIME:         [2026-07-09 Thu 12:11:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-74TA6 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 12:11:50 manager.dispatch_started TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1748
+:TIME:         [2026-07-09 Thu 12:11:50]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74TA6/worktree
+:BRANCH:       task-74ta6-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-brief.md
+:STARTED_AT:   [2026-07-09 Thu 12:11:50]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch via rmux; entry command + stub + root pointer (dec_YTJ0G)
+:END:
+
+* TX 2026-07-09 Thu 12:11:50 run.created TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1749
+:TIME:         [2026-07-09 Thu 12:11:50]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-74TA6-implementer-20260709T121150.jsonl
+:REASON:       re-dispatch via rmux; entry command + stub + root pointer (dec_YTJ0G)
+:RUN_ID:       run-20260709T121150-3f2db40b10ee4b9fa1858724c55a020f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74TA6/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1748
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 12:11:51 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1750
+:TIME:         [2026-07-09 Thu 12:11:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CZTWD to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 12:11:51 manager.dispatch_started TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1751
+:TIME:         [2026-07-09 Thu 12:11:51]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRANCH:       task-cztwd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:STARTED_AT:   [2026-07-09 Thu 12:11:51]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch via rmux; delete config.org + PIPELINE (dec_S0CPP)
+:END:
+
+* TX 2026-07-09 Thu 12:11:51 run.created TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1752
+:TIME:         [2026-07-09 Thu 12:11:51]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-CZTWD-implementer-20260709T121151.jsonl
+:REASON:       re-dispatch via rmux; delete config.org + PIPELINE (dec_S0CPP)
+:RUN_ID:       run-20260709T121151-e034ff46efa14347b56d1e42622898d4
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1751
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 12:14:02 manager.dispatch_aborted TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1753
+:TIME:         [2026-07-09 Thu 12:14:02]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:REASON:       codex launch stubbed at daemon level (tmux AND rmux launch 'echo …; exec sh'); driver-agnostic. Not re-dispatching until daemon runtime fixed.
+:CLOSED_TX:    tx-20260709-orgasmic-1748
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74TA6/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-09 Thu 12:14:03 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1754
+:TIME:         [2026-07-09 Thu 12:14:03]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-74TA6 to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-09 Thu 12:14:04 manager.dispatch_aborted TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1755
+:TIME:         [2026-07-09 Thu 12:14:04]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:       codex launch stubbed at daemon level (tmux AND rmux launch 'echo …; exec sh'); driver-agnostic. Not re-dispatching until daemon runtime fixed.
+:CLOSED_TX:    tx-20260709-orgasmic-1751
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-09 Thu 12:14:05 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1756
+:TIME:         [2026-07-09 Thu 12:14:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-CZTWD to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-09 Thu 12:22:21 task.created TASK-70VV1
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1757
+:TIME:         [2026-07-09 Thu 12:22:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-70VV1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-70VV1
+:END:
+
+* TX 2026-07-09 Thu 13:02:05 task.state_transitioned TASK-70VV1
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1758
+:TIME:         [2026-07-09 Thu 13:02:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-70VV1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Applied 2-line gate fix to tmux.rs:552 + rmux.rs:293; added codex placeholder-swap regression tests (both drivers); driver suite 25/25 green, clippy clean. Building release to restart daemon from source.
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 13:02:05 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1759
+:TIME:         [2026-07-09 Thu 13:02:05]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       TASK-70VV1
+:REASON:       Fixed codex-tmux/rmux placeholder-swap gate (claude-only -> any harness) so codex dispatch launches real codex TUI instead of stubbing. Files: crates/orgasmic-drivers/src/modes/{tmux.rs,rmux.rs} + regression tests. Verified: cargo test -p orgasmic-drivers 25/25, clippy clean. Next: release build + daemon restart --from-source, probe codex dispatch, resume redesign dispatches.
+:END:
+
+
+* TX 2026-07-09 Thu 13:04:23 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1760
+:TIME:         [2026-07-09 Thu 13:04:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-74TA6 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 13:04:23 manager.dispatch_started TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1761
+:TIME:         [2026-07-09 Thu 13:04:23]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74TA6/worktree
+:BRANCH:       task-74ta6-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-brief.md
+:STARTED_AT:   [2026-07-09 Thu 13:04:23]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: probe after codex driver fix; entry command + stub + root pointer (dec_YTJ0G)
+:END:
+
+* TX 2026-07-09 Thu 13:04:23 run.created TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1762
+:TIME:         [2026-07-09 Thu 13:04:23]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-74TA6-implementer-20260709T130423.jsonl
+:REASON:       probe after codex driver fix; entry command + stub + root pointer (dec_YTJ0G)
+:RUN_ID:       run-20260709T130423-c3485daa5233405e8225bd760293203e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74TA6/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-74TA6/task-74TA6-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1761
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 13:05:29 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1763
+:TIME:         [2026-07-09 Thu 13:05:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CZTWD to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 13:05:29 manager.dispatch_started TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1764
+:TIME:         [2026-07-09 Thu 13:05:29]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRANCH:       task-cztwd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:STARTED_AT:   [2026-07-09 Thu 13:05:29]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: codex driver fixed; delete config.org + PIPELINE, explicit-worker dispatch (dec_S0CPP)
+:END:
+
+* TX 2026-07-09 Thu 13:05:29 run.created TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1765
+:TIME:         [2026-07-09 Thu 13:05:29]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-CZTWD-implementer-20260709T130529.jsonl
+:REASON:       codex driver fixed; delete config.org + PIPELINE, explicit-worker dispatch (dec_S0CPP)
+:RUN_ID:       run-20260709T130529-5e13d7b6891a4bf5ad0d54d658c3b205
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1764
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 13:24:02 implementer.done TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1766
+:TIME:         [2026-07-09 Thu 13:24:02]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:RUN_ID:       run-20260709T130423-c3485daa5233405e8225bd760293203e
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-74TA6/worktree
+:SHA:          8fe0c986d2fc9cac87e56d5b8acfd710b2ed355c
+:MERGE_SHA:    8fe0c986d2fc9cac87e56d5b8acfd710b2ed355c
+:END:
+
+* TX 2026-07-09 Thu 13:25:30 manager.dispatch_aborted TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1767
+:TIME:         [2026-07-09 Thu 13:25:30]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:       codex launched (fix works) but process exited early with no output (transient); re-dispatching
+:CLOSED_TX:    tx-20260709-orgasmic-1764
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-09 Thu 13:25:30 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1768
+:TIME:         [2026-07-09 Thu 13:25:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-CZTWD to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-09 Thu 13:25:30 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1769
+:TIME:         [2026-07-09 Thu 13:25:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CZTWD to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 13:25:31 manager.dispatch_started TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1770
+:TIME:         [2026-07-09 Thu 13:25:31]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRANCH:       task-cztwd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:STARTED_AT:   [2026-07-09 Thu 13:25:31]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch after transient codex early-exit; dec_S0CPP
+:END:
+
+* TX 2026-07-09 Thu 13:25:31 run.created TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1771
+:TIME:         [2026-07-09 Thu 13:25:31]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-CZTWD-implementer-20260709T132531.jsonl
+:REASON:       re-dispatch after transient codex early-exit; dec_S0CPP
+:RUN_ID:       run-20260709T132531-374deefc7b134a4fabeaba20fd5d905e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1770
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 13:29:28 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1772
+:TIME:         [2026-07-09 Thu 13:29:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Manager review PASS: entry command sources router from shipped/entry/router.org (update-tracked), stub+detached protocol per dec_YTJ0G, root pointer + doctor + update.rs correct. Sole test failure (fixtures live_state backlog) is the .orgasmic worktree blindspot — verified PASS on main. Follow-ups at integration: F1 router.org still refs config.org/no-skill-installed/manager-implementer (clean when CZTWD/3YMVC land); F2 local_instructions pointer dropped; F3 notice to stdout not stderr.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-09 Thu 13:31:46 manager.dispatch_aborted TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1773
+:TIME:         [2026-07-09 Thu 13:31:46]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:       codex 0.139 self-update loop (update landed in different prefix); fixed nvm codex to 0.143, re-dispatching
+:CLOSED_TX:    tx-20260709-orgasmic-1770
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-09 Thu 13:31:46 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1774
+:TIME:         [2026-07-09 Thu 13:31:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-CZTWD to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-09 Thu 13:31:46 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1775
+:TIME:         [2026-07-09 Thu 13:31:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-CZTWD to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 13:31:47 manager.dispatch_started TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1776
+:TIME:         [2026-07-09 Thu 13:31:47]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRANCH:       task-cztwd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:STARTED_AT:   [2026-07-09 Thu 13:31:47]
+:LIVENESS:     806556a0ddfe086fd13797daf5a0a369705eefde
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch after codex version fix; dec_S0CPP
+:END:
+
+* TX 2026-07-09 Thu 13:31:47 run.created TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1777
+:TIME:         [2026-07-09 Thu 13:31:47]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-CZTWD-implementer-20260709T133147.jsonl
+:REASON:       re-dispatch after codex version fix; dec_S0CPP
+:RUN_ID:       run-20260709T133147-eb881654254d48c9ae04f67614756604
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-CZTWD/task-CZTWD-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1776
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+
+* TX 2026-07-09 Thu 14:11:14 implementer.done TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1778
+:TIME:         [2026-07-09 Thu 14:11:14]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:RUN_ID:       run-20260709T133147-eb881654254d48c9ae04f67614756604
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-CZTWD/worktree
+:SHA:          0b20f6e7482aa75512f803aa16ff4ce03fab9720
+:MERGE_SHA:    0b20f6e7482aa75512f803aa16ff4ce03fab9720
+:END:
+
+* TX 2026-07-09 Thu 14:14:48 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1779
+:TIME:         [2026-07-09 Thu 14:14:48]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Manager review PASS (branch 0b20f6e). config.org+ProjectConfig+NodeKind::Config+PIPELINE removed; no-worker dispatch -> 400 w/ candidates; --worker required (CLI+API); default_branch git-derived (better than brief). Reproduced: cargo test 60+2+5 green, compiles. Worker-verified: npm test 143 + typecheck pass, fresh-init smoke (no config.org, :BRANCH: trunk, parse_errors 0), live 400 dispatch smoke. Correct discovery: no dispatch-launch UI exists (worker-picker criterion moot). Residual: UI checks worker-run not manager-reproduced; router.org config.org refs (F1) still to clean at integration.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-09 Thu 14:14:48 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1780
+:TIME:         [2026-07-09 Thu 14:14:48]
+:TYPE:         manager.action
+:ACTOR:        theaspirational
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       TASK-VBZ24
+:REASON:       Both P1 entry-point tasks dispatched via codex-rmux gpt-5.5 high (after fixing driver stub bug TASK-70VV1 + codex 0.139->0.143 update loop) and manager-reviewed PASS: TASK-74TA6 (8fe0c98, orgasmic entry command + shipped router + stub + root pointer) and TASK-CZTWD (0b20f6e, config.org/PIPELINE/ProjectConfig/NodeKind::Config removal, explicit-worker dispatch, git-derived branch). Both in_review on branches off 806556a; not yet merged. Integration TODO: likely conflicts on projects.rs/doctor.rs/main.rs; F1 clean config.org refs from shipped/entry/router.org (74TA6) once CZTWD's config.org removal lands.
+:END:
+
+* TX 2026-07-09 Thu 14:54:51 task.state_transitioned TASK-74TA6
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1781
+:TIME:         [2026-07-09 Thu 14:54:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-74TA6
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged to main (8fe0c98) via merge commit 11086bd; reviewed PASS; cargo+UI green
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-09 Thu 14:54:51 task.state_transitioned TASK-CZTWD
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1782
+:TIME:         [2026-07-09 Thu 14:54:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CZTWD
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged to main via merge commit 11086bd; reviewed PASS; cargo+UI green; F1 router.org config.org refs cleaned
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+
+* TX 2026-07-09 Thu 15:01:23 task.state_transitioned TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1783
+:TIME:         [2026-07-09 Thu 15:01:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-A8559 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 15:01:24 manager.dispatch_started TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1784
+:TIME:         [2026-07-09 Thu 15:01:24]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-a8559/worktree
+:BRANCH:       task-a8559-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-A8559/task-A8559-brief.md
+:STARTED_AT:   [2026-07-09 Thu 15:01:24]
+:LIVENESS:     11086bddd1e3896e07a8db96624075940e1cbda4
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: next-wave: scaffold move (dec_N7BM4)
+:END:
+
+* TX 2026-07-09 Thu 15:01:24 run.created TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1785
+:TIME:         [2026-07-09 Thu 15:01:24]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-A8559-implementer-20260709T150124.jsonl
+:REASON:       next-wave: scaffold move (dec_N7BM4)
+:RUN_ID:       run-20260709T150124-687df40a8731461b9ca0b168613c2b14
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-a8559/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-A8559/task-A8559-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-A8559/task-A8559-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-A8559/task-A8559-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1784
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 15:01:25 task.state_transitioned TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1786
+:TIME:         [2026-07-09 Thu 15:01:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-3YMVC to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 15:01:26 manager.dispatch_started TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1787
+:TIME:         [2026-07-09 Thu 15:01:26]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3ymvc/worktree
+:BRANCH:       task-3ymvc-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-3YMVC/task-3YMVC-brief.md
+:STARTED_AT:   [2026-07-09 Thu 15:01:26]
+:LIVENESS:     11086bddd1e3896e07a8db96624075940e1cbda4
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: next-wave: de-scaffold conventions (dec_MCM6Y)
+:END:
+
+* TX 2026-07-09 Thu 15:01:26 run.created TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1788
+:TIME:         [2026-07-09 Thu 15:01:26]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-3YMVC-implementer-20260709T150126.jsonl
+:REASON:       next-wave: de-scaffold conventions (dec_MCM6Y)
+:RUN_ID:       run-20260709T150126-1455bfcf8bc74fd69b70a7d3bef49051
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3ymvc/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-3YMVC/task-3YMVC-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-3YMVC/task-3YMVC-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-3YMVC/task-3YMVC-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1787
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 15:01:27 task.state_transitioned TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1789
+:TIME:         [2026-07-09 Thu 15:01:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-PCDA2 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 15:01:28 manager.dispatch_started TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1790
+:TIME:         [2026-07-09 Thu 15:01:28]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-pcda2/worktree
+:BRANCH:       task-pcda2-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-PCDA2/task-PCDA2-brief.md
+:STARTED_AT:   [2026-07-09 Thu 15:01:28]
+:LIVENESS:     11086bddd1e3896e07a8db96624075940e1cbda4
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: next-wave: workflows v1 (dec_T949W)
+:END:
+
+* TX 2026-07-09 Thu 15:01:28 run.created TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1791
+:TIME:         [2026-07-09 Thu 15:01:28]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-PCDA2-implementer-20260709T150128.jsonl
+:REASON:       next-wave: workflows v1 (dec_T949W)
+:RUN_ID:       run-20260709T150128-6bd57920005349cc9ca33a2354714ab4
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-tmux
+:KIND:         implementer
+:DRIVER:       tmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-pcda2/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-PCDA2/task-PCDA2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-PCDA2/task-PCDA2-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-PCDA2/task-PCDA2-stdout.log
+:DISPATCH_TX:  tx-20260709-orgasmic-1790
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-09 Thu 15:20:28 implementer.done TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1792
+:TIME:         [2026-07-09 Thu 15:20:28]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:RUN_ID:       run-20260709T150126-1455bfcf8bc74fd69b70a7d3bef49051
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-3YMVC/worktree
+:SHA:          ef3bd8c93375341a14c070e1c1662490a33b8445
+:MERGE_SHA:    ef3bd8c93375341a14c070e1c1662490a33b8445
+:END:
+
+* TX 2026-07-09 Thu 15:22:04 implementer.done TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1793
+:TIME:         [2026-07-09 Thu 15:22:04]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:RUN_ID:       run-20260709T150124-687df40a8731461b9ca0b168613c2b14
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-A8559/worktree
+:SHA:          2c384719f83206d6bbea854cc284f9c6f00748a2
+:MERGE_SHA:    2c384719f83206d6bbea854cc284f9c6f00748a2
+:END:
+
+* TX 2026-07-09 Thu 15:24:09 implementer.done TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1794
+:TIME:         [2026-07-09 Thu 15:24:09]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:RUN_ID:       run-20260709T150128-6bd57920005349cc9ca33a2354714ab4
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-PCDA2/worktree
+:SHA:          4b5fb6abd23a15dc7fa8b558c432f2c957397267
+:MERGE_SHA:    4b5fb6abd23a15dc7fa8b558c432f2c957397267
+:END:
+
+* TX 2026-07-09 Thu 15:27:52 task.state_transitioned TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1795
+:TIME:         [2026-07-09 Thu 15:27:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Manager review PASS. Pure move+repoint: git confirms all scaffold files renamed (0-byte diffs, contents preserved incl 4 conventions left for 3YMVC); SCAFFOLD_SHIPPED_DIR repointed; doctor/fixtures/common/SKILL/init.md updated. Worker self-verified fmt/build/clippy + scaffold tests + init smoke + override smoke green. Sole reported failure (dispatch.rs:2202) re-run standalone = PASS — flaky under 3-worker load, not real. Branch 2c38471.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-09 Thu 15:27:52 task.state_transitioned TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1796
+:TIME:         [2026-07-09 Thu 15:27:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Manager review PASS. All 4 conventions removed from SCAFFOLD_FILES + deleted; doctor/tests updated; universal content folded into router.org (new Contributing discipline / Tooling usage / Dispatch rule sections; no-skill-installed ref replaced). Fence respected (untouched: SHIPPED_DIR, workflows, manager-implementer pointer left for PCDA2). Worker self-verified build/clippy/fmt/focused tests + init probe (no conventions) + entry probe + reindex 0 parse errors. Branch ef3bd8c.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-09 Thu 15:27:53 task.state_transitioned TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1797
+:TIME:         [2026-07-09 Thu 15:27:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Manager review PASS. New shipped/workflows/default.org (trivial/ordinary/risky/unsure, absorbs manager-implementer discipline); 3-tier resolver (.orgasmic/user/shipped) + inject into entry '** Default workflow'; router manager-implementer pointer retired to workflow; doctor + fixtures updated; entry.rs precedence tests. Fence respected (no scaffold/conventions edits). Worker self-verified build/clippy/fmt + full suite (CARGO_INCREMENTAL=0) + entry precedence probes + doctor. Branch 4b5fb6a.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-09 Thu 15:44:36 task.state_transitioned TASK-A8559
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1798
+:TIME:         [2026-07-09 Thu 15:44:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A8559
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged to main (3823a91 chain): build+test+clippy green; conflicts resolved manager-side; branch/worktree cleaned.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-09 Thu 15:44:37 task.state_transitioned TASK-3YMVC
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1799
+:TIME:         [2026-07-09 Thu 15:44:37]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3YMVC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged to main (3823a91 chain): build+test+clippy green; conflicts resolved manager-side; branch/worktree cleaned.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-09 Thu 15:44:37 task.state_transitioned TASK-PCDA2
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1800
+:TIME:         [2026-07-09 Thu 15:44:37]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-PCDA2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Merged to main (3823a91 chain): build+test+clippy green; conflicts resolved manager-side; branch/worktree cleaned.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-09 Thu 19:36:57 task.state_transitioned TASK-KWD80
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1801
+:TIME:         [2026-07-09 Thu 19:36:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWD80
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Manager-direct migration (live .orgasmic entanglement + judgment calls make dispatch unsuitable per worktree blindspot).
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-09 Thu 19:41:38 task.state_transitioned TASK-KWD80
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1802
+:TIME:         [2026-07-09 Thu 19:41:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWD80
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Dogfood migration complete. AGENTS.md/CLAUDE.md -> canonical 'run orgasmic entry' root pointers; .orgasmic/entry.org shrunk to runtime-router stub; config.org deleted after moving verification facts (cargo build/test/clippy, default branch main, write scope .orgasmic/**) into project.org ** Verification prose (PIPELINE dropped per dec_S0CPP); 4 generic conventions deleted (contributing/manager-implementer/no-skill-installed/orgasmic-tooling), repo-specific material retained: concurrent-writer.org kept + new decision-graph.org (edge vocabulary dec_HJENQ/2GQ7Q, id-migration recipe, dec_001 error-message standard). Verified: orgasmic project reindexes with 0 parse errors; 'orgasmic entry' against merged content prints a coherent router + injects resolved default workflow, no dangling convention/config refs. Note: stale glossary 'pipeline' term (config.org/:PIPELINE:) surfaced for separate reconciliation; live runtime publish still pending (whole-wave deploy).
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-09 Thu 20:23:22 graph.glossary.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260709-orgasmic-1803
+:TIME:         [2026-07-09 Thu 20:23:22]
+:TYPE:         graph.glossary.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/glossary.org
+:REASON:       edited glossary node term_P9JK1
+:NODE_ID:      term_P9JK1
+:END:

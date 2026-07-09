@@ -404,7 +404,7 @@
 :CANONICAL:          worker pipeline
 :AVOID:              stage worker mapping, STAGE_WORKER
 :RELATES_TO:         term_VV48W term_RG690 term_X4JGJ
-:DEFINITION:         The ordered list of worker kinds that serve a task (project default in config.org, e.g. griller planner implementer reviewer; per-task override via :PIPELINE: or implied by :KIND:). The task's position is read from the latest run sub-state — griller.done means the planner is next — and phases are skippable. Replaces the per-stage STAGE_WORKER_* mapping (dec_DEH2T).
+:DEFINITION:         The ordered progression of worker kinds that serve a task (e.g. griller -> planner -> implementer -> reviewer). No longer a config-declared fixed sequence: dec_S0CPP retired config.org and its :PIPELINE: map, and dec_T949W made workflows prose-only — the resolved workflow (e.g. the shipped `default`) describes the loop in prose and the manager selects the workers, model, and effort per task's risk rather than reading a stored list. The task's position is still read from the latest run sub-state — griller.done means the planner is next — and phases are skippable. Replaces the per-stage STAGE_WORKER_* mapping (dec_DEH2T).
 :DECIDED_AT:         [2026-06-10 Wed]
 :END:
 

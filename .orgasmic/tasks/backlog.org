@@ -1,3 +1,18 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
+* BACKLOG TASK-VBZ24 Runtime-mandatory entry, workflows v1, config.org removal    :entry:workflows:scaffold:
+:PROPERTIES:
+:DEPENDS_ON: dec_YTJ0G dec_N7BM4 dec_MCM6Y dec_T949W dec_S0CPP
+:ID: TASK-VBZ24
+:PRIORITY: P1
+:END:
+
+** Description
+Umbrella for the 2026-07-09 entry/workflows redesign (dec_YTJ0G dec_N7BM4 dec_MCM6Y dec_T949W dec_S0CPP). Kills the frozen-scaffold-surface problem: root pointers route to a stub that defers to a runtime-generated =orgasmic entry= router; generic conventions and the manager-implementer discipline move behind the runtime (shipped =workflows/default.org=); =config.org= and =:PIPELINE:= are deleted; dispatch always names its worker. Subtasks carry the implementation slices; this heading tracks overall completion.
+
+** Acceptance Criteria
+- [ ] All subtasks done.
+- [ ] A fresh =orgasmic project init= emits the slimmed scaffold (stub entry.org, no conventions/, no config.org).
+- [ ] This repo's own =.orgasmic/= is migrated to the new shape.
+

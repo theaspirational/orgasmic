@@ -1898,3 +1898,78 @@ Consequences
 - Does NOT help if the host KILLS the worker before it reaches finalize (resource-pressure deaths) — but nothing inside the worker can, and this BOUNDS the damage: reached finalize => everything durable; killed before => no finalize event (detectable) + uncommitted worktree (the rescuable state, not a silent loss). The daemon-side fallback + manager rescue remain the safety net for this residual.
 - Requires prompt-spec changes to every dispatched worker persona and a demotion of the current stall/scrape primary path.
 Complements the B05AM/567JG lineage by attacking the root (inference) rather than sub-cases.
+
+* dec_YTJ0G Must the orgasmic runtime be installed to work in a coordinated repo, and what do the root pointers route to?
+:PROPERTIES:
+:ID: dec_YTJ0G
+:PARENT: dec_RX4DF
+:RELATES_TO: dec_A6CXY dec_A10RB
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_RX4DF and dec_A6CXY made the /orgasmic skill an install-free scaffold path and framed the CLI/daemon as opt-in. That stance has already drifted: the shipped SKILL.md now says =init= requires the runtime and delegates to =orgasmic project init=. Meanwhile the scaffolded surface rots: =entry.org= and =conventions/*= are copied into each repo at init and never touched again — =init= is create-only (=init_project= skips existing files even under =--force=) and bundle update explicitly excludes registered project =.orgasmic/= files. A repo initialized on an old runtime keeps its old router and guidance forever. Root pointers (=AGENTS.md=/=CLAUDE.md=) are committed, so they cannot carry machine paths into =$ORGASMIC_HOME=.
+** Decision
+The runtime is mandatory for working in a coordinated repo. Root instruction files keep exactly one committed line routing to =.orgasmic/entry.org=, which shrinks to a ~6-line stub: the =#+orgasmic_version= marker (state-layout pin), the instruction to run =orgasmic entry= and follow its output, and the detached protocol — if the CLI is missing, offer to install (=/orgasmic install=); if the user declines, default to read-only for =.orgasmic/= and proceed with source edits only on explicit user confirmation, warning that drift must be reconciled once the runtime returns. A new CLI command =orgasmic entry= prints the live router: manager route, project map, write rules, and the resolved default workflow body — generated from the current runtime on every invocation, so router guidance is update-tracked and can detect state-layout version skew.
+** Consequences
+The frozen-surface staleness problem is solved at the router: everything prescriptive lives behind a command the bundle update refreshes. Partially supersedes dec_RX4DF (install-free init) and dec_A6CXY's CLI-optional framing; ratifies the drift already shipped in SKILL.md. Detached is a protocol in the stub, not a workflow — the one situation it covers (no runtime) is the one situation a loader cannot serve it. Existing repos need a migration: rewrite root pointers and shrink =entry.org=. Shell-less agents keep the stub as breadcrumb.
+
+* dec_N7BM4 Where does the project scaffold live once the skill no longer needs to be self-contained?
+:PROPERTIES:
+:ID: dec_N7BM4
+:PARENT: dec_YTJ0G
+:RELATES_TO: dec_RX4DF dec_HR8D8 dec_GRDFB
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_RX4DF bundled the scaffold templates inside the skill at =shipped/skills/orgasmic/scaffold/= so the copied skill could init a project offline with no binary or =$ORGASMIC_HOME=. With the runtime now mandatory (dec_YTJ0G) that founding rationale is dead — =init= already requires =orgasmic status= to succeed. The user-override key is already the skill-free name =user/project-scaffold/= (=resolve_scaffold=, =orgasmic-core/src/projects.rs=), so shipped and user tiers are asymmetric for historical reasons only.
+** Decision
+Move the scaffold to =shipped/project-scaffold/=. =SCAFFOLD_SHIPPED_DIR= repoints; the loader tiers become symmetric (=user/project-scaffold/<rel>= shadows =shipped/project-scaffold/<rel>= per dec_GRDFB). The skill sheds its =scaffold/= folder and slims to router + references (the dec_HR8D8 thin-router ideal); the skill install/copy prompt no longer carries scaffold assets. Doctor's =REQUIRED_SHIPPED=, the fixtures parse test, and =references/init.md= update to the new path.
+** Consequences
+One scaffold tree, symmetric with its override key; the skill is lighter and purely a UX surface over the CLI. Reverses the "no shipped/project-scaffold path at all" clause of dec_RX4DF — the drift-risk argument made there is void now that the path is the single source rather than an alias. Scaffold membership itself shrinks separately (dec on conventions/config).
+
+* dec_MCM6Y Should generic conventions be scaffolded into every repo, or served by the runtime?
+:PROPERTIES:
+:ID: dec_MCM6Y
+:PARENT: dec_YTJ0G
+:RELATES_TO: dec_A10RB dec_N7BM4
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_A10RB extracted prescriptive guidance from =entry.org= into scaffolded per-project =conventions/= files. Four of them (=contributing.org=, =manager-implementer.org=, =no-skill-installed.org=, =orgasmic-tooling.org=) are placeholder-free generic guidance, frozen per repo at init and never updated — the sharpest instance of the frozen-surface problem. Repo-specific accretions (edge vocabulary refs, the id-migration recipe in this repo's =contributing.org=) mixed into them prove the directory is doing two jobs. =no-skill-installed.org= exists only for the no-runtime case, which dec_YTJ0G eliminates.
+** Decision
+Stop scaffolding =conventions/=. The directory becomes pure user extension: projects add their own files; the manager consults =.orgasmic/conventions/= when present (the existing =prompt-specs/manager.org= wording already handles an absent/empty dir). Universal guidance — write rules, contributing discipline, tooling usage — folds into the =orgasmic entry= output, update-tracked. =no-skill-installed.org= is deleted. =manager-implementer.org= retires into the shipped default workflow (see workflows decision). This is distinct from =shipped/prompt-studio/conventions/= (prompt-slot bodies), which is untouched.
+** Consequences
+Generic guidance updates with every bundle update instead of rotting per repo; the per-project namespace is reserved for genuinely repo-specific agreements. Migration for existing repos: delete the four generic files, retain repo-specific content as real conventions (this repo keeps the edge-vocabulary and id-migration material). Scaffold membership shrinks by five files (four conventions + the stub change in dec_YTJ0G).
+
+* dec_T949W What is a workflow: structured lanes the daemon enforces, or prose guidance the manager follows?
+:PROPERTIES:
+:ID: dec_T949W
+:PARENT: dec_YTJ0G
+:RELATES_TO: dec_GRDFB dec_MCM6Y dec_ASB1A
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+The loop and the tiering are smeared across three places: =config.org='s =:PIPELINE:=, worker =DEFAULT_MODEL=/=DEFAULT_EFFORT=, and ad-hoc per-dispatch overrides. The operator wants adaptive routing by task complexity — a trivial fix implemented by the manager itself on a cheap tier, ordinary work dispatched and manager-reviewed, risky work through grill/plan/implement plus an independent reviewer — without adding moving parts. A structured design (named lanes with per-stage worker+model+effort, a rubric, per-task =:LANE:= stamping, daemon validation) was drafted and rejected as too much edit surface for v1. A prose workflow cannot be the daemon's source for model/effort, so stripping worker defaults (also considered) is unworkable.
+** Decision
+Workflows v1 are prose-only Org files: =* WORKFLOW <id>= heading plus a free-form guidance body; the daemon parses nothing inside them. Resolution is three-tier per the dec_GRDFB loader rule: =.orgasmic/workflows/<name>.org= (project) → =$ORGASMIC_HOME/user/workflows/<name>.org= (global) → =shipped/workflows/<name>.org=. There is exactly one well-known name, =default=; customization means shadowing that file, not repointing — no selection state exists anywhere. Alternate named workflows are invoked conversationally and session-scoped; nothing is written. Workers keep =DEFAULT_MODEL=/=DEFAULT_EFFORT= as the machine-readable fallback; the workflow prose tells the manager when to send the existing dispatch model/effort overrides. Ship exactly =shipped/workflows/default.org=: complexity guidance (trivial → manager implements directly, cheap tier, keeping the manager-implementer discipline of CLI-only state writes, markers, and reconcile-at-pauses; ordinary → dispatch an implementer, manager reviews the diff; risky → grill/plan/implement + independent reviewer on a premium tier; unsure → ask the user with a suggestion). =orgasmic entry= prints the resolved body. Detached operation is not a workflow — it lives in the stub protocol (dec_YTJ0G).
+** Consequences
+Workflows v1 needs zero daemon changes: it is a shipped file, a loader path, and an =orgasmic entry= section. The manager-implementer convention retires into =default.org=, update-tracked. Trade-off accepted knowingly: which loop a task actually ran is recorded only in tx/worklogs, not validated or stamped; if reproducibility pressure grows, the rejected lanes+rubric design is the known upgrade path. Rejected alternatives for the record: lanes + rubric with =:LANE:= stamping; machine-readable =:PIPELINE:= in workflow properties; per-task or config-pointer binding.
+
+* dec_S0CPP Does config.org survive once the pipeline moves out and its fields prove soft?
+:PROPERTIES:
+:ID: dec_S0CPP
+:PARENT: dec_FD6M7
+:RELATES_TO: dec_YTJ0G dec_T949W
+:SOURCE: session:2026-07-09 entry-workflows-grill
+:END:
+
+** Context
+dec_FD6M7 split machine config out of =project.org= because the stage-worker map bloated it; that map's successor =:PIPELINE:= is now superseded by workflows (dec_T949W). A hardness audit of the remaining fields: =TEST_CMD=/=LINT_CMD=/=BUILD_CMD= are =or_default()= prompt slots (=prompt_compiler.rs=) — empty when absent; =WRITE_SCOPE= is injected as advisory prompt text with task-level override and no hard lease enforcement; =DEFAULT_BRANCH= is a prompt slot with a hardcoded ="main"= fallback and an =Option= read at registration. The single hard consumer is =:PIPELINE:= via =first_pipeline_worker_for_kind= (=api.rs=), which resolves no-worker dispatches.
+** Decision
+Delete =config.org= from the scaffold and the schema. Repo facts (verification commands, branch, write scope) go free-form: stated in =project.org= prose or a repo convention, read by agents like any durable state — no dedicated machine fields. =:PIPELINE:= is dropped with no replacement map: a dispatch must always name its worker explicitly; a no-worker dispatch is rejected with the house-style error listing candidates, the UI worker picker becomes mandatory (preselecting last-used), and =--worker= is required on the CLI. =ProjectConfig= and its readers (=schema.rs=, =index.rs::load_project=, =api.rs= config reads) are removed; =SettingsView= is reworked off its =config.org= splice. The =default_branch= prompt fallback changes from hardcoded ="main"= to git-derived or empty — never a wrong injected value.
+** Consequences
+One fewer scaffold file and the last per-project machine-config surface disappears; project identity stays on =project.org='s PROJECT heading (=:ID:= was the only schema-required field and is already there). Partially reverses dec_FD6M7 — its cause (the bloated map) evaporated. Cost accepted: dispatch prompts may carry empty command slots (workers discover commands from prose), and every dispatch caller (API/CLI/UI) must name a worker. Rejected alternatives: folding the four fields into PROJECT heading properties; deriving commands automatically; a kind-based worker defaulting rule (deterministic single-candidate auto-select was declined in favor of always-explicit).

@@ -1,3 +1,27 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-70VV1 Fix: codex-tmux/rmux dispatch stubs — placeholder-swap gate is claude-only :bug:drivers:dispatch:
+:PROPERTIES:
+:ID: TASK-70VV1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/modes/rmux.rs
+:END:
+
+** Description
+Pre-existing driver bug (present since the initial public release c96f0f3, still in 0.0.10-dev; the live 0.0.9 daemon has it too). Any =implementer-codex-tmux= / =implementer-codex-rmux= dispatch silently stubs: the daemon stages every worker pane with a placeholder command =sh -lc "echo orgasmic pipeline stage acquired; exec sh"= (=api.rs:3221=, `stage_driver_config_with_overrides`), and the terminal driver is supposed to swap that placeholder for the real harness launch. But the swap gate only fires for claude:
+- =crates/orgasmic-drivers/src/modes/tmux.rs:548-552= `should_use_default_command` returns true only if `cfg.command.is_none()` OR `harness == "claude" && is_dispatch_placeholder(...)`.
+- =crates/orgasmic-drivers/src/modes/rmux.rs:289-292= same, gated on `(harness == "claude" || harness == "custom") && staged_placeholder`.
+For =harness == "codex"= the placeholder is Some("sh") and the claude clause is false, so the driver runs the placeholder shell verbatim and types the compiled prompt into a bare =sh= → cascade of `sh: …: command not found` / `syntax error near unexpected token '('` → `stall_timeout_exceeded` → `outcome: failed`, no files touched. `default_command_for_harness` already maps `"codex" => ("codex", [])` (tmux.rs:584, rmux.rs; unit test `default_command_for_harness("codex").0 == "codex"` passes), so the launch capability exists — only the gate excludes codex.
+
+Evidence: runs run-20260709T115632 (tmux) and run-20260709T121150/121151 (rmux) all failed identically with the placeholder pane command in their driver_config. Daemon is the genuine 0.0.9 release under launchd with codex on its PATH (~/.nvm/.../bin/codex) — not a PATH or binary-missing issue.
+
+** Acceptance Criteria
+- [ ] `should_use_default_command` (tmux) and the rmux equivalent swap the dispatch placeholder for the real harness command for codex (decide: add "codex" explicitly, or drop the harness restriction since `default_command_for_harness` already falls back to ("sh", []) for unknown harnesses — cursor-agent/hermes behavior must be considered).
+- [ ] A codex-tmux and a codex-rmux dispatch launch the real `codex` TUI in the pane (driver_config pane command is `codex`, not the placeholder) and reach a real turn.
+- [ ] Existing claude/custom behavior unchanged; driver unit tests updated to cover codex placeholder-swap on both modes.
+- [ ] After rebuild + daemon restart, a probe dispatch of a redesign task (TASK-74TA6) actually produces a diff.
+
+** Notes
+Blocks dispatching the entry/workflows redesign (TASK-VBZ24 tree) via codex. Until fixed, those dispatch via claude workers or manager-implement.
+
