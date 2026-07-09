@@ -37,10 +37,12 @@ set|append`, `orgasmic decision create`, `orgasmic architecture create`,
    orgasmic project init
    ```
 
-   Optional: `--name`, `--default-branch`, `--path`. The CLI copies bundled
-   scaffold templates, substitutes `{{PROJECT_NAME}}` / `{{PROJECT_ID}}` /
-   `{{DEFAULT_BRANCH}}`, seeds `tmp/local_instructions.org`, and ensures the
-   root `AGENTS.md` pointer to `.orgasmic/entry.org`.
+   Optional: `--name`, `--default-branch`, `--path`. The CLI copies templates
+   from `shipped/project-scaffold/` (with per-file user overrides under
+   `user/project-scaffold/`), substitutes `{{PROJECT_NAME}}` /
+   `{{PROJECT_ID}}` / `{{DEFAULT_BRANCH}}`, seeds
+   `tmp/local_instructions.org`, and ensures the root `AGENTS.md` pointer to
+   `.orgasmic/entry.org`.
 
 3. **Summarize.** List files written and resolved `PROJECT_NAME` / `PROJECT_ID` /
    `DEFAULT_BRANCH`. Point at `.orgasmic/entry.org` and the bootstrap task

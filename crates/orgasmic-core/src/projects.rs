@@ -80,20 +80,17 @@ fn slugify(s: &str) -> String {
         .to_string()
 }
 
-/// Shipped scaffold location under `shipped/` — bundled inside the /orgasmic
-/// skill (dec_057) so a copied skill stays self-contained. Single source of
-/// truth; the skill-free name `project-scaffold` survives only as the
-/// user-override key below.
-pub const SCAFFOLD_SHIPPED_DIR: &str = "skills/orgasmic/scaffold";
+/// Shipped scaffold location under `shipped/`. The shipped and user tiers use
+/// the same `project-scaffold` key so per-file overrides stay symmetric
+/// (dec_N7BM4, dec_GRDFB).
+pub const SCAFFOLD_SHIPPED_DIR: &str = "project-scaffold";
 
 /// Logical key for user scaffold overrides: `user/project-scaffold/<rel>`
-/// shadows the shipped template per the loader rule (dec_002), without
-/// leaking the skill's internal layout into the user-content contract.
+/// shadows `shipped/project-scaffold/<rel>` per the loader rule (dec_GRDFB).
 const SCAFFOLD_USER_DIR: &str = "project-scaffold";
 
 /// Resolve one scaffold template: user override first, then the shipped
-/// skill-bundled tree. Scaffold-specific stand-in for `resolve_loader`,
-/// because the user key and the shipped path diverge here.
+/// top-level scaffold tree.
 fn resolve_scaffold(home: &Home, rel: &str) -> Option<PathBuf> {
     let user = home.user().join(SCAFFOLD_USER_DIR).join(rel);
     if user.exists() {
@@ -108,7 +105,7 @@ fn resolve_scaffold(home: &Home, rel: &str) -> Option<PathBuf> {
 }
 
 /// Files the scaffold writes inside `<project>/.orgasmic/`, paired with their
-/// shipped source under `shipped/skills/orgasmic/scaffold/`.
+/// shipped source under `shipped/project-scaffold/`.
 const SCAFFOLD_FILES: &[&str] = &[
     ".gitignore",
     "entry.org",
@@ -723,9 +720,9 @@ mod tests {
 
     #[test]
     fn scaffold_manifest_matches_shipped_directory() {
-        // SCAFFOLD_FILES must track shipped/skills/orgasmic/scaffold exactly,
-        // or daemon/CLI-inited projects silently diverge from skill-inited
-        // ones (this drifted once: conventions/manager-implementer.org).
+        // SCAFFOLD_FILES must track shipped/project-scaffold exactly,
+        // or daemon/CLI-inited projects silently diverge from the runtime
+        // scaffold (this drifted once: conventions/manager-implementer.org).
         let shipped = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../shipped")
             .join(SCAFFOLD_SHIPPED_DIR);
@@ -751,7 +748,7 @@ mod tests {
         manifest.sort();
         assert_eq!(
             on_disk, manifest,
-            "shipped scaffold/ and SCAFFOLD_FILES disagree"
+            "shipped project-scaffold/ and SCAFFOLD_FILES disagree"
         );
     }
 

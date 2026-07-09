@@ -408,25 +408,25 @@ fn parses_shipped_schema_files() {
 #[test]
 fn parses_shipped_project_scaffold() {
     for name in [
-        "shipped/skills/orgasmic/scaffold/tasks/backlog.org",
-        "shipped/skills/orgasmic/scaffold/tasks/todo.org",
-        "shipped/skills/orgasmic/scaffold/tasks/in_progress.org",
-        "shipped/skills/orgasmic/scaffold/tasks/in_review.org",
-        "shipped/skills/orgasmic/scaffold/tasks/done.org",
-        "shipped/skills/orgasmic/scaffold/tasks/cancelled.org",
+        "shipped/project-scaffold/tasks/backlog.org",
+        "shipped/project-scaffold/tasks/todo.org",
+        "shipped/project-scaffold/tasks/in_progress.org",
+        "shipped/project-scaffold/tasks/in_review.org",
+        "shipped/project-scaffold/tasks/done.org",
+        "shipped/project-scaffold/tasks/cancelled.org",
     ] {
         parse_or_panic(name);
     }
-    parse_or_panic("shipped/skills/orgasmic/scaffold/tasks/goal.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/tasks/handoff.org");
+    parse_or_panic("shipped/project-scaffold/tasks/goal.org");
+    parse_or_panic("shipped/project-scaffold/tasks/handoff.org");
     // Project scaffold uses {{PROJECT_NAME}} placeholders; the parser must
     // still accept it because slot syntax is not Org syntax.
-    parse_or_panic("shipped/skills/orgasmic/scaffold/decisions.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/project.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/entry.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/contributing.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/no-skill-installed.org");
-    parse_or_panic("shipped/skills/orgasmic/scaffold/conventions/orgasmic-tooling.org");
+    parse_or_panic("shipped/project-scaffold/decisions.org");
+    parse_or_panic("shipped/project-scaffold/project.org");
+    parse_or_panic("shipped/project-scaffold/entry.org");
+    parse_or_panic("shipped/project-scaffold/conventions/contributing.org");
+    parse_or_panic("shipped/project-scaffold/conventions/no-skill-installed.org");
+    parse_or_panic("shipped/project-scaffold/conventions/orgasmic-tooling.org");
 }
 
 #[test]
@@ -441,7 +441,7 @@ fn shipped_scaffold_state_files_ship_without_seed_headings() {
         "done.org",
         "cancelled.org",
     ] {
-        let rel = format!("shipped/skills/orgasmic/scaffold/tasks/{name}");
+        let rel = format!("shipped/project-scaffold/tasks/{name}");
         let f = parse_or_panic(&rel);
         assert!(
             f.headings.is_empty(),
@@ -457,7 +457,7 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
     // daemon can index a just-bootstrapped project, and the parent/subtask
     // structure + ordering must hold (dec_056). Under the file-per-state
     // layout (dec_QQYXM) the tree ships in backlog.org — its stage.
-    let rel = "shipped/skills/orgasmic/scaffold/tasks/backlog.org";
+    let rel = "shipped/project-scaffold/tasks/backlog.org";
     let f = parse_or_panic(rel);
     let tasks: Vec<TaskHeading> = f
         .headings
