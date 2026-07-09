@@ -1,1 +1,1 @@
-read AGENTS.md
+Read `AGENTS.md`.

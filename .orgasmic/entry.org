@@ -3,55 +3,6 @@
 
 * Entry
 
-Route first. Read only the files required by that route.
+Run `orgasmic entry` and follow its output.
 
-If `.orgasmic/tmp/local_instructions.org` exists, read it after this file.
-It is local, ignored, and may contain machine-specific setup notes.
-
-** Agent router
-Worker route when the prompt is a strict orgasmic worker dispatch with all of:
-- worker role: implementer, architect, planner, reviewer, or griller
-- task ID or task heading
-- read/write scope
-- acceptance, reporting, or evidence expectations
-
-Worker startup:
-1. Read the task heading.
-2. Read `project.org`, `config.org`, and `gotchas.org`.
-3. Read only referenced conventions and source files.
-
-Manager route for every other prompt, including arbitrary requests,
-pickup/status requests, and prompts beginning with `/orgasmic`.
-
-Manager startup:
-1. Check `~/.agents/skills/orgasmic/SKILL.md` or the visible skill registry.
-2. If installed, read the skill and follow the selected `/orgasmic` subcommand.
-3. If absent, read `conventions/no-skill-installed.org`.
-
-Manager-implementer: when the manager edits source directly in this session
-instead of dispatching a worker (single-worker setups), read
-`conventions/manager-implementer.org` before the first source edit.
-
-** Project map
-- `project.org`: baseline, mission, operating constraints.
-- `tasks/`: `backlog.org`, `todo.org`, `in_progress.org`, `in_review.org`, `done.org`, `cancelled.org`, `goal.org`, `handoff.org`.
-- `tasks/goal.org`: manager focus only.
-- `tasks/handoff.org`: manager continuity only.
-- `decisions.org`: durable rationale.
-- `architecture.org`: architecture graph, source paths, node tests.
-- `glossary.org`: domain language.
-- `gotchas.org`: repeated traps; read before source edits.
-- `conventions/`: repo-local working agreements.
-- `config.org`: verification commands, default branch, stage-worker map.
-- `tx/`: agent activity log.
-
-** Write rules
-
-- Before `.orgasmic/` state writes: run
-  `command -v orgasmic >/dev/null 2>&1 && orgasmic status >/dev/null 2>&1`.
-- If it succeeds: write through `orgasmic ...` CLI commands.
-- If it fails: stop — install or start the runtime (`/orgasmic install`,
-  `orgasmic daemon start`); do not hand-edit.
-- Read `conventions/contributing.org` before changing orgasmic state.
-- Read `conventions/orgasmic-tooling.org` before using installed tooling.
-- Add repo-specific conventions as separate files under `conventions/`.
+If the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.

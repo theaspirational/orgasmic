@@ -1,0 +1,36 @@
+#+title: decision graph
+#+orgasmic_version: 1
+
+* Convention: evolving orgasmic's durable graph
+
+Repo-specific rules for authoring this project's decision/architecture graph and
+durable state. (Generic "how to contribute / write state through the CLI"
+guidance is served by =orgasmic entry=; this file keeps only what is particular
+to developing orgasmic itself.)
+
+** Living model while greenfield
+While the project is greenfield (pre-stable), the decision and architecture graph
+is a *living model*: edit nodes in place to keep them true. Use =orgasmic
+decision create= / =orgasmic architecture create= for genuinely new rationale,
+and =orgasmic node body set= / =orgasmic node prop set= to revise, merge,
+correct, or re-link existing nodes. Reserve append-only supersession (a new
+record plus a =:SUPERSEDES:= backref, per [[dec_KTF04]]) for after the graph
+stabilizes, when history must be preserved.
+
+** Edge vocabulary (canonical, closed set)
+Edge keys come from the canonical vocabulary ([[dec_HJENQ]]) — don't invent new
+ones:
+=:MOTIVATED_BY: :RELATES_TO: :DEPENDS_ON: :BLOCKED_BY: :IMPLEMENTS: :PRODUCES:
+:GLOSSARY_REFS: :PARENT:=. =:PARENT:= is the single-value, same-class
+decision-nesting hierarchy edge ([[dec_2GQ7Q]]).
+
+** Resolving pre-migration ids
+To resolve any pre-migration id: =git show id-migration | grep <old-id>=.
+
+** Errors name the fix
+Every daemon/CLI rejection tells the caller exactly what to do instead (the
+=dec_001= legacy-id rejection is the house standard — "omit id to auto-mint or
+use =orgasmic id mint="). A 404/400 that only names the problem sends agents down
+wrong hypotheses; guards without a named alternative or override don't ship.
+(Validated by the 2026-07-06 external battle-test: the frictions that cost
+debugging sessions were exactly the errors lacking this.)

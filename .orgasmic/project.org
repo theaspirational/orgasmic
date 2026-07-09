@@ -18,6 +18,11 @@ orgasmic coordinates AI-agent work through repo-local plain-text state. This rep
 - The daemon is the write authority for tx, sessions, and structured project-state edits.
 - Inspired by HAR (sibling repo at `../har/`) and org-mode. Reuse from HAR is encouraged: the `WorkerDriver` trait + concrete drivers, the supervisor pattern, and the UI's transport seams.
 
+** Verification
+- Default branch: =main=.
+- Build: =cargo build=. Test: =cargo test=. Lint: =cargo clippy --workspace --all-targets=. All three must be green before a change is called done; run the UI checks (=npm run typecheck= / tests under =ui/=) when the change touches =ui/=.
+- Agent write scope for durable state is =.orgasmic/**=, mediated by the daemon (dec_S0CPP retired the standalone =config.org=; these facts live here as prose).
+
 ** Product Baseline
 - Product: orgasmic is a per-developer local coordination app, made of a daemon, CLI, and React UI, for projects, tasks, decisions, architecture, glossary, activity, and agent runs. Success means the operator can see current project state, launch or inspect workers, edit durable =.org= sources, and verify what happened without guessing which agent or file owns the truth.
 - Register: product / tool. Design serves the product; this is working software, not a marketing or brand surface.
