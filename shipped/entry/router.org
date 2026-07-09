@@ -24,8 +24,8 @@ Manager startup:
 3. If absent, read `conventions/no-skill-installed.org`.
 
 Manager-implementer: when the manager edits source directly in this session
-instead of dispatching a worker (single-worker setups), read
-`conventions/manager-implementer.org` before the first source edit.
+instead of dispatching a worker (single-worker setups), follow the resolved
+`default` workflow printed below before the first source edit.
 
 ** Project map
 - `project.org`: baseline, mission, operating constraints.
@@ -50,5 +50,3 @@ instead of dispatching a worker (single-worker setups), read
 - Add repo-specific conventions as separate files under `conventions/`.
 
 ** Default workflow
-<!-- workflow: resolved by TASK-PCDA2 -->
-Resolved `default` workflow body will print here once TASK-PCDA2 lands.

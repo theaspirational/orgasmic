@@ -403,6 +403,7 @@ fn parses_shipped_schema_files() {
     parse_or_panic("shipped/prompt-studio/slots.org");
     parse_or_panic("shipped/schema/state-machine.org");
     parse_or_panic("shipped/entry/router.org");
+    parse_or_panic("shipped/workflows/default.org");
 }
 
 #[test]
