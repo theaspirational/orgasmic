@@ -50,5 +50,6 @@ orgasmic/
     update.md                   /orgasmic update
     init.md                     /orgasmic init
     recall-resume.md            /orgasmic recall and resume
-  scaffold/                     project templates bundled for `init`
 ```
+
+Project templates live in the runtime at `shipped/project-scaffold/`.

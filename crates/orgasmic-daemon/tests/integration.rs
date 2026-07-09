@@ -208,7 +208,7 @@ fn seed_unregistered_project(project_root: &Path, project_id: &str) {
 }
 
 fn seed_project_scaffold(home: &Home) {
-    let dst = home.source().join("shipped/skills/orgasmic/scaffold");
+    let dst = home.source().join("shipped/project-scaffold");
     std::fs::create_dir_all(dst.join("tasks")).unwrap();
     std::fs::create_dir_all(dst.join("conventions")).unwrap();
     write(&dst.join(".gitignore"), "tmp/\n");
