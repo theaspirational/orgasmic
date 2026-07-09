@@ -7,7 +7,7 @@
 
 Source of truth lookup:
 - Code is authoritative once written.
-- Read `.orgasmic/entry.org`; it names what to open for the task at hand.
+- Run `orgasmic entry`; it names what to open for the task at hand.
 
 Read only the files and entries relevant to the assignment. Full project
 documents are referenced by path, not pasted into the prompt.

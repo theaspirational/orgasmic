@@ -116,16 +116,17 @@ const LOCAL_INSTRUCTIONS_PLACEHOLDER: &str = concat!(
 
 /// Root instruction files harnesses auto-read: `AGENTS.md`
 /// (codex/opencode/cursor) and `CLAUDE.md` (Claude). After init both must exist
-/// and route to `.orgasmic/entry.org`; the first entry is canonical (carries the
-/// real pointer) and the second defers to it — same invariant as the
-/// `/orgasmic init` skill.
+/// and route to `orgasmic entry`, with `.orgasmic/entry.org` retained as the
+/// fallback breadcrumb; the first entry is canonical (carries the real pointer)
+/// and the second defers to it — same invariant as the `/orgasmic init` skill.
 const ROOT_POINTER_FILES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
 const ROOT_POINTER_TARGET: &str = ".orgasmic/entry.org";
 const ROOT_POINTER_LINE: &str = concat!(
-    "This repo is coordinated with **orgasmic**. Before you answer, search, ",
-    "edit, or run any tool here, you MUST read ",
-    "[`.orgasmic/entry.org`](.orgasmic/entry.org) and follow it. ",
-    "No exceptions — read it first.\n",
+    "This repo is coordinated with **orgasmic**: before you answer, search, ",
+    "edit, or run any tool here, you MUST run `orgasmic entry` and follow its ",
+    "output; if the CLI is missing, read ",
+    "[`.orgasmic/entry.org`](.orgasmic/entry.org); install missing root ",
+    "pointers with `orgasmic project init`.\n",
 );
 
 /// Initialize `<project_root>/.orgasmic/` from the shipped scaffold templates.
@@ -455,7 +456,7 @@ mod tests {
         std::fs::write(dst.join(".gitignore"), "tmp/\n").unwrap();
         std::fs::write(
             dst.join("entry.org"),
-            "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRead the file your task touches.\n\n** What lives where\n- `conventions/` — repo-local working agreements.\n",
+            "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
         )
         .unwrap();
         let conventions_dst = dst.join("conventions");
@@ -555,8 +556,14 @@ mod tests {
         // entry.org and per-project conventions are scaffolded too (dec_055).
         let entry = std::fs::read_to_string(proj.join(".orgasmic/entry.org")).unwrap();
         assert!(entry.contains("* Entry"));
+        assert!(entry.contains("#+orgasmic_version: 1"));
+        assert!(entry.contains("Run `orgasmic entry` and follow its output."));
+        assert!(entry.contains("keep `.orgasmic/` read-only"));
+        assert!(entry.contains("source edits will drift from orgasmic state"));
         let root_pointer = std::fs::read_to_string(proj.join("AGENTS.md")).unwrap();
         assert!(root_pointer.contains(".orgasmic/entry.org"));
+        assert!(root_pointer.contains("orgasmic entry"));
+        assert!(root_pointer.contains("orgasmic project init"));
         let claude_pointer = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
         assert_eq!(claude_pointer, "Read `AGENTS.md`.\n");
         assert!(proj

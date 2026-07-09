@@ -24,6 +24,7 @@ const REQUIRED_RUNTIME_FILES: &[&str] = &[
     "docs/README.md",
     "shipped/schema/tx.org",
     "shipped/prompt-studio/slots.org",
+    "shipped/entry/router.org",
     "shipped/skills/orgasmic/SKILL.md",
 ];
 
@@ -861,6 +862,7 @@ mod tests {
         write(&root.join("docs/README.md"), "# runtime docs\n");
         write(&root.join("shipped/schema/tx.org"), "* Tx\n");
         write(&root.join("shipped/prompt-studio/slots.org"), "* Slots\n");
+        write(&root.join("shipped/entry/router.org"), "* Entry\n");
         write(
             &root.join("shipped/skills/orgasmic/SKILL.md"),
             "---\nname: orgasmic\n---\n",

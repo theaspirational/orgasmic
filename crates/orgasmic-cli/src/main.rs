@@ -68,6 +68,8 @@ Examples:
   orgasmic doctor
   orgasmic project init --path ~/myrepo --name myrepo")]
     Init,
+    /// Print the runtime-provided project entry router.
+    Entry,
     /// Diagnose this install (home layout, shipped files, daemon liveness).
     #[command(after_help = "\
 Examples:
@@ -867,6 +869,10 @@ struct DaemonRestartArgs {
     clear_runtime_override: bool,
 }
 
+// orgasmic:dec_YTJ0G
+const ENTRY_ROUTER_REL: &str = "entry/router.org";
+const ENTRY_SCAFFOLD_VERSION: &str = "1";
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let home = Home::from_env()?;
@@ -879,6 +885,7 @@ fn main() -> Result<()> {
     orgasmic_daemon::init_tracing(&log_default);
     match cli.cmd {
         Cmd::Init => cmd_init(&home),
+        Cmd::Entry => cmd_entry(&home),
         Cmd::Doctor {
             fix_id_collisions,
             project,
@@ -963,6 +970,75 @@ fn main() -> Result<()> {
             reason,
             wait,
         } => cmd_stage(&home, "plan", project, reason, wait),
+    }
+}
+
+fn cmd_entry(home: &Home) -> Result<()> {
+    let router = read_runtime_entry_router(home)?;
+    if let Some(project_root) = find_project_root_optional()? {
+        if let Some(notice) = entry_version_notice(&project_root) {
+            println!("{notice}");
+            println!();
+        }
+    }
+    print!("{router}");
+    if !router.ends_with('\n') {
+        println!();
+    }
+    Ok(())
+}
+
+fn read_runtime_entry_router(home: &Home) -> Result<String> {
+    let path = home.source().join("shipped").join(ENTRY_ROUTER_REL);
+    std::fs::read_to_string(&path)
+        .with_context(|| format!("read runtime entry router {}", path.display()))
+}
+
+fn find_project_root_optional() -> Result<Option<PathBuf>> {
+    let mut dir = std::env::current_dir().context("cwd")?;
+    loop {
+        if dir.join(".orgasmic/project.org").is_file() {
+            return Ok(Some(dir));
+        }
+        if !dir.pop() {
+            return Ok(None);
+        }
+    }
+}
+
+fn entry_version_notice(project_root: &Path) -> Option<String> {
+    let path = project_root.join(".orgasmic/entry.org");
+    let source = match std::fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(_) => {
+            return Some(
+                "notice: .orgasmic/entry.org is missing or unreadable; run `orgasmic project migrate` when available."
+                    .to_string(),
+            );
+        }
+    };
+    let file = match orgasmic_core::OrgFile::parse(source, path.to_string_lossy()) {
+        Ok(file) => file,
+        Err(err) => {
+            return Some(format!(
+                "notice: .orgasmic/entry.org version could not be read ({err}); run `orgasmic project migrate` when available."
+            ));
+        }
+    };
+    let version = file
+        .keywords
+        .iter()
+        .find(|keyword| keyword.key.eq_ignore_ascii_case("orgasmic_version"))
+        .map(|keyword| keyword.value.trim());
+    match version {
+        Some(found) if found == ENTRY_SCAFFOLD_VERSION => None,
+        Some(found) => Some(format!(
+            "notice: .orgasmic/entry.org scaffold version {found} does not match runtime version {ENTRY_SCAFFOLD_VERSION}; run `orgasmic project migrate` when available."
+        )),
+        None => Some(
+            "notice: .orgasmic/entry.org has no #+orgasmic_version; run `orgasmic project migrate` when available."
+                .to_string(),
+        ),
     }
 }
 

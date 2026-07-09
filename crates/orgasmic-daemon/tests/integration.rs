@@ -214,7 +214,7 @@ fn seed_project_scaffold(home: &Home) {
     write(&dst.join(".gitignore"), "tmp/\n");
     write(
         &dst.join("entry.org"),
-        "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRead the file your task touches.\n",
+        "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
     );
     write(
         &dst.join("conventions/contributing.org"),

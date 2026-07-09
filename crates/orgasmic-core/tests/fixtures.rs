@@ -427,6 +427,7 @@ fn parses_shipped_schema_files() {
     parse_or_panic("shipped/schema/tx.org");
     parse_or_panic("shipped/prompt-studio/slots.org");
     parse_or_panic("shipped/schema/state-machine.org");
+    parse_or_panic("shipped/entry/router.org");
 }
 
 #[test]

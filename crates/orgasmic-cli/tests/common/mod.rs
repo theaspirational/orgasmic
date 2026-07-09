@@ -26,6 +26,7 @@ const REQUIRED_SHIPPED: &[&str] = &[
     "schema/tx.org",
     "prompt-studio/slots.org",
     "schema/state-machine.org",
+    "entry/router.org",
     "skills/orgasmic/scaffold/.gitignore",
     "skills/orgasmic/scaffold/entry.org",
     "skills/orgasmic/scaffold/project.org",
