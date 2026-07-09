@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { Check, Loader2, MessageSquarePlus, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, MessageSquarePlus, RefreshCw, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +26,7 @@ import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import {
   fetchArtifact,
+  isArtifactMissingError,
   postArtifactComment,
   regenerateArtifact,
   resolveArtifactComment,
@@ -98,21 +99,45 @@ export function ArtifactView({ projectId }: { projectId: string }) {
     });
   }
 
-  async function regenerate(extraPrompt: string) {
+  async function regenerate(extraPrompt: string): Promise<boolean> {
     setRegenerating(true);
     try {
       await regenerateArtifact(artifactId, extraPrompt ? { extraPrompt } : {}, projectId);
       toast.success('Regenerate started');
       setRegenerateDialogOpen(false);
       artifact.refresh();
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
+      return false;
     } finally {
       setRegenerating(false);
     }
   }
 
-  if (artifact.error) return <ErrorPanel error={artifact.error} />;
+  if (artifact.error) {
+    if (isArtifactMissingError(artifact.error)) {
+      return (
+        <div className="flex flex-col items-start gap-4">
+          <PageHeader title="Artifact not found" />
+          <p className="text-sm text-muted-foreground">
+            No artifact with id{' '}
+            <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">{artifactId}</code>{' '}
+            exists in this project. It may have been renamed or removed.
+          </p>
+          <Button
+            variant="outline"
+            onClick={() =>
+              void navigate({ to: '/projects/$projectId/artifacts', params: { projectId } })
+            }
+          >
+            <ArrowLeft className="size-4" /> Back to Artifacts
+          </Button>
+        </div>
+      );
+    }
+    return <ErrorPanel error={artifact.error} />;
+  }
   if (!artifact.data) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -166,7 +191,7 @@ export function ArtifactView({ projectId }: { projectId: string }) {
           open={regenerateDialogOpen}
           onOpenChange={setRegenerateDialogOpen}
           submitting={regenerating}
-          onSubmit={(extraPrompt) => void regenerate(extraPrompt)}
+          onSubmit={regenerate}
         />
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
@@ -196,19 +221,19 @@ function RegenerateArtifactDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   submitting: boolean;
-  /** Trimmed extra-prompt text; empty string means "none". */
-  onSubmit: (extraPrompt: string) => void;
+  /** Trimmed extra-prompt text; empty string means "none". Resolves true when
+   *  the regeneration was accepted, so the dialog knows to clear its draft. */
+  onSubmit: (extraPrompt: string) => Promise<boolean>;
 }) {
+  // The draft survives close/reopen — an escaped dialog must not discard typed
+  // steering text. It clears only after a successful submit.
   const [extraPrompt, setExtraPrompt] = useState('');
-
-  useEffect(() => {
-    if (!open) return;
-    setExtraPrompt('');
-  }, [open]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit(extraPrompt.trim());
+    void onSubmit(extraPrompt.trim()).then((ok) => {
+      if (ok) setExtraPrompt('');
+    });
   }
 
   return (

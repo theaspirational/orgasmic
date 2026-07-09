@@ -1,0 +1,12 @@
+#+title: orgasmic artifact ART-04FYD
+#+orgasmic_version: 1
+
+* ART-04FYD Lifecycle cockpit — team discussion brief
+:PROPERTIES:
+:ID:           ART-04FYD
+:TITLE:        Lifecycle cockpit — team discussion brief
+:SUBJECT_NODES: dec_K1DR7 dec_W58VM dec_ZG9B9
+:PROMPT:       Neutral team-discussion brief on the archive/grilling-session-local-first-cockpit-report.md proposal (local-first lifecycle cockpit): concept summary, tensions with recorded decisions, standalone reusable ideas, naming alternatives, and the open questions the team must answer before any adoption.
+:VERSION:      1
+:STATE:        submitted
+:END:

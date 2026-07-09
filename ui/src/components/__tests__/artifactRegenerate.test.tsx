@@ -105,6 +105,28 @@ describe('ArtifactView regenerate', () => {
     expect(regenerateArtifactMock).toHaveBeenCalledWith('ART-1', {}, 'proj1');
   });
 
+  it('keeps a typed extra prompt when the dialog is dismissed and reopened', async () => {
+    fetchArtifactMock.mockResolvedValue(detail());
+
+    render(<ArtifactView projectId="proj1" />);
+    await screen.findByText('Login flow wireframe');
+
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate/ }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(
+      within(dialog).getByPlaceholderText('Anything extra to steer this regeneration…'),
+      { target: { value: 'Half-typed steering note' } },
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: /Regenerate/ }));
+    const reopened = await screen.findByRole('dialog');
+    expect(
+      within(reopened).getByPlaceholderText('Anything extra to steer this regeneration…'),
+    ).toHaveValue('Half-typed steering note');
+  });
+
   it('locks the comment composer and shows the regenerating banner', async () => {
     fetchArtifactMock.mockResolvedValue(detail({ state: 'regenerating' }));
 

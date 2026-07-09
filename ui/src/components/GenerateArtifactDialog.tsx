@@ -36,14 +36,17 @@ export function GenerateArtifactDialog({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Deliberately keep `prompt` across close/reopen: an escaped or misclicked
+  // dialog must not discard typed work. It clears only after a successful
+  // submit.
   useEffect(() => {
     if (!open) return;
-    setPrompt('');
     setSubmitting(false);
     setError(null);
   }, [open]);
 
   const canSubmit = prompt.trim().length > 0;
+  const suggestions = promptSuggestions(nodes, nodeLabels);
 
   async function submit() {
     if (!canSubmit) return;
@@ -52,6 +55,7 @@ export function GenerateArtifactDialog({
     try {
       const result = await generateArtifact({ nodes, prompt: prompt.trim() }, projectId);
       toast.success('Artifact generation started');
+      setPrompt('');
       onOpenChange(false);
       void navigate({
         to: '/projects/$projectId/artifacts/$artifactId',
@@ -67,6 +71,32 @@ export function GenerateArtifactDialog({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void submit();
+  }
+
+  // Starter prompts shaped by the subject, shown only while the field is
+  // empty: a likely default beats a blank required textarea, and the user
+  // still edits before submitting.
+  function promptSuggestions(ids: string[], labels?: string[]): string[] {
+    if (ids.length === 0) {
+      return [
+        'Project overview for a new teammate.',
+        'Current risks and open questions.',
+        'Sprint board from the open tasks.',
+      ];
+    }
+    if (ids.length === 1) {
+      const label = labels?.[0] ?? ids[0];
+      return [
+        `One-page brief on ${label}: context, mechanism, open questions.`,
+        `Review packet for ${label} — what to check and what could break.`,
+        `Diagram how ${label} connects to the rest of the system.`,
+      ];
+    }
+    return [
+      `Compare these ${ids.length} nodes: overlaps, gaps, and tensions.`,
+      `One-page brief covering these ${ids.length} nodes for a new teammate.`,
+      'Review packet: risks and open questions across the selection.',
+    ];
   }
 
   return (
@@ -104,6 +134,22 @@ export function GenerateArtifactDialog({
               placeholder="What should this artifact cover?"
             />
           </label>
+          {prompt.trim().length === 0 && suggestions.length > 0 ? (
+            <div className="flex flex-wrap gap-1.5" aria-label="Prompt suggestions">
+              {suggestions.map((suggestion) => (
+                <Button
+                  key={suggestion}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-auto whitespace-normal py-1 text-left text-xs font-normal text-muted-foreground"
+                  onClick={() => setPrompt(suggestion)}
+                >
+                  {suggestion}
+                </Button>
+              ))}
+            </div>
+          ) : null}
           {error ? (
             <div role="alert" aria-live="polite" className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
               {error}

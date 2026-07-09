@@ -47,7 +47,8 @@ use tower_http::cors::{Any, CorsLayer};
 
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
-    new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_mdx, versions_dir,
+    new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_art_id_readable,
+    validate_mdx, versions_dir,
     ArtifactDetail, ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
@@ -9689,6 +9690,17 @@ fn require_valid_art_id(art_id: &str) -> Result<(), ApiError> {
     validate_art_id(art_id).map_err(ApiError::bad_request)
 }
 
+/// Read-route counterpart to [`require_valid_art_id`]: enforces only
+/// traversal-safety (a single safe path segment) rather than the strict minted
+/// grammar. Used by `GET /artifacts/:id` so legacy / hand-authored semantic ids
+/// that the list route already surfaces from disk can be opened, while a
+/// missing id still 404s downstream and a traversal attempt still 400s here.
+/// Create/mint/write routes keep [`require_valid_art_id`] so new ids stay
+/// well-formed.
+fn require_readable_art_id(art_id: &str) -> Result<(), ApiError> {
+    validate_art_id_readable(art_id).map_err(ApiError::bad_request)
+}
+
 async fn get_artifacts(
     State(state): State<ApiState>,
     Extension(identity): Extension<Identity>,
@@ -9710,7 +9722,7 @@ async fn get_artifact(
     Path(id): Path<String>,
     Query(q): Query<ArtifactQuery>,
 ) -> Result<Json<ArtifactDetail>, ApiError> {
-    require_valid_art_id(&id)?;
+    require_readable_art_id(&id)?;
     let snap = state.index.snapshot().await;
     let entry = resolve_artifact_project(&snap, q.project.as_deref())?;
     authz::require(&identity, Some(&entry.id), Action::ArtifactsRead)?;

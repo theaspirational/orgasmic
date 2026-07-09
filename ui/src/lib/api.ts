@@ -187,6 +187,14 @@ export function isRunGoneError(err: unknown): boolean {
   return err instanceof HttpError && err.status === 404;
 }
 
+// True when an artifact fetch failed because the id is unknown or malformed:
+// the daemon 404s a missing artifact and 400s an id that isn't a valid path
+// segment. The detail view renders both as a friendly "artifact not found"
+// state with a link back to the list, rather than surfacing the raw error.
+export function isArtifactMissingError(err: unknown): boolean {
+  return err instanceof HttpError && (err.status === 404 || err.status === 400);
+}
+
 export function postRunInput(runId: string, input: string): Promise<RunInputResponse> {
   return post<RunInputResponse>(`/runs/${encodeURIComponent(runId)}/input`, { input });
 }

@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
+import { Sparkles } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { useMe } from '@/hooks/useMe';
 import { useRefreshToken } from '@/hooks/useRefreshBus';
 import { fetchArchitecture, fetchArtifacts, fetchDecisions, fetchGlossary } from '@/lib/api';
@@ -9,6 +11,7 @@ import type { ArchitectureSummary, ArtifactSummary, DecisionSummary, GlossarySum
 import { useResource } from '@/lib/useResource';
 import { inferNodeKind } from '@/components/node-views/orgNodes';
 
+import { GenerateArtifactDialog } from './GenerateArtifactDialog';
 import { ErrorPanel, PageHeader } from './Primitives';
 import { NodeListView } from './node-views/NodeListView';
 
@@ -55,6 +58,8 @@ export function ArtifactsView({ projectId }: { projectId: string }) {
   // would 403 — skip the lookups and fall back to raw ids / "Prompt-only".
   const { can } = useMe();
   const canReadGraph = can(projectId, 'graph.read');
+  const canGenerate = can(projectId, 'artifacts.generate');
+  const [generateOpen, setGenerateOpen] = useState(false);
   const artifacts = useResource(`artifacts:${projectId}:${refresh}`, () => fetchArtifacts(projectId));
   const decisions = useResource(
     `artifacts-subjects-decisions:${projectId}:${refresh}`,
@@ -93,6 +98,14 @@ export function ArtifactsView({ projectId }: { projectId: string }) {
         title="Artifacts"
         count={artifacts.data?.length}
         description={`Generated artifacts for ${projectId}.`}
+        actions={
+          canGenerate ? (
+            <Button type="button" size="sm" onClick={() => setGenerateOpen(true)}>
+              <Sparkles />
+              Generate artifact
+            </Button>
+          ) : null
+        }
       />
       <NodeListView<ArtifactSummary>
         ariaLabel="Artifacts"
@@ -100,7 +113,11 @@ export function ArtifactsView({ projectId }: { projectId: string }) {
         getId={(item) => item.id}
         onSelect={openArtifact}
         loading={artifacts.loading}
-        emptyLabel="No artifacts yet. Generate one from a section page or a node's aside."
+        emptyLabel={
+          canGenerate
+            ? 'No artifacts yet. Generate the first from the button above — prompt suggestions are provided.'
+            : 'No artifacts yet.'
+        }
         renderRow={(artifact) => (
           <div className="grid w-full gap-2 md:grid-cols-[1fr_auto] md:items-center">
             <div className="min-w-0">
@@ -118,6 +135,12 @@ export function ArtifactsView({ projectId }: { projectId: string }) {
             </div>
           </div>
         )}
+      />
+      <GenerateArtifactDialog
+        projectId={projectId}
+        open={generateOpen}
+        onOpenChange={setGenerateOpen}
+        nodes={[]}
       />
     </div>
   );

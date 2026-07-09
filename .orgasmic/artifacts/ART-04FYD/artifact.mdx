@@ -1,0 +1,180 @@
+<Section title="Why this artifact exists">
+
+<RichText>
+On 2026-07-06 an external grilling session analyzed an **orgasmic snapshot at commit `ad38043`** and produced a report proposing a new product direction: turn orgasmic from a *per-developer local coordination app* into a **local-first lifecycle cockpit**. The report survives at `archive/grilling-session-local-first-cockpit-report.md`; the work products it describes (17 ADRs, a `CONTEXT.md` glossary, a design-fixture Program workspace, and a `program.rs` parser/validator slice with passing tests) live in a **separate workspace that is not on this machine** and are not in this repo.
+
+Meanwhile `main` has moved **117 commits past** the analyzed snapshot — mostly in the opposite stylistic direction: cutting surfaces (the Graph page was excised under `dec_ZG9B9`) and hardening the dispatch/artifact pipeline.
+
+This brief presents the concept **neutrally**, lays out the tensions with our recorded decisions, and ends with the questions the team needs to answer. Nothing here is adopted; no decision has been recorded.
+</RichText>
+
+</Section>
+
+<Section title="The concept in one page">
+
+<RichText>
+The report's claim: orgasmic's current model is a good **agent workbench** but cannot express *lifecycle* — a cross-repo effort moving through discovery → planning → implementation → review → release readiness, with risks, architecture deltas, and **proof** attached. Its proposed fix is a new aggregate layer above Project (names are the report's; see the naming section):
+
+- **Program** — a lifecycle aggregate over several explicitly linked Projects, stored in its own Git-backable *Program workspace* (not inside any one repo, not hidden in `$ORGASMIC_HOME`).
+- **Initiative** — the primary lifecycle object inside a Program: owns scope, affected Projects, decisions, risks, tasks, agent runs, and evidence. Task stays the execution unit; Project stays the repo boundary.
+- **Typed Org event log** — append-only write authority for all Program/Initiative changes; human-readable Org headings with typed JSON payloads.
+- **Rebuildable projections** — generated current-state views (`initiatives.org` etc.); stale ones are deleted and rebuilt, never hand-edited.
+- **Stage + Health + Gates** instead of one status — `In Review / Blocked` becomes a valid, informative state.
+- **Evidence Pack** — a first-class reviewable proof bundle that closes a gate ("task Done ≠ release readiness; agent claim ≠ accepted outcome").
+- **Waiver** — an audited exception event that lets an operator pass a gate anyway, leaving a visible risk trail.
+- **Agents as audited automation** — not "team members": every assignment records intent, scope, allowed paths, commands, claimed outcome, reviewer verdict.
+- **External systems as adapters** — GitHub/CI/Jira import signals and evidence but never own lifecycle truth.
+</RichText>
+
+<FlowChart direction="LR">
+EV[typed event] --> PJ[projection]
+PJ --> EP[Evidence Pack]
+EP --> GT[gate check]
+GT --> TR[stage transition]
+TR --> CR[Initiative Control Room]
+TR --> EV
+</FlowChart>
+
+<Callout tone="info">
+The report's own risk statement: the direction fails if lateral surfaces (UI dashboards, integrations, graph layouts) get built before this core loop is proven end-to-end, locally, via CLI.
+</Callout>
+
+</Section>
+
+<Section title="What the report says the current model cannot do">
+
+<Table
+  headers={["Limitation claimed", "Essence"]}
+  rows={[
+    ["Project is the maximum management unit", "A cross-repo effort (daemon API + UI + CLI + packaging) has no object that owns its shared lifecycle truth — it smears across several task lists."],
+    ["Task is too small for lifecycle", "Task answers 'what to do'; nothing answers 'which goal is moving through which stage, with which risks and proof'. Making Task central yields 'a local Jira with agents'."],
+    ["Board and graph are views, not authority", "Board flattens to columns; graph shows topology; neither manages readiness, gates, or evidence."],
+    ["One status lies", "All tasks Done does not mean release-ready; In Review can be Blocked. Hence stage + health + gates."],
+    ["Evidence is scattered", "Worklogs, transcripts, CI links exist but no reviewable unit says 'this gate closed on this proof with this verdict'."],
+    ["Tx/session logs are not a lifecycle log", "Existing audit records project-state changes, not Program-level causality (why a transition was allowed, what was waived)."]
+  ]}
+  caption="Report sections 3.1–3.6, condensed"
+/>
+
+</Section>
+
+<Section title="Tensions with our recorded direction">
+
+<Callout tone="risk">
+The report's foundation is an **ambition change** — "manage large projects and their full lifecycle" — that is recorded **nowhere** in this repo's decision graph. `project.org` Product Baseline still says *per-developer local coordination app*. If the team does not actually hold that ambition, everything downstream is architecture without a customer.
+</Callout>
+
+<Table
+  headers={["Recorded position (this repo)", "Report position", "Tension"]}
+  rows={[
+    ["dec_K1DR7: standalone local developer coordination app, not a hosted team system", "Local-first lifecycle cockpit (still local-first)", "Compatible in hosting, but shifts the product's center of gravity from agent coordination to lifecycle management."],
+    ["project.org: 'no separate ADR surface' — durable rationale lives in .orgasmic/decisions.org", "Ships 17 ADRs in docs/adr/ plus a root CONTEXT.md", "Direct conflict. Adopting the direction does not require adopting its doc system — decisions would be re-expressed natively."],
+    ["dec_ZG9B9 + goal cut-the-graph: excise weak surfaces, ship a hardened framework core", "Adds a large new superstructure: Program workspace, event log, projections, gates, Control Room UI", "Trajectory conflict: we have been removing layers; this adds the biggest one yet."],
+    ["dec_W58VM: cross-project board is a pointer list; Project owns its state", "Agrees — Program links Projects via manifest, never copies state", "No conflict; the report explicitly preserves this."],
+    ["Existing tx/session/run audit trail", "Wants a Program-level typed event log with projections", "Philosophically aligned (append-only, plain text, daemon-mediated) but a second event system to build and maintain."],
+    ["Artifact chain (dec_GPV4G …): agent-generated documents reviewed with pinned comments", "Evidence Pack: reviewable proof bundle with verdict", "Overlap worth probing: artifacts + reviews may already be 70% of Evidence Pack."]
+  ]}
+  caption="Where the proposal lands against decisions.org and project.org"
+/>
+
+<RichText>
+Two practical facts also weigh in: the report's **implementation slice does not exist here** (it would be re-implemented against a codebase 117 commits ahead), and the report was written by engineers reviewing a snapshot — it validated internal consistency of the new model, not demand for it.
+</RichText>
+
+</Section>
+
+<Section title="Reusable even without the superstructure">
+
+<RichText>
+If the team rejects Program/Initiative wholesale, four ideas still stand on their own and could land as small, local changes:
+
+1. **Stage + health instead of one status** — even at Task or goal level, `In Review / Blocked` is more honest than one Kanban column.
+2. **Evidence-linked done-ness** — "an agent claimed success" ≠ "accepted outcome". A lightweight required-evidence convention on task close (link a run, a review verdict, a command output) captures most of Evidence Pack's value without a new object.
+3. **Typed events over freeform notes** — wherever we log durable facts, the typed-Org-heading + JSON-payload pattern is stronger than prose, and matches our existing tx philosophy.
+4. **Agents as audited automation** — already how orgasmic treats workers/runs; the report merely names the stance. Worth a glossary term regardless.
+</RichText>
+
+</Section>
+
+<Section title="Naming: the report's terms are contested">
+
+<RichText>
+The report's vocabulary is used above as **working labels only**. Concerns and candidates, for the team to vote on (voice check: our brand is *quiet, precise, work-focused*):
+</RichText>
+
+<Table
+  headers={["Report term", "Problem", "Candidates"]}
+  rows={[
+    ["Program", "Collides with 'a program you run' in a dev CLI (orgasmic program init reads ambiguous); PMO/SAFe register (program management, program increment).", "Superproject (git's own term for a repo aggregating others), Portfolio, Venture — or keep Program."],
+    ["Initiative", "OKR/corporate register; in Jira/SAFe an Initiative sits above Epic, importing hierarchy baggage; long word for a CLI noun.", "Arc (short, quiet, carries a beginning-middle-end shape), Effort, Track — or keep Initiative."],
+    ["Evidence Pack", "Serviceable but bland; 'pack' is vague.", "Dossier (quiet, precise: a file of proof), Proof bundle — or keep Evidence Pack."],
+    ["Initiative Control Room", "Duplicates the cockpit metaphor already in the product framing; 'war-room' energy clashes with quiet voice.", "Cockpit (one metaphor, owned), Console — or keep Control Room."],
+    ["Program workspace", "'Workspace' is already a file/editor term (Cargo workspace, VS Code workspace).", "Follows automatically from the Program rename (e.g. superproject root)."]
+  ]}
+  caption="Naming is downstream of adoption — settle the concept first, then the words"
+/>
+
+</Section>
+
+<Section title="Team questions">
+
+<QuestionForm
+  title="Decisions this discussion must produce"
+  questions={[
+    {
+      type: "single",
+      prompt: "Q1 — The premise: is 'manage large multi-repo efforts through their full lifecycle' actually an ambition we hold for orgasmic?",
+      options: [
+        { label: "Yes — it is the next product layer", detail: "The per-developer coordination core is the foundation; lifecycle is where it goes." },
+        { label: "No — orgasmic stays an agent coordination workbench", detail: "Lifecycle management is a different product; keep cutting toward the hardened core." },
+        { label: "Only when a concrete recurring pain demands it", detail: "Name the real cross-repo scenario first; adopt machinery only against a named pain." }
+      ],
+      allowOther: true
+    },
+    {
+      type: "single",
+      prompt: "Q2 — If the premise holds: adopt the report's model (Program → Initiative → event log → projections → gates), or something smaller?",
+      options: [
+        { label: "Adopt the model, thin vertical slice first", detail: "The report's own target: 1 Program, 1 Initiative, event log, one projection, manual Evidence Pack, one gated transition. CLI/API first, UI later." },
+        { label: "Cherry-pick concepts into the existing model", detail: "Stage+health, evidence-linked done-ness, typed events — without the Program/Initiative aggregate." },
+        { label: "Reject; revisit after the framework core ships", detail: "Park the report in archive/ as provenance." }
+      ],
+      allowOther: true
+    },
+    {
+      type: "multi",
+      prompt: "Q3 — Independent of Q2: which standalone ideas are worth landing regardless?",
+      options: [
+        { label: "Stage + health split (one status lies)" },
+        { label: "Evidence required to close review/release-shaped work" },
+        { label: "Typed Org events for durable facts" },
+        { label: "Glossary stance: agents are audited automation, not members" },
+        { label: "None of these" }
+      ],
+      allowOther: true
+    },
+    {
+      type: "single",
+      prompt: "Q4 — Naming: if the aggregate layer happens, which family?",
+      options: [
+        { label: "Program / Initiative (keep report terms)", detail: "Continuity with the report; established PM vocabulary." },
+        { label: "Superproject / Arc", detail: "Git-native aggregate + quiet lifecycle-shaped effort noun." },
+        { label: "Portfolio / Track", detail: "Business-flavored aggregate + neutral execution noun." },
+        { label: "Decide after a thin slice exists", detail: "Prototype under working names; rename before anything ships." }
+      ],
+      allowOther: true
+    },
+    {
+      type: "single",
+      prompt: "Q5 — The lost artifacts: the grilling workspace (ADRs, fixture, program.rs + tests) is not on this machine. What do we do about it?",
+      options: [
+        { label: "Re-derive here if adopted", detail: "Treat the report as design input only; re-express decisions in decisions.org, re-implement against current HEAD." },
+        { label: "Try to recover the workspace first", detail: "It may exist on another machine or in a cloud session; recovering saves an implemented, tested slice." },
+        { label: "Irrelevant until Q1/Q2 are answered", detail: "Don't spend effort recovering artifacts for a direction we may not take." }
+      ],
+      allowOther: true
+    }
+  ]}
+/>
+
+</Section>

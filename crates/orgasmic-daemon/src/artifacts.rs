@@ -680,6 +680,37 @@ pub fn validate_art_id(art_id: &str) -> Result<(), String> {
     }
 }
 
+/// Traversal-safe validation for **read** routes that resolve an *already
+/// existing* artifact directory (`GET /artifacts/:id`).
+///
+/// Unlike [`validate_art_id`] — which enforces the strict minted Crockford
+/// grammar and is reserved for create/mint so fresh ids are always well-formed
+/// — this only guarantees `art_id` is a single safe path segment under the
+/// artifacts dir. It requires the `ART-` prefix and a non-empty stem drawn from
+/// `[A-Za-z0-9_-]`, which cannot contain `/`, `\`, `.` (so no `..` traversal),
+/// or NUL. That whitelist lets legacy / hand-authored semantic ids (e.g.
+/// `ART-DEDUP`) that predate the grammar — and which the list route already
+/// surfaces from disk — be opened, instead of 400-ing "listable but
+/// unopenable". A genuinely missing id still 404s downstream via
+/// [`ArtifactLoadError::NotFound`]; a traversal attempt is rejected here.
+pub fn validate_art_id_readable(art_id: &str) -> Result<(), String> {
+    let stem = art_id.strip_prefix("ART-");
+    let ok = stem.is_some_and(|stem| {
+        !stem.is_empty()
+            && stem.len() <= 64
+            && stem
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    });
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "invalid artifact id {art_id:?}: expected ART- followed by 1-64 characters (letters, digits, `-` or `_`)"
+        ))
+    }
+}
+
 /// Rewrite reviews.org marking every currently open (neither resolved nor
 /// consumed) comment as resolved+consumed in one pass.
 ///
@@ -1007,6 +1038,33 @@ mod tests {
             let err = validate_art_id(bad).expect_err(bad);
             assert!(err.contains("ART-"), "{err}");
             assert!(err.contains("orgasmic id mint --class artifact"), "{err}");
+        }
+    }
+
+    #[test]
+    fn validate_art_id_readable_accepts_legacy_and_rejects_traversal() {
+        // Minted ids and the strict grammar are of course still fine.
+        assert!(validate_art_id_readable(&new_artifact_id()).is_ok());
+        assert!(validate_art_id_readable("ART-8KX2M").is_ok());
+        // Legacy / hand-authored semantic ids the strict grammar rejects but
+        // that are perfectly safe path segments — now openable.
+        for good in ["ART-DEDUP", "ART-config_dup", "ART-a", "ART-A1_b-2"] {
+            assert!(validate_art_id_readable(good).is_ok(), "{good}");
+            // These are exactly the ids the strict mint-time validator rejects.
+            assert!(validate_art_id(good).is_err(), "{good}");
+        }
+        // Traversal / malformed must still be rejected before hitting the fs.
+        for bad in [
+            "../../etc/passwd",
+            "ART-../..",
+            "ART-/etc/passwd",
+            "ART-AAAA/",
+            "ART-a.b",
+            "ART-",
+            "art-8kx2m",
+            "",
+        ] {
+            assert!(validate_art_id_readable(bad).is_err(), "{bad}");
         }
     }
 
