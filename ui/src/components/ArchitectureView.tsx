@@ -177,6 +177,18 @@ export function ArchitectureView({ projectId }: { projectId: string }) {
         onSelect={selectMode ? toggleSelected : openNode}
         loading={architecture.loading}
         listId={ARCHITECTURE_LIST_ID}
+        emptyLabel={
+          query.trim() ? (
+            `No matches for "${query.trim()}".`
+          ) : (
+            <>
+              No architecture nodes yet. Map the first mechanism with{' '}
+              <code className="font-mono text-foreground">orgasmic architecture create</code>, or let
+              your agent infer the system with{' '}
+              <code className="font-mono text-foreground">/orgasmic resume</code>.
+            </>
+          )
+        }
         renderRow={(row) => {
           const item = row.item;
           const collapsed = collapsedRoots.has(item.id);

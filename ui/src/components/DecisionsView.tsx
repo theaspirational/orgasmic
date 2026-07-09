@@ -1,5 +1,5 @@
 // @arch arch_MK2Q2.7
-import { useEffect, useMemo, useState, type KeyboardEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearch } from '@tanstack/react-router';
 import { ChevronDown, ChevronRight, Plus, Sparkles } from 'lucide-react';
 
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import { CopyIdBadge } from './CopyIdBadge';
 import { GenerateArtifactDialog } from './GenerateArtifactDialog';
 import { ErrorPanel, PageHeader } from './Primitives';
+import { NodeListView } from './node-views/NodeListView';
 import { NodeModal } from './node-views/NodeModal';
 import { TagFilterInput } from './node-views/TagFilterInput';
 import { firstSentence } from './node-views/orgNodes';
@@ -24,19 +25,22 @@ import { firstSentence } from './node-views/orgNodes';
 const DECISIONS_LIST_ID = 'decisions-list-region';
 
 type DecisionsSearch = AppSearch & {
+  q?: string;
   tag?: string[];
+};
+
+type DecisionTreeRow = {
+  decision: DecisionSummary;
+  depth: number;
+  childCount: number;
+  collapsible: boolean;
+  context: boolean;
+  ghost: boolean;
 };
 
 function tagOptions(items: DecisionSummary[]): string[] {
   return Array.from(new Set(items.flatMap((item) => item.tags ?? []))).sort();
 }
-
-type DecisionTreeRow = {
-  decision: DecisionSummary;
-  depth: number;
-  context: boolean;
-  ghost: boolean;
-};
 
 function pathKey(decision: DecisionSummary): number[] {
   return (decision.path ?? '')
@@ -57,11 +61,18 @@ function compareDecisionPath(a: DecisionSummary, b: DecisionSummary): number {
   return a.id.localeCompare(b.id);
 }
 
+function matchesQuery(decision: DecisionSummary, q: string): boolean {
+  if (!q) return true;
+  const haystack = `${decision.id} ${decision.title} ${decision.preview ?? ''} ${(decision.tags ?? []).join(' ')} ${decision.path ?? ''}`.toLowerCase();
+  return haystack.includes(q);
+}
+
 function buildDecisionTreeRows(
   decisions: DecisionSummary[],
   selectedTags: string[],
   showSuperseded: boolean,
   collapsed: Set<string>,
+  query: string,
 ): DecisionTreeRow[] {
   const byId = new Map(decisions.map((decision) => [decision.id, decision]));
   const children = new Map<string, DecisionSummary[]>();
@@ -78,6 +89,8 @@ function buildDecisionTreeRows(
   }
   for (const bucket of children.values()) bucket.sort(compareDecisionPath);
   roots.sort(compareDecisionPath);
+
+  const q = query.trim().toLowerCase();
   const tagFilterActive = selectedTags.length > 0;
   const tagMatches = (decision: DecisionSummary) =>
     !tagFilterActive || (decision.tags ?? []).some((tag) => selectedTags.includes(tag));
@@ -87,13 +100,19 @@ function buildDecisionTreeRows(
     const kids = children.get(decision.id) ?? [];
     const childMatches = kids.map((child) => visit(child, depth + 1));
     const descendantVisible = childMatches.some(Boolean);
-    const ownVisible = tagMatches(decision) && (showSuperseded || !decision.superseded);
+    const ownVisible =
+      tagMatches(decision) &&
+      matchesQuery(decision, q) &&
+      (showSuperseded || !decision.superseded);
+    // When searching, keep ancestors so matching descendants stay nested.
     const visible = ownVisible || descendantVisible;
     if (!visible) return false;
 
     const row: DecisionTreeRow = {
       decision,
       depth,
+      childCount: kids.length,
+      collapsible: kids.length > 0,
       context: !ownVisible && descendantVisible,
       ghost: Boolean(decision.superseded && descendantVisible && !showSuperseded),
     };
@@ -104,7 +123,9 @@ function buildDecisionTreeRows(
     });
     if (insertAt >= 0) visibleRows.splice(insertAt, 0, row);
     else visibleRows.push(row);
-    if (collapsed.has(decision.id)) {
+
+    // Collapse only when not searching — search forces the matching subtree open.
+    if (!q && collapsed.has(decision.id)) {
       let i = visibleRows.length - 1;
       while (i >= 0) {
         const candidate = visibleRows[i];
@@ -120,6 +141,7 @@ function buildDecisionTreeRows(
 
   for (const root of roots) visit(root, 0);
   visibleRows.sort((a, b) => compareDecisionPath(a.decision, b.decision));
+  if (q) return visibleRows;
   return visibleRows.filter((row) => {
     const path = row.decision.path ?? '';
     return ![...collapsed].some((id) => {
@@ -140,6 +162,7 @@ export function DecisionsView({ projectId }: { projectId: string }) {
   const decisions = useResource(`decisions:${projectId}:${refresh}`, () => fetchDecisions(projectId));
   const tags = useMemo(() => tagOptions(decisions.data ?? []), [decisions.data]);
   const selectedTags = useMemo(() => searchList(search.tag), [search.tag]);
+  const query = search.q ?? '';
   const [showSuperseded, setShowSuperseded] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [creatingUnder, setCreatingUnder] = useState<string | null>(null);
@@ -165,9 +188,16 @@ export function DecisionsView({ projectId }: { projectId: string }) {
   );
 
   const rows = useMemo(
-    () => buildDecisionTreeRows(decisions.data ?? [], selectedTags, showSuperseded, collapsed),
-    [collapsed, decisions.data, selectedTags, showSuperseded],
+    () => buildDecisionTreeRows(decisions.data ?? [], selectedTags, showSuperseded, collapsed, query),
+    [collapsed, decisions.data, query, selectedTags, showSuperseded],
   );
+
+  function setQuery(value: string) {
+    void navigate({
+      search: routeSearch((prev) => ({ ...prev, q: value || undefined })),
+      replace: true,
+    });
+  }
 
   function setSelectedTags(next: string[]) {
     void navigate({
@@ -182,23 +212,6 @@ export function DecisionsView({ projectId }: { projectId: string }) {
     void navigate({
       search: routeSearch((prev) => appendDrawerStack(prev, id)),
     });
-  }
-
-  function activateRow(id: string) {
-    if (selectMode) toggleSelected(id);
-    else openNode(id);
-  }
-
-  function openRowFromKeyboard(event: KeyboardEvent<HTMLDivElement>, id: string) {
-    if (event.target !== event.currentTarget) return;
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      activateRow(id);
-    }
-  }
-
-  function stopRowOpen(event: { stopPropagation: () => void }) {
-    event.stopPropagation();
   }
 
   function toggleCollapsed(id: string) {
@@ -241,8 +254,10 @@ export function DecisionsView({ projectId }: { projectId: string }) {
 
   if (decisions.error) return <ErrorPanel error={decisions.error} />;
 
+  const filtersActive = selectedTags.length > 0 || (!showSuperseded && supersededCount > 0);
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex min-h-0 flex-col gap-4">
       <PageHeader
         title="Decisions"
         count={rows.length}
@@ -277,17 +292,25 @@ export function DecisionsView({ projectId }: { projectId: string }) {
           ) : null
         }
       />
-      <section className="rounded-xl border bg-card" aria-label="Decisions">
-        <div className="border-b p-3">
-          <div className="flex flex-wrap items-center gap-2">
+      <NodeListView
+        ariaLabel="Decisions"
+        items={rows}
+        getId={(row) => row.decision.id}
+        search={query}
+        onSearchChange={setQuery}
+        onSelect={selectMode ? toggleSelected : openNode}
+        loading={decisions.loading}
+        listId={DECISIONS_LIST_ID}
+        filters={
+          <>
             <TagFilterInput
               options={tags}
               selected={selectedTags}
               onChange={setSelectedTags}
               ariaControls={DECISIONS_LIST_ID}
-              className="md:w-96"
+              className="md:w-64"
             />
-            {supersededCount > 0 && (
+            {supersededCount > 0 ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -297,106 +320,127 @@ export function DecisionsView({ projectId }: { projectId: string }) {
               >
                 {showSuperseded ? `Hide superseded (${supersededCount})` : `Show superseded (${supersededCount})`}
               </Button>
-            )}
-          </div>
-        </div>
-        <div id={DECISIONS_LIST_ID} className="divide-y" aria-busy={decisions.loading}>
-          {decisions.loading && rows.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">Loading decisions…</div>
-          ) : rows.length === 0 ? (
-            <div className="p-4 text-sm text-muted-foreground">No decisions match the current filters.</div>
+            ) : null}
+          </>
+        }
+        emptyLabel={
+          query.trim() || filtersActive ? (
+            <div className="flex flex-col items-center gap-3">
+              <span>
+                {query.trim()
+                  ? `No matches for "${query.trim()}".`
+                  : 'No decisions match the current filters.'}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setQuery('');
+                  setSelectedTags([]);
+                  setShowSuperseded(true);
+                }}
+              >
+                Show all
+              </Button>
+            </div>
           ) : (
-            rows.map((row) => {
-              const decision = row.decision;
-              const decisionTags = decision.tags ?? [];
-              const decisionText = firstSentence(decision.preview) || decision.title || decision.id;
-              const hasChildren = (decision.children ?? []).length > 0;
-              const isCollapsed = collapsed.has(decision.id);
-              return (
-                <div
-                  key={decision.id}
-                  onClick={() => activateRow(decision.id)}
-                  className={cn(
-                    'grid w-full cursor-pointer gap-2 px-3 py-3 transition-colors hover:bg-muted/30 md:grid-cols-[1fr_auto] md:items-center',
-                    row.ghost && 'bg-muted/20 opacity-70',
-                    row.context && 'bg-muted/10',
-                  )}
-                  style={{ paddingLeft: `${0.75 + row.depth * 1.25}rem` }}
-                >
-                  <div className="flex min-w-0 items-start gap-2">
+            <>
+              No decisions yet. Record the first with{' '}
+              <code className="font-mono text-foreground">orgasmic decision create</code>, or let
+              your agent infer them from the repo with{' '}
+              <code className="font-mono text-foreground">/orgasmic resume</code>.
+            </>
+          )
+        }
+        renderRow={(row) => {
+          const decision = row.decision;
+          const collapsedRow = collapsed.has(decision.id);
+          const decisionText = firstSentence(decision.preview) || decision.title || decision.id;
+          const decisionTags = decision.tags ?? [];
+          return (
+            <div
+              className={cn(
+                'grid w-full gap-2 md:grid-cols-[1fr_auto] md:items-center',
+                row.ghost && 'opacity-70',
+                row.context && 'opacity-80',
+              )}
+            >
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: row.depth ? row.depth * 28 : 0 }}>
+                  {row.collapsible ? (
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-sm"
-                      className={cn('mt-0.5 shrink-0', !hasChildren && 'invisible')}
-                      aria-label={isCollapsed ? `Expand ${decision.id}` : `Collapse ${decision.id}`}
-                      onPointerDown={stopRowOpen}
+                      className="-ml-2 size-7 shrink-0"
+                      aria-label={`${collapsedRow ? 'Expand' : 'Collapse'} ${decision.title || decision.id}`}
+                      onPointerDown={(event) => event.stopPropagation()}
                       onClick={(event) => {
                         event.stopPropagation();
                         toggleCollapsed(decision.id);
                       }}
                     >
-                      {isCollapsed ? <ChevronRight /> : <ChevronDown />}
+                      {collapsedRow ? <ChevronRight /> : <ChevronDown />}
                     </Button>
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-1.5">
-                        <Badge variant="outline" className="font-mono">{decision.path ?? '—'}</Badge>
-                        <CopyIdBadge
-                          value={decision.id}
-                          className="h-4 w-fit origin-top-left rounded-sm px-1 text-[10px] leading-none"
-                        />
-                        {row.context ? <Badge variant="secondary">ancestor context</Badge> : null}
-                        {decision.superseded ? <Badge variant="outline">superseded</Badge> : null}
-                      </div>
-                      <div
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Open ${decision.id}`}
-                        className="min-w-0 rounded-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          activateRow(decision.id);
-                        }}
-                        onKeyDown={(event) => openRowFromKeyboard(event, decision.id)}
-                      >
-                        <p className="text-sm font-medium leading-5 text-pretty break-words">{decisionText}</p>
-                        <p className="text-xs text-muted-foreground">{decision.title || decision.id}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div
-                    className="flex flex-wrap items-center gap-1.5 md:justify-end"
-                    onPointerDown={stopRowOpen}
-                    onClick={stopRowOpen}
-                  >
-                    {decisionTags.map((tag) => (
-                      <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">{tag}</Badge>
-                    ))}
-                    {selectMode ? (
-                      <Checkbox
-                        checked={selected.has(decision.id)}
-                        onCheckedChange={() => toggleSelected(decision.id)}
-                        aria-label={`Select ${decision.title || decision.id}`}
+                  ) : (
+                    <span className="size-7 shrink-0" aria-hidden="true" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <CopyIdBadge
+                        value={decision.id}
+                        className="h-4 w-fit origin-top-left scale-[0.65] rounded-sm px-1 text-[10px] leading-none"
                       />
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={creatingUnder === decision.id}
-                        onClick={() => void addSubDecision(decision.id)}
-                      >
-                        <Plus />
-                        Add sub-decision
-                      </Button>
-                    )}
+                      {row.context ? <Badge variant="secondary" className="h-4 scale-[0.85] origin-left text-[10px]">context</Badge> : null}
+                      {decision.superseded ? <Badge variant="outline" className="h-4 scale-[0.85] origin-left text-[10px]">superseded</Badge> : null}
+                    </div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="truncate text-sm font-medium">{decisionText}</p>
+                    </div>
+                    <p className="truncate text-xs text-muted-foreground">{decision.title || decision.id}</p>
                   </div>
                 </div>
-              );
-            })
-          )}
-        </div>
-      </section>
+              </div>
+              <div className="flex flex-wrap gap-1.5 md:justify-end">
+                {decisionTags.map((tag) => (
+                  <Badge key={tag} variant="secondary" className="hidden sm:inline-flex">
+                    {tag}
+                  </Badge>
+                ))}
+                {row.childCount > 0 ? (
+                  <Badge variant="secondary" className="hidden sm:inline-flex">
+                    {row.childCount} child{row.childCount === 1 ? '' : 'ren'}
+                  </Badge>
+                ) : null}
+              </div>
+            </div>
+          );
+        }}
+        renderActionZone={(row) => (
+          <div className="flex items-center gap-1.5">
+            {selectMode ? (
+              <Checkbox
+                checked={selected.has(row.decision.id)}
+                onCheckedChange={() => toggleSelected(row.decision.id)}
+                aria-label={`Select ${row.decision.title || row.decision.id}`}
+              />
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="hidden sm:inline-flex"
+                disabled={creatingUnder === row.decision.id}
+                onClick={() => void addSubDecision(row.decision.id)}
+              >
+                <Plus />
+                Add sub-decision
+              </Button>
+            )}
+          </div>
+        )}
+      />
       <GenerateArtifactDialog
         projectId={projectId}
         open={generateOpen}

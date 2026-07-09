@@ -171,6 +171,7 @@ function ProjectHeader({
           <Field icon={FolderTree} label="Root" value={project.root} mono />
         </dl>
         <Separator className="my-4" />
+        <TaskDoneProgress grouped={grouped} stages={stages} />
         <div className="flex flex-wrap gap-1.5">
           {stages.length === 0 ? (
             <span className="text-xs text-muted-foreground">No tasks tracked.</span>
@@ -184,6 +185,40 @@ function ProjectHeader({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function TaskDoneProgress({
+  grouped,
+  stages,
+}: {
+  grouped: Map<string, TaskSummary[]>;
+  stages: string[];
+}) {
+  const doneCount = grouped.get('done')?.length ?? 0;
+  const activeTotal = stages
+    .filter((s) => s !== 'cancelled')
+    .reduce((sum, s) => sum + (grouped.get(s)?.length ?? 0), 0);
+  if (activeTotal === 0 || doneCount === 0) return null;
+  return (
+    <div className="mb-3 flex items-center gap-2">
+      <span
+        className="h-1.5 w-full max-w-48 overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-label="Tasks done"
+        aria-valuemin={0}
+        aria-valuemax={activeTotal}
+        aria-valuenow={doneCount}
+      >
+        <span
+          className="block h-full rounded-full bg-primary"
+          style={{ width: `${Math.round((doneCount / activeTotal) * 100)}%` }}
+        />
+      </span>
+      <span className="font-mono text-xs text-muted-foreground">
+        {doneCount}/{activeTotal} done
+      </span>
+    </div>
   );
 }
 

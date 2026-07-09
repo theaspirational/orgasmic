@@ -226,6 +226,14 @@ export function SettingsView({ projectId: _projectId }: { projectId: string | nu
                     : 'Install update'}
               </Button>
             </div>
+            {updateStatus === 'available' && pendingUpdate?.notes ? (
+              <p className="line-clamp-6 max-w-md whitespace-pre-wrap text-xs leading-relaxed text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  Running {pendingUpdate.currentVersion}; {pendingUpdate.version} adds:
+                </span>{' '}
+                {pendingUpdate.notes}
+              </p>
+            ) : null}
           </div>
         </SettingRow>
 

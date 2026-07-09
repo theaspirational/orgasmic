@@ -127,6 +127,18 @@ export function GlossaryView({ projectId }: { projectId: string }) {
         onSearchChange={setQuery}
         onSelect={selectMode ? toggleSelected : openNode}
         loading={glossary.loading}
+        emptyLabel={
+          query.trim() ? (
+            `No matches for "${query.trim()}".`
+          ) : (
+            <>
+              No terms yet. Capture the first with{' '}
+              <code className="font-mono text-foreground">orgasmic glossary create</code>, or let your
+              agent draft the domain language with{' '}
+              <code className="font-mono text-foreground">/orgasmic resume</code>.
+            </>
+          )
+        }
         renderRow={(term) => (
           <div className="grid w-full gap-2 md:grid-cols-[1fr_auto] md:items-center">
             <div className="min-w-0">

@@ -138,6 +138,8 @@ function TasksPageBody({
         layout={requestedLayout}
         setLayout={setLayout}
         taskCount={tasks.length}
+        doneCount={tasks.filter((t) => t.lifecycle_stage === 'done').length}
+        activeTotal={tasks.filter((t) => t.lifecycle_stage !== 'cancelled').length}
       />
       {requestedLayout === 'kanban' ? (
         <KanbanBoard
@@ -225,10 +227,16 @@ function Toolbar({
   layout,
   setLayout,
   taskCount,
+  doneCount,
+  activeTotal,
 }: {
   layout: TasksLayout;
   setLayout: (v: string) => void;
   taskCount: number;
+  /** Tasks in the `done` stage. */
+  doneCount: number;
+  /** All tasks except `cancelled` — the denominator for done-progress. */
+  activeTotal: number;
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -237,6 +245,24 @@ function Toolbar({
         <Badge variant="outline" className="font-mono text-[10px]">
           {taskCount} task{taskCount === 1 ? '' : 's'}
         </Badge>
+        {activeTotal > 0 && doneCount > 0 ? (
+          <span className="flex items-center gap-1.5 self-center text-xs text-muted-foreground">
+            <span
+              className="hidden h-1.5 w-16 overflow-hidden rounded-full bg-muted sm:block"
+              role="progressbar"
+              aria-label="Tasks done"
+              aria-valuemin={0}
+              aria-valuemax={activeTotal}
+              aria-valuenow={doneCount}
+            >
+              <span
+                className="block h-full rounded-full bg-primary"
+                style={{ width: `${Math.round((doneCount / activeTotal) * 100)}%` }}
+              />
+            </span>
+            <span className="font-mono">{doneCount}/{activeTotal} done</span>
+          </span>
+        ) : null}
       </div>
       <div className="flex items-center gap-1 rounded-md border bg-muted/30 p-0.5">
         <Button
@@ -290,7 +316,10 @@ function TaskList({
     return (
       <Card>
         <CardContent className="px-6 py-10 text-center text-sm text-muted-foreground">
-          No tasks yet.
+          No tasks yet. File the first with{' '}
+          <code className="font-mono text-foreground">orgasmic task create</code>, or set a goal with{' '}
+          <code className="font-mono text-foreground">orgasmic goal set</code> and let the manager
+          plan the backlog.
         </CardContent>
       </Card>
     );

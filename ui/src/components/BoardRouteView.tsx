@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FolderGit2, Plus } from 'lucide-react';
+import { CheckCircle2, Circle, FolderGit2, Plus } from 'lucide-react';
 
 import { BoardView } from '@/components/BoardView';
 import { ErrorPanel } from '@/components/Primitives';
@@ -52,16 +52,36 @@ export function BoardRouteView() {
           <Card className="w-full max-w-lg">
             <CardHeader>
               <FolderGit2 className="size-8 text-muted-foreground" />
-              <CardTitle>No projects yet</CardTitle>
+              <CardTitle>One step left</CardTitle>
               <CardDescription>
-                Register a repo with orgasmic to make the project-scoped sidebar useful.
+                The daemon is running and this UI is connected. Register a repo to finish setup.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Button type="button" onClick={() => setAddOpen(true)}>
-                <Plus />
-                Add your first project
-              </Button>
+            <CardContent className="flex flex-col gap-4">
+              <ul className="flex flex-col gap-2 text-sm">
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                  Daemon running
+                </li>
+                <li className="flex items-center gap-2">
+                  <CheckCircle2 className="size-4 shrink-0 text-emerald-600" />
+                  UI connected
+                </li>
+                <li className="flex items-center gap-2 font-medium">
+                  <Circle className="size-4 shrink-0 text-muted-foreground" />
+                  Register a project
+                </li>
+              </ul>
+              <div className="flex flex-wrap items-center gap-3">
+                <Button type="button" onClick={() => setAddOpen(true)}>
+                  <Plus />
+                  Add your first project
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  or run <code className="font-mono text-foreground">orgasmic project init</code> in
+                  a repo.
+                </span>
+              </div>
             </CardContent>
           </Card>
         </div>

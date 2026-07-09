@@ -218,8 +218,11 @@ export function AppShell() {
 
         window.localStorage.setItem(UPDATE_LAST_NOTIFIED_KEY, notificationKey);
         const action = update.platform === 'android-sideload' ? 'download the APK' : 'install';
+        // Lead with what the running build lacks (first release-note line)
+        // rather than the bare version delta — concrete beats abstract.
+        const firstNote = update.notes?.split('\n').find((line) => line.trim())?.trim();
         toast.success('Update available', {
-          description: `${channel}: ${update.currentVersion} -> ${update.version}. Open Settings to ${action}.`,
+          description: `${channel}: ${update.currentVersion} -> ${update.version}${firstNote ? ` — ${firstNote}` : ''}. Open Settings to ${action}.`,
         });
       } catch {
         // Release assets may not exist yet, especially before the first nightly publish.
