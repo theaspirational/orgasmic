@@ -288,9 +288,9 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
     // `:HARNESS_ARGS:` is the whole wrapped command line.
     let staged_placeholder = is_dispatch_placeholder(cfg.command.as_deref(), &cfg.args);
     let mut harness_args_consumed = false;
-    let (command, mut args) = if cfg.command.is_none()
-        || ((harness == "claude" || harness == "custom") && staged_placeholder)
-    {
+    // The dispatch placeholder is the daemon's "swap me for the real harness"
+    // sentinel; honor it for any harness (codex included), not just claude/custom.
+    let (command, mut args) = if cfg.command.is_none() || staged_placeholder {
         if harness == "custom" && !cfg.harness_args.is_empty() {
             harness_args_consumed = true;
             (cfg.harness_args[0].clone(), cfg.harness_args[1..].to_vec())
@@ -1778,6 +1778,32 @@ mod tests {
         let native = plan.native_runtime.expect("claude native runtime");
         assert_eq!(native.provider, "claude");
         assert!(!native.resume_argv.is_empty());
+    }
+
+    #[test]
+    fn dispatch_placeholder_swaps_to_real_codex_invocation() {
+        // Regression: the swap gate was `claude || custom` only, so codex
+        // workers executed the placeholder `sh` and the prompt was typed into
+        // a bare shell. The daemon sentinel must swap to real `codex`.
+        let cfg: RmuxConfig = serde_json::from_value(json!({
+            "command": "sh",
+            "args": ["-lc", "echo orgasmic pipeline stage acquired; exec sh"],
+            "harness": "codex",
+            "model": "gpt-5.5",
+            "prompt_bundle_text": "do the task",
+        }))
+        .unwrap();
+        let ctx = ctx("run-dispatch-codex", RunKind::Worker);
+        let plan = build_spawn_plan(&cfg, &ctx, "codex");
+        assert_eq!(plan.command, "codex");
+        assert!(!is_dispatch_placeholder(
+            Some(plan.command.as_str()),
+            &plan.args
+        ));
+        let prompt = plan.initial_prompt.expect("dispatch prompt staged");
+        assert!(prompt.contains("do the task"));
+        let native = plan.native_runtime.expect("codex native runtime");
+        assert_eq!(native.provider, "codex");
     }
 
     /// Worker `:HARNESS_ARGS:` ride along on the real harness argv, and a

@@ -545,11 +545,12 @@ pub(crate) fn claude_native_runtime(
     }
 }
 
-fn should_use_default_command(cfg: &TmuxTuiConfig, harness: &str) -> bool {
-    if cfg.command.is_none() {
-        return true;
-    }
-    harness == "claude" && is_dispatch_placeholder(cfg.command.as_deref(), &cfg.args)
+fn should_use_default_command(cfg: &TmuxTuiConfig, _harness: &str) -> bool {
+    // The dispatch placeholder is the daemon's explicit "swap me for the real
+    // harness" sentinel (api.rs stages every worker with it); honor it for any
+    // TUI harness, not just claude. `default_command_for_harness` resolves the
+    // right binary (codex, hermes, …) and falls back to `sh` for unknown ones.
+    cfg.command.is_none() || is_dispatch_placeholder(cfg.command.as_deref(), &cfg.args)
 }
 
 /// The daemon's dispatch path stages every worker with a placeholder command
@@ -1409,6 +1410,28 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
+    }
+
+    #[test]
+    fn dispatch_placeholder_swaps_to_codex_default_command() {
+        // Regression: the placeholder-swap gate was claude-only, so codex
+        // workers ran the placeholder `sh` verbatim and the prompt was typed
+        // into a bare shell. The daemon sentinel must swap to real `codex`.
+        let cfg = TmuxTuiConfig {
+            command: Some("sh".into()),
+            args: vec![
+                "-lc".into(),
+                "echo orgasmic pipeline stage acquired; exec sh".into(),
+            ],
+            harness: Some("codex".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-codex-placeholder", RunKind::Worker), "codex");
+        assert_eq!(plan.command, "codex");
+        assert!(!is_dispatch_placeholder(
+            Some(plan.command.as_str()),
+            &plan.args
+        ));
     }
 
     #[test]
