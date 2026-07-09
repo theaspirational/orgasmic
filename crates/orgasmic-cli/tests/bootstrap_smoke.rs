@@ -135,8 +135,7 @@ fn wait_for_project_loaded(
 
 /// Locate the orgasmic repo root from `CARGO_MANIFEST_DIR` so the test can
 /// point `home.source()` at the *real* shipped scaffold — this test drives
-/// the scaffold's own instructions (dec_K1DR7-style daemon-minted decision
-/// ids, `conventions/contributing.org`'s CLI-only guidance), so a generic
+/// the scaffold's own instructions and runtime entry guidance, so a generic
 /// placeholder fixture would defeat the point.
 fn repo_root() -> PathBuf {
     let mut here = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -200,9 +199,8 @@ async fn greenfield_bootstrap_e2e_through_first_artifact() {
     // daemon was already running; it must become usable with no restart.
     wait_for_project_loaded(&home, &running, &project_root, project_id);
 
-    // --- decisions: daemon-minted ids, per the corrected scaffold text
-    // (conventions/contributing.org: "Use `orgasmic decision create` ... for
-    // genuinely new rationale") — never invent sequential ids. ---
+    // --- decisions: daemon-minted ids, per the runtime entry guidance; never
+    // invent sequential ids. ---
     let dec_one_stdout = run_cli(
         &home,
         &running,

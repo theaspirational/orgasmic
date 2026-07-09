@@ -120,10 +120,6 @@ const SCAFFOLD_FILES: &[&str] = &[
     "tasks/goal.org",
     "tasks/handoff.org",
     "gotchas.org",
-    "conventions/contributing.org",
-    "conventions/manager-implementer.org",
-    "conventions/no-skill-installed.org",
-    "conventions/orgasmic-tooling.org",
 ];
 
 const SCAFFOLD_DIRS: &[&str] = &["tmp", "tmp/sessions", "tmp/dispatch"];
@@ -481,28 +477,6 @@ mod tests {
             "#+title: orgasmic entry\n#+orgasmic_version: 1\n\n* Entry\n\nRun `orgasmic entry` and follow its output.\n\nIf the `orgasmic` CLI is missing, offer to install it with `/orgasmic install`. If the user declines, keep `.orgasmic/` read-only. Edit source only after explicit user confirmation, warn that source edits will drift from orgasmic state, and reconcile once the runtime is available.\n",
         )
         .unwrap();
-        let conventions_dst = dst.join("conventions");
-        std::fs::create_dir_all(&conventions_dst).unwrap();
-        std::fs::write(
-            conventions_dst.join("contributing.org"),
-            "#+title: contributing\n#+orgasmic_version: 1\n\n* Convention: contributing changes\n\n- Follow the constraints in `project.org`.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            conventions_dst.join("manager-implementer.org"),
-            "#+title: manager-implementer\n#+orgasmic_version: 1\n\n* Convention: manager-implementer mode\n\nSingle-worker mode; iterate fast, reconcile later.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            conventions_dst.join("orgasmic-tooling.org"),
-            "#+title: orgasmic tooling\n#+orgasmic_version: 1\n\n* Convention: working with orgasmic installed (optional)\n\nOptional accelerant; not required.\n",
-        )
-        .unwrap();
-        std::fs::write(
-            conventions_dst.join("no-skill-installed.org"),
-            "#+title: no skill installed\n#+orgasmic_version: 1\n\n* Convention: manager fallback without the `/orgasmic` skill\n\nBrief from plain files.\n",
-        )
-        .unwrap();
         std::fs::write(
             dst.join("project.org"),
             "#+title: {{PROJECT_NAME}}\n#+orgasmic_version: 1\n\n* PROJECT {{PROJECT_NAME}}\n:PROPERTIES:\n:ID:                  {{PROJECT_ID}}\n:END:\n\n** Mission\n[Describe the project's goal.]\n\n** Operating Constraints\n[Project-specific constraints.]\n",
@@ -570,7 +544,8 @@ mod tests {
                 OrgFile::parse(src, p.to_string_lossy()).expect("scaffold output parses");
             }
         }
-        // entry.org and per-project conventions are scaffolded too (dec_055).
+        // entry.org remains a runtime-router stub; generic conventions are
+        // served by the runtime entry output instead of being scaffolded.
         let entry = std::fs::read_to_string(proj.join(".orgasmic/entry.org")).unwrap();
         assert!(entry.contains("* Entry"));
         assert!(entry.contains("#+orgasmic_version: 1"));
@@ -583,18 +558,11 @@ mod tests {
         assert!(root_pointer.contains("orgasmic project init"));
         let claude_pointer = std::fs::read_to_string(proj.join("CLAUDE.md")).unwrap();
         assert_eq!(claude_pointer, "Read `AGENTS.md`.\n");
-        assert!(proj
-            .join(".orgasmic/conventions/manager-implementer.org")
-            .exists());
-        let contributing =
-            std::fs::read_to_string(proj.join(".orgasmic/conventions/contributing.org")).unwrap();
-        assert!(contributing.contains("contributing changes"));
-        assert!(proj
-            .join(".orgasmic/conventions/orgasmic-tooling.org")
-            .exists());
-        assert!(proj
-            .join(".orgasmic/conventions/no-skill-installed.org")
-            .exists());
+        let conventions = proj.join(".orgasmic/conventions");
+        assert!(
+            !conventions.exists() || std::fs::read_dir(&conventions).unwrap().next().is_none(),
+            "fresh init must not scaffold generic convention files"
+        );
         assert!(proj.join(".orgasmic/tmp").is_dir());
         assert!(proj.join(".orgasmic/tmp/local_instructions.org").exists());
         let gitignore = std::fs::read_to_string(proj.join(".orgasmic/.gitignore")).unwrap();

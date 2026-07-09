@@ -424,9 +424,6 @@ fn parses_shipped_project_scaffold() {
     parse_or_panic("shipped/project-scaffold/decisions.org");
     parse_or_panic("shipped/project-scaffold/project.org");
     parse_or_panic("shipped/project-scaffold/entry.org");
-    parse_or_panic("shipped/project-scaffold/conventions/contributing.org");
-    parse_or_panic("shipped/project-scaffold/conventions/no-skill-installed.org");
-    parse_or_panic("shipped/project-scaffold/conventions/orgasmic-tooling.org");
 }
 
 #[test]
