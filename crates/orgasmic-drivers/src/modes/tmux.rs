@@ -1426,7 +1426,11 @@ mod tests {
             harness: Some("codex".into()),
             ..TmuxTuiConfig::default()
         };
-        let plan = build_spawn_plan(&cfg, &ctx("run-codex-placeholder", RunKind::Worker), "codex");
+        let plan = build_spawn_plan(
+            &cfg,
+            &ctx("run-codex-placeholder", RunKind::Worker),
+            "codex",
+        );
         assert_eq!(plan.command, "codex");
         assert!(!is_dispatch_placeholder(
             Some(plan.command.as_str()),

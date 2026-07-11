@@ -11987,3 +11987,52 @@ Dogfood migration once the runtime slices land. Rewrite =AGENTS.md=/=CLAUDE.md= 
 - [ ] No generic convention or config.org remains; repo-specific conventions preserved.
 - [ ] A fresh manager session (cold context) successfully routes via the new pointers.
 
+* DONE TASK-70VV1 Fix: codex-tmux/rmux dispatch stubs — placeholder-swap gate is claude-only :bug:drivers:dispatch:
+:PROPERTIES:
+:ID: TASK-70VV1
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/modes/rmux.rs
+:END:
+
+** Description
+Pre-existing driver bug (present since the initial public release c96f0f3, still in 0.0.10-dev; the live 0.0.9 daemon has it too). Any =implementer-codex-tmux= / =implementer-codex-rmux= dispatch silently stubs: the daemon stages every worker pane with a placeholder command =sh -lc "echo orgasmic pipeline stage acquired; exec sh"= (=api.rs:3221=, `stage_driver_config_with_overrides`), and the terminal driver is supposed to swap that placeholder for the real harness launch. But the swap gate only fires for claude:
+- =crates/orgasmic-drivers/src/modes/tmux.rs:548-552= `should_use_default_command` returns true only if `cfg.command.is_none()` OR `harness == "claude" && is_dispatch_placeholder(...)`.
+- =crates/orgasmic-drivers/src/modes/rmux.rs:289-292= same, gated on `(harness == "claude" || harness == "custom") && staged_placeholder`.
+For =harness == "codex"= the placeholder is Some("sh") and the claude clause is false, so the driver runs the placeholder shell verbatim and types the compiled prompt into a bare =sh= → cascade of `sh: …: command not found` / `syntax error near unexpected token '('` → `stall_timeout_exceeded` → `outcome: failed`, no files touched. `default_command_for_harness` already maps `"codex" => ("codex", [])` (tmux.rs:584, rmux.rs; unit test `default_command_for_harness("codex").0 == "codex"` passes), so the launch capability exists — only the gate excludes codex.
+
+Evidence: runs run-20260709T115632 (tmux) and run-20260709T121150/121151 (rmux) all failed identically with the placeholder pane command in their driver_config. Daemon is the genuine 0.0.9 release under launchd with codex on its PATH (~/.nvm/.../bin/codex) — not a PATH or binary-missing issue.
+
+** Acceptance Criteria
+- [X] `should_use_default_command` in tmux and the rmux equivalent swap the daemon dispatch placeholder for the real harness command for Codex and every known TUI harness.
+- [X] Live Codex-rmux and Codex-tmux redesign dispatches launched real Codex turns and produced landed commits.
+- [X] Existing Claude and custom behavior remains covered; focused placeholder regression tests pass for both terminal modes.
+- [X] After rebuild and daemon restart, the TASK-74TA6 probe produced commit `8fe0c98` and was merged.
+
+** Notes
+Blocks dispatching the entry/workflows redesign (TASK-VBZ24 tree) via codex. Until fixed, those dispatch via claude workers or manager-implement.
+** Evidence
+- [2026-07-11 Sat] Verified implementation commit `a7480ee`: tmux and rmux treat the daemon placeholder as a harness-agnostic sentinel and retain explicit custom commands.
+- Live proof from the daemon tx ledger: TASK-74TA6 ran through `implementer-codex-rmux` as `run-20260709T130423-c3485daa5233405e8225bd760293203e` and produced `8fe0c98`; TASK-A8559, TASK-3YMVC, and TASK-PCDA2 subsequently ran through `implementer-codex-tmux` and produced commits.
+- Current gates: `cargo test -p orgasmic-drivers dispatch_placeholder` passed 5/5; `cargo clippy --workspace --all-targets -- -D warnings` passed; both touched driver files pass `rustfmt --check`; `git diff --check` passed.
+- Repaired the one task-owned rustfmt drift in `crates/orgasmic-drivers/src/modes/tmux.rs`. Full-workspace `cargo fmt --all --check` now reports only the later unrelated artifact-WIP drift in `crates/orgasmic-daemon/src/api.rs` from `ad3498b`; carried in handoff.
+
+* DONE TASK-VBZ24 Runtime-mandatory entry, workflows v1, config.org removal :entry:workflows:scaffold:
+:PROPERTIES:
+:DEPENDS_ON: dec_YTJ0G dec_N7BM4 dec_MCM6Y dec_T949W dec_S0CPP
+:ID: TASK-VBZ24
+:PRIORITY: P1
+:END:
+
+** Description
+Umbrella for the 2026-07-09 entry/workflows redesign (dec_YTJ0G dec_N7BM4 dec_MCM6Y dec_T949W dec_S0CPP). Kills the frozen-scaffold-surface problem: root pointers route to a stub that defers to a runtime-generated =orgasmic entry= router; generic conventions and the manager-implementer discipline move behind the runtime (shipped =workflows/default.org=); =config.org= and =:PIPELINE:= are deleted; dispatch always names its worker. Subtasks carry the implementation slices; this heading tracks overall completion.
+
+** Acceptance Criteria
+- [X] All six implementation slices are done: TASK-74TA6, TASK-CZTWD, TASK-3YMVC, TASK-A8559, TASK-PCDA2, and TASK-KWD80.
+- [X] A fresh source-built `orgasmic project init` emits the slim scaffold with stub `entry.org`, no `conventions/`, and no `config.org`.
+- [X] This repository is migrated to the runtime-served entry and workflow shape.
+** Evidence
+- [2026-07-11 Sat] Confirmed all six redesign slices are in `done`; landed implementation chain: `8fe0c98`, `0b20f6e`/`11086bd`, `ef3bd8c`/`ee6bd6b`, `2c38471`/`b6ca44b`, `4b5fb6a`/`3823a91`, and repo migration `c47a855`.
+- Real fresh-init probe using the source-built 0.0.12 CLI scaffolded 14 files and asserted stub `entry.org` present, `config.org` absent, and `conventions/` absent.
+- Current gates: entry integration tests 3/3; greenfield bootstrap smoke 1/1; shipped scaffold parser 1/1; workspace clippy passed.
+- Current repository route is live: root pointers require `orgasmic entry`, `.orgasmic/entry.org` is the stub, `config.org` and generic conventions are absent, and the runtime router resolves `shipped/workflows/default.org`.
+
