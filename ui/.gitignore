@@ -1,0 +1,4 @@
+# design-sync (staged converter, build output, machine state)
+.design-sync/
+.ds-sync/
+ds-bundle/
