@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover';
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,15 @@ const STATE_VARIANT: Record<string, 'outline' | 'default' | 'destructive' | 'sec
 };
 
 const MAX_ANCHOR_LEN = 280;
+
+type InlineSelection = {
+  anchor: string;
+  virtualElement: {
+    contextElement?: Element;
+    getBoundingClientRect: () => DOMRect;
+  };
+  focusOnOpen: boolean;
+};
 
 export function ArtifactView({ projectId }: { projectId: string }) {
   const navigate = useNavigate();
@@ -273,7 +283,7 @@ function RegenerateArtifactDialog({
   );
 }
 
-function ArtifactComments({
+export function ArtifactComments({
   data,
   projectId,
   artifactId,
@@ -288,37 +298,75 @@ function ArtifactComments({
 }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const inlineComposerRef = useRef<HTMLTextAreaElement | null>(null);
+  const selectionTimerRef = useRef<number | null>(null);
   const [message, setMessage] = useState('');
-  const [anchor, setAnchor] = useState<string | null>(null);
-  const [selectionText, setSelectionText] = useState('');
+  const [inlineMessage, setInlineMessage] = useState('');
+  const [inlineSelection, setInlineSelection] = useState<InlineSelection | null>(null);
   const [posting, setPosting] = useState(false);
+  const [inlinePosting, setInlinePosting] = useState(false);
   const [resolvingCid, setResolvingCid] = useState<string | null>(null);
 
   const isRegenerating = data.state === 'regenerating';
   const comments = data.comments ?? [];
 
-  const captureSelection = useCallback(() => {
+  const captureSelection = useCallback((focusOnOpen: boolean) => {
+    if (!canComment || isRegenerating) return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !bodyRef.current) {
-      setSelectionText('');
       return;
     }
     const text = selection.toString().trim();
-    const node = selection.anchorNode;
-    if (text && node && bodyRef.current.contains(node)) {
-      setSelectionText(text.slice(0, MAX_ANCHOR_LEN));
-    } else {
-      setSelectionText('');
+    const range = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
+    if (!text || !range) return;
+    const withinBody = (node: Node | null) => Boolean(node && bodyRef.current?.contains(node));
+    if (
+      !withinBody(selection.anchorNode) ||
+      !withinBody(selection.focusNode) ||
+      !withinBody(range.commonAncestorContainer)
+    ) {
+      return;
     }
-  }, []);
+    setInlineSelection({
+      anchor: text.slice(0, MAX_ANCHOR_LEN),
+      virtualElement: {
+        contextElement: bodyRef.current,
+        getBoundingClientRect: () => range.getBoundingClientRect(),
+      },
+      focusOnOpen,
+    });
+    setInlineMessage('');
+  }, [canComment, isRegenerating]);
 
-  function attachSelection() {
-    if (!selectionText) return;
-    setAnchor(selectionText);
-    window.getSelection()?.removeAllRanges();
-    setSelectionText('');
-    composerRef.current?.focus();
-  }
+  const scheduleSelectionCapture = useCallback(
+    (focusOnOpen: boolean) => {
+      if (selectionTimerRef.current !== null) window.clearTimeout(selectionTimerRef.current);
+      selectionTimerRef.current = window.setTimeout(() => {
+        selectionTimerRef.current = null;
+        captureSelection(focusOnOpen);
+      }, 0);
+    },
+    [captureSelection],
+  );
+
+  useEffect(() => {
+    if (!inlineSelection?.focusOnOpen) return;
+    inlineComposerRef.current?.focus();
+  }, [inlineSelection]);
+
+  useEffect(() => {
+    if (isRegenerating || !canComment) {
+      setInlineSelection(null);
+      setInlineMessage('');
+    }
+  }, [canComment, isRegenerating]);
+
+  useEffect(
+    () => () => {
+      if (selectionTimerRef.current !== null) window.clearTimeout(selectionTimerRef.current);
+    },
+    [],
+  );
 
   async function submitComment() {
     const trimmed = message.trim();
@@ -327,16 +375,36 @@ function ArtifactComments({
     try {
       await postArtifactComment(
         artifactId,
-        { message: trimmed, anchor: anchor ?? undefined },
+        { message: trimmed },
         projectId,
       );
       setMessage('');
-      setAnchor(null);
       onChanged();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : String(err));
     } finally {
       setPosting(false);
+    }
+  }
+
+  async function submitInlineComment() {
+    const trimmed = inlineMessage.trim();
+    if (!trimmed || inlinePosting || isRegenerating || !canComment || !inlineSelection) return;
+    setInlinePosting(true);
+    try {
+      await postArtifactComment(
+        artifactId,
+        { message: trimmed, anchor: inlineSelection.anchor },
+        projectId,
+      );
+      setInlineMessage('');
+      setInlineSelection(null);
+      window.getSelection()?.removeAllRanges();
+      onChanged();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setInlinePosting(false);
     }
   }
 
@@ -357,11 +425,84 @@ function ArtifactComments({
       <div
         ref={bodyRef}
         className="rounded-xl border bg-card/40 p-4"
-        onMouseUp={captureSelection}
-        onKeyUp={captureSelection}
+        onPointerUp={(event) => scheduleSelectionCapture(event.pointerType !== 'touch')}
+        onKeyUp={() => scheduleSelectionCapture(true)}
+        onTouchEnd={() => scheduleSelectionCapture(false)}
       >
         <ArtifactRenderer content={data.content} />
       </div>
+      <Popover open={Boolean(inlineSelection)} onOpenChange={(open) => {
+        if (!open) {
+          setInlineSelection(null);
+          setInlineMessage('');
+        }
+      }}>
+        {inlineSelection ? <PopoverAnchor virtualRef={{ current: inlineSelection.virtualElement }} /> : null}
+        <PopoverContent
+          align="center"
+          side="bottom"
+          sideOffset={8}
+          collisionPadding={12}
+          className="w-[min(22rem,calc(100vw-2rem))] p-3"
+          onOpenAutoFocus={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => event.preventDefault()}
+        >
+          {inlineSelection ? (
+            <form
+              className="flex flex-col gap-2"
+              aria-label="Comment on selected text"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void submitInlineComment();
+              }}
+            >
+              <div className="flex items-start gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5">
+                <blockquote className="min-w-0 flex-1 border-l-2 border-primary/40 pl-2 text-xs italic text-muted-foreground">
+                  {inlineSelection.anchor}
+                </blockquote>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Close selection comment composer"
+                  onClick={() => {
+                    setInlineSelection(null);
+                    setInlineMessage('');
+                  }}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
+              <Textarea
+                ref={inlineComposerRef}
+                rows={3}
+                value={inlineMessage}
+                disabled={inlinePosting || isRegenerating}
+                aria-label="Selection comment"
+                placeholder="Comment on the selected text…"
+                onChange={(event) => setInlineMessage(event.target.value)}
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={inlinePosting}
+                  onClick={() => {
+                    setInlineSelection(null);
+                    setInlineMessage('');
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button type="submit" size="sm" disabled={!inlineMessage.trim() || inlinePosting || isRegenerating}>
+                  {inlinePosting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+                  {inlinePosting ? 'Posting…' : 'Comment'}
+                </Button>
+              </div>
+            </form>
+          ) : null}
+        </PopoverContent>
+      </Popover>
 
       <aside className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
@@ -409,40 +550,14 @@ function ArtifactComments({
             ) : null}
             <div className="flex items-center justify-between gap-2">
               <span className="text-xs font-medium">Add a comment</span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="h-7 gap-1 px-2 text-xs"
-                disabled={!selectionText || isRegenerating}
-                onClick={attachSelection}
-                title="Pin the current artifact selection to this comment"
-              >
-                <MessageSquarePlus className="size-3.5" />
-                Comment on selection
-              </Button>
+              <MessageSquarePlus className="size-3.5 text-muted-foreground" aria-hidden="true" />
             </div>
-            {anchor ? (
-              <div className="flex items-start gap-2 rounded-md border bg-muted/40 px-2.5 py-1.5">
-                <blockquote className="min-w-0 flex-1 truncate border-l-2 border-primary/40 pl-2 text-xs italic text-muted-foreground">
-                  {anchor}
-                </blockquote>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground"
-                  aria-label="Remove pinned selection"
-                  onClick={() => setAnchor(null)}
-                >
-                  <X className="size-3.5" />
-                </button>
-              </div>
-            ) : null}
             <Textarea
               ref={composerRef}
               rows={3}
               value={message}
               disabled={isRegenerating || posting}
-              placeholder={anchor ? 'Comment on the pinned selection…' : 'Leave a comment…'}
+              placeholder="Leave a comment…"
               onChange={(event) => setMessage(event.target.value)}
             />
             <div className="flex justify-end">
