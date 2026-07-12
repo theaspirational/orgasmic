@@ -10525,3 +10525,204 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-12 Sun 09:38:39 task.created TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1818
+:TIME:         [2026-07-12 Sun 09:38:39]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User requested inline selection commenting and an attachment feasibility check
+:END:
+
+* TX 2026-07-12 Sun 09:39:05 task.state_transitioned TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1819
+:TIME:         [2026-07-12 Sun 09:39:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-E7W7Q to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-12 Sun 09:39:07 manager.dispatch_started TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1820
+:TIME:         [2026-07-12 Sun 09:39:07]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-e7w7q/worktree
+:BRANCH:       task-e7w7q-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-brief.md
+:STARTED_AT:   [2026-07-12 Sun 09:39:07]
+:LIVENESS:     8961ad86e75c83e482cf8d334d96b1ac370c20b2
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-sonnet-4-6
+:EFFORT:       medium
+:REASON_INITIAL: Contained artifact-comment UX implementation with focused tests; attachment work excluded
+:END:
+
+* TX 2026-07-12 Sun 09:39:07 run.created TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1821
+:TIME:         [2026-07-12 Sun 09:39:07]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-E7W7Q-implementer-20260712T093906.jsonl
+:REASON:       Contained artifact-comment UX implementation with focused tests; attachment work excluded
+:RUN_ID:       run-20260712T093906-ed537856bd0346ad8be01d11a8aabe81
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-e7w7q/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-stdout.log
+:PID:          54242
+:DISPATCH_TX:  tx-20260712-orgasmic-1820
+:MODEL_OVERRIDE: claude-sonnet-4-6
+:EFFORT_OVERRIDE: medium
+:END:
+
+* TX 2026-07-12 Sun 09:39:46 manager.dispatch_aborted TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1822
+:TIME:         [2026-07-12 Sun 09:39:46]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:REASON:       Claude ACP worker authentication failed before any code changes
+:CLOSED_TX:    tx-20260712-orgasmic-1820
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-e7w7q/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-12 Sun 09:39:46 task.state_transitioned TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1823
+:TIME:         [2026-07-12 Sun 09:39:46]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-E7W7Q to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-12 Sun 09:39:54 task.state_transitioned TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1824
+:TIME:         [2026-07-12 Sun 09:39:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-E7W7Q to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-12 Sun 09:39:54 manager.dispatch_started TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1825
+:TIME:         [2026-07-12 Sun 09:39:54]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/TASK-E7W7Q/worktree
+:BRANCH:       task-e7w7q-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-brief.md
+:STARTED_AT:   [2026-07-12 Sun 09:39:54]
+:LIVENESS:     8961ad86e75c83e482cf8d334d96b1ac370c20b2
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       medium
+:REASON_INITIAL: Recover from Claude ACP authentication failure; same contained scope
+:END:
+
+* TX 2026-07-12 Sun 09:39:54 run.created TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1826
+:TIME:         [2026-07-12 Sun 09:39:54]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-E7W7Q-implementer-20260712T093954.jsonl
+:REASON:       Recover from Claude ACP authentication failure; same contained scope
+:RUN_ID:       run-20260712T093954-60eed75f3b3049878b87792517f7bd2e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/TASK-E7W7Q/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/TASK-E7W7Q/TASK-E7W7Q-stdout.log
+:PID:          58675
+:DISPATCH_TX:  tx-20260712-orgasmic-1825
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: medium
+:END:
+
+* TX 2026-07-12 Sun 09:45:16 implementer.done TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1827
+:TIME:         [2026-07-12 Sun 09:45:16]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:RUN_ID:       run-20260712T093954-60eed75f3b3049878b87792517f7bd2e
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/TASK-E7W7Q/worktree
+:SHA:          bb51670ee5b297a64c25916ddb81f4286e470999
+:MERGE_SHA:    bb51670ee5b297a64c25916ddb81f4286e470999
+:END:
+
+* TX 2026-07-12 Sun 09:51:10 task.state_transitioned TASK-E7W7Q
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1828
+:TIME:         [2026-07-12 Sun 09:51:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E7W7Q
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Landed as a66f359 after manager review; main UI typecheck and all 151 UI tests pass
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
