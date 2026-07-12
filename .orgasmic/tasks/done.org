@@ -12042,3 +12042,10 @@ Umbrella for the 2026-07-09 entry/workflows redesign (dec_YTJ0G dec_N7BM4 dec_MC
 :END:
 
 When a member selects text inside a rendered artifact, immediately open a focused comment composer below the selection. Preserve the existing unanchored comment composer in the comments rail. Cover mouse, keyboard, and touch-capable selection events; keep the current comment API and anchor text contract unchanged. File/image attachments are explicitly assessment-only in this task.
+
+* DONE TASK-H5X52 Let nightly subscribers adopt a newer stable runtime :updater:runtime:
+:PROPERTIES:
+:ID: TASK-H5X52
+:END:
+
+When a bundle installation remains subscribed to nightly, automatic update must compare the target-specific nightly and stable runtime versions using semantic-version precedence and install stable when it is newer. Preserve explicit --channel behavior and the nightly subscription pointer.

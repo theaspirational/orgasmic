@@ -10726,3 +10726,110 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-12 Sun 10:40:45 task.created TASK-H5X52
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1829
+:TIME:         [2026-07-12 Sun 10:40:45]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H5X52
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       A nightly subscriber on 0.0.8-nightly currently reports already up to date even though stable 0.0.12 is newer.
+:END:
+
+* TX 2026-07-12 Sun 10:41:11 task.state_transitioned TASK-H5X52
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1830
+:TIME:         [2026-07-12 Sun 10:41:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H5X52
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-H5X52 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-12 Sun 10:41:12 manager.dispatch_started TASK-H5X52
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1831
+:TIME:         [2026-07-12 Sun 10:41:12]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H5X52
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-h5x52/worktree
+:BRANCH:       task-h5x52-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-H5X52/TASK-H5X52-brief.md
+:STARTED_AT:   [2026-07-12 Sun 10:41:12]
+:LIVENESS:     78f97bfb25dd323fa67893d68280a11c204ad81e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       medium
+:REASON_INITIAL: Focused updater behavior change with a bounded SemVer selection matrix and regression tests.
+:END:
+
+* TX 2026-07-12 Sun 10:41:12 run.created TASK-H5X52
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1832
+:TIME:         [2026-07-12 Sun 10:41:12]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H5X52
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-H5X52-implementer-20260712T104112.jsonl
+:REASON:       Focused updater behavior change with a bounded SemVer selection matrix and regression tests.
+:RUN_ID:       run-20260712T104112-da1c8dbffdf148fea3f3f4b079e7d383
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-h5x52/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/TASK-H5X52/TASK-H5X52-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/TASK-H5X52/TASK-H5X52-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/TASK-H5X52/TASK-H5X52-stdout.log
+:PID:          33826
+:DISPATCH_TX:  tx-20260712-orgasmic-1831
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: medium
+:END:
+
+* TX 2026-07-12 Sun 10:54:05 implementer.done TASK-H5X52
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1833
+:TIME:         [2026-07-12 Sun 10:54:05]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H5X52
+:RUN_ID:       run-20260712T104112-da1c8dbffdf148fea3f3f4b079e7d383
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/TASK-H5X52/worktree
+:SHA:          a3f6c0c3894fe183e3f5d2239d3d9532ea475f58
+:MERGE_SHA:    a3f6c0c3894fe183e3f5d2239d3d9532ea475f58
+:END:
+
+* TX 2026-07-12 Sun 10:55:31 task.state_transitioned TASK-H5X52
+:PROPERTIES:
+:TX_ID:        tx-20260712-orgasmic-1834
+:TIME:         [2026-07-12 Sun 10:55:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H5X52
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Implemented in f54494a; focused updater tests passed on main, and worker verification passed cargo build, full cargo test, clippy, and diff check.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
