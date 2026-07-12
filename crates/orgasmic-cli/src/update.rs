@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
+use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
@@ -99,6 +100,7 @@ fn run_bundle(
     // installer is equality-based (it installs the channel head regardless of
     // whether its semver is higher or lower), which is exactly what a deliberate
     // channel switch needs. dec_B4147 versioning amendment.
+    let explicit_channel = channel_override.is_some();
     let switching = channel_override
         .as_deref()
         .is_some_and(|c| Some(c) != state.channel.as_deref());
@@ -118,19 +120,44 @@ fn run_bundle(
     }
     println!("→ checking {channel} runtime manifest: {manifest_url}");
 
-    let manifest_raw = fetch_text(&manifest_url)?;
-    let manifest: RuntimeChannelManifest =
-        serde_json::from_str(&manifest_raw).context("parse runtime channel manifest")?;
-    let asset = manifest
-        .runtimes
-        .get(&target)
-        .with_context(|| format!("manifest has no runtime for target {target}"))?;
-    let asset_version = asset
-        .version
-        .clone()
-        .unwrap_or_else(|| manifest.version.clone());
+    let mut candidate = load_runtime_candidate(&manifest_url, &channel, &target)?;
+    if !explicit_channel && channel == "nightly" {
+        match sibling_stable_manifest_url(&manifest_url) {
+            Some(stable_url) => {
+                println!("→ checking stable runtime manifest: {stable_url}");
+                match load_runtime_candidate(&stable_url, "stable", &target) {
+                    Ok(stable_candidate) => {
+                        if stable_candidate.parsed_version > candidate.parsed_version {
+                            println!(
+                                "→ stable runtime {} is newer than nightly {}; installing stable artifact while keeping nightly subscription",
+                                stable_candidate.asset_version, candidate.asset_version
+                            );
+                            candidate = stable_candidate;
+                        }
+                    }
+                    Err(error) => {
+                        if runtime_manifest_fetch_failed(&error) {
+                            eprintln!(
+                                "warning: stable runtime manifest unavailable; continuing with nightly candidate: {error}"
+                            );
+                        } else {
+                            return Err(error).context("stable runtime candidate is invalid");
+                        }
+                    }
+                }
+            }
+            None => eprintln!(
+                "warning: cannot derive stable runtime manifest from {manifest_url}; continuing with nightly candidate"
+            ),
+        }
+    }
 
-    // Already up to date: the channel advertises the version we already have
+    let selected_channel = candidate.channel.clone();
+    let selected_manifest_url = candidate.manifest_url.clone();
+    let asset = candidate.asset.clone();
+    let asset_version = candidate.asset_version.clone();
+
+    // Already up to date: the selected candidate advertises the version we already have
     // installed and active, and the daemon is on that managed runtime (no
     // temporary `--from-source` override to clear). Skip the re-download/swap.
     if !switching
@@ -142,8 +169,8 @@ fn run_bundle(
         return Ok(());
     }
 
-    let asset_url = resolve_asset_url(&manifest_url, &asset.url);
-    println!("→ downloading runtime {asset_version} for {target}");
+    let asset_url = resolve_asset_url(&selected_manifest_url, &asset.url);
+    println!("→ downloading {selected_channel} runtime {asset_version} for {target}");
 
     let work = prepare_work_dir(home, "runtime-update")?;
     let result = (|| {
@@ -164,7 +191,7 @@ fn run_bundle(
         let previous_current = read_symlink(&home.current_runtime());
         let new_state = InstallState {
             mode: InstallMode::Bundle,
-            channel: manifest.channel.clone().or(Some(channel)),
+            channel: Some(channel.clone()),
             version: Some(asset_version.clone()),
             target: Some(target.clone()),
             manifest_url: Some(manifest_url.clone()),
@@ -225,6 +252,83 @@ fn run_bundle(
     })();
     let _ = std::fs::remove_dir_all(&work);
     result
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeCandidate {
+    manifest_url: String,
+    channel: String,
+    asset: RuntimeAsset,
+    asset_version: String,
+    parsed_version: Version,
+}
+
+fn load_runtime_candidate(
+    manifest_url: &str,
+    channel: &str,
+    target: &str,
+) -> Result<RuntimeCandidate> {
+    let manifest_raw = fetch_text(manifest_url)?;
+    let manifest: RuntimeChannelManifest = serde_json::from_str(&manifest_raw)
+        .with_context(|| format!("parse runtime channel manifest {manifest_url}"))?;
+    let asset = manifest
+        .runtimes
+        .get(target)
+        .with_context(|| format!("manifest has no runtime for target {target}"))?
+        .clone();
+    let asset_version = asset
+        .version
+        .clone()
+        .unwrap_or_else(|| manifest.version.clone());
+    let parsed_version = Version::parse(&asset_version).with_context(|| {
+        format!("runtime candidate version is not valid SemVer: {asset_version}")
+    })?;
+    Ok(RuntimeCandidate {
+        manifest_url: manifest_url.to_string(),
+        channel: manifest.channel.unwrap_or_else(|| channel.to_string()),
+        asset,
+        asset_version,
+        parsed_version,
+    })
+}
+
+fn runtime_manifest_fetch_failed(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause.to_string().starts_with("read ") || cause.to_string().starts_with("fetch ")
+    })
+}
+
+fn sibling_stable_manifest_url(manifest_url: &str) -> Option<String> {
+    sibling_channel_manifest_url(manifest_url, "nightly", "stable")
+}
+
+fn sibling_channel_manifest_url(
+    manifest_url: &str,
+    from_channel: &str,
+    to_channel: &str,
+) -> Option<String> {
+    let suffix = format!("/{from_channel}/runtime-latest.json");
+    if let Some(prefix) = manifest_url.strip_suffix(&suffix) {
+        return Some(format!("{prefix}/{to_channel}/runtime-latest.json"));
+    }
+
+    let path = local_path_from_location(manifest_url)?;
+    if path.file_name().and_then(|name| name.to_str()) != Some("runtime-latest.json") {
+        return None;
+    }
+    let parent = path.parent()?;
+    if parent.file_name().and_then(|name| name.to_str()) != Some(from_channel) {
+        return None;
+    }
+    let sibling = parent
+        .parent()?
+        .join(to_channel)
+        .join("runtime-latest.json");
+    if manifest_url.strip_prefix("file://").is_some() {
+        Some(format!("file://{}", sibling.display()))
+    } else {
+        Some(sibling.to_string_lossy().to_string())
+    }
 }
 
 /// True when `version` for `target` is already installed and active — its
@@ -882,17 +986,69 @@ mod tests {
     }
 
     fn bundle_manifest(version: &str, bundle: &Path, sha: &str) -> String {
+        channel_manifest("nightly", version, bundle, sha, None)
+    }
+
+    fn channel_manifest(
+        channel: &str,
+        manifest_version: &str,
+        bundle: &Path,
+        sha: &str,
+        asset_version: Option<&str>,
+    ) -> String {
+        let mut asset = serde_json::json!({
+            "url": bundle.to_string_lossy(),
+            "sha256": sha,
+        });
+        if let Some(version) = asset_version {
+            asset["version"] = serde_json::Value::String(version.to_string());
+        }
         serde_json::json!({
-            "version": version,
-            "channel": "nightly",
+            "version": manifest_version,
+            "channel": channel,
             "runtimes": {
-                "darwin-aarch64": {
-                    "url": bundle.to_string_lossy(),
-                    "sha256": sha,
-                }
+                "darwin-aarch64": asset
             }
         })
         .to_string()
+    }
+
+    fn runtime_bundle(tmp: &Path, name: &str, marker: &str) -> (PathBuf, String) {
+        let payload = tmp.join(format!("payload-{name}"));
+        write_runtime_payload(&payload, marker);
+        let bundle = tmp.join(format!("runtime-{name}.tar.gz"));
+        tar_runtime(&payload, &bundle);
+        let sha = sha256_hex(&std::fs::read(&bundle).unwrap());
+        (bundle, sha)
+    }
+
+    fn install_old_runtime(home: &Home, version: &str) -> PathBuf {
+        let old_runtime = home.runtimes().join(format!("{version}-darwin-aarch64"));
+        write_runtime_payload(&old_runtime, "old");
+        swap_runtime_links(home, &old_runtime).unwrap();
+        old_runtime
+    }
+
+    fn run_with_temp_skills(home: &Home, skills_dir: &Path, channel: Option<String>) -> Result<()> {
+        let previous_skills_dir = std::env::var_os("AGENT_SKILLS_DIR");
+        std::env::set_var("AGENT_SKILLS_DIR", skills_dir);
+        let result = run(home, "main", true, channel);
+        if let Some(previous) = previous_skills_dir {
+            std::env::set_var("AGENT_SKILLS_DIR", previous);
+        } else {
+            std::env::remove_var("AGENT_SKILLS_DIR");
+        }
+        result
+    }
+
+    fn assert_install_state(home: &Home, channel: &str, version: &str, manifest_url: &Path) {
+        let state = install_state::read(home).unwrap().unwrap();
+        assert_eq!(state.channel.as_deref(), Some(channel));
+        assert_eq!(state.version.as_deref(), Some(version));
+        assert_eq!(
+            state.manifest_url.as_deref(),
+            Some(&*manifest_url.to_string_lossy())
+        );
     }
 
     #[test]
@@ -1076,6 +1232,450 @@ mod tests {
         assert_eq!(
             std::fs::read_link(home.current_runtime()).unwrap(),
             PathBuf::from("runtimes/0.2.0-darwin-aarch64")
+        );
+    }
+
+    #[test]
+    fn nightly_subscription_installs_newer_stable_but_keeps_nightly_pointer() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.8-nightly.20260706.1783321648");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let nightly_dir = tmp.path().join("nightly");
+        let stable_dir = tmp.path().join("stable");
+        let nightly_manifest = nightly_dir.join("runtime-latest.json");
+        let stable_manifest = stable_dir.join("runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.8-nightly.20260706.1783321648",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        write(
+            &stable_manifest,
+            &channel_manifest("stable", "0.0.12", &stable_bundle, &stable_sha, None),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.8-nightly.20260706.1783321648".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(&home, &tmp.path().join("skills"), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.12-darwin-aarch64")
+        );
+        assert_install_state(&home, "nightly", "0.0.12", &nightly_manifest);
+    }
+
+    #[test]
+    fn nightly_subscription_retains_newer_nightly() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.12");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        let stable_manifest = tmp.path().join("stable/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.13-nightly.20260712.1",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        write(
+            &stable_manifest,
+            &channel_manifest("stable", "0.0.12", &stable_bundle, &stable_sha, None),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.12".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(&home, &tmp.path().join("skills"), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.13-nightly.20260712.1-darwin-aarch64")
+        );
+        assert_install_state(
+            &home,
+            "nightly",
+            "0.0.13-nightly.20260712.1",
+            &nightly_manifest,
+        );
+    }
+
+    #[test]
+    fn stable_release_beats_same_base_nightly_prerelease() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.11");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        let stable_manifest = tmp.path().join("stable/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.12-nightly.20260712.1",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        write(
+            &stable_manifest,
+            &channel_manifest("stable", "0.0.12", &stable_bundle, &stable_sha, None),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.11".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(&home, &tmp.path().join("skills"), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.12-darwin-aarch64")
+        );
+        assert_install_state(&home, "nightly", "0.0.12", &nightly_manifest);
+    }
+
+    #[test]
+    fn explicit_nightly_channel_does_not_cross_to_newer_stable() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.8");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        let stable_manifest = tmp.path().join("stable/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.9-nightly.20260712.1",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        write(
+            &stable_manifest,
+            &channel_manifest("stable", "0.0.12", &stable_bundle, &stable_sha, None),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.8".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(
+            &home,
+            &tmp.path().join("skills"),
+            Some("nightly".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.9-nightly.20260712.1-darwin-aarch64")
+        );
+        assert_install_state(
+            &home,
+            "nightly",
+            "0.0.9-nightly.20260712.1",
+            &nightly_manifest,
+        );
+    }
+
+    #[test]
+    fn stable_subscription_stays_stable_only() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.11");
+
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let stable_manifest = tmp.path().join("stable/runtime-latest.json");
+        write(
+            &stable_manifest,
+            &channel_manifest("stable", "0.0.12", &stable_bundle, &stable_sha, None),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("stable".to_string()),
+                version: Some("0.0.11".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(stable_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(&home, &tmp.path().join("skills"), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.12-darwin-aarch64")
+        );
+        assert_install_state(&home, "stable", "0.0.12", &stable_manifest);
+    }
+
+    #[test]
+    fn target_specific_asset_version_controls_nightly_stable_comparison() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.9");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        let stable_manifest = tmp.path().join("stable/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.20",
+                &nightly_bundle,
+                &nightly_sha,
+                Some("0.0.10-nightly.1"),
+            ),
+        );
+        write(
+            &stable_manifest,
+            &channel_manifest(
+                "stable",
+                "0.0.1",
+                &stable_bundle,
+                &stable_sha,
+                Some("0.0.12"),
+            ),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.9".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(&home, &tmp.path().join("skills"), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.12-darwin-aarch64")
+        );
+        assert_install_state(&home, "nightly", "0.0.12", &nightly_manifest);
+    }
+
+    #[test]
+    fn stable_manifest_unavailable_warns_and_falls_back_to_nightly() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.8");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.9-nightly.1",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.8".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        run_with_temp_skills(&home, &tmp.path().join("skills"), None).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.9-nightly.1-darwin-aarch64")
+        );
+        assert_install_state(&home, "nightly", "0.0.9-nightly.1", &nightly_manifest);
+    }
+
+    #[test]
+    fn malformed_semver_candidate_fails_clearly() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.8");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "not-a-semver",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.8".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        let err = run_with_temp_skills(&home, &tmp.path().join("skills"), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("not valid SemVer"), "{err}");
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.8-darwin-aarch64")
+        );
+    }
+
+    #[test]
+    fn malformed_stable_semver_candidate_fails_instead_of_falling_back() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let old_runtime = install_old_runtime(&home, "0.0.8");
+
+        let (nightly_bundle, nightly_sha) = runtime_bundle(tmp.path(), "nightly", "nightly");
+        let (stable_bundle, stable_sha) = runtime_bundle(tmp.path(), "stable", "stable");
+        let nightly_manifest = tmp.path().join("nightly/runtime-latest.json");
+        let stable_manifest = tmp.path().join("stable/runtime-latest.json");
+        write(
+            &nightly_manifest,
+            &channel_manifest(
+                "nightly",
+                "0.0.9-nightly.1",
+                &nightly_bundle,
+                &nightly_sha,
+                None,
+            ),
+        );
+        write(
+            &stable_manifest,
+            &channel_manifest("stable", "not-a-semver", &stable_bundle, &stable_sha, None),
+        );
+        install_state::write(
+            &home,
+            &InstallState {
+                mode: InstallMode::Bundle,
+                channel: Some("nightly".to_string()),
+                version: Some("0.0.8".to_string()),
+                target: Some("darwin-aarch64".to_string()),
+                manifest_url: Some(nightly_manifest.to_string_lossy().to_string()),
+                runtime_dir: Some(old_runtime),
+                source_checkout: None,
+            },
+        )
+        .unwrap();
+
+        let err = run_with_temp_skills(&home, &tmp.path().join("skills"), None)
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("stable runtime candidate is invalid"), "{err}");
+        assert_eq!(
+            std::fs::read_link(home.current_runtime()).unwrap(),
+            PathBuf::from("runtimes/0.0.8-darwin-aarch64")
         );
     }
 

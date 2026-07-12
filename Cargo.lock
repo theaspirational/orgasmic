@@ -1141,6 +1141,7 @@ dependencies = [
  "orgasmic-core",
  "orgasmic-daemon",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
