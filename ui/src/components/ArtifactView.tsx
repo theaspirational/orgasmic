@@ -350,6 +350,11 @@ export function ArtifactComments({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const inlineComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const selectionTimerRef = useRef<number | null>(null);
+  // Latest inlineSelection/inlinePosting mirrored into refs so captureSelection
+  // can read them without becoming a dependency (keeps the selectionchange
+  // listener from re-subscribing on every selection update).
+  const inlineSelectionRef = useRef<InlineSelection | null>(null);
+  const inlinePostingRef = useRef(false);
   // Stored anchor ranges for highlight->comment hit-testing (cid + live Range).
   const anchorHitsRef = useRef<Array<{ cid: string; range: Range }>>([]);
   const [message, setMessage] = useState('');
@@ -511,9 +516,11 @@ export function ArtifactComments({
   );
 
   const captureSelection = useCallback((focusOnOpen: boolean) => {
-    if (!canComment || isRegenerating) return;
+    if (!canComment || isRegenerating || inlinePostingRef.current) return;
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !bodyRef.current) {
+      // A collapsed or out-of-body selection (e.g. tapping into the composer
+      // textarea) must preserve the currently captured quote, not clear it.
       return;
     }
     // Collapse internal whitespace/newlines to single spaces before storing:
@@ -530,15 +537,22 @@ export function ArtifactComments({
     ) {
       return;
     }
+    const anchor = text.slice(0, MAX_ANCHOR_LEN);
+    const prev = inlineSelectionRef.current;
+    // selectionchange fires very frequently; skip when the quote is unchanged so
+    // we avoid pointless re-renders and popover reposition churn.
+    if (prev && prev.anchor === anchor) return;
     setInlineSelection({
-      anchor: text.slice(0, MAX_ANCHOR_LEN),
+      anchor,
       virtualElement: {
         contextElement: bodyRef.current,
         getBoundingClientRect: () => range.getBoundingClientRect(),
       },
       focusOnOpen,
     });
-    setInlineMessage('');
+    // Only clear the draft when the composer is freshly opening; re-capturing an
+    // already-open composer (e.g. extending the selection) must keep the draft.
+    if (!prev) setInlineMessage('');
   }, [canComment, isRegenerating]);
 
   const scheduleSelectionCapture = useCallback(
@@ -553,9 +567,43 @@ export function ArtifactComments({
   );
 
   useEffect(() => {
+    inlineSelectionRef.current = inlineSelection;
+  }, [inlineSelection]);
+
+  useEffect(() => {
+    inlinePostingRef.current = inlinePosting;
+  }, [inlinePosting]);
+
+  useEffect(() => {
     if (!inlineSelection?.focusOnOpen) return;
     inlineComposerRef.current?.focus();
   }, [inlineSelection]);
+
+  // Native selection-handle drags (mobile) are browser chrome: they never
+  // dispatch pointerup/touchend to the page, only document-level
+  // `selectionchange`. Keep the captured anchor in sync via a debounced
+  // selectionchange listener so extending the selection updates the quote
+  // without a pointer event. focusOnOpen is always false here — never steal
+  // focus mid-drag (would pop the mobile keyboard). captureSelection's existing
+  // guards preserve the quote on a collapsed/out-of-body selection.
+  useEffect(() => {
+    if (!canComment || isRegenerating) return;
+    const handler = () => {
+      if (selectionTimerRef.current !== null) window.clearTimeout(selectionTimerRef.current);
+      selectionTimerRef.current = window.setTimeout(() => {
+        selectionTimerRef.current = null;
+        captureSelection(false);
+      }, 150);
+    };
+    document.addEventListener('selectionchange', handler);
+    return () => {
+      document.removeEventListener('selectionchange', handler);
+      if (selectionTimerRef.current !== null) {
+        window.clearTimeout(selectionTimerRef.current);
+        selectionTimerRef.current = null;
+      }
+    };
+  }, [canComment, isRegenerating, captureSelection]);
 
   useEffect(() => {
     if (isRegenerating || !canComment) {

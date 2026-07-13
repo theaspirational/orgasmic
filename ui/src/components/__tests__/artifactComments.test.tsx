@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const apiMocks = vi.hoisted(() => ({
@@ -303,5 +303,216 @@ describe('ArtifactComments inline selection composer', () => {
       expect(screen.queryByRole('form', { name: 'Comment on selected text' })).toBeNull(),
     );
     expect(apiMocks.postArtifactComment).not.toHaveBeenCalled();
+  });
+});
+
+describe('ArtifactComments selectionchange sync (native handle drag)', () => {
+  // jsdom never auto-fires selectionchange on selection mutation, so every
+  // capture in these tests is driven purely by an explicit selectionchange —
+  // i.e. no pointerup/touchend reaches the page, exactly like a mobile native
+  // handle drag.
+  function collapseSelectionIn(element: HTMLElement) {
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode();
+    if (!node) throw new Error('No selectable text node found');
+    const range = document.createRange();
+    range.setStart(node, 0);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  }
+
+  function fireSelectionChange() {
+    act(() => {
+      document.dispatchEvent(new Event('selectionchange'));
+      vi.advanceTimersByTime(150);
+    });
+  }
+
+  function inlineComposer() {
+    return screen.getByRole('form', { name: 'Comment on selected text' });
+  }
+
+  it('updates the quote when the selection is extended, with no pointerup', () => {
+    vi.useFakeTimers();
+    try {
+      mockRangeRect();
+      render(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment
+          onChanged={vi.fn()}
+        />,
+      );
+
+      const artifactText = screen.getByText(/Selected artifact text is here/);
+      // Mobile long-press selects one word; the composer opens quoting it.
+      selectTextIn(artifactText, 'Selected');
+      fireSelectionChange();
+      expect(within(inlineComposer()).getByText('Selected')).toBeInTheDocument();
+
+      // Drag the native handle to extend the selection: only selectionchange
+      // fires — no pointerup/touchend reaches the page.
+      selectTextIn(artifactText, 'Selected artifact text is here');
+      fireSelectionChange();
+      expect(within(inlineComposer()).getByText('Selected artifact text is here')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves the captured quote when the selection collapses (focusing the textarea)', () => {
+    vi.useFakeTimers();
+    try {
+      mockRangeRect();
+      render(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment
+          onChanged={vi.fn()}
+        />,
+      );
+
+      const artifactText = screen.getByText(/Selected artifact text is here/);
+      selectTextIn(artifactText, 'Selected artifact text');
+      fireSelectionChange();
+      expect(within(inlineComposer()).getByText('Selected artifact text')).toBeInTheDocument();
+
+      // Tapping into the composer collapses the artifact selection; the quote
+      // must survive.
+      collapseSelectionIn(artifactText);
+      fireSelectionChange();
+      expect(within(inlineComposer()).getByText('Selected artifact text')).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a typed draft when the quote updates on re-capture', () => {
+    vi.useFakeTimers();
+    try {
+      mockRangeRect();
+      render(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment
+          onChanged={vi.fn()}
+        />,
+      );
+
+      const artifactText = screen.getByText(/Selected artifact text is here/);
+      selectTextIn(artifactText, 'Selected');
+      fireSelectionChange();
+
+      fireEvent.change(within(inlineComposer()).getByLabelText('Selection comment'), {
+        target: { value: 'Half a thought' },
+      });
+
+      selectTextIn(artifactText, 'Selected artifact text is here');
+      fireSelectionChange();
+
+      expect(within(inlineComposer()).getByText('Selected artifact text is here')).toBeInTheDocument();
+      expect(within(inlineComposer()).getByLabelText('Selection comment')).toHaveValue('Half a thought');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('starts a fresh capture with an empty draft', () => {
+    vi.useFakeTimers();
+    try {
+      mockRangeRect();
+      render(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment
+          onChanged={vi.fn()}
+        />,
+      );
+
+      const artifactText = screen.getByText(/Selected artifact text is here/);
+      selectTextIn(artifactText, 'Selected artifact text');
+      fireSelectionChange();
+
+      expect(within(inlineComposer()).getByLabelText('Selection comment')).toHaveValue('');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not disturb an open composer or draft on an identical re-selection (no-op guard)', () => {
+    vi.useFakeTimers();
+    try {
+      mockRangeRect();
+      render(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment
+          onChanged={vi.fn()}
+        />,
+      );
+
+      const artifactText = screen.getByText(/Selected artifact text is here/);
+      selectTextIn(artifactText, 'Selected artifact text');
+      fireSelectionChange();
+
+      fireEvent.change(within(inlineComposer()).getByLabelText('Selection comment'), {
+        target: { value: 'Steady draft' },
+      });
+
+      // Re-selecting identical text (selectionchange churn) must be a no-op.
+      selectTextIn(artifactText, 'Selected artifact text');
+      fireSelectionChange();
+
+      expect(within(inlineComposer()).getByText('Selected artifact text')).toBeInTheDocument();
+      expect(within(inlineComposer()).getByLabelText('Selection comment')).toHaveValue('Steady draft');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not sync the selection once the viewer can no longer comment', () => {
+    vi.useFakeTimers();
+    try {
+      mockRangeRect();
+      const { rerender } = render(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment
+          onChanged={vi.fn()}
+        />,
+      );
+
+      rerender(
+        <ArtifactComments
+          data={detail()}
+          projectId="proj1"
+          artifactId="ART-1"
+          canComment={false}
+          onChanged={vi.fn()}
+        />,
+      );
+
+      const artifactText = screen.getByText(/Selected artifact text is here/);
+      selectTextIn(artifactText, 'Selected artifact text');
+      fireSelectionChange();
+
+      expect(screen.queryByRole('form', { name: 'Comment on selected text' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
