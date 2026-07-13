@@ -12064,3 +12064,10 @@ A first-time visitor opening a protected deep link such as /projects/orsl/artifa
 :END:
 
 Operator-requested artifact collaboration bundle (2026-07-13). (1) QuestionForm block becomes interactive: members with artifacts.comment answer single/multi/freeform/other questions; each answer posts as a normal artifact comment carrying a structured JSON anchor {kind:'question', key, prompt}; the form groups current-version answer comments per question (latest per author), shows teammates' answers, and offers Agree (posts a reply). (2) Threaded replies: new REPLY_TO comment property end to end (daemon reviews.org model, API validation, tx, regen context, CLI --reply-to, UI nested rendering + reply composer). (3) Anchored text spans stay highlighted in the rendered artifact via CSS Custom Highlight API; clicking a highlight scrolls to the matching comment card; clicking a comment's quote scrolls to the anchored text (question answers scroll to their question). Brief: .orgasmic/tmp/dispatch brief at dispatch time.
+
+* DONE TASK-WYSMM Mobile: selection-comment quote stuck on first word; extend-selection never updates the composer :ui:bug:
+:PROPERTIES:
+:ID: TASK-WYSMM
+:END:
+
+On mobile browsers, long-press selects one word and touchend opens the inline comment composer quoting only that word. Dragging the native selection handles to extend the selection never updates the quote: handle drags do not dispatch pointerup/touchend to the page (only document.selectionchange fires), and ArtifactView captures the anchor exactly once on pointerup/touchend/keyup. Fix: keep the captured anchor in sync via a debounced document selectionchange listener while the composer is eligible, re-capturing when the selection is non-collapsed inside the artifact body and preserving the existing quote when the selection collapses (e.g. focusing the textarea).

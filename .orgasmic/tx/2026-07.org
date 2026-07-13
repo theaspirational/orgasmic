@@ -11048,3 +11048,109 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-13 Mon 16:49:19 task.created TASK-WYSMM
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1847
+:TIME:         [2026-07-13 Mon 16:49:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WYSMM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User-reported mobile bug on the just-shipped anchored-comment feature (TASK-TJF7G)
+:END:
+
+* TX 2026-07-13 Mon 16:50:16 task.state_transitioned TASK-WYSMM
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1848
+:TIME:         [2026-07-13 Mon 16:50:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WYSMM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-WYSMM to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-13 Mon 16:50:17 manager.dispatch_started TASK-WYSMM
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1849
+:TIME:         [2026-07-13 Mon 16:50:17]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WYSMM
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wysmm/worktree
+:BRANCH:       task-wysmm-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-wysmm/task-wysmm-brief.md
+:STARTED_AT:   [2026-07-13 Mon 16:50:17]
+:LIVENESS:     39d2040b3f8c4e4b21672b5191300f3f1e176f01
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-4-8
+:EFFORT:       high
+:REASON_INITIAL: Mobile selection-quote bug on TASK-TJF7G anchored comments
+:END:
+
+* TX 2026-07-13 Mon 16:50:17 run.created TASK-WYSMM
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1850
+:TIME:         [2026-07-13 Mon 16:50:17]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WYSMM
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-WYSMM-implementer-20260713T165016.jsonl
+:REASON:       Mobile selection-quote bug on TASK-TJF7G anchored comments
+:RUN_ID:       run-20260713T165016-9b52b9838ee24cf3b322d93c4836cd7d
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wysmm/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-wysmm/task-wysmm-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-wysmm/task-wysmm-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-wysmm/task-wysmm-stdout.log
+:DISPATCH_TX:  tx-20260713-orgasmic-1849
+:MODEL_OVERRIDE: claude-opus-4-8
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-13 Mon 17:01:06 implementer.done TASK-WYSMM
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1851
+:TIME:         [2026-07-13 Mon 17:01:06]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WYSMM
+:RUN_ID:       run-20260713T165016-9b52b9838ee24cf3b322d93c4836cd7d
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wysmm/worktree
+:SHA:          0ddaba28eef8093d3f5eab705eed8768b5f99e23
+:MERGE_SHA:    0ddaba28eef8093d3f5eab705eed8768b5f99e23
+:END:
+
+* TX 2026-07-13 Mon 17:02:52 task.state_transitioned TASK-WYSMM
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1852
+:TIME:         [2026-07-13 Mon 17:02:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WYSMM
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Implementer run-20260713T165016 landed 0ddaba2 on main: debounced document selectionchange sync keeps the inline comment quote following mobile selection-handle drags; 6 new jsdom tests, full ui suite 191 passed, tsc clean
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
