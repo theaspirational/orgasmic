@@ -12057,3 +12057,10 @@ When a bundle installation remains subscribed to nightly, automatic update must 
 :END:
 
 A first-time visitor opening a protected deep link such as /projects/orsl/artifacts/ART-P81EE enters a valid member token, but the routed resource can retain a pre-auth 401 until page reload. Prove the ordering with regression coverage and ensure the protected route fetch runs only after successful authentication, without requiring reload. Preserve admin and restored-member flows.
+
+* DONE TASK-TJF7G Interactive artifact Q&A: QuestionForm answers as comments, threaded replies, anchor highlights + two-way navigation
+:PROPERTIES:
+:ID: TASK-TJF7G
+:END:
+
+Operator-requested artifact collaboration bundle (2026-07-13). (1) QuestionForm block becomes interactive: members with artifacts.comment answer single/multi/freeform/other questions; each answer posts as a normal artifact comment carrying a structured JSON anchor {kind:'question', key, prompt}; the form groups current-version answer comments per question (latest per author), shows teammates' answers, and offers Agree (posts a reply). (2) Threaded replies: new REPLY_TO comment property end to end (daemon reviews.org model, API validation, tx, regen context, CLI --reply-to, UI nested rendering + reply composer). (3) Anchored text spans stay highlighted in the rendered artifact via CSS Custom Highlight API; clicking a highlight scrolls to the matching comment card; clicking a comment's quote scrolls to the anchored text (question answers scroll to their question). Brief: .orgasmic/tmp/dispatch brief at dispatch time.
