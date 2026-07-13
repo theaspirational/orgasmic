@@ -12049,3 +12049,11 @@ When a member selects text inside a rendered artifact, immediately open a focuse
 :END:
 
 When a bundle installation remains subscribed to nightly, automatic update must compare the target-specific nightly and stable runtime versions using semantic-version precedence and install stable when it is newer. Preserve explicit --channel behavior and the nightly subscription pointer.
+
+* DONE TASK-VJNJ2 Prevent stale 401 after first member-token deep-link login :bug:ui:auth:
+:PROPERTIES:
+:ID: TASK-VJNJ2
+:PRODUCES: ui/src/components/AppShell.tsx ui/src/hooks/useMe.tsx ui/src/components/ConnectGate.tsx ui/src/components/__tests__
+:END:
+
+A first-time visitor opening a protected deep link such as /projects/orsl/artifacts/ART-P81EE enters a valid member token, but the routed resource can retain a pre-auth 401 until page reload. Prove the ordering with regression coverage and ensure the protected route fetch runs only after successful authentication, without requiring reload. Preserve admin and restored-member flows.

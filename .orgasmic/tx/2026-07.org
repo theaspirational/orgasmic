@@ -10833,3 +10833,111 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-07-13 Mon 09:57:07 task.created TASK-VJNJ2
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1835
+:TIME:         [2026-07-13 Mon 09:57:07]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VJNJ2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User-reported first-login failure with screenshots
+:END:
+
+* TX 2026-07-13 Mon 09:57:29 task.state_transitioned TASK-VJNJ2
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1836
+:TIME:         [2026-07-13 Mon 09:57:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VJNJ2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-VJNJ2 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-13 Mon 09:57:29 manager.dispatch_started TASK-VJNJ2
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1837
+:TIME:         [2026-07-13 Mon 09:57:29]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VJNJ2
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vjnj2/worktree
+:BRANCH:       codex/task-vjnj2-first-login
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/orgasmic-task-vjnj2/orgasmic-task-vjnj2-brief.md
+:STARTED_AT:   [2026-07-13 Mon 09:57:29]
+:LIVENESS:     1a13088ff9369e41fee11da1a5faa20aac53be1f
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.5
+:EFFORT:       high
+:REASON_INITIAL: Implement and prove the user-reported first member-login deep-link fix
+:END:
+
+* TX 2026-07-13 Mon 09:57:29 run.created TASK-VJNJ2
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1838
+:TIME:         [2026-07-13 Mon 09:57:29]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VJNJ2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-VJNJ2-implementer-20260713T095729.jsonl
+:REASON:       Implement and prove the user-reported first member-login deep-link fix
+:RUN_ID:       run-20260713T095729-5109152af33d41e883b120e37f204adc
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vjnj2/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/orgasmic-task-vjnj2/orgasmic-task-vjnj2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/orgasmic-task-vjnj2/orgasmic-task-vjnj2-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/orgasmic-task-vjnj2/orgasmic-task-vjnj2-stdout.log
+:PID:          57284
+:DISPATCH_TX:  tx-20260713-orgasmic-1837
+:MODEL_OVERRIDE: gpt-5.5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-13 Mon 10:06:14 implementer.done TASK-VJNJ2
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1839
+:TIME:         [2026-07-13 Mon 10:06:14]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VJNJ2
+:RUN_ID:       run-20260713T095729-5109152af33d41e883b120e37f204adc
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vjnj2/worktree
+:SHA:          b3084adcef95f7dd79d28dd6d8bf20ae31fb6283
+:MERGE_SHA:    b3084adcef95f7dd79d28dd6d8bf20ae31fb6283
+:END:
+
+* TX 2026-07-13 Mon 10:07:50 task.state_transitioned TASK-VJNJ2
+:PROPERTIES:
+:TX_ID:        tx-20260713-orgasmic-1840
+:TIME:         [2026-07-13 Mon 10:07:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VJNJ2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Implemented in 0456a63; manager review passed; focused auth-gate tests 4/4, full UI tests 155/155, typecheck, and production build all passed on main.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
