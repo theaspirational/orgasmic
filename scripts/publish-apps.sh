@@ -162,12 +162,14 @@ if [[ "$ALLOW_HEAD_MISMATCH" != "1" ]]; then
 fi
 echo "✓ clean tree at $HEAD_SHA"
 
-# The android build stamps versionCode into a tracked file; restore the tree on
-# exit so a published run leaves no local drift behind.
+# App builds can refresh the nested Cargo.lock, and the Android build stamps
+# versionCode into tracked files. Restore all build-touched tracked files on exit
+# so dry-runs and publishes leave no local drift behind.
 ANDROID_CONF="src-tauri/tauri.android.conf.json"
 RESTORE_ANDROID_TREE=0
 RESTORE_VERSION_FILES=0
 cleanup() {
+    git checkout -- src-tauri/Cargo.lock 2>/dev/null || true
     if [[ "$RESTORE_ANDROID_TREE" == "1" ]]; then
         git checkout -- "$ANDROID_CONF" 2>/dev/null || true
         git checkout -- src-tauri/gen/android 2>/dev/null || true
