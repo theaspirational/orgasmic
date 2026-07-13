@@ -30,6 +30,7 @@ function comment(overrides: Partial<CommentRecord> = {}): CommentRecord {
     version: 2,
     anchor: 'the second paragraph',
     resolution_target: '',
+    reply_to: '',
     resolved: false,
     consumed: false,
     message: 'This section needs a diagram.',
@@ -117,6 +118,105 @@ describe('CommentCard', () => {
       />,
     );
     expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
+  });
+
+  it('renders the quote as a navigation button and invokes the handler', () => {
+    const onQuoteNavigate = vi.fn();
+    render(
+      <CommentCard
+        comment={comment()}
+        canComment={false}
+        resolving={false}
+        onQuoteNavigate={onQuoteNavigate}
+      />,
+    );
+    const quote = screen.getByRole('button', { name: 'the second paragraph' });
+    fireEvent.click(quote);
+    expect(onQuoteNavigate).toHaveBeenCalledWith(expect.objectContaining({ cid: 'cmt_1' }));
+  });
+
+  it('shows an answer badge and the question prompt for a question-answer comment', () => {
+    const questionComment = comment({
+      anchor: JSON.stringify({ kind: 'question', key: 'abcd1234', prompt: 'Which stack?' }),
+      message: 'Postgres',
+    });
+    render(<CommentCard comment={questionComment} canComment={false} resolving={false} />);
+    expect(screen.getByText('answer')).toBeInTheDocument();
+    expect(screen.getByText('Which stack?')).toBeInTheDocument();
+  });
+
+  it('posts a reply with reply_to when the reply composer is used', async () => {
+    apiMocks.postArtifactComment.mockResolvedValue(true);
+    const onReply = vi.fn(async (parentCid: string, message: string) => {
+      await apiMocks.postArtifactComment('ART-1', { message, reply_to: parentCid }, 'proj1');
+      return true;
+    });
+    render(
+      <CommentCard comment={comment()} canComment resolving={false} onReply={onReply} />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    const form = screen.getByRole('form', { name: 'Reply to Dana Reviewer' });
+    fireEvent.change(within(form).getByLabelText('Reply'), { target: { value: 'Good point.' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Reply' }));
+
+    await waitFor(() => expect(onReply).toHaveBeenCalledWith('cmt_1', 'Good point.'));
+    expect(apiMocks.postArtifactComment).toHaveBeenCalledWith(
+      'ART-1',
+      { message: 'Good point.', reply_to: 'cmt_1' },
+      'proj1',
+    );
+  });
+
+  it('nests replies under their root comment', () => {
+    render(
+      <CommentCard
+        comment={comment({ cid: 'root', message: 'Root comment' })}
+        replies={[comment({ cid: 'reply', author: 'Ravi', message: 'A reply', reply_to: 'root' })]}
+        canComment={false}
+        resolving={false}
+      />,
+    );
+    expect(screen.getByText('Root comment')).toBeInTheDocument();
+    expect(screen.getByText('A reply')).toBeInTheDocument();
+    expect(screen.getByText('Ravi')).toBeInTheDocument();
+  });
+});
+
+describe('ArtifactComments threaded replies', () => {
+  it('renders a reply nested under its root and posts reply_to', async () => {
+    apiMocks.postArtifactComment.mockResolvedValue({ cid: 'CID-new' });
+    const onChanged = vi.fn();
+    render(
+      <ArtifactComments
+        data={detail({
+          comments: [
+            comment({ cid: 'root1', author: 'Ana', anchor: '{}', message: 'Root here' }),
+            comment({ cid: 'rep1', author: 'Bo', anchor: '{}', message: 'Nested reply', reply_to: 'root1' }),
+          ],
+        })}
+        projectId="proj1"
+        artifactId="ART-1"
+        canComment
+        onChanged={onChanged}
+      />,
+    );
+
+    expect(screen.getByText('Root here')).toBeInTheDocument();
+    expect(screen.getByText('Nested reply')).toBeInTheDocument();
+
+    // Reply to the root: open its Reply composer and submit.
+    const replyButtons = screen.getAllByRole('button', { name: 'Reply' });
+    fireEvent.click(replyButtons[0]);
+    const form = screen.getByRole('form', { name: 'Reply to Ana' });
+    fireEvent.change(within(form).getByLabelText('Reply'), { target: { value: 'Me too' } });
+    fireEvent.click(within(form).getByRole('button', { name: 'Reply' }));
+
+    await waitFor(() => expect(apiMocks.postArtifactComment).toHaveBeenCalled());
+    expect(apiMocks.postArtifactComment).toHaveBeenCalledWith(
+      'ART-1',
+      { message: 'Me too', reply_to: 'root1' },
+      'proj1',
+    );
   });
 });
 

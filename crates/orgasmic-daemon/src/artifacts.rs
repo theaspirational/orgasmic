@@ -79,6 +79,12 @@ pub struct CommentRecord {
     pub version: u32,
     pub anchor: String,
     pub resolution_target: String,
+    /// CID of the comment this one replies to. Empty for a top-level comment.
+    /// `#[serde(default)]` + empty default so legacy reviews.org files (written
+    /// before threaded replies existed, with no `:REPLY_TO:` property) keep
+    /// parsing and round-trip as top-level.
+    #[serde(default)]
+    pub reply_to: String,
     pub resolved: bool,
     pub consumed: bool,
     pub message: String,
@@ -360,6 +366,8 @@ pub struct NewComment<'a> {
     pub version: u32,
     pub anchor: &'a str,
     pub resolution_target: &'a str,
+    /// CID this comment replies to; empty for a top-level comment.
+    pub reply_to: &'a str,
     pub message: &'a str,
 }
 
@@ -373,6 +381,7 @@ pub fn comment_org_block(comment: &NewComment<'_>) -> String {
         version,
         anchor,
         resolution_target,
+        reply_to,
         message,
     } = comment;
     let message = escape_comment_message(message);
@@ -384,6 +393,7 @@ pub fn comment_org_block(comment: &NewComment<'_>) -> String {
          :VERSION:          {version}\n\
          :ANCHOR:           {anchor}\n\
          :RESOLUTION_TARGET: {resolution_target}\n\
+         :REPLY_TO:         {reply_to}\n\
          :RESOLVED:         false\n\
          :CONSUMED:         false\n\
          :END:\n\
@@ -472,6 +482,7 @@ fn comment_record_from_heading(file: &OrgFile, heading: &Heading) -> Option<Comm
             .property("RESOLUTION_TARGET")
             .unwrap_or("")
             .to_string(),
+        reply_to: heading.property("REPLY_TO").unwrap_or("").to_string(),
         resolved,
         consumed,
         message,
@@ -859,6 +870,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "Good work.",
         });
         let content = format!("{header}{block}");
@@ -868,6 +880,57 @@ mod tests {
         assert_eq!(records[0].author, "user@test.com");
         assert!(!records[0].resolved);
         assert_eq!(records[0].message, "Good work.");
+        assert_eq!(
+            records[0].reply_to, "",
+            "a top-level comment round-trips with an empty reply_to"
+        );
+    }
+
+    #[test]
+    fn reply_to_round_trips_through_org_block() {
+        let header = "#+title: reviews\n#+orgasmic_version: 1\n";
+        let block = comment_org_block(&NewComment {
+            cid: "CID-reply0001",
+            author: "user@test.com",
+            version: 2,
+            anchor: "{}",
+            resolution_target: "",
+            reply_to: "CID-parent001",
+            message: "Agree",
+        });
+        // The written block carries a :REPLY_TO: property line.
+        assert!(
+            block.contains(":REPLY_TO:         CID-parent001"),
+            "block should write the REPLY_TO property: {block}"
+        );
+        let content = format!("{header}{block}");
+        let records = parse_comments(&content);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].reply_to, "CID-parent001");
+    }
+
+    #[test]
+    fn legacy_reviews_without_reply_to_parses_with_empty_default() {
+        // A reviews.org heading written before threaded replies existed has no
+        // :REPLY_TO: property; it must still parse, defaulting reply_to to "".
+        let content = "#+title: reviews\n#+orgasmic_version: 1\n\
+             \n* CID-legacy001\n\
+             :PROPERTIES:\n\
+             :CID:              CID-legacy001\n\
+             :AUTHOR:           user@test.com\n\
+             :VERSION:          1\n\
+             :ANCHOR:           {}\n\
+             :RESOLUTION_TARGET: \n\
+             :RESOLVED:         false\n\
+             :CONSUMED:         false\n\
+             :END:\n\
+             \n\
+             Legacy comment.\n";
+        let records = parse_comments(content);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].cid, "CID-legacy001");
+        assert_eq!(records[0].reply_to, "");
+        assert_eq!(records[0].message, "Legacy comment.");
     }
 
     #[test]
@@ -880,6 +943,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message,
         });
         let content = format!("{header}{block}");
@@ -913,6 +977,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message,
         });
         let content = format!("{header}{block}");
@@ -938,6 +1003,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: first_msg,
         });
         let block2 = comment_org_block(&NewComment {
@@ -946,6 +1012,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: second_msg,
         });
         let content = format!("{header}{block1}{block2}");
@@ -975,6 +1042,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "msg",
         });
         let content = format!("{header}{block}");
@@ -1077,6 +1145,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "one",
         });
         let open_b = comment_org_block(&NewComment {
@@ -1085,6 +1154,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "two",
         });
         // Pre-close one of the two the production way (regeneration close-out):
@@ -1215,6 +1285,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "old",
         });
         let reviews = format!("{}{}", reviews_org_header("ART-XYZAB"), block);
@@ -1263,6 +1334,7 @@ mod tests {
             version: 1,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "v1 thread comment",
         });
         let v1_only = format!("{}{}", reviews_org_header("ART-XYZAB"), v1_block);
@@ -1275,6 +1347,7 @@ mod tests {
             version: 2,
             anchor: "{}",
             resolution_target: "",
+            reply_to: "",
             message: "v2 thread comment",
         });
         let mut reviews = v1_consumed;

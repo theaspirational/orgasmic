@@ -571,6 +571,8 @@ export type CommentRecord = {
   version: number;
   anchor: string;
   resolution_target: string;
+  /** CID this comment replies to; empty for a top-level comment. */
+  reply_to: string;
   resolved: boolean;
   consumed: boolean;
   message: string;
@@ -587,6 +589,8 @@ export type ArtifactCommentRequest = {
   /** Optional selection anchor captured from the rendered artifact (pin). */
   anchor?: string;
   resolution_target?: string;
+  /** CID this comment replies to (threaded reply); omit for a top-level comment. */
+  reply_to?: string;
 };
 
 export type ArtifactCommentResolveResponse = {

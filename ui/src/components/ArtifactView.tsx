@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useNavigate, useParams, useSearch } from '@tanstack/react-router';
-import { ArrowLeft, Check, Loader2, MessageSquarePlus, RefreshCw, RotateCcw, X } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, MessageSquarePlus, RefreshCw, Reply, RotateCcw, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +33,9 @@ import {
   resolveArtifactComment,
 } from '@/lib/api';
 import { ArtifactRenderer } from '@/lib/artifacts/ArtifactRenderer';
+import { findQuoteRange } from '@/lib/artifacts/anchorRanges';
+import { ArtifactInteractionContext, type ArtifactInteraction } from '@/lib/artifacts/interaction';
+import { parseQuestionAnchor } from '@/lib/artifacts/questionKey';
 import { routeSearch } from '@/lib/searchState';
 import type { ArtifactDetail, CommentRecord } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
@@ -216,6 +219,7 @@ export function ArtifactView({ projectId }: { projectId: string }) {
         projectId={projectId}
         artifactId={artifactId}
         canComment={canComment}
+        isArchivedVersion={isArchivedVersion}
         onChanged={() => artifact.refresh()}
       />
     </div>
@@ -283,32 +287,228 @@ function RegenerateArtifactDialog({
   );
 }
 
+/** A comment's `anchor` is plain selection text (as opposed to a `{}` /
+ * structured JSON anchor) when it is non-empty and does not look like JSON.
+ * Only these get a persistent text highlight and text-scroll navigation. */
+function isPlainTextAnchor(anchor: string | undefined | null): anchor is string {
+  if (!anchor) return false;
+  const trimmed = anchor.trim();
+  return trimmed.length > 0 && trimmed !== '{}' && trimmed[0] !== '{';
+}
+
+type CommentThreads = {
+  roots: CommentRecord[];
+  repliesByRoot: Map<string, CommentRecord[]>;
+};
+
+/** Group comments into root threads. A root is a top-level comment (empty or
+ * dangling `reply_to`); every reply is flattened under its top-most root
+ * ancestor, preserving file (chronological) order. */
+function buildThreads(comments: CommentRecord[]): CommentThreads {
+  const byCid = new Map(comments.map((c) => [c.cid, c]));
+  const rootCidOf = (comment: CommentRecord): string => {
+    let current = comment;
+    const guard = new Set<string>();
+    while (current.reply_to && byCid.has(current.reply_to) && !guard.has(current.cid)) {
+      guard.add(current.cid);
+      current = byCid.get(current.reply_to) as CommentRecord;
+    }
+    return current.cid;
+  };
+  const roots: CommentRecord[] = [];
+  const repliesByRoot = new Map<string, CommentRecord[]>();
+  for (const comment of comments) {
+    const isRoot = !comment.reply_to || !byCid.has(comment.reply_to);
+    if (isRoot) {
+      roots.push(comment);
+    } else {
+      const rootCid = rootCidOf(comment);
+      const list = repliesByRoot.get(rootCid) ?? [];
+      list.push(comment);
+      repliesByRoot.set(rootCid, list);
+    }
+  }
+  return { roots, repliesByRoot };
+}
+
 export function ArtifactComments({
   data,
   projectId,
   artifactId,
   canComment,
+  isArchivedVersion = false,
   onChanged,
 }: {
   data: ArtifactDetail;
   projectId: string;
   artifactId: string;
   canComment: boolean;
+  isArchivedVersion?: boolean;
   onChanged: () => void;
 }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const inlineComposerRef = useRef<HTMLTextAreaElement | null>(null);
   const selectionTimerRef = useRef<number | null>(null);
+  // Stored anchor ranges for highlight->comment hit-testing (cid + live Range).
+  const anchorHitsRef = useRef<Array<{ cid: string; range: Range }>>([]);
   const [message, setMessage] = useState('');
   const [inlineMessage, setInlineMessage] = useState('');
   const [inlineSelection, setInlineSelection] = useState<InlineSelection | null>(null);
   const [posting, setPosting] = useState(false);
   const [inlinePosting, setInlinePosting] = useState(false);
   const [resolvingCid, setResolvingCid] = useState<string | null>(null);
+  const [flashedCid, setFlashedCid] = useState<string | null>(null);
 
   const isRegenerating = data.state === 'regenerating';
-  const comments = data.comments ?? [];
+  const comments = useMemo(() => data.comments ?? [], [data.comments]);
+  const threads = useMemo(() => buildThreads(comments), [comments]);
+
+  const interaction = useMemo<ArtifactInteraction>(
+    () => ({
+      canAnswer: canComment && !isRegenerating && !isArchivedVersion,
+      comments,
+      async submitAnswer({ questionKey, prompt, message: answerMessage }) {
+        try {
+          await postArtifactComment(
+            artifactId,
+            {
+              message: answerMessage,
+              anchor: JSON.stringify({ kind: 'question', key: questionKey, prompt: prompt.slice(0, 200) }),
+            },
+            projectId,
+          );
+          onChanged();
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+      },
+      async agree({ cid }) {
+        try {
+          await postArtifactComment(artifactId, { message: 'Agree', reply_to: cid }, projectId);
+          onChanged();
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+      },
+    }),
+    [canComment, isRegenerating, isArchivedVersion, comments, artifactId, projectId, onChanged],
+  );
+
+  // Persistent anchor highlights via the CSS Custom Highlight API — no DOM
+  // mutation, so React re-renders (interactive QuestionForm, Tabs) are never
+  // corrupted. Recompute on comment/content change and on a debounced
+  // MutationObserver (tab switches re-mount text nodes). Silently skipped where
+  // the API is absent (e.g. jsdom).
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !('highlights' in CSS)) return;
+
+    let frame = 0;
+    let debounce = 0;
+    const recompute = () => {
+      const hits: Array<{ cid: string; range: Range }> = [];
+      const ranges: Range[] = [];
+      for (const comment of comments) {
+        if (!isPlainTextAnchor(comment.anchor)) continue;
+        const range = findQuoteRange(body, comment.anchor);
+        if (range) {
+          hits.push({ cid: comment.cid, range });
+          ranges.push(range);
+        }
+      }
+      anchorHitsRef.current = hits;
+      if (ranges.length === 0) {
+        CSS.highlights.delete('orgasmic-comment-anchors');
+      } else {
+        CSS.highlights.set('orgasmic-comment-anchors', new Highlight(...ranges));
+      }
+    };
+
+    frame = requestAnimationFrame(recompute);
+    const observer = new MutationObserver(() => {
+      window.clearTimeout(debounce);
+      debounce = window.setTimeout(recompute, 120);
+    });
+    observer.observe(body, { childList: true, subtree: true, characterData: true });
+
+    return () => {
+      cancelAnimationFrame(frame);
+      window.clearTimeout(debounce);
+      observer.disconnect();
+      anchorHitsRef.current = [];
+      CSS.highlights.delete('orgasmic-comment-anchors');
+    };
+  }, [comments, data.content]);
+
+  const flashComment = useCallback((cid: string) => {
+    const el = document.getElementById(`comment-${cid}`);
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setFlashedCid(cid);
+    window.setTimeout(() => setFlashedCid((prev) => (prev === cid ? null : prev)), 1500);
+  }, []);
+
+  const flashElement = useCallback((el: Element) => {
+    el.classList.add('orgasmic-flash');
+    window.setTimeout(() => el.classList.remove('orgasmic-flash'), 1500);
+  }, []);
+
+  // Highlight -> comment: a plain click (collapsed selection) that lands inside
+  // a stored anchor range scrolls that comment's card into view and flashes it.
+  const handleBodyClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (!window.getSelection()?.isCollapsed) return;
+      const hits = anchorHitsRef.current;
+      if (hits.length === 0) return;
+      const { clientX: x, clientY: y } = event;
+      for (const { cid, range } of hits) {
+        for (const rect of Array.from(range.getClientRects())) {
+          if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+            flashComment(cid);
+            return;
+          }
+        }
+      }
+    },
+    [flashComment],
+  );
+
+  // Quote -> text: question answers scroll to their question element; plain
+  // anchors scroll to the matched text and flash it via a short-lived Highlight.
+  const navigateToAnchor = useCallback(
+    (comment: CommentRecord) => {
+      const body = bodyRef.current;
+      if (!body) return;
+      const question = parseQuestionAnchor(comment.anchor);
+      if (question) {
+        const target = body.querySelector(`[data-question-key="${question.key}"]`);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          flashElement(target);
+        }
+        return;
+      }
+      if (!isPlainTextAnchor(comment.anchor)) return;
+      const range = findQuoteRange(body, comment.anchor);
+      if (!range) return;
+      const startEl =
+        range.startContainer.nodeType === Node.ELEMENT_NODE
+          ? (range.startContainer as Element)
+          : range.startContainer.parentElement;
+      startEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if ('highlights' in CSS) {
+        try {
+          CSS.highlights.set('orgasmic-anchor-active', new Highlight(range));
+          window.setTimeout(() => CSS.highlights.delete('orgasmic-anchor-active'), 1500);
+        } catch {
+          // Range detached mid-navigation — non-fatal, skip the flash.
+        }
+      }
+    },
+    [flashElement],
+  );
 
   const captureSelection = useCallback((focusOnOpen: boolean) => {
     if (!canComment || isRegenerating) return;
@@ -316,7 +516,10 @@ export function ArtifactComments({
     if (!selection || selection.isCollapsed || !bodyRef.current) {
       return;
     }
-    const text = selection.toString().trim();
+    // Collapse internal whitespace/newlines to single spaces before storing:
+    // an embedded newline would corrupt the single-line `:ANCHOR:` org
+    // property, and normalization makes the anchor-range matcher reliable.
+    const text = selection.toString().replace(/\s+/g, ' ').trim();
     const range = selection.rangeCount > 0 ? selection.getRangeAt(0).cloneRange() : null;
     if (!text || !range) return;
     const withinBody = (node: Node | null) => Boolean(node && bodyRef.current?.contains(node));
@@ -387,6 +590,19 @@ export function ArtifactComments({
     }
   }
 
+  async function submitReply(parentCid: string, replyMessage: string): Promise<boolean> {
+    const trimmed = replyMessage.trim();
+    if (!trimmed || isRegenerating || !canComment) return false;
+    try {
+      await postArtifactComment(artifactId, { message: trimmed, reply_to: parentCid }, projectId);
+      onChanged();
+      return true;
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+      return false;
+    }
+  }
+
   async function submitInlineComment() {
     const trimmed = inlineMessage.trim();
     if (!trimmed || inlinePosting || isRegenerating || !canComment || !inlineSelection) return;
@@ -428,8 +644,11 @@ export function ArtifactComments({
         onPointerUp={(event) => scheduleSelectionCapture(event.pointerType !== 'touch')}
         onKeyUp={() => scheduleSelectionCapture(true)}
         onTouchEnd={() => scheduleSelectionCapture(false)}
+        onClick={handleBodyClick}
       >
-        <ArtifactRenderer content={data.content} />
+        <ArtifactInteractionContext.Provider value={interaction}>
+          <ArtifactRenderer content={data.content} />
+        </ArtifactInteractionContext.Provider>
       </div>
       <Popover open={Boolean(inlineSelection)} onOpenChange={(open) => {
         if (!open) {
@@ -520,13 +739,17 @@ export function ArtifactComments({
               No comments yet.{canComment ? ' Select text in the artifact to pin one.' : ''}
             </p>
           ) : (
-            comments.map((comment) => (
+            threads.roots.map((root) => (
               <CommentCard
-                key={comment.cid}
-                comment={comment}
+                key={root.cid}
+                comment={root}
+                replies={threads.repliesByRoot.get(root.cid) ?? []}
                 canComment={canComment}
-                resolving={resolvingCid === comment.cid}
-                onToggleResolved={() => void toggleResolved(comment)}
+                resolving={resolvingCid === root.cid}
+                onToggleResolved={() => void toggleResolved(root)}
+                onReply={canComment && !isRegenerating ? submitReply : undefined}
+                onQuoteNavigate={navigateToAnchor}
+                flashedCid={flashedCid}
               />
             ))
           )}
@@ -575,20 +798,57 @@ export function ArtifactComments({
 
 export function CommentCard({
   comment,
+  replies = [],
   canComment,
   resolving,
   onToggleResolved,
+  onReply,
+  onQuoteNavigate,
+  flashedCid,
+  isReply = false,
 }: {
   comment: CommentRecord;
+  replies?: CommentRecord[];
   canComment: boolean;
   resolving: boolean;
-  onToggleResolved: () => void;
+  onToggleResolved?: () => void;
+  /** Post a reply to `parentCid`; resolves true on success. Absent = no reply
+   * affordance. */
+  onReply?: (parentCid: string, message: string) => Promise<boolean>;
+  /** Navigate from this comment's quote to the anchored text or question. */
+  onQuoteNavigate?: (comment: CommentRecord) => void;
+  /** CID currently flashing (highlight->comment navigation target). */
+  flashedCid?: string | null;
+  isReply?: boolean;
 }) {
+  const [replyOpen, setReplyOpen] = useState(false);
+  const [replyText, setReplyText] = useState('');
+  const [replyPosting, setReplyPosting] = useState(false);
+
+  const question = parseQuestionAnchor(comment.anchor);
+  const quoteText = question ? question.prompt : isPlainTextAnchor(comment.anchor) ? comment.anchor : null;
+
+  async function sendReply() {
+    if (!onReply || !replyText.trim() || replyPosting) return;
+    setReplyPosting(true);
+    try {
+      const ok = await onReply(comment.cid, replyText);
+      if (ok) {
+        setReplyText('');
+        setReplyOpen(false);
+      }
+    } finally {
+      setReplyPosting(false);
+    }
+  }
+
   return (
     <div
+      id={`comment-${comment.cid}`}
       className={cn(
         'flex flex-col gap-1.5 rounded-lg border bg-card/40 p-3',
         comment.resolved && 'opacity-70',
+        flashedCid === comment.cid && 'orgasmic-flash',
       )}
     >
       <div className="flex items-center gap-2">
@@ -596,6 +856,11 @@ export function CommentCard({
         <Badge variant="outline" className="h-4 px-1 font-mono text-[10px]">
           v{comment.version}
         </Badge>
+        {question ? (
+          <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
+            answer
+          </Badge>
+        ) : null}
         {comment.resolved ? (
           <Badge variant="secondary" className="h-4 px-1.5 text-[10px]">
             resolved
@@ -607,31 +872,109 @@ export function CommentCard({
           </Badge>
         ) : null}
       </div>
-      {comment.anchor ? (
-        <blockquote className="truncate border-l-2 border-primary/40 pl-2 text-xs italic text-muted-foreground">
-          {comment.anchor}
-        </blockquote>
+      {quoteText ? (
+        onQuoteNavigate ? (
+          <button
+            type="button"
+            className="truncate border-l-2 border-primary/40 pl-2 text-left text-xs italic text-muted-foreground hover:text-foreground"
+            title={question ? 'Jump to the question' : 'Jump to the highlighted text'}
+            onClick={() => onQuoteNavigate(comment)}
+          >
+            {quoteText}
+          </button>
+        ) : (
+          <blockquote className="truncate border-l-2 border-primary/40 pl-2 text-xs italic text-muted-foreground">
+            {quoteText}
+          </blockquote>
+        )
       ) : null}
       <p className="whitespace-pre-wrap text-sm leading-snug">{comment.message}</p>
       {canComment ? (
-        <div className="flex justify-end">
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 px-2 text-xs"
-            disabled={resolving}
-            onClick={onToggleResolved}
-          >
-            {resolving ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : comment.resolved ? (
-              <RotateCcw className="size-3.5" />
-            ) : (
-              <Check className="size-3.5" />
-            )}
-            {comment.resolved ? 'Reopen' : 'Resolve'}
-          </Button>
+        <div className="flex justify-end gap-1">
+          {onReply ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={() => setReplyOpen((open) => !open)}
+            >
+              <Reply className="size-3.5" />
+              Reply
+            </Button>
+          ) : null}
+          {!isReply && onToggleResolved ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              disabled={resolving}
+              onClick={onToggleResolved}
+            >
+              {resolving ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : comment.resolved ? (
+                <RotateCcw className="size-3.5" />
+              ) : (
+                <Check className="size-3.5" />
+              )}
+              {comment.resolved ? 'Reopen' : 'Resolve'}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+      {replyOpen && onReply ? (
+        <form
+          className="flex flex-col gap-2 border-t pt-2"
+          aria-label={`Reply to ${comment.author}`}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void sendReply();
+          }}
+        >
+          <Textarea
+            rows={2}
+            value={replyText}
+            disabled={replyPosting}
+            aria-label="Reply"
+            placeholder="Write a reply…"
+            onChange={(event) => setReplyText(event.target.value)}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={replyPosting}
+              onClick={() => {
+                setReplyOpen(false);
+                setReplyText('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={!replyText.trim() || replyPosting}>
+              {replyPosting ? <Loader2 className="size-3.5 animate-spin" /> : null}
+              {replyPosting ? 'Replying…' : 'Reply'}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+      {replies.length > 0 ? (
+        <div className="mt-1 flex flex-col gap-1.5 border-l-2 border-muted pl-2">
+          {replies.map((reply) => (
+            <CommentCard
+              key={reply.cid}
+              comment={reply}
+              canComment={canComment}
+              resolving={false}
+              onReply={onReply}
+              onQuoteNavigate={onQuoteNavigate}
+              flashedCid={flashedCid}
+              isReply
+            />
+          ))}
         </div>
       ) : null}
     </div>

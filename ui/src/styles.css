@@ -826,3 +826,35 @@ html[data-theme='black-paper'] [data-slot='sidebar-inner'] {
   color: var(--shiki-dark);
   background-color: var(--shiki-dark-bg);
 }
+
+/* Persistent anchor highlights (CSS Custom Highlight API, TASK-TJF7G). One
+   registered Highlight named "orgasmic-comment-anchors" tints every comment's
+   anchored text in the rendered artifact without mutating the DOM, so React
+   re-renders (interactive QuestionForm, Tabs) are never corrupted. A short-
+   lived "orgasmic-anchor-active" flash is used for quote->text navigation.
+   Only color/background-color/text-decoration are honoured by ::highlight. */
+::highlight(orgasmic-comment-anchors) {
+  background-color: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+::highlight(orgasmic-anchor-active) {
+  background-color: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+/* Navigation flash for a comment card or a question element (TASK-TJF7G).
+   Applied briefly (~1.5s) when a highlight click scrolls to a comment, or a
+   comment quote scrolls to its question. Uses outline (not layout) so it never
+   shifts content. */
+.orgasmic-flash {
+  animation: orgasmic-flash-ring 1.5s ease-out;
+  border-radius: 0.5rem;
+}
+@keyframes orgasmic-flash-ring {
+  0% {
+    outline: 2px solid color-mix(in srgb, var(--primary) 80%, transparent);
+    outline-offset: 2px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+}

@@ -74,6 +74,9 @@ pub enum ArtifactCmd {
         /// CID this comment resolves (optional).
         #[arg(long)]
         resolution_target: Option<String>,
+        /// CID this comment replies to (optional; threaded reply).
+        #[arg(long)]
+        reply_to: Option<String>,
     },
 }
 
@@ -95,6 +98,7 @@ pub fn cmd_artifact(home: &Home, cmd: ArtifactCmd) -> Result<()> {
             message,
             anchor,
             resolution_target,
+            reply_to,
         } => cmd_feedback(
             home,
             id,
@@ -103,6 +107,7 @@ pub fn cmd_artifact(home: &Home, cmd: ArtifactCmd) -> Result<()> {
             message,
             anchor,
             resolution_target,
+            reply_to,
         ),
     }
 }
@@ -185,6 +190,7 @@ fn cmd_submit(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_feedback(
     home: &Home,
     id: String,
@@ -193,6 +199,7 @@ fn cmd_feedback(
     message: Option<String>,
     anchor: String,
     resolution_target: Option<String>,
+    reply_to: Option<String>,
 ) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
@@ -219,6 +226,7 @@ fn cmd_feedback(
                 "message": msg,
                 "anchor": anchor,
                 "resolution_target": resolution_target,
+                "reply_to": reply_to,
             });
             let resp: serde_json::Value = client
                 .post_json(

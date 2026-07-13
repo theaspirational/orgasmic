@@ -48,8 +48,7 @@ use tower_http::cors::{Any, CorsLayer};
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
     new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_art_id_readable,
-    validate_mdx, versions_dir,
-    ArtifactDetail, ArtifactLoadError, ArtifactSummary, NewComment,
+    validate_mdx, versions_dir, ArtifactDetail, ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
@@ -9664,6 +9663,11 @@ struct ArtifactCommentRequest {
     anchor: Option<String>,
     #[serde(default)]
     resolution_target: Option<String>,
+    /// CID of the comment this one replies to (threaded replies). Empty/omitted
+    /// = top-level comment. When set, the handler verifies the CID exists in
+    /// this artifact's reviews.org before appending.
+    #[serde(default)]
+    reply_to: Option<String>,
     /// Admin-only override (a member's comment is always stamped with their
     /// session identity's name, never this field — see `post_artifact_add_comment`).
     #[serde(default)]
@@ -10038,9 +10042,28 @@ async fn post_artifact_add_comment(
     };
     let anchor = body.anchor.unwrap_or_else(|| "{}".into());
     let resolution_target = body.resolution_target.unwrap_or_default();
+    let reply_to = body
+        .reply_to
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
 
     let reviews_path = art_dir.join("reviews.org");
     let current_reviews = std::fs::read_to_string(&reviews_path).unwrap_or_default();
+
+    // Validate the reply parent inside the same locked read→write window as the
+    // append (finding M1 / ZEFEY: never read reviews.org outside the artifact
+    // write lock). An unknown parent CID is a client error, not a silent
+    // top-level fallback.
+    if !reply_to.is_empty()
+        && !artifacts::parse_comments(&current_reviews)
+            .iter()
+            .any(|c| c.cid == reply_to)
+    {
+        return Err(ApiError::not_found(format!(
+            "reply_to comment {reply_to} not found in this artifact"
+        )));
+    }
+
     let new_reviews = append_comment(
         &current_reviews,
         &art_id,
@@ -10050,6 +10073,7 @@ async fn post_artifact_add_comment(
             version,
             anchor: &anchor,
             resolution_target: &resolution_target,
+            reply_to: &reply_to,
             message: &body.message,
         },
     );
@@ -10078,6 +10102,7 @@ async fn post_artifact_add_comment(
         ("VERSION".into(), version.to_string()),
         ("ANCHOR".into(), anchor),
         ("RESOLUTION_TARGET".into(), resolution_target),
+        ("REPLY_TO".into(), reply_to),
     ];
 
     // Single writer.transaction bundling the reviews.org rewrite + the tx
@@ -10358,9 +10383,14 @@ fn assemble_regen_context(
             } else {
                 c.resolution_target.as_str()
             };
+            let reply_to = if c.reply_to.trim().is_empty() {
+                "-"
+            } else {
+                c.reply_to.as_str()
+            };
             out.push_str(&format!(
-                "- [{}] {} (anchor: {}; resolves: {}; resolved: {}): {}\n",
-                c.cid, c.author, c.anchor, resolves, c.resolved, c.message
+                "- [{}] {} (anchor: {}; resolves: {}; reply-to: {}; resolved: {}): {}\n",
+                c.cid, c.author, c.anchor, resolves, reply_to, c.resolved, c.message
             ));
         }
     }
@@ -15481,6 +15511,7 @@ mod tests {
                 message: "should not land".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -15597,6 +15628,7 @@ mod tests {
                 message: "This looks good!".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("reviewer@test.com".into()),
             }),
         )
@@ -15705,6 +15737,7 @@ mod tests {
                 message: "Should be refused".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -15735,6 +15768,101 @@ mod tests {
 
         // versions/v1.mdx should be the archive
         assert!(art_dir.join("versions/v1.mdx").exists());
+    }
+
+    #[tokio::test]
+    async fn artifact_reply_to_validates_parent_and_surfaces_thread() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RPY24";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>Body</RichText>\n".into(),
+                title: Some("Reply Test".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("prompt".into()),
+            }),
+        )
+        .await
+        .expect("submit");
+
+        // Root comment.
+        let root = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "Root comment".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: Some("alice@test.com".into()),
+            }),
+        )
+        .await
+        .expect("root add");
+        let root_cid = root.0["cid"].as_str().unwrap().to_string();
+
+        // Unknown reply parent → 404.
+        let bad = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "orphan".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: Some("CID-doesnotexist".into()),
+                author: Some("bob@test.com".into()),
+            }),
+        )
+        .await;
+        assert!(bad.is_err());
+        assert_eq!(bad.unwrap_err().status, StatusCode::NOT_FOUND);
+
+        // Valid reply → stored.
+        let reply = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "Agree".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: Some(root_cid.clone()),
+                author: Some("bob@test.com".into()),
+            }),
+        )
+        .await
+        .expect("reply add");
+        let reply_cid = reply.0["cid"].as_str().unwrap().to_string();
+
+        // GET surfaces both, with reply_to set on the reply.
+        let detail = get_artifact(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+        )
+        .await
+        .expect("detail");
+        let comments = &detail.0.comments;
+        assert_eq!(comments.len(), 2);
+        let root_rec = comments.iter().find(|c| c.cid == root_cid).unwrap();
+        let reply_rec = comments.iter().find(|c| c.cid == reply_cid).unwrap();
+        assert_eq!(root_rec.reply_to, "");
+        assert_eq!(reply_rec.reply_to, root_cid);
     }
 
     // Archived-version reads (TASK-EDQPG gap 2): GET ?version=N&include_consumed=true
@@ -15779,6 +15907,7 @@ mod tests {
                 message: "v1 feedback".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("viewer@test.com".into()),
             }),
         )
@@ -15822,6 +15951,7 @@ mod tests {
                 message: "v2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("editor@test.com".into()),
             }),
         )
@@ -16051,6 +16181,7 @@ mod tests {
                 message: "please tighten this".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("reviewer@test.com".into()),
             }),
         )
@@ -16167,6 +16298,7 @@ mod tests {
                         message: format!("comment number {i}"),
                         anchor: None,
                         resolution_target: None,
+                        reply_to: None,
                         author: Some(format!("member-{i}")),
                     }),
                 )
@@ -16383,6 +16515,7 @@ mod tests {
                 message: "should not land".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -16434,6 +16567,7 @@ mod tests {
                 message: "to be consumed".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -16644,6 +16778,7 @@ mod tests {
                 version: 1,
                 anchor: "{}".into(),
                 resolution_target: String::new(),
+                reply_to: String::new(),
                 resolved: false,
                 consumed: false,
                 message: "tighten the copy".into(),
@@ -16654,6 +16789,7 @@ mod tests {
                 version: 1,
                 anchor: "{}".into(),
                 resolution_target: String::new(),
+                reply_to: "CID-abc12345".into(),
                 resolved: true,
                 consumed: false,
                 message: "already addressed".into(),
@@ -16664,8 +16800,8 @@ mod tests {
         assert!(out.contains("reviewer@test.com"));
         assert!(out.contains("tighten the copy"));
         assert!(out.contains("make it punchier"));
-        assert!(out.contains("[CID-abc12345] reviewer@test.com (anchor: {}; resolves: -; resolved: false): tighten the copy"));
-        assert!(out.contains("[CID-def67890] other@test.com (anchor: {}; resolves: -; resolved: true): already addressed"));
+        assert!(out.contains("[CID-abc12345] reviewer@test.com (anchor: {}; resolves: -; reply-to: -; resolved: false): tighten the copy"));
+        assert!(out.contains("[CID-def67890] other@test.com (anchor: {}; resolves: -; reply-to: CID-abc12345; resolved: true): already addressed"));
     }
 
     #[tokio::test]
@@ -16815,6 +16951,7 @@ mod tests {
                 message: "needs work".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("reviewer@test.com".into()),
             }),
         )
@@ -16969,6 +17106,7 @@ mod tests {
                 message: "round 1 feedback".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("reviewer@test.com".into()),
             }),
         )
@@ -17016,6 +17154,7 @@ mod tests {
                 message: "round 2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: Some("reviewer@test.com".into()),
             }),
         )
@@ -17135,6 +17274,7 @@ mod tests {
                 message: "needs work".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -17237,6 +17377,7 @@ mod tests {
                 message: "round 1".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -17286,6 +17427,7 @@ mod tests {
                 message: "after restart".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
@@ -17362,6 +17504,7 @@ mod tests {
                 message: "round 2 feedback".into(),
                 anchor: None,
                 resolution_target: None,
+                reply_to: None,
                 author: None,
             }),
         )
