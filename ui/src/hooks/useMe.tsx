@@ -90,6 +90,7 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     setAuthMode('bearer');
     clearMemberSession();
+    isMemberRef.current = false;
     setIsMember(false);
     setMe(null);
     setLoading(false);
@@ -114,12 +115,14 @@ export function MeProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (token: string) => {
     const result = await memberLogin(token);
     setAuthMode('member');
-    setIsMember(true);
     isMemberRef.current = true;
     try {
       const next = await fetchMe();
       setMe(next);
       persistMemberSession(next);
+      // AppShell treats isMember as the signal that protected routes may mount.
+      // Publish it only after /me confirms and the session snapshot is persisted.
+      setIsMember(true);
     } catch (err) {
       // Login succeeded but the follow-up /me failed — unwind so we don't strand
       // the app in a half-authenticated state.
