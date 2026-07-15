@@ -540,3 +540,38 @@ An artifact records its subject node-set and originating prompt at creation. Its
 :END:
 
 Roles: the one admin mints and revokes tokens and can do everything; editors generate and regenerate artifacts and comment; viewers view and comment. Member records (name, role, token hash) live host-local in $ORGASMIC_HOME/user/auth/members.org and are never committed to the repo-shared .orgasmic/ — repo files carry member names only. How a member's browser reaches the daemon (tunnel, LAN, shared host) is deployment ops, not member identity.
+
+* term_5V9F8 Run Dock
+:PROPERTIES:
+:AVOID: manager popover; bottom drawer; manager bar
+:CANONICAL: Run Dock
+:DEFINITION: The app-shell surface along the bottom of the UI that hosts every live session. It is always present as a Taskbar and expands into a session panel above it.
+:ID: term_5V9F8
+:END:
+
+* term_YTD8X Taskbar
+:PROPERTIES:
+:AVOID: peek bar; tab strip; dock header
+:CANONICAL: Taskbar
+:DEFINITION: The always-visible strip of the Run Dock. It carries the Terminal launcher, one button per live run, and the Running Agents menu. When the dock is collapsed it is the whole dock; when a session is raised it becomes the dock's top row, browser-tab style.
+:ID: term_YTD8X
+:RELATES_TO: term_5V9F8
+:END:
+
+* term_Z5EZJ Raise
+:PROPERTIES:
+:AVOID: open the dock; expand; peek
+:CANONICAL: Raise
+:DEFINITION: To bring a run's session in front: select its Taskbar button and show the Run Dock panel at the remembered height. A run is only ever raised by explicit user action — dispatching a run adds its button but never raises it.
+:ID: term_Z5EZJ
+:RELATES_TO: term_5V9F8 term_YTD8X
+:END:
+
+* term_6QE1M Minimize
+:PROPERTIES:
+:AVOID: close the dock; collapse to peek
+:CANONICAL: Minimize
+:DEFINITION: To put the Run Dock panel away, leaving the Taskbar and the run untouched. Minimizing is a view action: it never stops, releases, or detaches a run.
+:ID: term_6QE1M
+:RELATES_TO: term_5V9F8 term_YTD8X term_Z5EZJ
+:END:

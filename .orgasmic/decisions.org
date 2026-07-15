@@ -1973,3 +1973,65 @@ dec_FD6M7 split machine config out of =project.org= because the stage-worker map
 Delete =config.org= from the scaffold and the schema. Repo facts (verification commands, branch, write scope) go free-form: stated in =project.org= prose or a repo convention, read by agents like any durable state — no dedicated machine fields. =:PIPELINE:= is dropped with no replacement map: a dispatch must always name its worker explicitly; a no-worker dispatch is rejected with the house-style error listing candidates, the UI worker picker becomes mandatory (preselecting last-used), and =--worker= is required on the CLI. =ProjectConfig= and its readers (=schema.rs=, =index.rs::load_project=, =api.rs= config reads) are removed; =SettingsView= is reworked off its =config.org= splice. The =default_branch= prompt fallback changes from hardcoded ="main"= to git-derived or empty — never a wrong injected value.
 ** Consequences
 One fewer scaffold file and the last per-project machine-config surface disappears; project identity stays on =project.org='s PROJECT heading (=:ID:= was the only schema-required field and is already there). Partially reverses dec_FD6M7 — its cause (the bloated map) evaporated. Cost accepted: dispatch prompts may carry empty command slots (workers discover commands from prose), and every dispatch caller (API/CLI/UI) must name a worker. Rejected alternatives: folding the four fields into PROJECT heading properties; deriving commands automatically; a kind-based worker defaulting rule (deterministic single-candidate auto-select was declined in favor of always-explicit).
+
+* dec_RDHX7 How should the Run Dock present sizing and the manager after the taskbar redesign?
+:PROPERTIES:
+:DECIDED_AT: 2026-07-15
+:GLOSSARY_REFS: term_5V9F8 term_YTD8X term_Z5EZJ term_6QE1M
+:ID: dec_RDHX7
+:PARENT: dec_FBBT2
+:SOURCE: RunDock taskbar redesign session (grill-with-docs)
+:END:
+
+** Context
+dec_FBBT2 gave the dock a peek/workbench/focus size triad, a pinned Manager
+tab keyed by a sentinel (=MANAGER_TAB_ID=), and a resting one-line manager bar;
+peek later grew a windowed sub-state that hosted a run's transcript as a small
+overlay. Three named sizes plus two peek forms meant the same run could be
+looked at in four visually distinct ways, each with its own chrome, while the
+bar carried five competing controls (drag grip, Manager pin, expand chevron,
+fullscreen toggle, minimize). The Manager tab also kept =ManagerWorkbench=
+alive purely as a launcher: a ~1.4k-line surface reachable only through that
+one tab.
+
+** Decision
+The Run Dock (term_5V9F8) is binary: a Taskbar (term_YTD8X) that is always
+visible, and one session panel above it.
+- Every run is a peer keyed by run id. There is no special tab: the manager is
+  an ordinary Taskbar button rendered through =RunSurface= like any terminal or
+  worker. =MANAGER_TAB_ID= and =ManagerWorkbench= are deleted; manager launch
+  and driver choice move to a terminal session or the CLI. The Taskbar's only
+  pinned launcher is Terminal (bare PTY, =custom= pseudo-harness).
+- The size triad and the windowed peek are replaced by one continuous height,
+  persisted as a viewport fraction. Raising (term_Z5EZJ) any run shows the panel
+  at that height; an unresized dock raises full-screen.
+- Resize is a drag anywhere along the dock's top border — the Taskbar's own top
+  edge — not a dedicated grip. Dragging below a floor threshold minimizes
+  (term_6QE1M) instead of clamping.
+- The bar carries no expand chevron and no fullscreen control: a run button
+  raises, the same button minimizes, and =⌄= appears only while open. =Cmd+`=
+  toggles; Escape minimizes unless a composer/terminal holds focus.
+
+** Consequences
+The taskbar reads as a taskbar: what is running, and one launcher. Dispatch
+still only adds a button — a session is never raised for you (dec_FBBT2's
+no-noise rule survives), and closing a tab still detaches only. The cost is
+that the app can no longer launch a manager or pick its driver: that is
+terminal/CLI-only now, accepted because the driver matrix is CLI territory and
+the workbench existed solely to host it. Pointer capture must own the drag
+end-to-end on the Taskbar element (splitting pointerdown/pointermove across
+elements silently drops the gesture). Supersedes the sizing and Manager-tab
+clauses of dec_FBBT2; the Running Agents menu now raises a run exactly as its
+button does, rather than opening a peek window.
+
+* dec_3Y2E1 Running Agents lists supervised agents only; external managers join by registering
+:PROPERTIES:
+:ID: dec_3Y2E1
+:RELATES_TO: dec_FBBT2 dec_RDHX7
+:END:
+
+The Running Agents menu (and its count badge) answers "which agents is orgasmic supervising?". Bare terminals (manager.launch runs with the custom pseudo-harness) are PTYs the operator drives, not agents: they stay taskbar-only and never appear in the menu or the count. Workers and agent-harness managers remain.
+
+A manager started outside the app (plain terminal, even outside rmux) can become visible by registering. Settled design: registration acquires a REAL supervisor run (driver 'external', no PTY) on the normal manager.launch:<project> lease, so the manager singleton is enforced by the same mechanism as app launches and the run appears in /runs live with no parallel presence concept. Liveness: register captures the terminal session-leader PID; the daemon polls it (~30s) and releases on death, with a TTL fallback (refreshed by re-running register) when no PID is available; UI Stop stays the manual override — this matters because a wedged external lease would 500 the app's own manager launch. Collisions: re-register from the same session is an idempotent refresh (doubles as heartbeat); a different holder gets a readable refusal, never a silent takeover. CLI: 'orgasmic manager register' / 'orgasmic manager release'; drivers start exporting ORGASMIC_RUN_ID into launched PTYs so register no-ops with exit 0 when already supervised, letting the entry router carry one unconditional Manager-startup step with no conditional prose. UI renders an external manager as an info row with an inline End control (attach is impossible; no dock tab ever).
+
+Rejected: a separate presence record (duplicates 'something is running' across two APIs and splits the singleton rule into two mechanisms that cannot see each other); pure TTL heartbeat (drops a live manager that thinks for N minutes without CLI writes, or lingers and wedges launches); registration as a side effect of existing commands like 'orgasmic status' (a human poking at status in a spare terminal would silently claim the manager lease).
