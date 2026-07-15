@@ -2051,6 +2051,49 @@ pub struct ManagerActionResponse {
     pub tx_id: String,
 }
 
+/// Whether a manager launch is really a bare terminal. `custom` is the
+/// pseudo-harness meaning "PTY with no agent CLI": the run gets the manager's
+/// interactive treatment without being the project's manager.
+fn manager_terminal_harness(harness: &str) -> bool {
+    harness.trim().eq_ignore_ascii_case("custom")
+}
+
+struct ManagerLaunchIds {
+    task_id: String,
+    session_file: String,
+}
+
+/// Identity for one manager-namespace launch.
+///
+/// The project's manager is a singleton, and its stable task id is what makes
+/// that true: the supervisor leases on (task_id, kind), so a second launch is
+/// refused. A terminal is not the manager — it is a bare PTY, and the operator
+/// may keep several open — so each terminal launch gets its own discriminator
+/// and therefore its own lease. The `manager.launch:` prefix stays in front of
+/// it because it is load-bearing beyond identity: it is how the supervisor
+/// recognises an operator-paced session and holds back the stall and
+/// max-duration detectors.
+fn manager_launch_ids(
+    project_id: &str,
+    harness: &str,
+    now: chrono::DateTime<Utc>,
+) -> ManagerLaunchIds {
+    let stamp = now.format("%Y%m%dT%H%M%S");
+    if !manager_terminal_harness(harness) {
+        return ManagerLaunchIds {
+            task_id: format!("manager.launch:{project_id}"),
+            session_file: format!("manager-{project_id}-{stamp}.jsonl"),
+        };
+    }
+    // The discriminator lands in the session file name too: a second-granularity
+    // stamp alone collides between two terminals opened in the same second.
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    ManagerLaunchIds {
+        task_id: format!("manager.launch:{project_id}#terminal-{id}"),
+        session_file: format!("manager-{project_id}-{stamp}-{id}.jsonl"),
+    }
+}
+
 async fn post_manager_launch(
     State(state): State<ApiState>,
     Json(req): Json<ManagerLaunchRequest>,
@@ -2091,13 +2134,9 @@ async fn post_manager_launch(
         &state.driver_defaults,
     );
 
-    let now = Utc::now();
-    let session_path = project_sessions_dir(&project.root).join(format!(
-        "manager-{}-{}.jsonl",
-        req.project_id,
-        now.format("%Y%m%dT%H%M%S")
-    ));
-    let task_id = format!("manager.launch:{}", req.project_id);
+    let ids = manager_launch_ids(&req.project_id, &req.harness, Utc::now());
+    let session_path = project_sessions_dir(&project.root).join(ids.session_file);
+    let task_id = ids.task_id;
     let acquire = state
         .supervisor
         .acquire(
@@ -11814,6 +11853,49 @@ mod tests {
             dispatch_response_delay: None,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
+    }
+
+    fn launch_stamp() -> chrono::DateTime<Utc> {
+        chrono::DateTime::parse_from_rfc3339("2026-07-15T09:37:35Z")
+            .unwrap()
+            .with_timezone(&Utc)
+    }
+
+    #[test]
+    fn manager_launch_keeps_one_stable_task_id_per_project() {
+        // The manager is a singleton: two launches must land on the same lease
+        // key so the second is refused rather than starting a rival manager.
+        let first = manager_launch_ids("orgasmic", "claude", launch_stamp());
+        let second = manager_launch_ids("orgasmic", "claude", launch_stamp());
+        assert_eq!(first.task_id, "manager.launch:orgasmic");
+        assert_eq!(first.task_id, second.task_id);
+    }
+
+    #[test]
+    fn each_terminal_launch_gets_its_own_lease_key_and_session_file() {
+        // Terminals are not singletons; sharing the manager's task id is what
+        // made the second one fail to acquire.
+        let first = manager_launch_ids("orgasmic", "custom", launch_stamp());
+        let second = manager_launch_ids("orgasmic", "custom", launch_stamp());
+        assert_ne!(first.task_id, second.task_id);
+        // Same second, so only the discriminator separates the two files.
+        assert_ne!(first.session_file, second.session_file);
+    }
+
+    #[test]
+    fn a_terminal_task_id_still_reads_as_operator_paced() {
+        // The prefix gates the supervisor's stall/max-duration detectors; an
+        // idle terminal sitting at a prompt must never read as a stalled worker.
+        let ids = manager_launch_ids("orgasmic", "custom", launch_stamp());
+        assert!(crate::supervisor::is_interactive_manager_task(&ids.task_id));
+        assert!(ids.task_id.starts_with("manager.launch:orgasmic"));
+    }
+
+    #[test]
+    fn terminal_detection_ignores_harness_casing_and_padding() {
+        assert!(manager_terminal_harness("custom"));
+        assert!(manager_terminal_harness(" Custom "));
+        assert!(!manager_terminal_harness("claude"));
     }
 
     #[tokio::test]

@@ -10,20 +10,20 @@ import {
 } from 'react';
 
 import { fetchRecoveryStatus, fetchRuns } from '@/lib/api';
-import type { ManagerSize, RunSummary } from '@/lib/types';
-import { applyWorkerTabUpdate } from '@/lib/runDockUtils';
+import type { RunSummary } from '@/lib/types';
+import { applyWorkerTabUpdate, clampDockHeight, DEFAULT_DOCK_HEIGHT } from '@/lib/runDockUtils';
 
 const OPEN_TABS_KEY = 'orgasmic.rundock.open-tabs.v1';
-const SIZE_KEY = 'orgasmic.rundock.size.v1';
-
-// The Manager tab is always present and is keyed by a sentinel, not a run id:
-// the active manager run can change (relaunch/switch) while the tab stays put.
-export const MANAGER_TAB_ID = '__manager__';
+const OPEN_KEY = 'orgasmic.rundock.open.v1';
+const ACTIVE_TAB_KEY = 'orgasmic.rundock.active-tab.v1';
+const HEIGHT_KEY = 'orgasmic.rundock.height.v1';
 
 export type RunDockTab = {
-  // tabId is MANAGER_TAB_ID for the special manager tab, otherwise the run id.
+  // Every tab — manager, terminal, worker — is keyed by its run id. The dock
+  // has no special tab (dec_FBBT2's Manager tab was retired with the taskbar
+  // redesign): the manager is a peer run like any other.
   tabId: string;
-  runId: string | null;
+  runId: string;
   // A staged recovery prompt to pre-fill the composer with on open. Cleared once
   // the user sends (explicit send only — never auto-sent).
   draftPrompt?: string | null;
@@ -31,30 +31,29 @@ export type RunDockTab = {
 
 type OpenRunOptions = {
   runId: string;
-  role?: 'manager' | 'worker';
   draftPrompt?: string | null;
-  // The requested sizing is honored literally: 'peek' opens a small live-transcript
-  // window above the dock, 'workbench'/'focus' expand. Defaults to workbench so a
-  // freshly opened run is visible unless the caller asks for a peek explicitly.
-  size?: ManagerSize;
 };
 
 type RunDockContextValue = {
+  /** Open = the session panel is showing above the taskbar. */
   open: boolean;
-  size: ManagerSize;
+  /** Panel height as a viewport fraction (0..1); the taskbar is excluded. */
+  height: number;
   tabs: RunDockTab[];
-  activeTabId: string;
-  setSize: (size: ManagerSize) => void;
+  activeTabId: string | null;
+  setHeight: (height: number) => void;
   setActiveTab: (tabId: string) => void;
-  openManager: (size?: ManagerSize) => void;
+  /** Raise a run: select it and show the panel at the remembered height. */
   openRun: (options: OpenRunOptions) => void;
+  /** Collapse to the bare taskbar, keeping the active selection. */
+  minimize: () => void;
   closeTab: (tabId: string) => void;
   consumeDraft: (tabId: string) => void;
 };
 
 const RunDockContext = createContext<RunDockContextValue | null>(null);
 
-type StoredTab = { tabId: string; runId: string | null };
+type StoredTab = { tabId: string; runId: string };
 
 function readStoredTabs(): StoredTab[] {
   if (typeof window === 'undefined') return [];
@@ -65,8 +64,8 @@ function readStoredTabs(): StoredTab[] {
       if (!entry || typeof entry !== 'object') return [];
       const tabId = (entry as { tabId?: unknown }).tabId;
       const runId = (entry as { runId?: unknown }).runId;
-      if (typeof tabId !== 'string') return [];
-      return [{ tabId, runId: typeof runId === 'string' ? runId : null }];
+      if (typeof tabId !== 'string' || typeof runId !== 'string') return [];
+      return [{ tabId, runId }];
     });
   } catch {
     return [];
@@ -77,37 +76,63 @@ function writeStoredTabs(tabs: RunDockTab[]): void {
   if (typeof window === 'undefined') return;
   // Drafts are intentionally not persisted: a staged prompt is session-scoped and
   // re-derived from backend run state on the next recovery open.
-  const stored: StoredTab[] = tabs
-    .filter((tab) => tab.tabId !== MANAGER_TAB_ID)
-    .map((tab) => ({ tabId: tab.tabId, runId: tab.runId }));
+  const stored: StoredTab[] = tabs.map((tab) => ({ tabId: tab.tabId, runId: tab.runId }));
   window.localStorage.setItem(OPEN_TABS_KEY, JSON.stringify(stored));
 }
 
-function readStoredSize(): ManagerSize {
-  if (typeof window === 'undefined') return 'peek';
-  const raw = window.localStorage.getItem(SIZE_KEY);
-  return raw === 'workbench' || raw === 'focus' ? raw : 'peek';
+function readStoredOpen(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(OPEN_KEY) === '1';
+}
+
+function readStoredActiveTab(): string | null {
+  if (typeof window === 'undefined') return null;
+  return window.localStorage.getItem(ACTIVE_TAB_KEY);
+}
+
+function readStoredHeight(): number {
+  if (typeof window === 'undefined') return DEFAULT_DOCK_HEIGHT;
+  const raw = window.localStorage.getItem(HEIGHT_KEY);
+  const parsed = raw === null ? Number.NaN : Number(raw);
+  // An unresized dock opens full-screen; a dragged one reopens where the user
+  // left it.
+  return Number.isFinite(parsed) ? clampDockHeight(parsed) : DEFAULT_DOCK_HEIGHT;
 }
 
 export function RunDockProvider({ children }: { children: ReactNode }) {
-  const [size, setSizeState] = useState<ManagerSize>(() => readStoredSize());
-  const [tabs, setTabs] = useState<RunDockTab[]>(() => [
-    { tabId: MANAGER_TAB_ID, runId: null },
-  ]);
-  const [activeTabId, setActiveTabId] = useState<string>(MANAGER_TAB_ID);
+  const [openState, setOpen] = useState<boolean>(() => readStoredOpen());
+  const [height, setHeightState] = useState<number>(() => readStoredHeight());
+  const [tabs, setTabs] = useState<RunDockTab[]>([]);
+  const [activeTabId, setActiveTabIdState] = useState<string | null>(() =>
+    readStoredActiveTab(),
+  );
   const validatedRef = useRef(false);
 
-  // Open = anything larger than the peek bar. The manager tab is always present
-  // so "open" purely reflects whether the dock is expanded.
-  const open = size !== 'peek';
+  // A dock with nothing selected has nothing to show, so it stays down. This
+  // also covers the reload window before persisted tabs finish validating.
+  const open = openState && activeTabId !== null;
 
-  const setSize = useCallback((next: ManagerSize) => {
-    setSizeState(next);
-    if (typeof window !== 'undefined') window.localStorage.setItem(SIZE_KEY, next);
+  const setActiveTabId = useCallback((tabId: string | null) => {
+    setActiveTabIdState(tabId);
+    if (typeof window === 'undefined') return;
+    if (tabId === null) window.localStorage.removeItem(ACTIVE_TAB_KEY);
+    else window.localStorage.setItem(ACTIVE_TAB_KEY, tabId);
   }, []);
 
-  // On first mount, restore persisted worker tabs but validate every run id
-  // against backend run + recovery state; drop ids the daemon no longer knows.
+  const setHeight = useCallback((next: number) => {
+    const clamped = clampDockHeight(next);
+    setHeightState(clamped);
+    if (typeof window !== 'undefined')
+      window.localStorage.setItem(HEIGHT_KEY, String(clamped));
+  }, []);
+
+  const minimize = useCallback(() => {
+    setOpen(false);
+    if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '0');
+  }, []);
+
+  // On first mount, restore persisted tabs but validate every run id against
+  // backend run + recovery state; drop ids the daemon no longer knows.
   useEffect(() => {
     if (validatedRef.current) return;
     validatedRef.current = true;
@@ -132,17 +157,21 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
         ]) {
           for (const run of list ?? []) known.add(run.run_id);
         }
-        const restored = stored.filter((tab) => tab.runId && known.has(tab.runId));
+        const restored = stored.filter((tab) => known.has(tab.runId));
+        // A persisted selection whose run died while the page was closed can no
+        // longer be raised; drop it so the dock restores collapsed rather than
+        // onto an empty panel.
+        setActiveTabIdState((current) =>
+          current && restored.some((tab) => tab.tabId === current) ? current : null,
+        );
         if (restored.length === 0) return;
         setTabs((prev) => {
           const seen = new Set(prev.map((tab) => tab.tabId));
-          const additions = restored
-            .filter((tab) => !seen.has(tab.tabId))
-            .map((tab) => ({ tabId: tab.tabId, runId: tab.runId }));
+          const additions = restored.filter((tab) => !seen.has(tab.tabId));
           return additions.length ? [...prev, ...additions] : prev;
         });
       } catch {
-        // Validation is best-effort; on failure we simply keep only Manager.
+        // Validation is best-effort; on failure the dock simply starts empty.
       }
     })();
     return () => {
@@ -154,49 +183,38 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     writeStoredTabs(tabs);
   }, [tabs]);
 
-  const setActiveTab = useCallback((tabId: string) => {
-    setActiveTabId(tabId);
-  }, []);
-
-  const openManager = useCallback(
-    (nextSize: ManagerSize = 'workbench') => {
-      setActiveTabId(MANAGER_TAB_ID);
-      setSize(nextSize);
+  const setActiveTab = useCallback(
+    (tabId: string) => {
+      setActiveTabId(tabId);
     },
-    [setSize],
+    [setActiveTabId],
   );
 
   const openRun = useCallback(
-    ({ runId, role, draftPrompt, size: nextSize = 'workbench' }: OpenRunOptions) => {
-      if (role === 'manager') {
-        // Manager recovery routes to the special Manager tab, which always tracks
-        // the live manager run itself.
-        setTabs((prev) =>
-          prev.map((tab) =>
-            tab.tabId === MANAGER_TAB_ID ? { ...tab, draftPrompt: draftPrompt ?? null } : tab,
-          ),
-        );
-        setActiveTabId(MANAGER_TAB_ID);
-        setSize(nextSize);
-        return;
-      }
+    ({ runId, draftPrompt }: OpenRunOptions) => {
       setTabs((prev) => applyWorkerTabUpdate(prev, runId, draftPrompt));
       setActiveTabId(runId);
-      setSize(nextSize);
+      setOpen(true);
+      if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '1');
     },
-    [setSize],
+    [setActiveTabId],
   );
 
-  const closeTab = useCallback((tabId: string) => {
-    // The Manager tab is permanent; closing detaches UI only and never stops the
-    // run, so we just drop the tab from the dock.
-    if (tabId === MANAGER_TAB_ID) return;
-    setTabs((prev) => {
-      const next = prev.filter((tab) => tab.tabId !== tabId);
-      return next.length ? next : prev;
-    });
-    setActiveTabId((current) => (current === tabId ? MANAGER_TAB_ID : current));
-  }, []);
+  const closeTab = useCallback(
+    (tabId: string) => {
+      // Closing detaches the UI only; it never stops or releases the run
+      // (stop/release stays a separate explicit action — dec_FBBT2).
+      setTabs((prev) => prev.filter((tab) => tab.tabId !== tabId));
+      // Closing the tab you were looking at puts the dock down: there is no
+      // "next" tab worth guessing at, and the taskbar is one click away.
+      setActiveTabIdState((current) => {
+        if (current !== tabId) return current;
+        if (typeof window !== 'undefined') window.localStorage.removeItem(ACTIVE_TAB_KEY);
+        return null;
+      });
+    },
+    [],
+  );
 
   const consumeDraft = useCallback((tabId: string) => {
     setTabs((prev) =>
@@ -207,25 +225,25 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
   const value = useMemo<RunDockContextValue>(
     () => ({
       open,
-      size,
+      height,
       tabs,
       activeTabId,
-      setSize,
+      setHeight,
       setActiveTab,
-      openManager,
       openRun,
+      minimize,
       closeTab,
       consumeDraft,
     }),
     [
       open,
-      size,
+      height,
       tabs,
       activeTabId,
-      setSize,
+      setHeight,
       setActiveTab,
-      openManager,
       openRun,
+      minimize,
       closeTab,
       consumeDraft,
     ],

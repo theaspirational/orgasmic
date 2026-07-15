@@ -326,20 +326,20 @@ function TaskList({
   }
 
   return (
-    <Card className="overflow-hidden p-0">
-      {groups.map(([stage, items], i) => (
-        <TaskStageSection
-          key={stage}
-          projectId={projectId}
-          stage={stage}
-          items={items}
-          divided={i > 0}
-          onSelectTask={onSelectTask}
-          longPressEnabled={longPressEnabled}
-          forTask={forTask}
-        />
+    <div className="flex flex-col gap-4">
+      {groups.map(([stage, items]) => (
+        <Card key={stage} className="overflow-hidden bg-transparent p-0">
+          <TaskStageSection
+            projectId={projectId}
+            stage={stage}
+            items={items}
+            onSelectTask={onSelectTask}
+            longPressEnabled={longPressEnabled}
+            forTask={forTask}
+          />
+        </Card>
       ))}
-    </Card>
+    </div>
   );
 }
 
@@ -347,7 +347,6 @@ function TaskStageSection({
   projectId,
   stage,
   items,
-  divided,
   onSelectTask,
   longPressEnabled,
   forTask,
@@ -355,7 +354,6 @@ function TaskStageSection({
   projectId: string;
   stage: string;
   items: TaskSummary[];
-  divided: boolean;
   onSelectTask: (id: string) => void;
   longPressEnabled: boolean;
   forTask: ForTask;
@@ -392,7 +390,7 @@ function TaskStageSection({
   }, [collapseState, storageKey]);
 
   return (
-    <section className={cn(divided && 'border-t')}>
+    <section>
       <div className="flex min-h-11 flex-wrap items-center gap-2 bg-muted/30 px-3 py-2">
         <button
           type="button"

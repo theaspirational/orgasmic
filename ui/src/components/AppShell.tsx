@@ -9,14 +9,12 @@ import {
   Cpu,
   FileCode2,
   FileStack,
-  FolderOpen,
   FolderTree,
   GitCommitHorizontal,
   LayoutList,
   ListChecks,
   Monitor,
   Moon,
-  Plus,
   Settings,
   Sun,
   type LucideIcon,
@@ -34,7 +32,6 @@ import { Toaster } from '@/components/ui/sonner';
 import {
   Sidebar,
   SidebarContent,
-  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -50,12 +47,11 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useEventStream, useWsStatus } from '@/hooks/useEventStream';
 import { useMe } from '@/hooks/useMe';
-import { useRefreshBump, useRefreshToken } from '@/hooks/useRefreshBus';
+import { useRefreshBump } from '@/hooks/useRefreshBus';
 import { useActiveProject } from '@/hooks/useActiveProject';
 import { useTabSync } from '@/hooks/useProjectTabs';
 import { navPageVisible } from '@/lib/capabilities';
 import { useBackendProfiles } from '@/lib/backend';
-import { fetchProjects } from '@/lib/api';
 import {
   UPDATE_AUTO_CHECK_MS,
   UPDATE_LAST_NOTIFIED_KEY,
@@ -66,7 +62,6 @@ import { routeSearch } from '@/lib/searchState';
 import { THEME_OPTIONS, useTheme, type ThemePreference } from '@/lib/theme';
 import { setUnauthorizedHandler } from '@/lib/transport';
 import type { DaemonEvent, ViewName, WsConnectionState } from '@/lib/types';
-import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
 
 import { ConnectGate } from './ConnectGate';
@@ -76,9 +71,7 @@ import { RichTextProvider } from '@/lib/richText';
 import { RunDock } from './manager/RunDock';
 import { RunDockProvider } from '@/lib/runDock';
 import { NotificationBell } from './notifications/NotificationBell';
-import { ProjectAddDialog } from './ProjectAddDialog';
 import { ProjectTabs } from './ProjectTabs';
-import { ProjectsManageDialog } from './ProjectsManageDialog';
 
 type ProjectPage =
   | 'decisions'
@@ -341,9 +334,6 @@ export function AppShell() {
               </SidebarGroup>
             ) : null}
           </SidebarContent>
-          <SidebarFooter>
-            <ProjectSidebarFooter />
-          </SidebarFooter>
         </Sidebar>
         <SidebarInset>
           <header
@@ -536,57 +526,6 @@ function MobileOverflow({ onNavigate }: { onNavigate: (next: ViewName) => void }
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  );
-}
-
-function ProjectSidebarFooter() {
-  const refresh = useRefreshToken();
-  const { isMember } = useMe();
-  // The admin `/projects` list (and the Add/Manage actions it feeds) are
-  // admin-only; a member would 403, so skip the fetch entirely for them.
-  const { data } = useResource(`projects:${refresh}:sidebar-footer`, fetchProjects, {
-    enabled: !isMember,
-  });
-  const [addOpen, setAddOpen] = useState(false);
-  const [manageOpen, setManageOpen] = useState(false);
-  const addLabel = data?.length === 0 ? 'Add your first project' : 'Add project';
-
-  return (
-    <>
-      <div className="flex flex-col gap-1 group-data-[collapsible=icon]:items-center">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-full justify-start group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0"
-          aria-label={addLabel}
-          onClick={() => setAddOpen(true)}
-        >
-          <Plus />
-          <span className="truncate group-data-[collapsible=icon]:hidden">{addLabel}</span>
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="w-full justify-start group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0"
-          aria-label="Manage projects"
-          onClick={() => setManageOpen(true)}
-        >
-          <FolderOpen />
-          <span className="truncate group-data-[collapsible=icon]:hidden">Manage projects</span>
-        </Button>
-      </div>
-      <ProjectAddDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        onOpenManage={() => {
-          setAddOpen(false);
-          setManageOpen(true);
-        }}
-      />
-      <ProjectsManageDialog open={manageOpen} onOpenChange={setManageOpen} />
-    </>
   );
 }
 

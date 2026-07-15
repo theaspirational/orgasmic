@@ -1,7 +1,7 @@
 // @arch arch_MK2Q2.4
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from '@tanstack/react-router';
-import { Plus, X } from 'lucide-react';
+import { FolderOpen, Plus, X } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -25,6 +25,7 @@ import { useResource } from '@/lib/useResource';
 import { cn } from '@/lib/utils';
 
 import { ProjectAddDialog } from './ProjectAddDialog';
+import { ProjectsManageDialog } from './ProjectsManageDialog';
 
 const VIEW_LABELS: Record<TabView, string> = {
   decisions: 'Decisions',
@@ -338,6 +339,7 @@ function NewTabMenu({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [manageOpen, setManageOpen] = useState(false);
 
   const openSet = useMemo(() => new Set(openProjectIds), [openProjectIds]);
   const available = useMemo(
@@ -443,10 +445,29 @@ function NewTabMenu({
               <Plus className="size-4" />
               <span>Add new project</span>
             </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none hover:bg-accent focus-visible:bg-accent"
+              onClick={() => {
+                setOpen(false);
+                setManageOpen(true);
+              }}
+            >
+              <FolderOpen className="size-4" />
+              <span>Manage projects</span>
+            </button>
           </div>
         </PopoverContent>
       </Popover>
-      <ProjectAddDialog open={addOpen} onOpenChange={setAddOpen} />
+      <ProjectAddDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onOpenManage={() => {
+          setAddOpen(false);
+          setManageOpen(true);
+        }}
+      />
+      <ProjectsManageDialog open={manageOpen} onOpenChange={setManageOpen} />
     </>
   );
 }

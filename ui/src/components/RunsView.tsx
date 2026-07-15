@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 
 import { fetchRun, fetchRuns } from '../lib/api';
 import { useRunDock } from '../lib/runDock';
-import { isManagerRun } from '../lib/runLabels';
 import type { RecoveredRun, RunsResponse, RunSummary } from '../lib/types';
 import { useResource } from '../lib/useResource';
 import { Badge, DataTable, ErrorPanel, JsonPanel, Loading } from './Primitives';
@@ -116,13 +115,7 @@ export function RunsView({ projectId: _projectId }: { projectId: string | null }
                     className="btn"
                     onClick={(event) => {
                       event.stopPropagation();
-                      openRun({
-                        runId: String(row.run_id),
-                        role: isManagerRun({ task_id: String(row.task_id) })
-                          ? 'manager'
-                          : 'worker',
-                        size: 'workbench',
-                      });
+                      openRun({ runId: String(row.run_id) });
                     }}
                   >
                     Open

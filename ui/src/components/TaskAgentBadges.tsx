@@ -11,7 +11,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import type { TaskRunMatch } from '@/hooks/useTaskRuns';
 import { useRunDock } from '@/lib/runDock';
-import { isManagerRun, runTabTitle } from '@/lib/runLabels';
+import { runTabTitle } from '@/lib/runLabels';
 import { buildPerformerPill } from '@/lib/performerPill';
 import type { RunSummary } from '@/lib/types';
 import { cn } from '@/lib/utils';
@@ -86,7 +86,7 @@ export function TaskAgentBadges({
     event.stopPropagation();
     if (!singleImmediate) return;
     const run = primary[0]!;
-    openRun({ runId: run.run_id, role: isManagerRun(run) ? 'manager' : 'worker', size: 'workbench' });
+    openRun({ runId: run.run_id });
   }
 
   const liveBadge = (
@@ -109,7 +109,7 @@ export function TaskAgentBadges({
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        openRun({ runId: watcher.run_id, role: 'worker', size: 'workbench' });
+        openRun({ runId: watcher.run_id });
       }}
       title={`${liveBadgeLabel(watcher)} · open transcript`}
       aria-label="Open babysitter run"
@@ -172,11 +172,7 @@ export function TaskAgentBadges({
             key={run.run_id}
             title={run.run_id}
             onClick={() =>
-              openRun({
-                runId: run.run_id,
-                role: isManagerRun(run) ? 'manager' : 'worker',
-                size: 'workbench',
-              })
+              openRun({ runId: run.run_id })
             }
           >
             <span className="min-w-0 flex-1 truncate">{runTabTitle(run)}</span>

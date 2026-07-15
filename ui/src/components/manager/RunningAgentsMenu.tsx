@@ -12,10 +12,12 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useEventStream } from '@/hooks/useEventStream';
 import { fetchRuns } from '@/lib/api';
-import { MANAGER_TAB_ID, useRunDock } from '@/lib/runDock';
-import { isManagerRun, runTabTitle } from '@/lib/runLabels';
+import { useRunDock } from '@/lib/runDock';
+import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RecoveredRun, RunSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
+
+import { agentRuns } from './runDockLabels';
 
 function recoveredTitle(run: RecoveredRun): string {
   // Recovered runs do not carry a task id in the recovery payload, so fall back
@@ -25,7 +27,7 @@ function recoveredTitle(run: RecoveredRun): string {
 }
 
 export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
-  const { openRun, activeTabId, size } = useRunDock();
+  const { openRun } = useRunDock();
   const runs = useResource('rundock-running-agents', fetchRuns);
 
   const refresh = useCallback(() => {
@@ -42,10 +44,10 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
     ),
   );
 
-  const live = runs.data?.live ?? [];
-  // Workers and managers are both "running"; the dock surfaces the manager via
-  // its special tab, but it stays selectable here for symmetry.
-  const running = live;
+  // Terminals are peer runs on the taskbar but they are not agents: this menu
+  // (and its count badge) reports what orgasmic is supervising, so only worker
+  // and agent-manager runs make the list.
+  const running = agentRuns(runs.data?.live ?? []);
   // Recent defaults to the current project: terminal/no-op runs from this boot
   // plus any ambiguous ones. Global toggle/search is deferred.
   const recent: RecoveredRun[] = [
@@ -55,16 +57,10 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
 
   const count = running.length;
 
+  // Attaching from the menu raises the run exactly like clicking its taskbar
+  // button: same tab, same remembered height.
   const handleSelectRunning = (run: RunSummary) => {
-    const role = isManagerRun(run) ? 'manager' : 'worker';
-    const tabId = role === 'manager' ? MANAGER_TAB_ID : run.run_id;
-    // Per dec_053: first attach opens peek. Re-selecting the already-active tab
-    // should focus it without collapsing workbench/focus.
-    openRun({
-      runId: run.run_id,
-      role,
-      size: activeTabId === tabId ? size : 'peek',
-    });
+    openRun({ runId: run.run_id });
   };
 
   return (
