@@ -150,6 +150,24 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
 
   const replaceLiveRuns = useCallback((runs: RunSummary[]) => {
     liveRunsRef.current = new Map(runs.map((run) => [run.run_id, run]));
+    // openRun admits a run the map does not know yet (stale/ended tabs must
+    // stay openable — dec_FBBT2), so a tab opened during the sync gap could be
+    // an external run. Purge tabs only for ids now positively known to be live
+    // and external; everything else is untouched.
+    const externalIds = new Set(
+      runs.filter((run) => !isRunDockEligible(run)).map((run) => run.run_id),
+    );
+    if (externalIds.size === 0) return;
+    setTabs((prev) =>
+      prev.some((tab) => externalIds.has(tab.runId))
+        ? prev.filter((tab) => !externalIds.has(tab.runId))
+        : prev,
+    );
+    setActiveTabIdState((current) => {
+      if (!current || !externalIds.has(current)) return current;
+      if (typeof window !== 'undefined') window.localStorage.removeItem(ACTIVE_TAB_KEY);
+      return null;
+    });
   }, []);
 
   // On first mount, restore persisted tabs but validate every run id against

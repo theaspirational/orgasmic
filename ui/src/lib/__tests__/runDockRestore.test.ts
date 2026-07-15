@@ -33,6 +33,19 @@ function OpenRunProbe({ runs, runId }: { runs: RunSummary[]; runId: string }) {
   );
 }
 
+// Unlike OpenRunProbe, synchronization here is a click, not an effect — the
+// race under test is openRun landing BEFORE the live-run map knows the run.
+function LateSyncProbe({ runs, runId }: { runs: RunSummary[]; runId: string }) {
+  const { tabs, openRun, replaceLiveRuns } = useRunDock();
+  return createElement(
+    'div',
+    null,
+    createElement('button', { onClick: () => openRun({ runId }) }, 'Open run'),
+    createElement('button', { onClick: () => replaceLiveRuns(runs) }, 'Sync runs'),
+    createElement('output', { 'aria-label': 'open tab count' }, tabs.length),
+  );
+}
+
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
@@ -65,6 +78,24 @@ describe('persisted Run Dock restore eligibility', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Open run' }));
+    expect(screen.getByLabelText('open tab count').textContent).toBe('0');
+  });
+
+  it('purges a tab that won the race against live-run synchronization', () => {
+    const external = liveRun('run-external', 'external');
+    render(
+      createElement(
+        RunDockProvider,
+        null,
+        createElement(LateSyncProbe, { runs: [external], runId: external.run_id }),
+      ),
+    );
+
+    // The map is empty, so openRun admits the run like any stale tab...
+    fireEvent.click(screen.getByRole('button', { name: 'Open run' }));
+    expect(screen.getByLabelText('open tab count').textContent).toBe('1');
+    // ...and the next synchronization learns it is live external and purges it.
+    fireEvent.click(screen.getByRole('button', { name: 'Sync runs' }));
     expect(screen.getByLabelText('open tab count').textContent).toBe('0');
   });
 
