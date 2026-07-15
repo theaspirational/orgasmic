@@ -149,6 +149,23 @@ pub struct LeaseReleaseArgs {
     pub kind: String,
 }
 
+/// External manager self-registration (dec_3Y2E1): a manager session started
+/// outside the app registers itself with the daemon so it appears in Running
+/// Agents as a supervised run.
+#[derive(Args, Debug, Clone)]
+pub struct ManagerRegisterArgs {
+    /// Project id; defaults to the project containing the cwd.
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct ManagerReleaseArgs {
+    /// Project id; defaults to the project containing the cwd.
+    #[arg(long)]
+    pub project: Option<String>,
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum FinalizeStatus {
     Done,
@@ -668,6 +685,125 @@ pub fn cmd_lease_release(home: &Home, args: LeaseReleaseArgs) -> Result<()> {
         ),
         "no_lease" => println!("no lease held for {}; nothing to clear", args.task),
         other => println!("lease release: {other}"),
+    }
+    Ok(())
+}
+
+/// Terminal session-leader pid (`getsid(0)`) for the calling process, when
+/// resolvable. This is what the daemon polls (~30s) to know the registrant
+/// terminal is still alive (dec_3Y2E1).
+#[cfg(unix)]
+fn terminal_session_leader_pid() -> Option<u32> {
+    let sid = unsafe { libc::getsid(0) };
+    u32::try_from(sid).ok()
+}
+
+#[cfg(not(unix))]
+fn terminal_session_leader_pid() -> Option<u32> {
+    None
+}
+
+#[derive(Debug, Serialize)]
+struct ManagerRegisterHttpRequest {
+    project_id: String,
+    pid: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerRegisterHttpResponse {
+    status: String,
+    run_id: Option<String>,
+    message: Option<String>,
+}
+
+/// External manager self-registration (dec_3Y2E1). The entry router runs
+/// this unconditionally on every manager startup; when `ORGASMIC_RUN_ID` is
+/// already set (a PTY the daemon launched, per drivers exporting it into
+/// every session) this is a no-op — the command itself knows when it applies,
+/// so the router carries no conditional prose.
+pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()> {
+    if let Ok(run_id) = std::env::var("ORGASMIC_RUN_ID") {
+        let run_id = run_id.trim();
+        if !run_id.is_empty() {
+            println!("already supervised as {run_id}; nothing to do");
+            return Ok(());
+        }
+    }
+
+    let project_id = match args.project.clone() {
+        Some(project) => project,
+        None => read_project_id(&find_project_root()?)?,
+    };
+    let pid = terminal_session_leader_pid();
+    let client = DaemonClient::from_home_autostart(home)?;
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    let response: ManagerRegisterHttpResponse = runtime.block_on(client.post_json(
+        "/manager/register",
+        &ManagerRegisterHttpRequest {
+            project_id: project_id.clone(),
+            pid,
+        },
+    ))?;
+
+    match response.status.as_str() {
+        "registered" => {
+            println!(
+                "registered manager for {project_id} as {}",
+                response.run_id.as_deref().unwrap_or("-")
+            );
+            Ok(())
+        }
+        "refreshed" => {
+            println!(
+                "manager registration for {project_id} refreshed ({})",
+                response.run_id.as_deref().unwrap_or("-")
+            );
+            Ok(())
+        }
+        "refused" => bail!(
+            "{}",
+            response
+                .message
+                .unwrap_or_else(|| "manager registration refused".to_string())
+        ),
+        other => bail!("unexpected manager register status: {other}"),
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct ManagerReleaseHttpRequest {
+    project_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManagerReleaseHttpResponse {
+    status: String,
+    run_id: Option<String>,
+}
+
+/// Explicit deregistration for `orgasmic manager register`. A no-op (not an
+/// error) when nothing is registered.
+pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> {
+    let project_id = match args.project.clone() {
+        Some(project) => project,
+        None => read_project_id(&find_project_root()?)?,
+    };
+    let client = DaemonClient::from_home_autostart(home)?;
+    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+    let response: ManagerReleaseHttpResponse = runtime.block_on(client.post_json(
+        "/manager/release",
+        &ManagerReleaseHttpRequest {
+            project_id: project_id.clone(),
+        },
+    ))?;
+
+    match response.status.as_str() {
+        "released" => println!(
+            "released manager registration for {project_id} (was {})",
+            response.run_id.as_deref().unwrap_or("-")
+        ),
+        "not_registered" => println!("no manager registered for {project_id}; nothing to do"),
+        other => println!("manager release: {other}"),
     }
     Ok(())
 }

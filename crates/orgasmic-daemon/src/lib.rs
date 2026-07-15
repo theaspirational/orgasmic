@@ -18,6 +18,7 @@ pub mod config;
 pub mod content;
 pub mod events;
 pub mod index;
+pub mod manager_registration;
 pub mod prompt_compiler;
 pub mod runtime;
 pub mod supervisor;
@@ -251,6 +252,8 @@ impl Daemon {
 
         let writer = spawn_writer(events.clone());
         let supervisor = supervisor::Supervisor::new(writer.clone(), boot.clone());
+        let manager_registry = manager_registration::ManagerRegistry::new();
+        manager_registration::spawn_liveness_loop(manager_registry.clone(), supervisor.clone());
         index.spawn_tx_listener(events.clone());
 
         // Project roots for boot auto-reattach, run once `api_state` exists
@@ -286,6 +289,7 @@ impl Daemon {
             writer: writer.clone(),
             supervisor,
             manager_driver: Arc::new(tmux::driver()),
+            manager_registry,
             events: events.clone(),
             boot: boot.clone(),
             auth: auth_state,

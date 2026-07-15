@@ -1,5 +1,6 @@
 import { useCallback } from 'react';
-import { Radio } from 'lucide-react';
+import { Radio, X } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -11,13 +12,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useEventStream } from '@/hooks/useEventStream';
-import { fetchRuns } from '@/lib/api';
+import { fetchRuns, isRunGoneError, postRunRelease } from '@/lib/api';
 import { useRunDock } from '@/lib/runDock';
 import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RecoveredRun, RunSummary } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
-import { agentRuns } from './runDockLabels';
+import { agentRuns, isExternalManagerRun } from './runDockLabels';
 
 function recoveredTitle(run: RecoveredRun): string {
   // Recovered runs do not carry a task id in the recovery payload, so fall back
@@ -60,7 +61,31 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
   // Attaching from the menu raises the run exactly like clicking its taskbar
   // button: same tab, same remembered height.
   const handleSelectRunning = (run: RunSummary) => {
+    if (isExternalManagerRun(run)) {
+      // No PTY behind an external registration — there is nothing to attach.
+      toast.info('This manager runs outside orgasmic', {
+        description: 'It registered itself; attach is unavailable. Use End to clear a stale registration.',
+      });
+      return;
+    }
     openRun({ runId: run.run_id });
+  };
+
+  const handleEndExternal = async (run: RunSummary) => {
+    try {
+      await postRunRelease(run.run_id);
+      toast.success('Manager registration ended');
+    } catch (err) {
+      if (isRunGoneError(err)) {
+        toast.info('Registration already ended');
+      } else {
+        toast.error('Ending registration failed', {
+          description: err instanceof Error ? err.message : String(err),
+        });
+        return;
+      }
+    }
+    refresh();
   };
 
   return (
@@ -101,9 +126,24 @@ export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
                   {run.sub_state}
                 </span>
               ) : null}
-              <span className="font-mono text-[10px] text-muted-foreground">
-                {run.event_count}
-              </span>
+              {isExternalManagerRun(run) ? (
+                <button
+                  type="button"
+                  aria-label="End manager registration"
+                  title="End manager registration"
+                  className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleEndExternal(run);
+                  }}
+                >
+                  <X className="size-3" />
+                </button>
+              ) : (
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {run.event_count}
+                </span>
+              )}
             </DropdownMenuItem>
           ))
         )}

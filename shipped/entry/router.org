@@ -23,6 +23,7 @@ Manager startup:
 2. If installed, read the skill and follow the selected `/orgasmic` subcommand.
 3. If absent, offer `/orgasmic install`; keep `.orgasmic/` read-only until the
    runtime is available.
+4. Run `orgasmic manager register`.
 
 Manager-implementer: when the manager edits source directly in this session
 instead of dispatching a worker (single-worker setups), follow the resolved

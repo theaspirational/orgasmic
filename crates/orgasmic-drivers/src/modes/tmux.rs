@@ -411,6 +411,10 @@ struct TmuxSpawnPlan {
     /// Harness-aware native runtime identity recorded into the session JSONL.
     /// `None` when the harness has no known native session semantics.
     native_runtime: Option<NativeRuntimeMeta>,
+    /// This run's id, exported as `ORGASMIC_RUN_ID` into the spawned pane's
+    /// environment so a manager session recognises "I am already supervised"
+    /// (`orgasmic manager register`, dec_3Y2E1).
+    run_id: String,
 }
 
 fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> TmuxSpawnPlan {
@@ -493,6 +497,7 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         initial_prompt,
         eot_marker,
         native_runtime,
+        run_id: ctx.identity.run_id.clone(),
     }
 }
 
@@ -649,8 +654,10 @@ async fn spawn_tmux_session(session: &str, plan: &TmuxSpawnPlan) -> Result<(), D
         TMUX_SESSION_COLS,
         "-y",
         TMUX_SESSION_ROWS,
-        "-c",
+        "-e",
     ])
+    .arg(format!("ORGASMIC_RUN_ID={}", plan.run_id))
+    .arg("-c")
     .arg(&plan.cwd)
     .arg("--")
     .arg(&plan.command);
@@ -1712,6 +1719,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn real_tmux_session_exports_orgasmic_run_id() {
+        // `orgasmic manager register` (dec_3Y2E1) recognises "I am already
+        // supervised" by reading ORGASMIC_RUN_ID from its own environment —
+        // prove the spawned pane actually has it set, not just that the
+        // spawn plan carries a run id.
+        let _live_guard = live_session_guard();
+        if !tmux_spawn_usable().await {
+            eprintln!(
+                "skipping real_tmux_session_exports_orgasmic_run_id: tmux unavailable or unusable"
+            );
+            return;
+        }
+        let out_dir = tempfile::tempdir().unwrap();
+        let out_path = out_dir.path().join("run-id.txt");
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", format!("printf '%s' \"$ORGASMIC_RUN_ID\" > {}", out_path.display())],
+        }));
+        let s = d
+            .acquire(ctx("run-env-export-test", RunKind::Worker), cfg)
+            .await
+            .unwrap();
+        let _guard = SessionGuard(tmux_session_name(&s.identity));
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut body = String::new();
+        while std::time::Instant::now() < deadline {
+            if let Ok(contents) = std::fs::read_to_string(&out_path) {
+                if !contents.is_empty() {
+                    body = contents;
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(body, "run-env-export-test");
+    }
+
+    #[tokio::test]
     async fn real_tmux_control_drop_without_release_kills_session() {
         let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await {
@@ -1778,6 +1825,7 @@ mod tests {
             initial_prompt: None,
             eot_marker: tmux_eot_marker("run-input-ready"),
             native_runtime: None,
+            run_id: "run-input-ready".into(),
         };
 
         let _guard = SessionGuard(session.clone());

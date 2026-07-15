@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 orgasmic-core = { path = "../orgasmic-core" }
 orgasmic-drivers = { path = "../orgasmic-drivers" }
+async-trait = "0.1"
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
@@ -31,7 +32,6 @@ sha2.workspace = true
 include_dir.workspace = true
 
 [dev-dependencies]
-async-trait = "0.1"
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 reqwest.workspace = true

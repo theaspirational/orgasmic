@@ -266,6 +266,10 @@ struct RmuxSpawnPlan {
     use_render_default: bool,
     native_runtime: Option<NativeRuntimeMeta>,
     persistent: bool,
+    /// This run's id, exported as `ORGASMIC_RUN_ID` into the spawned pane's
+    /// environment so a manager session recognises "I am already supervised"
+    /// (`orgasmic manager register`, dec_3Y2E1).
+    run_id: String,
 }
 
 fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> RmuxSpawnPlan {
@@ -366,6 +370,7 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         use_render_default,
         native_runtime,
         persistent: cfg.persistent,
+        run_id: ctx.identity.run_id.clone(),
     }
 }
 
@@ -798,8 +803,9 @@ async fn run_live_session(
     let session_name = rmux_sdk::SessionName::new(session_name.to_string())
         .map_err(|e| DriverError::Transport(format!("rmux session name: {e}")))?;
 
-    let process =
+    let mut process =
         ProcessSpec::argv(std::iter::once(plan.command.clone()).chain(plan.args.iter().cloned()));
+    process.environment = Some(vec![format!("ORGASMIC_RUN_ID={}", plan.run_id)]);
     let session = rmux
         .ensure_session(
             EnsureSession::named(session_name)
@@ -2235,6 +2241,62 @@ mod tests {
         );
         // release() after natural completion is idempotent (terminal already
         // emitted) and tears the session down via the typed Session::kill.
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    /// `orgasmic manager register` (dec_3Y2E1) recognises "I am already
+    /// supervised" by reading ORGASMIC_RUN_ID from its own environment —
+    /// prove the spawned rmux pane actually has it set, not just that the
+    /// spawn plan carries a run id. Skipped without a real rmux binary.
+    #[tokio::test]
+    async fn live_rmux_session_exports_orgasmic_run_id() {
+        let _live_guard = live_session_guard();
+        let probe = probe_rmux_binary();
+        if !probe.found {
+            eprintln!("skipping live_rmux_session_exports_orgasmic_run_id: rmux binary not found");
+            return;
+        }
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", "printf 'run-id=%s\\n' \"$ORGASMIC_RUN_ID\"; exit 0"],
+        }));
+        let mut s = d
+            .acquire(ctx("run-env-export-test", RunKind::Worker), cfg)
+            .await
+            .unwrap();
+
+        let ev = s.events.recv().await.unwrap();
+        let DriverEvent::Ready { capabilities, .. } = ev else {
+            panic!("expected Ready, got {ev:?}");
+        };
+        if capabilities["inert"] == true {
+            assert!(capabilities["inert_reason"].is_string());
+            s.control.release("cleanup").await.unwrap();
+            return;
+        }
+
+        let mut saw_run_id = false;
+        for _ in 0..40 {
+            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
+                .await
+                .expect("timed out waiting for rmux stream event")
+                .expect("event stream closed");
+            match ev {
+                DriverEvent::TextChunk { chunk, .. } => {
+                    saw_run_id |= chunk.contains("run-id=run-env-export-test");
+                }
+                DriverEvent::RunComplete { .. } => break,
+                DriverEvent::DriverError { fatal, message } => {
+                    panic!("unexpected driver error (fatal={fatal}): {message}");
+                }
+                other => panic!("unexpected event before completion: {other:?}"),
+            }
+        }
+        assert!(
+            saw_run_id,
+            "expected ORGASMIC_RUN_ID in the pane environment"
+        );
         s.control.release("cleanup").await.unwrap();
     }
 

@@ -2235,7 +2235,7 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
     });
 }
 
-fn subprocess_exited(pid: u32) -> bool {
+pub(crate) fn subprocess_exited(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }

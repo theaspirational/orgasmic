@@ -73,6 +73,7 @@ pub struct ApiState {
     pub writer: WriterHandle,
     pub supervisor: Supervisor,
     pub manager_driver: Arc<dyn WorkerDriver>,
+    pub manager_registry: crate::manager_registration::ManagerRegistry,
     pub events: EventBus,
     pub boot: Arc<BootIdentity>,
     pub auth: AuthState,
@@ -217,6 +218,8 @@ pub fn router(state: ApiState) -> Router {
         .route("/skills/:id", get(get_skill))
         .route("/manager/launch", post(post_manager_launch))
         .route("/manager/action", post(post_manager_action))
+        .route("/manager/register", post(post_manager_register))
+        .route("/manager/release", post(post_manager_release))
         .route("/manager/state", get(get_manager_state))
         .route("/managers/drivers", get(get_manager_drivers))
         .route("/tmux/:run_id/attach", get(stub("TASK-007")))
@@ -2167,6 +2170,114 @@ async fn post_manager_launch(
 
     Ok(Json(ManagerLaunchResponse {
         run_id: acquire.run_id,
+    }))
+}
+
+/// External manager self-registration (dec_3Y2E1, TASK-VKP5T): a manager
+/// session started outside the app registers here so it appears in Running
+/// Agents as a supervised run, on the same `manager.launch:<project>` lease
+/// the app's own manager launch uses.
+#[derive(Debug, Deserialize)]
+pub struct ManagerRegisterRequest {
+    pub project_id: String,
+    /// Terminal session-leader PID (`getsid(0)`), when the registrant could
+    /// capture one. Absent falls back to a TTL that re-registering refreshes.
+    #[serde(default)]
+    pub pid: Option<u32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerRegisterResponse {
+    /// "registered" | "refreshed" | "refused".
+    pub status: String,
+    pub run_id: Option<String>,
+    pub message: Option<String>,
+}
+
+async fn post_manager_register(
+    State(state): State<ApiState>,
+    Json(req): Json<ManagerRegisterRequest>,
+) -> Result<Json<ManagerRegisterResponse>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let project = snap
+        .projects
+        .get(&req.project_id)
+        .cloned()
+        .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
+    drop(snap);
+
+    let ids = manager_launch_ids(&req.project_id, "external", Utc::now());
+    let session_path = project_sessions_dir(&project.root).join(ids.session_file);
+    let outcome = state
+        .manager_registry
+        .register(
+            &state.supervisor,
+            &req.project_id,
+            project.root,
+            session_path,
+            req.pid,
+        )
+        .await
+        .map_err(|e| supervisor_acquire_error("manager register", e))?;
+
+    Ok(Json(match outcome {
+        crate::manager_registration::RegisterOutcome::Registered { run_id } => {
+            ManagerRegisterResponse {
+                status: "registered".to_string(),
+                run_id: Some(run_id),
+                message: None,
+            }
+        }
+        crate::manager_registration::RegisterOutcome::Refreshed { run_id } => {
+            ManagerRegisterResponse {
+                status: "refreshed".to_string(),
+                run_id: Some(run_id),
+                message: None,
+            }
+        }
+        crate::manager_registration::RegisterOutcome::Refused { message } => {
+            ManagerRegisterResponse {
+                status: "refused".to_string(),
+                run_id: None,
+                message: Some(message),
+            }
+        }
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ManagerReleaseRegistrationRequest {
+    pub project_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ManagerReleaseRegistrationResponse {
+    /// "released" | "not_registered".
+    pub status: String,
+    pub run_id: Option<String>,
+}
+
+async fn post_manager_release(
+    State(state): State<ApiState>,
+    Json(req): Json<ManagerReleaseRegistrationRequest>,
+) -> Result<Json<ManagerReleaseRegistrationResponse>, ApiError> {
+    let outcome = state
+        .manager_registry
+        .release(&state.supervisor, &req.project_id)
+        .await;
+    Ok(Json(match outcome {
+        crate::manager_registration::ManagerReleaseOutcome::Released { run_id } => {
+            ManagerReleaseRegistrationResponse {
+                status: "released".to_string(),
+                run_id: Some(run_id),
+            }
+        }
+        crate::manager_registration::ManagerReleaseOutcome::NotRegistered => {
+            ManagerReleaseRegistrationResponse {
+                status: "not_registered".to_string(),
+                run_id: None,
+            }
+        }
     }))
 }
 
@@ -11834,6 +11945,7 @@ mod tests {
             writer,
             supervisor,
             manager_driver: Arc::new(orgasmic_drivers::modes::tmux::driver()),
+            manager_registry: crate::manager_registration::ManagerRegistry::new(),
             events,
             boot,
             auth: AuthState::new("test-token".to_string()),
@@ -11896,6 +12008,94 @@ mod tests {
         assert!(manager_terminal_harness("custom"));
         assert!(manager_terminal_harness(" Custom "));
         assert!(!manager_terminal_harness("claude"));
+    }
+
+    #[tokio::test]
+    async fn manager_register_release_round_trip_through_http_handlers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+
+        let Json(registered) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(std::process::id()),
+            }),
+        )
+        .await
+        .expect("register succeeds");
+        assert_eq!(registered.status, "registered");
+        let run_id = registered.run_id.clone().expect("run_id on registered");
+
+        let live = state.supervisor.snapshot().await;
+        let run = live
+            .runs
+            .iter()
+            .find(|r| r.run_id == run_id)
+            .expect("registered run visible in live list");
+        assert_eq!(run.driver, "external");
+        assert_eq!(run.harness.as_deref(), Some("external"));
+
+        // Same PID re-register: idempotent refresh, not a new run.
+        let Json(refreshed) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(std::process::id()),
+            }),
+        )
+        .await
+        .expect("refresh succeeds");
+        assert_eq!(refreshed.status, "refreshed");
+        assert_eq!(refreshed.run_id.as_deref(), Some(run_id.as_str()));
+
+        // A different pid is refused, never a takeover.
+        let Json(refused) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(std::process::id() + 1),
+            }),
+        )
+        .await
+        .expect("refusal is a 200, not an error");
+        assert_eq!(refused.status, "refused");
+        assert!(refused
+            .message
+            .unwrap()
+            .contains("already registered externally"));
+
+        let Json(released) = post_manager_release(
+            State(state.clone()),
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+            }),
+        )
+        .await
+        .expect("release succeeds");
+        assert_eq!(released.status, "released");
+        assert_eq!(released.run_id.as_deref(), Some(run_id.as_str()));
+        assert!(!state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .any(|r| r.run_id == run_id));
+
+        let Json(no_op) = post_manager_release(
+            State(state.clone()),
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+            }),
+        )
+        .await
+        .expect("release is a no-op when nothing is registered");
+        assert_eq!(no_op.status, "not_registered");
     }
 
     #[tokio::test]
@@ -12230,6 +12430,70 @@ mod tests {
             last_body.contains("boot reattach watcher smoke"),
             "last.txt should carry the worker report: {last_body}"
         );
+    }
+
+    #[tokio::test]
+    async fn external_manager_lease_is_free_after_restart_shaped_recovery() {
+        // Daemon restart wipes the in-memory supervisor; an external
+        // registration has no `attach()` support (unlike tmux/rmux managers),
+        // so boot reattach must skip it rather than resurrect the lease —
+        // re-registration is the only recovery path (dec_3Y2E1).
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        std::fs::create_dir_all(project_sessions_dir(&project_root)).unwrap();
+
+        let state = direct_stage_test_state(home.clone()).await;
+        let ids = manager_launch_ids("proj", "external", Utc::now());
+        let session_path = project_sessions_dir(&project_root).join(ids.session_file);
+        let outcome = state
+            .manager_registry
+            .register(
+                &state.supervisor,
+                "proj",
+                project_root.clone(),
+                session_path,
+                Some(std::process::id()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            outcome,
+            crate::manager_registration::RegisterOutcome::Registered { .. }
+        ));
+
+        // A fresh Supervisor/ApiState never acquired this run — standing in
+        // for the post-restart daemon boot.
+        let post_restart_state = direct_stage_test_state(home).await;
+        reattach_live_runs_on_boot(&post_restart_state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            post_restart_state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.task_id != "manager.launch:proj"),
+            "external manager run must not survive a restart-shaped recovery"
+        );
+
+        // Lease is free: a fresh register succeeds instead of colliding.
+        let reregistered = post_restart_state
+            .manager_registry
+            .register(
+                &post_restart_state.supervisor,
+                "proj",
+                project_root.clone(),
+                project_sessions_dir(&project_root).join("manager-proj-after-restart.jsonl"),
+                Some(std::process::id()),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            reregistered,
+            crate::manager_registration::RegisterOutcome::Registered { .. }
+        ));
     }
 
     fn dispatch_summary_env(kind: SessionEventKind, event: serde_json::Value) -> SessionEnvelope {

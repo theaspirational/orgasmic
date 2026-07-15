@@ -46,6 +46,9 @@ const TRANSPORT_LABELS: Record<string, string> = {
   'cursor-acp': 'Cursor',
   hermes: 'Hermes',
   chat: 'Chat',
+  // External manager self-registration (dec_3Y2E1): a presence record for a
+  // manager session started outside the app, not a driver orgasmic spawned.
+  external: 'External',
 };
 
 const HARNESS_LABELS: Record<string, string> = {
@@ -53,6 +56,7 @@ const HARNESS_LABELS: Record<string, string> = {
   codex: 'Codex',
   'cursor-agent': 'Cursor',
   hermes: 'Hermes',
+  external: 'External',
 };
 
 function normalizeId(value: string | null | undefined): string {

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   agentRuns,
+  isExternalManagerRun,
   isTerminalRun,
   orderRunsByLaunch,
   terminalRunLabel,
@@ -115,6 +116,30 @@ describe('agentRuns — the Running Agents menu shows supervised agents only', (
   it('yields an empty list — and so a hidden count badge — when only terminals are live', () => {
     const terminal = run({ task_id: 'manager.launch:orgasmic', harness: 'custom' });
     expect(agentRuns([terminal])).toEqual([]);
+  });
+
+  it('keeps an external manager registration (dec_3Y2E1) — it is a supervised run, not a terminal', () => {
+    const external = run({
+      task_id: 'manager.launch:orgasmic',
+      driver: 'external',
+      harness: 'external',
+    });
+    expect(agentRuns([external])).toEqual([external]);
+  });
+});
+
+describe('isExternalManagerRun — dec_3Y2E1 external manager self-registration', () => {
+  it('flags a run with driver external', () => {
+    expect(isExternalManagerRun(run({ driver: 'external' }))).toBe(true);
+  });
+
+  it('is case/whitespace tolerant', () => {
+    expect(isExternalManagerRun(run({ driver: ' External ' }))).toBe(true);
+  });
+
+  it('does not flag ordinary drivers', () => {
+    expect(isExternalManagerRun(run({ driver: 'tmux' }))).toBe(false);
+    expect(isExternalManagerRun(run({ driver: null }))).toBe(false);
   });
 });
 

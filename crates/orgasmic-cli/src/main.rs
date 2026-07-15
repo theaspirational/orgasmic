@@ -775,6 +775,12 @@ enum ManagerCmd {
     /// Clear an orphaned dispatch lease (no live run). Never needs a daemon
     /// restart; refuses when a live run still holds the lease.
     LeaseRelease(manager::LeaseReleaseArgs),
+    /// Register a manager session started outside the app so it appears in
+    /// Running Agents as a supervised run (dec_3Y2E1). A no-op when
+    /// `ORGASMIC_RUN_ID` is already set (a daemon-launched PTY).
+    Register(manager::ManagerRegisterArgs),
+    /// Explicit deregistration for `register` (no-op if nothing is registered).
+    Release(manager::ManagerReleaseArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -2548,6 +2554,8 @@ fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
         ManagerCmd::DispatchClose(args) => manager::cmd_dispatch_close(home, args),
         ManagerCmd::DispatchStatus(args) => manager::cmd_dispatch_status(home, args),
         ManagerCmd::LeaseRelease(args) => manager::cmd_lease_release(home, args),
+        ManagerCmd::Register(args) => manager::cmd_manager_register(home, args),
+        ManagerCmd::Release(args) => manager::cmd_manager_release(home, args),
         ManagerCmd::State => {
             let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
             runtime.block_on(async move {

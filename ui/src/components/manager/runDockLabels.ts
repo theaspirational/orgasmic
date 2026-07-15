@@ -22,6 +22,13 @@ export function terminalRunLabel(index: number, total: number): string {
   return total > 1 ? `Terminal ${index + 1}` : 'Terminal';
 }
 
+// A manager session started outside the app (dec_3Y2E1): a real supervised
+// run with no PTY behind it. It renders as an info row — there is nothing to
+// attach — with an inline End control instead of the usual open-tab click.
+export function isExternalManagerRun(run: Pick<RunSummary, 'driver'>): boolean {
+  return (run.driver ?? '').trim().toLowerCase() === 'external';
+}
+
 // "Running Agents" answers "which agents is orgasmic supervising?". A bare
 // terminal is a PTY the operator drives, not an agent, so it lives on the
 // taskbar only and never counts toward the badge.
