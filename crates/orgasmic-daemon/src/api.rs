@@ -2061,6 +2061,10 @@ fn manager_terminal_harness(harness: &str) -> bool {
     harness.trim().eq_ignore_ascii_case("custom")
 }
 
+fn manager_external_harness(harness: &str) -> bool {
+    harness.trim().eq_ignore_ascii_case("external")
+}
+
 struct ManagerLaunchIds {
     task_id: String,
     session_file: String,
@@ -2083,9 +2087,18 @@ fn manager_launch_ids(
 ) -> ManagerLaunchIds {
     let stamp = now.format("%Y%m%dT%H%M%S");
     if !manager_terminal_harness(harness) {
+        let session_file = if manager_external_harness(harness) {
+            // External presence runs share the real manager lease, but never
+            // its transcript: End-external followed by app-launch in the same
+            // second must not append two run identities to one recovery file.
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            format!("manager-{project_id}-{stamp}-external-{id}.jsonl")
+        } else {
+            format!("manager-{project_id}-{stamp}.jsonl")
+        };
         return ManagerLaunchIds {
             task_id: format!("manager.launch:{project_id}"),
-            session_file: format!("manager-{project_id}-{stamp}.jsonl"),
+            session_file,
         };
     }
     // The discriminator lands in the session file name too: a second-granularity
@@ -2183,7 +2196,11 @@ pub struct ManagerRegisterRequest {
     /// Terminal session-leader PID (`getsid(0)`), when the registrant could
     /// capture one. Absent falls back to a TTL that re-registering refreshes.
     #[serde(default)]
-    pub pid: Option<u32>,
+    pub pid: Option<i64>,
+    /// Opaque token returned for the PID-less fallback. The CLI persists it
+    /// per terminal session and presents it on refresh.
+    #[serde(default)]
+    pub holder_token: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2192,6 +2209,12 @@ pub struct ManagerRegisterResponse {
     pub status: String,
     pub run_id: Option<String>,
     pub message: Option<String>,
+    pub holder_token: Option<String>,
+}
+
+fn normalize_manager_registration_pid(pid: Option<i64>) -> Option<u32> {
+    pid.and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid > 0)
 }
 
 async fn post_manager_register(
@@ -2215,31 +2238,37 @@ async fn post_manager_register(
             &req.project_id,
             project.root,
             session_path,
-            req.pid,
+            normalize_manager_registration_pid(req.pid),
+            req.holder_token,
         )
         .await
         .map_err(|e| supervisor_acquire_error("manager register", e))?;
 
     Ok(Json(match outcome {
-        crate::manager_registration::RegisterOutcome::Registered { run_id } => {
-            ManagerRegisterResponse {
-                status: "registered".to_string(),
-                run_id: Some(run_id),
-                message: None,
-            }
-        }
-        crate::manager_registration::RegisterOutcome::Refreshed { run_id } => {
-            ManagerRegisterResponse {
-                status: "refreshed".to_string(),
-                run_id: Some(run_id),
-                message: None,
-            }
-        }
+        crate::manager_registration::RegisterOutcome::Registered {
+            run_id,
+            holder_token,
+        } => ManagerRegisterResponse {
+            status: "registered".to_string(),
+            run_id: Some(run_id),
+            message: None,
+            holder_token,
+        },
+        crate::manager_registration::RegisterOutcome::Refreshed {
+            run_id,
+            holder_token,
+        } => ManagerRegisterResponse {
+            status: "refreshed".to_string(),
+            run_id: Some(run_id),
+            message: None,
+            holder_token,
+        },
         crate::manager_registration::RegisterOutcome::Refused { message } => {
             ManagerRegisterResponse {
                 status: "refused".to_string(),
                 run_id: None,
                 message: Some(message),
+                holder_token: None,
             }
         }
     }))
@@ -5989,6 +6018,10 @@ fn boot_reattach_candidate(
     envelopes: &[SessionEnvelope],
     session_path: &FsPath,
 ) -> Option<BootReattachCandidate> {
+    // Older builds could append End-external then app-launch identities to the
+    // same second-granularity manager file. Recover the latest contiguous run
+    // segment instead of combining its metadata with the first run's identity.
+    let envelopes = latest_run_segment(envelopes);
     let first = envelopes.first()?;
     let last = envelopes.last().unwrap_or(first);
     // Skip terminal runs (mirrors the recovery classifier).
@@ -6001,6 +6034,11 @@ fn boot_reattach_candidate(
         }
     };
     if terminal {
+        return None;
+    }
+    // External registrations are daemon-local presence records with no
+    // attachable runtime. Re-registration is their only recovery path.
+    if session_is_external_registration(envelopes) {
         return None;
     }
 
@@ -6063,6 +6101,17 @@ fn boot_reattach_candidate(
         driver_config,
         session_path: session_path.to_path_buf(),
     })
+}
+
+fn latest_run_segment(envelopes: &[SessionEnvelope]) -> &[SessionEnvelope] {
+    let Some(latest_run_id) = envelopes.last().map(|envelope| envelope.run_id.as_str()) else {
+        return envelopes;
+    };
+    let start = envelopes
+        .iter()
+        .rposition(|envelope| envelope.run_id != latest_run_id)
+        .map_or(0, |index| index + 1);
+    &envelopes[start..]
 }
 
 /// Boot auto-reattach: rehydrate still-live runs into the freshly built
@@ -6271,6 +6320,7 @@ async fn classify_session_dir(
             });
             continue;
         };
+        let envelopes = latest_run_segment(&envelopes);
         let Some(first) = envelopes.first() else {
             continue;
         };
@@ -6282,8 +6332,12 @@ async fn classify_session_dir(
                 }
                 ReleaseOutcome::Interrupted => None,
             }
-        } else if session_driver_terminal_event(&envelopes).is_some() {
+        } else if session_driver_terminal_event(envelopes).is_some() {
             Some("session ended with terminal driver event".to_string())
+        } else if !live_ids.contains(first.run_id.as_str())
+            && session_is_external_registration(envelopes)
+        {
+            Some("external manager registration ended with daemon restart".to_string())
         } else {
             None
         };
@@ -6294,8 +6348,8 @@ async fn classify_session_dir(
             // Non-terminal: prove liveness (live tmux from any boot reattaches
             // before being marked interrupted, dec_052) and compute the
             // ordered, harness-aware recovery action list.
-            let attach = classify_current_boot_session(home, &envelopes, first, live_ids).await;
-            let actions = resolve_recovery_actions(home, &envelopes, attach.classification).await;
+            let attach = classify_current_boot_session(home, envelopes, first, live_ids).await;
+            let actions = resolve_recovery_actions(home, envelopes, attach.classification).await;
             (attach.classification.to_string(), attach.reason, actions)
         };
         runs.push(RecoveredRun {
@@ -6631,6 +6685,18 @@ fn release_outcome(envelope: &orgasmic_core::SessionEnvelope) -> Option<ReleaseO
         Lifecycle::Release { outcome, .. } => Some(outcome),
         _ => None,
     }
+}
+
+fn session_is_external_registration(envelopes: &[SessionEnvelope]) -> bool {
+    envelopes.iter().any(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return false;
+        }
+        matches!(
+            serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+            Ok(Lifecycle::RunMeta { transport, .. }) if transport.trim().eq_ignore_ascii_case("external")
+        )
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -11995,6 +12061,25 @@ mod tests {
     }
 
     #[test]
+    fn external_manager_keeps_stable_lease_but_gets_discriminated_session_file() {
+        let external = manager_launch_ids("orgasmic", "external", launch_stamp());
+        let second_external = manager_launch_ids("orgasmic", "external", launch_stamp());
+        let app = manager_launch_ids("orgasmic", "claude", launch_stamp());
+        assert_eq!(external.task_id, app.task_id);
+        assert_ne!(external.session_file, second_external.session_file);
+        assert_ne!(external.session_file, app.session_file);
+        assert!(external.session_file.contains("-external-"));
+    }
+
+    #[test]
+    fn manager_registration_normalizes_nonpositive_and_out_of_range_pids_to_ttl() {
+        assert_eq!(normalize_manager_registration_pid(Some(0)), None);
+        assert_eq!(normalize_manager_registration_pid(Some(-1)), None);
+        assert_eq!(normalize_manager_registration_pid(Some(i64::MAX)), None);
+        assert_eq!(normalize_manager_registration_pid(Some(42)), Some(42));
+    }
+
+    #[test]
     fn a_terminal_task_id_still_reads_as_operator_paced() {
         // The prefix gates the supervisor's stall/max-duration detectors; an
         // idle terminal sitting at a prompt must never read as a stalled worker.
@@ -12023,7 +12108,8 @@ mod tests {
             State(state.clone()),
             Json(ManagerRegisterRequest {
                 project_id: "proj".into(),
-                pid: Some(std::process::id()),
+                pid: Some(i64::from(std::process::id())),
+                holder_token: None,
             }),
         )
         .await
@@ -12045,7 +12131,8 @@ mod tests {
             State(state.clone()),
             Json(ManagerRegisterRequest {
                 project_id: "proj".into(),
-                pid: Some(std::process::id()),
+                pid: Some(i64::from(std::process::id())),
+                holder_token: None,
             }),
         )
         .await
@@ -12058,7 +12145,8 @@ mod tests {
             State(state.clone()),
             Json(ManagerRegisterRequest {
                 project_id: "proj".into(),
-                pid: Some(std::process::id() + 1),
+                pid: Some(i64::from(std::process::id()) + 1),
+                holder_token: None,
             }),
         )
         .await
@@ -12096,6 +12184,57 @@ mod tests {
         .await
         .expect("release is a no-op when nothing is registered");
         assert_eq!(no_op.status, "not_registered");
+    }
+
+    #[tokio::test]
+    async fn nonpositive_pid_uses_tokenized_ttl_holder_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+
+        let Json(first) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(0),
+                holder_token: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.status, "registered");
+        let token = first
+            .holder_token
+            .clone()
+            .expect("PID 0 must fall back to a tokenized TTL registration");
+
+        let Json(other) = post_manager_register(
+            State(state.clone()),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: Some(-1),
+                holder_token: None,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(other.status, "refused");
+
+        let Json(refreshed) = post_manager_register(
+            State(state),
+            Json(ManagerRegisterRequest {
+                project_id: "proj".into(),
+                pid: None,
+                holder_token: Some(token.clone()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(refreshed.status, "refreshed");
+        assert_eq!(refreshed.holder_token.as_deref(), Some(token.as_str()));
     }
 
     #[tokio::test]
@@ -12309,6 +12448,128 @@ mod tests {
         assert!(boot_reattach_candidate(&[acquire], &path).is_none());
     }
 
+    #[test]
+    fn same_second_external_end_then_app_launch_preserves_app_recovery_identity() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stamp = launch_stamp();
+        let external_ids = manager_launch_ids("proj", "external", stamp);
+        let app_ids = manager_launch_ids("proj", "claude", stamp);
+        assert_eq!(external_ids.task_id, app_ids.task_id);
+        assert_ne!(external_ids.session_file, app_ids.session_file);
+
+        let write_manager_session =
+            |path: &FsPath, identity: RuntimeIdentity, transport: &str, terminal: bool| {
+                let mut writer = orgasmic_core::SessionWriter::open(path, identity).unwrap();
+                writer
+                    .append(
+                        SessionEventKind::Lifecycle,
+                        serde_json::to_value(Lifecycle::Acquire {
+                            task_id: "manager.launch:proj".into(),
+                            kind: "worker".into(),
+                            worker_id: "manager".into(),
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap();
+                writer
+                    .append(
+                        SessionEventKind::Lifecycle,
+                        serde_json::to_value(Lifecycle::RunMeta {
+                            transport: transport.into(),
+                            harness: Some(transport.into()),
+                            project_id: Some("proj".into()),
+                            worktree: Some(tmp.path().join("proj")),
+                            last_path: None,
+                            stdout_path: None,
+                            driver_config: json!({}),
+                        })
+                        .unwrap(),
+                    )
+                    .unwrap();
+                if terminal {
+                    writer
+                        .append(
+                            SessionEventKind::Lifecycle,
+                            serde_json::to_value(Lifecycle::Release {
+                                reason: "external manager deregistered".into(),
+                                outcome: ReleaseOutcome::Cancelled,
+                                finalized_by_worker: false,
+                            })
+                            .unwrap(),
+                        )
+                        .unwrap();
+                }
+            };
+
+        let external_path = tmp.path().join(external_ids.session_file);
+        write_manager_session(
+            &external_path,
+            RuntimeIdentity {
+                run_id: "run-external".into(),
+                runtime_id: "rt-external".into(),
+                boot_id: "boot-old".into(),
+            },
+            "external",
+            true,
+        );
+        let app_path = tmp.path().join(app_ids.session_file);
+        write_manager_session(
+            &app_path,
+            RuntimeIdentity {
+                run_id: "run-app".into(),
+                runtime_id: "rt-app".into(),
+                boot_id: "boot-old".into(),
+            },
+            "tmux",
+            false,
+        );
+
+        assert!(boot_reattach_candidate(
+            &read_session_file(&external_path).unwrap(),
+            &external_path
+        )
+        .is_none());
+        let app = boot_reattach_candidate(&read_session_file(&app_path).unwrap(), &app_path)
+            .expect("app manager remains a clean recovery candidate");
+        assert_eq!(app.run_id, "run-app");
+        assert_eq!(app.runtime_id, "rt-app");
+        assert_eq!(app.task_id, "manager.launch:proj");
+        assert_eq!(app.transport, "tmux");
+
+        // Also repair residue written by the pre-fix layout: if both identities
+        // already share one file, recovery selects the latest contiguous run
+        // instead of pairing the external identity with the app's metadata.
+        let legacy_collision_path = tmp.path().join("manager-proj-collided.jsonl");
+        write_manager_session(
+            &legacy_collision_path,
+            RuntimeIdentity {
+                run_id: "run-legacy-external".into(),
+                runtime_id: "rt-legacy-external".into(),
+                boot_id: "boot-old".into(),
+            },
+            "external",
+            true,
+        );
+        write_manager_session(
+            &legacy_collision_path,
+            RuntimeIdentity {
+                run_id: "run-legacy-app".into(),
+                runtime_id: "rt-legacy-app".into(),
+                boot_id: "boot-old".into(),
+            },
+            "tmux",
+            false,
+        );
+        let recovered = boot_reattach_candidate(
+            &read_session_file(&legacy_collision_path).unwrap(),
+            &legacy_collision_path,
+        )
+        .expect("legacy collision recovers the app segment");
+        assert_eq!(recovered.run_id, "run-legacy-app");
+        assert_eq!(recovered.runtime_id, "rt-legacy-app");
+        assert_eq!(recovered.transport, "tmux");
+    }
+
     /// TASK-567JG: a daemon restart mid-run must still write `last.txt` on
     /// release. `spawn_dispatch_completion_watcher` is a tokio task spawned
     /// only at dispatch time, so it dies with the old daemon process; without
@@ -12453,8 +12714,9 @@ mod tests {
                 &state.supervisor,
                 "proj",
                 project_root.clone(),
-                session_path,
+                session_path.clone(),
                 Some(std::process::id()),
+                None,
             )
             .await
             .unwrap();
@@ -12477,6 +12739,24 @@ mod tests {
                 .all(|run| run.task_id != "manager.launch:proj"),
             "external manager run must not survive a restart-shaped recovery"
         );
+        let external_envelopes = read_session_file(&session_path).unwrap();
+        assert!(
+            boot_reattach_candidate(&external_envelopes, &session_path).is_none(),
+            "external residue must not enter the no-driver reattach/log path"
+        );
+        let recovered = classify_session_files(
+            &post_restart_state.home,
+            &post_restart_state.boot.boot_id,
+            &[],
+            std::slice::from_ref(&project_root),
+        )
+        .await;
+        let external = recovered
+            .iter()
+            .find(|run| run.run_id == external_envelopes[0].run_id)
+            .expect("external residue is explicitly classified");
+        assert_eq!(external.classification, "terminal_noop");
+        assert!(external.reason.contains("daemon restart"));
 
         // Lease is free: a fresh register succeeds instead of colliding.
         let reregistered = post_restart_state
@@ -12487,6 +12767,7 @@ mod tests {
                 project_root.clone(),
                 project_sessions_dir(&project_root).join("manager-proj-after-restart.jsonl"),
                 Some(std::process::id()),
+                None,
             )
             .await
             .unwrap();

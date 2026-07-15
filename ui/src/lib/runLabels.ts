@@ -14,6 +14,16 @@ export function isManagerRun(run: { task_id: string }): boolean {
   return run.task_id.startsWith('manager.');
 }
 
+// External manager registrations are presence-only supervisor runs. They have
+// no PTY/chat transport, so the dock must reject them at every entry point.
+export function isExternalManagerRun(run: { driver?: string | null }): boolean {
+  return (run.driver ?? '').trim().toLowerCase() === 'external';
+}
+
+export function isRunDockEligible(run: { driver?: string | null }): boolean {
+  return !isExternalManagerRun(run);
+}
+
 // Drivers whose live surface is the PTY terminal (xterm pane) rather than the
 // ACP chat transcript. rmux attaches through the same daemon PTY bridge as
 // tmux (`rmux attach-session`), so it renders in the terminal stack too.

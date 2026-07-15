@@ -112,6 +112,9 @@ impl DriverControl for ExternalManagerControl {
 struct Registration {
     run_id: String,
     pid: Option<u32>,
+    /// Opaque daemon-minted identity for the PID-less fallback. A second
+    /// PID-less terminal must present this exact token to refresh the holder.
+    holder_token: Option<String>,
     /// `Some` only when `pid` is `None` — the PID-less TTL fallback.
     expires_at: Option<Instant>,
 }
@@ -121,16 +124,16 @@ struct Registration {
 pub enum RegisterOutcome {
     Registered {
         run_id: String,
+        holder_token: Option<String>,
     },
     /// Same-session re-register: idempotent refresh, doubles as heartbeat.
     Refreshed {
         run_id: String,
+        holder_token: Option<String>,
     },
     /// A different holder (app manager or another external session) already
     /// has the lease. Never a takeover.
-    Refused {
-        message: String,
-    },
+    Refused { message: String },
 }
 
 /// Outcome of a release call.
@@ -188,7 +191,8 @@ impl ManagerRegistry {
 
     /// Register (or idempotently refresh) an external manager for
     /// `project_id`. `pid` is the registrant's terminal session-leader PID,
-    /// when known.
+    /// when known. PID-less refreshes require the opaque token returned by the
+    /// first registration so unrelated terminals cannot extend its TTL.
     pub async fn register(
         &self,
         supervisor: &Supervisor,
@@ -196,26 +200,36 @@ impl ManagerRegistry {
         project_root: PathBuf,
         session_path: PathBuf,
         pid: Option<u32>,
+        holder_token: Option<String>,
     ) -> Result<RegisterOutcome, SupervisorError> {
+        let holder_token = holder_token.filter(|token| !token.trim().is_empty());
         let mut map = self.inner.lock().await;
         if let Some(existing) = Self::reconcile_locked(supervisor, &mut map, project_id).await {
             let same_session = match (existing.pid, pid) {
                 (Some(a), Some(b)) => a == b,
-                (None, None) => true,
+                (None, None) => {
+                    existing.holder_token.as_deref() == holder_token.as_deref()
+                        && existing.holder_token.is_some()
+                }
                 _ => false,
             };
             if same_session {
                 let run_id = existing.run_id.clone();
+                let holder_token = existing.holder_token.clone();
                 let expires_at = pid.is_none().then(|| Instant::now() + TTL_NO_PID);
                 map.insert(
                     project_id.to_string(),
                     Registration {
                         run_id: run_id.clone(),
                         pid,
+                        holder_token: holder_token.clone(),
                         expires_at,
                     },
                 );
-                return Ok(RegisterOutcome::Refreshed { run_id });
+                return Ok(RegisterOutcome::Refreshed {
+                    run_id,
+                    holder_token,
+                });
             }
             let message = match existing.pid {
                 Some(holder_pid) => format!(
@@ -255,17 +269,20 @@ impl ManagerRegistry {
             .await;
         match acquire {
             Ok(resp) => {
+                let holder_token = pid.is_none().then(|| uuid::Uuid::new_v4().to_string());
                 let expires_at = pid.is_none().then(|| Instant::now() + TTL_NO_PID);
                 map.insert(
                     project_id.to_string(),
                     Registration {
                         run_id: resp.run_id.clone(),
                         pid,
+                        holder_token: holder_token.clone(),
                         expires_at,
                     },
                 );
                 Ok(RegisterOutcome::Registered {
                     run_id: resp.run_id,
+                    holder_token,
                 })
             }
             Err(SupervisorError::LeaseHeld { .. }) => Ok(RegisterOutcome::Refused {
@@ -397,6 +414,26 @@ mod tests {
             .expect("spawn short-lived process")
     }
 
+    fn app_manager_request(dir: &tempfile::TempDir, name: &str) -> AcquireRequest {
+        AcquireRequest {
+            task_id: "manager.launch:proj".into(),
+            kind: RunKind::Worker,
+            worker_id: "manager".into(),
+            role: "manager".into(),
+            project_id: Some("proj".into()),
+            worktree: Some(dir.path().to_path_buf()),
+            last_path: None,
+            stdout_path: None,
+            session_path: session_path(dir, name),
+            driver_config: DriverConfig::empty(),
+            babysitter_target: None,
+            stall_timeout_secs: Some(0),
+            max_run_duration_secs: Some(0),
+            idle_timeout_secs: None,
+            babysitter: None,
+        }
+    }
+
     #[tokio::test]
     async fn register_makes_run_visible_with_external_driver() {
         let (sup, dir) = make_supervisor();
@@ -408,10 +445,11 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
-        let RegisterOutcome::Registered { run_id } = outcome else {
+        let RegisterOutcome::Registered { run_id, .. } = outcome else {
             panic!("expected Registered, got {outcome:?}");
         };
         let snap = sup.snapshot().await;
@@ -432,6 +470,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
@@ -549,6 +588,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj-ext"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
@@ -569,11 +609,13 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
         let RegisterOutcome::Registered {
             run_id: first_run_id,
+            ..
         } = first
         else {
             panic!("expected Registered");
@@ -585,11 +627,13 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj-2"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
         let RegisterOutcome::Refreshed {
             run_id: second_run_id,
+            ..
         } = second
         else {
             panic!("expected Refreshed, got {second:?}");
@@ -614,6 +658,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
@@ -624,6 +669,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj-2"),
                 Some(9999),
+                None,
             )
             .await
             .unwrap();
@@ -638,6 +684,100 @@ mod tests {
         let snap = sup.snapshot().await;
         assert_eq!(
             snap.runs.iter().filter(|r| r.driver == "external").count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn pidless_registration_requires_matching_holder_token_to_refresh() {
+        let (sup, dir) = make_supervisor();
+        let registry = ManagerRegistry::new();
+        let first = registry
+            .register(
+                &sup,
+                "proj",
+                dir.path().to_path_buf(),
+                session_path(&dir, "manager-proj"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let RegisterOutcome::Registered {
+            run_id,
+            holder_token: Some(token),
+        } = first
+        else {
+            panic!("PID-less registration must return a holder token: {first:?}");
+        };
+
+        let unrelated = registry
+            .register(
+                &sup,
+                "proj",
+                dir.path().to_path_buf(),
+                session_path(&dir, "manager-proj-other"),
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        assert!(matches!(unrelated, RegisterOutcome::Refused { .. }));
+
+        let refreshed = registry
+            .register(
+                &sup,
+                "proj",
+                dir.path().to_path_buf(),
+                session_path(&dir, "manager-proj-refresh"),
+                None,
+                Some(token.clone()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            refreshed,
+            RegisterOutcome::Refreshed {
+                run_id,
+                holder_token: Some(token),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn register_and_app_launch_race_has_exactly_one_winner() {
+        let (sup, dir) = make_supervisor();
+        let registry = ManagerRegistry::new();
+        let register = registry.register(
+            &sup,
+            "proj",
+            dir.path().to_path_buf(),
+            session_path(&dir, "manager-proj-external"),
+            Some(4242),
+            None,
+        );
+        let app_launch = sup.acquire(
+            &ExternalManagerDriver,
+            app_manager_request(&dir, "manager-proj-app"),
+        );
+
+        let (registered, launched) = tokio::join!(register, app_launch);
+        match (registered.unwrap(), launched) {
+            (RegisterOutcome::Registered { .. }, Err(SupervisorError::LeaseHeld { .. })) => {}
+            (RegisterOutcome::Refused { message }, Ok(_)) => {
+                assert!(message.contains("already running in the app"), "{message}");
+            }
+            (registration, launch) => {
+                panic!("race must have one winner: registration={registration:?} launch={launch:?}")
+            }
+        }
+        assert_eq!(
+            sup.snapshot()
+                .await
+                .runs
+                .iter()
+                .filter(|run| run.task_id == "manager.launch:proj")
+                .count(),
             1
         );
     }
@@ -659,10 +799,11 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(pid),
+                None,
             )
             .await
             .unwrap();
-        let RegisterOutcome::Registered { run_id } = outcome else {
+        let RegisterOutcome::Registered { run_id, .. } = outcome else {
             panic!("expected Registered");
         };
 
@@ -670,6 +811,47 @@ mod tests {
 
         let snap = sup.snapshot().await;
         assert!(!snap.runs.iter().any(|r| r.run_id == run_id));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn production_liveness_loop_releases_dead_pid_after_poll_tick() {
+        let (sup, dir) = make_supervisor();
+        let registry = ManagerRegistry::new();
+        let mut child = spawn_short_lived();
+        let pid = child.id();
+        child.wait().unwrap();
+
+        let outcome = registry
+            .register(
+                &sup,
+                "proj",
+                dir.path().to_path_buf(),
+                session_path(&dir, "manager-proj-loop"),
+                Some(pid),
+                None,
+            )
+            .await
+            .unwrap();
+        let RegisterOutcome::Registered { run_id, .. } = outcome else {
+            panic!("expected Registered");
+        };
+
+        spawn_liveness_loop(registry, sup.clone());
+        tokio::task::yield_now().await;
+        tokio::time::advance(LIVENESS_POLL_INTERVAL).await;
+        for _ in 0..10 {
+            if !sup
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == run_id)
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("production liveness loop did not release dead PID registration");
     }
 
     #[tokio::test]
@@ -683,10 +865,11 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 None,
+                None,
             )
             .await
             .unwrap();
-        let RegisterOutcome::Registered { run_id } = outcome else {
+        let RegisterOutcome::Registered { run_id, .. } = outcome else {
             panic!("expected Registered");
         };
 
@@ -714,6 +897,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
@@ -733,6 +917,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj-2"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
@@ -753,10 +938,11 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();
-        let RegisterOutcome::Registered { run_id } = outcome else {
+        let RegisterOutcome::Registered { run_id, .. } = outcome else {
             panic!("expected Registered");
         };
 
@@ -771,6 +957,7 @@ mod tests {
                 dir.path().to_path_buf(),
                 session_path(&dir, "manager-proj-2"),
                 Some(4242),
+                None,
             )
             .await
             .unwrap();

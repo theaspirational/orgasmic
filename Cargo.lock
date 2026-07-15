@@ -1181,6 +1181,7 @@ dependencies = [
  "fs2",
  "futures",
  "include_dir",
+ "libc",
  "notify",
  "orgasmic-core",
  "orgasmic-drivers",

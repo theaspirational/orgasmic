@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 
-import { fetchRun, fetchRuns } from '../lib/api';
+import { fetchRun, fetchRuns, postRunRelease } from '../lib/api';
 import { useRunDock } from '../lib/runDock';
+import { isExternalManagerRun } from '../lib/runLabels';
 import type { RecoveredRun, RunsResponse, RunSummary } from '../lib/types';
 import { useResource } from '../lib/useResource';
 import { Badge, DataTable, ErrorPanel, JsonPanel, Loading } from './Primitives';
@@ -15,6 +16,7 @@ type RunRow = Record<string, unknown> & {
   boot_id: string;
   reason: string;
   sub_state?: string | null;
+  driver?: string | null;
 };
 
 function liveRows(runs: RunSummary[]): RunRow[] {
@@ -27,6 +29,7 @@ function liveRows(runs: RunSummary[]): RunRow[] {
     boot_id: run.identity.boot_id,
     reason: `${run.event_count} events`,
     sub_state: run.sub_state ?? null,
+    driver: run.driver,
   }));
 }
 
@@ -108,8 +111,26 @@ export function RunsView({ projectId: _projectId }: { projectId: string | null }
             {
               key: 'action',
               label: 'Action',
-              render: (row) =>
-                row.classification === 'live' ? (
+              render: (row) => {
+                if (row.classification !== 'live') return '';
+                if (isExternalManagerRun(row)) {
+                  return (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        void postRunRelease(String(row.run_id)).then(
+                          () => runs.refresh(),
+                          () => runs.refresh(),
+                        );
+                      }}
+                    >
+                      End
+                    </button>
+                  );
+                }
+                return (
                   <button
                     type="button"
                     className="btn"
@@ -120,9 +141,8 @@ export function RunsView({ projectId: _projectId }: { projectId: string | null }
                   >
                     Open
                   </button>
-                ) : (
-                  ''
-                ),
+                );
+              },
             },
           ]}
         />

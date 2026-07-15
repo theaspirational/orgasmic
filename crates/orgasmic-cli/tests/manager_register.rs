@@ -219,3 +219,47 @@ async fn register_then_release_round_trip_through_real_daemon() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn register_refusal_exits_nonzero_with_holder_message() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("proj");
+    seed_project(&home, &project_root, "cli-register-refusal");
+    let running = boot(home.clone()).await;
+    let token = std::fs::read_to_string(home.auth_token()).unwrap();
+
+    let response = reqwest::Client::new()
+        .post(format!("http://{}/api/manager/register", running.addr))
+        .bearer_auth(token.trim())
+        .json(&serde_json::json!({
+            "project_id": "cli-register-refusal",
+            "pid": u32::MAX,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+
+    let refused = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &["manager", "register", "--project", "cli-register-refusal"],
+        &[],
+    );
+    let stdout = String::from_utf8_lossy(&refused.stdout);
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        !refused.status.success(),
+        "refusal must be non-zero\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stderr.contains("already registered externally") && stderr.contains("4294967295"),
+        "refusal must name the holder\nstdout={stdout}\nstderr={stderr}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

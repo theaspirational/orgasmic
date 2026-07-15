@@ -10,6 +10,7 @@ import {
 } from 'react';
 
 import { fetchRecoveryStatus, fetchRuns } from '@/lib/api';
+import { isRunDockEligible } from '@/lib/runLabels';
 import type { RunSummary } from '@/lib/types';
 import { applyWorkerTabUpdate, clampDockHeight, DEFAULT_DOCK_HEIGHT } from '@/lib/runDockUtils';
 
@@ -32,6 +33,7 @@ export type RunDockTab = {
 type OpenRunOptions = {
   runId: string;
   draftPrompt?: string | null;
+  driver?: string | null;
 };
 
 type RunDockContextValue = {
@@ -53,7 +55,19 @@ type RunDockContextValue = {
 
 const RunDockContext = createContext<RunDockContextValue | null>(null);
 
-type StoredTab = { tabId: string; runId: string };
+export type StoredTab = { tabId: string; runId: string };
+
+export function restorableStoredTabs(
+  stored: StoredTab[],
+  liveRuns: RunSummary[],
+  recoveredRunIds: Iterable<string>,
+): StoredTab[] {
+  const known = new Set(recoveredRunIds);
+  for (const run of liveRuns) {
+    if (isRunDockEligible(run)) known.add(run.run_id);
+  }
+  return stored.filter((tab) => known.has(tab.runId));
+}
 
 function readStoredTabs(): StoredTab[] {
   if (typeof window === 'undefined') return [];
@@ -146,8 +160,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
           fetchRecoveryStatus().catch(() => null),
         ]);
         if (cancelled) return;
-        const known = new Set<string>();
-        for (const run of runs?.live ?? []) known.add(run.run_id);
+        const recoveredRunIds: string[] = [];
         for (const list of [
           runs?.interrupted,
           runs?.reattached,
@@ -155,9 +168,12 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
           recovery?.interrupted_runs,
           recovery?.reattached_runs,
         ]) {
-          for (const run of list ?? []) known.add(run.run_id);
+          for (const run of list ?? []) recoveredRunIds.push(run.run_id);
         }
-        const restored = stored.filter((tab) => known.has(tab.runId));
+        const restored = restorableStoredTabs(stored, runs?.live ?? [], recoveredRunIds);
+        // Purge rejected ids immediately, including external tabs persisted by
+        // an older UI build, rather than waiting for a later state effect.
+        writeStoredTabs(restored);
         // A persisted selection whose run died while the page was closed can no
         // longer be raised; drop it so the dock restores collapsed rather than
         // onto an empty panel.
@@ -191,7 +207,8 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
   );
 
   const openRun = useCallback(
-    ({ runId, draftPrompt }: OpenRunOptions) => {
+    ({ runId, draftPrompt, driver }: OpenRunOptions) => {
+      if (!isRunDockEligible({ driver })) return;
       setTabs((prev) => applyWorkerTabUpdate(prev, runId, draftPrompt));
       setActiveTabId(runId);
       setOpen(true);

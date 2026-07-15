@@ -5,6 +5,7 @@ import {
   isExternalManagerRun,
   isTerminalRun,
   orderRunsByLaunch,
+  taskbarRunGroups,
   terminalRunLabel,
   workerButtonLabel,
   workerRunTabLabel,
@@ -140,6 +141,19 @@ describe('isExternalManagerRun — dec_3Y2E1 external manager self-registration'
   it('does not flag ordinary drivers', () => {
     expect(isExternalManagerRun(run({ driver: 'tmux' }))).toBe(false);
     expect(isExternalManagerRun(run({ driver: null }))).toBe(false);
+  });
+
+  it('never classifies an external manager as a taskbar button', () => {
+    const external = run({
+      task_id: 'manager.launch:orgasmic',
+      driver: 'external',
+      harness: 'external',
+    });
+    const worker = run({ run_id: 'run-worker', driver: 'rmux' });
+    const groups = taskbarRunGroups([external, worker]);
+    expect(groups.managers).toEqual([]);
+    expect(groups.terminals).toEqual([]);
+    expect(groups.workers).toEqual([worker]);
   });
 });
 

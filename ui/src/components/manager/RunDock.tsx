@@ -23,7 +23,7 @@ import {
 import { useContainedWheelRef } from '@/lib/containedWheel';
 import { useRunDock } from '@/lib/runDock';
 import { dockHeightFromPointer } from '@/lib/runDockUtils';
-import { isManagerRun, runTabTitle } from '@/lib/runLabels';
+import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RunSummary } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { useResource } from '@/lib/useResource';
@@ -32,7 +32,7 @@ import { DockTaskbar, type TaskbarRunButton } from './DockTaskbar';
 import { RunningAgentsMenu } from './RunningAgentsMenu';
 import {
   isTerminalRun,
-  orderRunsByLaunch,
+  taskbarRunGroups,
   terminalRunLabel,
   workerButtonLabel,
   workerRunTabLabel,
@@ -91,14 +91,10 @@ export function RunDock() {
   const projectRuns = useMemo(() => {
     const inProject = (run: RunSummary) =>
       !activeProjectId || !run.project_id || run.project_id === activeProjectId;
-    const all = orderRunsByLaunch([...runById.values()].filter(inProject));
     // Managers and terminals share the manager.launch namespace; the `custom`
     // pseudo-harness is what separates a bare terminal from an agent manager.
-    return {
-      managers: all.filter((run) => isManagerRun(run) && !isTerminalRun(run)),
-      terminals: all.filter(isTerminalRun),
-      workers: all.filter((run) => !isManagerRun(run)),
-    };
+    // Presence-only external managers are centrally ineligible for the dock.
+    return taskbarRunGroups([...runById.values()].filter(inProject));
   }, [activeProjectId, runById]);
 
   useEffect(() => {

@@ -707,6 +707,7 @@ fn terminal_session_leader_pid() -> Option<u32> {
 struct ManagerRegisterHttpRequest {
     project_id: String,
     pid: Option<u32>,
+    holder_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -714,6 +715,86 @@ struct ManagerRegisterHttpResponse {
     status: String,
     run_id: Option<String>,
     message: Option<String>,
+    #[serde(default)]
+    holder_token: Option<String>,
+}
+
+const MANAGER_HOLDER_TOKEN_ENV: &str = "ORGASMIC_MANAGER_HOLDER_TOKEN";
+
+fn safe_registration_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn manager_session_scope() -> Option<String> {
+    for name in [
+        "ORGASMIC_MANAGER_SESSION_ID",
+        "TERM_SESSION_ID",
+        "WT_SESSION",
+        "TMUX_PANE",
+        "RMUX_SESSION_ID",
+    ] {
+        if let Ok(value) = std::env::var(name) {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(format!("{name}-{value}"));
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        let parent = unsafe { libc::getppid() };
+        if parent > 0 {
+            return Some(format!("ppid-{parent}"));
+        }
+    }
+    None
+}
+
+/// PID-less registration token storage is scoped to the invoking terminal
+/// session, never merely to the project. Otherwise a second terminal could
+/// read the first terminal's token and silently extend its TTL.
+fn manager_holder_token_path(home: &Home, project_id: &str) -> Option<PathBuf> {
+    let scope = manager_session_scope()?;
+    Some(home.state().join("manager-registration").join(format!(
+        "{}--{}.token",
+        safe_registration_component(project_id),
+        safe_registration_component(&scope)
+    )))
+}
+
+fn read_manager_holder_token(path: Option<&Path>) -> Option<String> {
+    std::env::var(MANAGER_HOLDER_TOKEN_ENV)
+        .ok()
+        .filter(|token| !token.trim().is_empty())
+        .or_else(|| {
+            std::fs::read_to_string(path?)
+                .ok()
+                .map(|token| token.trim().to_string())
+                .filter(|token| !token.is_empty())
+        })
+}
+
+fn persist_manager_holder_token(path: Option<&Path>, token: &str) -> Result<bool> {
+    let Some(path) = path else {
+        return Ok(false);
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("create manager registration state at {}", parent.display())
+        })?;
+    }
+    std::fs::write(path, format!("{token}\n"))
+        .with_context(|| format!("write manager registration state at {}", path.display()))?;
+    Ok(true)
 }
 
 /// External manager self-registration (dec_3Y2E1). The entry router runs
@@ -735,6 +816,14 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
         None => read_project_id(&find_project_root()?)?,
     };
     let pid = terminal_session_leader_pid();
+    let token_path = pid
+        .is_none()
+        .then(|| manager_holder_token_path(home, &project_id))
+        .flatten();
+    let holder_token = pid
+        .is_none()
+        .then(|| read_manager_holder_token(token_path.as_deref()))
+        .flatten();
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let response: ManagerRegisterHttpResponse = runtime.block_on(client.post_json(
@@ -742,11 +831,19 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
         &ManagerRegisterHttpRequest {
             project_id: project_id.clone(),
             pid,
+            holder_token,
         },
     ))?;
 
     match response.status.as_str() {
         "registered" => {
+            if let Some(token) = response.holder_token.as_deref() {
+                if !persist_manager_holder_token(token_path.as_deref(), token)? {
+                    println!(
+                        "PID unavailable; export {MANAGER_HOLDER_TOKEN_ENV}={token} to refresh this registration"
+                    );
+                }
+            }
             println!(
                 "registered manager for {project_id} as {}",
                 response.run_id.as_deref().unwrap_or("-")
@@ -754,6 +851,9 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
             Ok(())
         }
         "refreshed" => {
+            if let Some(token) = response.holder_token.as_deref() {
+                let _ = persist_manager_holder_token(token_path.as_deref(), token)?;
+            }
             println!(
                 "manager registration for {project_id} refreshed ({})",
                 response.run_id.as_deref().unwrap_or("-")
@@ -804,6 +904,15 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
         ),
         "not_registered" => println!("no manager registered for {project_id}; nothing to do"),
         other => println!("manager release: {other}"),
+    }
+    if matches!(response.status.as_str(), "released" | "not_registered") {
+        if let Some(path) = manager_holder_token_path(home, &project_id) {
+            if let Err(e) = std::fs::remove_file(path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    return Err(e).context("remove manager registration state");
+                }
+            }
+        }
     }
     Ok(())
 }

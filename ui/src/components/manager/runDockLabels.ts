@@ -1,4 +1,9 @@
-import { isManagerRun, runTabTitle } from '@/lib/runLabels';
+import {
+  isExternalManagerRun,
+  isManagerRun,
+  isRunDockEligible,
+  runTabTitle,
+} from '@/lib/runLabels';
 import type { RunSummary } from '@/lib/types';
 
 export function workerRunTabLabel(
@@ -25,8 +30,19 @@ export function terminalRunLabel(index: number, total: number): string {
 // A manager session started outside the app (dec_3Y2E1): a real supervised
 // run with no PTY behind it. It renders as an info row — there is nothing to
 // attach — with an inline End control instead of the usual open-tab click.
-export function isExternalManagerRun(run: Pick<RunSummary, 'driver'>): boolean {
-  return (run.driver ?? '').trim().toLowerCase() === 'external';
+export { isExternalManagerRun };
+
+export function taskbarRunGroups(runs: RunSummary[]): {
+  managers: RunSummary[];
+  terminals: RunSummary[];
+  workers: RunSummary[];
+} {
+  const eligible = orderRunsByLaunch(runs.filter(isRunDockEligible));
+  return {
+    managers: eligible.filter((run) => isManagerRun(run) && !isTerminalRun(run)),
+    terminals: eligible.filter(isTerminalRun),
+    workers: eligible.filter((run) => !isManagerRun(run)),
+  };
 }
 
 // "Running Agents" answers "which agents is orgasmic supervising?". A bare

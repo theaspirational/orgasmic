@@ -30,6 +30,7 @@ subtle.workspace = true
 rand.workspace = true
 sha2.workspace = true
 include_dir.workspace = true
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

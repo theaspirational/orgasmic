@@ -251,6 +251,61 @@ struct Inner {
     babysitter_auto_spawn_backoff: HashMap<String, BabysitterAutoSpawnBackoff>,
 }
 
+/// Owns a lease reservation until the corresponding [`RunRecord`] is live.
+///
+/// Most acquisition failures can clean up explicitly, but cancellation can
+/// drop an acquire future at any `.await`. Drop therefore removes the lease
+/// synchronously when the supervisor lock is free (the normal case), or queues
+/// the same conditional cleanup on the current runtime. The run-id check keeps
+/// a stale guard from removing a newer holder's lease.
+struct LeaseReservation {
+    inner: Arc<Mutex<Inner>>,
+    key: Option<(String, RunKind)>,
+    run_id: String,
+}
+
+impl LeaseReservation {
+    fn new(inner: Arc<Mutex<Inner>>, key: (String, RunKind), run_id: String) -> Self {
+        Self {
+            inner,
+            key: Some(key),
+            run_id,
+        }
+    }
+
+    fn commit(&mut self) {
+        self.key = None;
+    }
+
+    fn remove_if_unowned(inner: &mut Inner, key: &(String, RunKind), run_id: &str) {
+        let reserved_by_this_run = inner.leases.get(key).is_some_and(|held| held == run_id);
+        if reserved_by_this_run && !inner.runs.contains_key(run_id) {
+            inner.leases.remove(key);
+        }
+    }
+}
+
+impl Drop for LeaseReservation {
+    fn drop(&mut self) {
+        let Some(key) = self.key.take() else {
+            return;
+        };
+        if let Ok(mut inner) = self.inner.try_lock() {
+            Self::remove_if_unowned(&mut inner, &key, &self.run_id);
+            return;
+        }
+
+        let inner = Arc::clone(&self.inner);
+        let run_id = self.run_id.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let mut inner = inner.lock().await;
+                Self::remove_if_unowned(&mut inner, &key, &run_id);
+            });
+        }
+    }
+}
+
 struct RunRecord {
     task_id: String,
     kind: RunKind,
@@ -621,21 +676,22 @@ impl Supervisor {
         // reserve the slot — the actual driver spawn is awaited without
         // the lock so a slow driver doesn't block other runs.
         let run_id = make_run_id(&req.kind);
+        let lease_key = (req.task_id.clone(), req.kind);
         {
             let mut guard = self.inner.lock().await;
             if guard.acquisition_paused {
                 return Err(SupervisorError::AcquisitionPaused);
             }
-            let key = (req.task_id.clone(), req.kind);
-            if let Some(existing) = guard.leases.get(&key) {
+            if let Some(existing) = guard.leases.get(&lease_key) {
                 return Err(SupervisorError::LeaseHeld {
                     task_id: req.task_id.clone(),
                     kind: req.kind,
                     run_id: existing.clone(),
                 });
             }
-            guard.leases.insert(key, run_id.clone());
+            guard.leases.insert(lease_key.clone(), run_id.clone());
         }
+        let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
 
         // Build the driver context and spawn. If the driver fails, release
         // the lease before returning.
@@ -654,10 +710,7 @@ impl Supervisor {
         let harness = driver.harness().map(str::to_string);
         let session = match driver.acquire(ctx, req.driver_config.clone()).await {
             Ok(s) => s,
-            Err(e) => {
-                self.release_lease(&req.task_id, req.kind).await;
-                return Err(SupervisorError::Driver(e));
-            }
+            Err(e) => return Err(SupervisorError::Driver(e)),
         };
         let pid = session.pid;
 
@@ -874,6 +927,7 @@ impl Supervisor {
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
+        lease.commit();
         if let Some(pid) = pid {
             spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
         }
@@ -916,21 +970,22 @@ impl Supervisor {
             ));
         }
         let run_id = make_run_id(&req.kind);
+        let lease_key = (req.task_id.clone(), req.kind);
         {
             let mut guard = self.inner.lock().await;
             if guard.acquisition_paused {
                 return Err(SupervisorError::AcquisitionPaused);
             }
-            let key = (req.task_id.clone(), req.kind);
-            if let Some(existing) = guard.leases.get(&key) {
+            if let Some(existing) = guard.leases.get(&lease_key) {
                 return Err(SupervisorError::LeaseHeld {
                     task_id: req.task_id.clone(),
                     kind: req.kind,
                     run_id: existing.clone(),
                 });
             }
-            guard.leases.insert(key, run_id.clone());
+            guard.leases.insert(lease_key.clone(), run_id.clone());
         }
+        let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
         let identity = RuntimeIdentity::new(&run_id, &self.boot.boot_id);
         let ctx = DriverContext {
             identity: identity.clone(),
@@ -946,10 +1001,7 @@ impl Supervisor {
         let harness = driver.harness().map(str::to_string);
         let session = match driver.acquire(ctx, req.driver_config.clone()).await {
             Ok(s) => s,
-            Err(e) => {
-                self.release_lease(&req.task_id, req.kind).await;
-                return Err(SupervisorError::Driver(e));
-            }
+            Err(e) => return Err(SupervisorError::Driver(e)),
         };
         let pid = session.pid;
 
@@ -1100,6 +1152,7 @@ impl Supervisor {
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
+        lease.commit();
         if let Some(pid) = pid {
             spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
         }
@@ -1257,6 +1310,7 @@ impl Supervisor {
     ) -> Result<AcquireResponse, SupervisorError> {
         let run_id = identity.run_id.clone();
         // Lease conflict guard: do not steal an occupied lease.
+        let lease_key = (task_id.clone(), kind);
         {
             let mut guard = self.inner.lock().await;
             if guard.acquisition_paused {
@@ -1271,8 +1325,7 @@ impl Supervisor {
                     pid: None,
                 });
             }
-            let key = (task_id.clone(), kind);
-            if let Some(active) = guard.leases.get(&key) {
+            if let Some(active) = guard.leases.get(&lease_key) {
                 if active != &run_id {
                     return Err(SupervisorError::ReattachLeaseConflict {
                         task_id,
@@ -1281,8 +1334,9 @@ impl Supervisor {
                     });
                 }
             }
-            guard.leases.insert(key, run_id.clone());
+            guard.leases.insert(lease_key.clone(), run_id.clone());
         }
+        let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
 
         let ctx = DriverContext {
             identity: identity.clone(),
@@ -1299,16 +1353,12 @@ impl Supervisor {
         let attached = match driver.attach(ctx, driver_config).await {
             Ok(AttachOutcome::Attached(attached)) => attached,
             Ok(AttachOutcome::NotReattachable) => {
-                self.release_lease(&task_id, kind).await;
                 return Err(SupervisorError::NotReattachable {
                     run_id,
                     reason: "driver could not prove a live runtime handle".into(),
                 });
             }
-            Err(e) => {
-                self.release_lease(&task_id, kind).await;
-                return Err(SupervisorError::Driver(e));
-            }
+            Err(e) => return Err(SupervisorError::Driver(e)),
         };
         let session = *attached.session;
 
@@ -1433,6 +1483,7 @@ impl Supervisor {
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
+        lease.commit();
         Ok(AcquireResponse {
             run_id,
             identity,
@@ -1953,11 +2004,6 @@ impl Supervisor {
         Ok(())
     }
 
-    async fn release_lease(&self, task_id: &str, kind: RunKind) {
-        let mut g = self.inner.lock().await;
-        g.leases.remove(&(task_id.into(), kind));
-    }
-
     /// Stop any live dispatch worker (or clear an orphaned lease) before
     /// daemon-side worktree/branch cleanup. Returns the released run id when
     /// a worker or lease was cleared.
@@ -2237,15 +2283,37 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
 
 pub(crate) fn subprocess_exited(pid: u32) -> bool {
     if pid == 0 {
-        return false;
+        tracing::warn!(pid, "refusing to probe invalid process id");
+        return true;
     }
-    Command::new("kill")
-        .args(["-0", pid.to_string().as_str()])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| !status.success())
-        .unwrap_or(true)
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        tracing::warn!(
+            pid,
+            "process id does not fit platform pid_t; treating as exited"
+        );
+        return true;
+    };
+    let result = if unsafe { libc::kill(pid, 0) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().raw_os_error())
+    };
+    process_probe_reports_exited(pid, result)
+}
+
+fn process_probe_reports_exited(pid: libc::pid_t, result: Result<(), Option<i32>>) -> bool {
+    match result {
+        Ok(()) | Err(Some(libc::EPERM)) => false,
+        Err(Some(libc::ESRCH)) => true,
+        Err(errno) => {
+            tracing::warn!(
+                pid,
+                ?errno,
+                "unexpected kill(pid, 0) result; keeping run alive"
+            );
+            false
+        }
+    }
 }
 
 fn session_has_work_envelope(envelopes: &[SessionEnvelope]) -> bool {
@@ -2761,6 +2829,43 @@ mod tests {
             )),
         );
         (sup, dir, writer)
+    }
+
+    #[test]
+    fn process_probe_distinguishes_esrch_eperm_and_unexpected_errors() {
+        assert!(process_probe_reports_exited(4242, Err(Some(libc::ESRCH))));
+        assert!(!process_probe_reports_exited(4242, Err(Some(libc::EPERM))));
+        assert!(!process_probe_reports_exited(4242, Err(Some(libc::EIO))));
+        assert!(!process_probe_reports_exited(4242, Ok(())));
+        assert!(subprocess_exited(0));
+    }
+
+    #[tokio::test]
+    async fn failed_session_write_releases_manager_lease_for_immediate_reacquire() {
+        let (sup, dir, _writer) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let task_id = "manager.launch:writer-failure";
+
+        // A file where the sessions directory should be makes SessionWriter
+        // fail after the supervisor has reserved the manager lease.
+        let blocked = dir.path().join("blocked-sessions");
+        std::fs::write(&blocked, "not a directory").unwrap();
+        let mut broken = impl_req(task_id, dir.path());
+        broken.role = "manager".into();
+        broken.worker_id = "manager".into();
+        broken.session_path = blocked.join("manager.jsonl");
+        let error = sup.acquire(&driver, broken).await.unwrap_err();
+        assert!(matches!(error, SupervisorError::Session(_)), "{error}");
+
+        // Mirrors the app manager's stable task id + Worker lease. The failed
+        // external registration must not leave the slot wedged.
+        let mut retry = impl_req(task_id, dir.path());
+        retry.role = "manager".into();
+        retry.worker_id = "manager".into();
+        retry.session_path = dir.path().join("manager-app-retry.jsonl");
+        sup.acquire(&driver, retry)
+            .await
+            .expect("manager lease should be immediately reusable");
     }
 
     #[test]
