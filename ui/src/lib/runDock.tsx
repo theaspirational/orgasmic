@@ -47,6 +47,8 @@ type RunDockContextValue = {
   setActiveTab: (tabId: string) => void;
   /** Raise a run: select it and show the panel at the remembered height. */
   openRun: (options: OpenRunOptions) => void;
+  /** Replace the current live-run metadata used to guard dock eligibility. */
+  replaceLiveRuns: (runs: RunSummary[]) => void;
   /** Collapse to the bare taskbar, keeping the active selection. */
   minimize: () => void;
   closeTab: (tabId: string) => void;
@@ -121,6 +123,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     readStoredActiveTab(),
   );
   const validatedRef = useRef(false);
+  const liveRunsRef = useRef<Map<string, RunSummary>>(new Map());
 
   // A dock with nothing selected has nothing to show, so it stays down. This
   // also covers the reload window before persisted tabs finish validating.
@@ -145,6 +148,10 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     if (typeof window !== 'undefined') window.localStorage.setItem(OPEN_KEY, '0');
   }, []);
 
+  const replaceLiveRuns = useCallback((runs: RunSummary[]) => {
+    liveRunsRef.current = new Map(runs.map((run) => [run.run_id, run]));
+  }, []);
+
   // On first mount, restore persisted tabs but validate every run id against
   // backend run + recovery state; drop ids the daemon no longer knows.
   useEffect(() => {
@@ -160,6 +167,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
           fetchRecoveryStatus().catch(() => null),
         ]);
         if (cancelled) return;
+        replaceLiveRuns(runs?.live ?? []);
         const recoveredRunIds: string[] = [];
         for (const list of [
           runs?.interrupted,
@@ -193,7 +201,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [replaceLiveRuns]);
 
   useEffect(() => {
     writeStoredTabs(tabs);
@@ -208,7 +216,8 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
 
   const openRun = useCallback(
     ({ runId, draftPrompt, driver }: OpenRunOptions) => {
-      if (!isRunDockEligible({ driver })) return;
+      const liveRun = liveRunsRef.current.get(runId);
+      if (!isRunDockEligible(liveRun ?? { driver })) return;
       setTabs((prev) => applyWorkerTabUpdate(prev, runId, draftPrompt));
       setActiveTabId(runId);
       setOpen(true);
@@ -248,6 +257,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       setHeight,
       setActiveTab,
       openRun,
+      replaceLiveRuns,
       minimize,
       closeTab,
       consumeDraft,
@@ -260,6 +270,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
       setHeight,
       setActiveTab,
       openRun,
+      replaceLiveRuns,
       minimize,
       closeTab,
       consumeDraft,

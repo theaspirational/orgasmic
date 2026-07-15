@@ -2213,8 +2213,22 @@ pub struct ManagerRegisterResponse {
 }
 
 fn normalize_manager_registration_pid(pid: Option<i64>) -> Option<u32> {
-    pid.and_then(|pid| u32::try_from(pid).ok())
-        .filter(|pid| *pid > 0)
+    #[cfg(unix)]
+    {
+        let pid = pid
+            .and_then(|pid| u32::try_from(pid).ok())
+            .filter(|pid| *pid > 0)?;
+        libc::pid_t::try_from(pid).ok()?;
+        Some(pid)
+    }
+    #[cfg(not(unix))]
+    {
+        // The daemon deliberately performs no process probing on non-Unix.
+        // Treat even a supplied PID as absent so registration gets a holder
+        // token and the refreshable TTL fallback.
+        let _ = pid;
+        None
+    }
 }
 
 async fn post_manager_register(
@@ -12076,7 +12090,18 @@ mod tests {
         assert_eq!(normalize_manager_registration_pid(Some(0)), None);
         assert_eq!(normalize_manager_registration_pid(Some(-1)), None);
         assert_eq!(normalize_manager_registration_pid(Some(i64::MAX)), None);
+        assert_eq!(
+            normalize_manager_registration_pid(Some(i64::from(i32::MAX) + 1)),
+            None
+        );
+        assert_eq!(
+            normalize_manager_registration_pid(Some(i64::from(u32::MAX))),
+            None
+        );
+        #[cfg(unix)]
         assert_eq!(normalize_manager_registration_pid(Some(42)), Some(42));
+        #[cfg(not(unix))]
+        assert_eq!(normalize_manager_registration_pid(Some(42)), None);
     }
 
     #[test]
@@ -12235,6 +12260,57 @@ mod tests {
         .unwrap();
         assert_eq!(refreshed.status, "refreshed");
         assert_eq!(refreshed.holder_token.as_deref(), Some(token.as_str()));
+    }
+
+    #[tokio::test]
+    async fn out_of_probe_range_pids_use_tokenized_ttl_and_survive_liveness_sweep() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+
+        for pid in [i64::from(i32::MAX) + 1, i64::from(u32::MAX)] {
+            let Json(registered) = post_manager_register(
+                State(state.clone()),
+                Json(ManagerRegisterRequest {
+                    project_id: "proj".into(),
+                    pid: Some(pid),
+                    holder_token: None,
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(registered.status, "registered");
+            assert!(
+                registered.holder_token.is_some(),
+                "PID {pid} must use the tokenized TTL fallback"
+            );
+            let run_id = registered.run_id.expect("registered run id");
+
+            state.manager_registry.sweep(&state.supervisor).await;
+            assert!(
+                state
+                    .supervisor
+                    .snapshot()
+                    .await
+                    .runs
+                    .iter()
+                    .any(|run| run.run_id == run_id),
+                "PID {pid} registration must survive an immediate liveness sweep"
+            );
+
+            let Json(released) = post_manager_release(
+                State(state.clone()),
+                Json(ManagerReleaseRegistrationRequest {
+                    project_id: "proj".into(),
+                }),
+            )
+            .await
+            .unwrap();
+            assert_eq!(released.status, "released");
+        }
     }
 
     #[tokio::test]

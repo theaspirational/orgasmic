@@ -229,13 +229,14 @@ async fn register_refusal_exits_nonzero_with_holder_message() {
     seed_project(&home, &project_root, "cli-register-refusal");
     let running = boot(home.clone()).await;
     let token = std::fs::read_to_string(home.auth_token()).unwrap();
+    let holder_pid = std::process::id();
 
     let response = reqwest::Client::new()
         .post(format!("http://{}/api/manager/register", running.addr))
         .bearer_auth(token.trim())
         .json(&serde_json::json!({
             "project_id": "cli-register-refusal",
-            "pid": u32::MAX,
+            "pid": holder_pid,
         }))
         .send()
         .await
@@ -256,7 +257,8 @@ async fn register_refusal_exits_nonzero_with_holder_message() {
         "refusal must be non-zero\nstdout={stdout}\nstderr={stderr}"
     );
     assert!(
-        stderr.contains("already registered externally") && stderr.contains("4294967295"),
+        stderr.contains("already registered externally")
+            && stderr.contains(&holder_pid.to_string()),
         "refusal must name the holder\nstdout={stdout}\nstderr={stderr}"
     );
 

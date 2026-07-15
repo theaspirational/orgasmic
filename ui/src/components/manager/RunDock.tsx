@@ -55,6 +55,7 @@ export function RunDock() {
     setHeight,
     setActiveTab,
     openRun,
+    replaceLiveRuns,
     minimize,
     closeTab,
     consumeDraft,
@@ -83,6 +84,10 @@ export function RunDock() {
     }
     return map;
   }, [liveRuns, manager.data?.runs]);
+
+  useEffect(() => {
+    replaceLiveRuns([...runById.values()]);
+  }, [replaceLiveRuns, runById]);
 
   // Every live run of the active project earns a taskbar button the moment it
   // is dispatched — the Windows-taskbar model. Only clicking a button opens a

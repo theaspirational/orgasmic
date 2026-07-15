@@ -2281,6 +2281,7 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
     });
 }
 
+#[cfg(unix)]
 pub(crate) fn subprocess_exited(pid: u32) -> bool {
     if pid == 0 {
         tracing::warn!(pid, "refusing to probe invalid process id");
@@ -2301,6 +2302,15 @@ pub(crate) fn subprocess_exited(pid: u32) -> bool {
     process_probe_reports_exited(pid, result)
 }
 
+#[cfg(not(unix))]
+pub(crate) fn subprocess_exited(_pid: u32) -> bool {
+    // There is no portable non-Unix equivalent of kill(pid, 0). External
+    // manager registration normalizes every supplied PID away on these
+    // targets, so it uses the tokenized TTL fallback instead.
+    false
+}
+
+#[cfg(unix)]
 fn process_probe_reports_exited(pid: libc::pid_t, result: Result<(), Option<i32>>) -> bool {
     match result {
         Ok(()) | Err(Some(libc::EPERM)) => false,
@@ -2831,6 +2841,7 @@ mod tests {
         (sup, dir, writer)
     }
 
+    #[cfg(unix)]
     #[test]
     fn process_probe_distinguishes_esrch_eperm_and_unexpected_errors() {
         assert!(process_probe_reports_exited(4242, Err(Some(libc::ESRCH))));

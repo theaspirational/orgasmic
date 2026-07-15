@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { createElement, useEffect } from 'react';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { restorableStoredTabs } from '../runDock';
+import { restorableStoredTabs, RunDockProvider, useRunDock } from '../runDock';
 import type { RunSummary } from '../types';
 
 function liveRun(runId: string, driver: string): RunSummary {
@@ -20,6 +22,22 @@ function liveRun(runId: string, driver: string): RunSummary {
   };
 }
 
+function OpenRunProbe({ runs, runId }: { runs: RunSummary[]; runId: string }) {
+  const { tabs, openRun, replaceLiveRuns } = useRunDock();
+  useEffect(() => replaceLiveRuns(runs), [replaceLiveRuns, runs]);
+  return createElement(
+    'div',
+    null,
+    createElement('button', { onClick: () => openRun({ runId }) }, 'Open run'),
+    createElement('output', { 'aria-label': 'open tab count' }, tabs.length),
+  );
+}
+
+afterEach(() => {
+  cleanup();
+  window.localStorage.clear();
+});
+
 describe('persisted Run Dock restore eligibility', () => {
   it('purges a saved external tab while restoring normal live and recovered tabs', () => {
     const stored = [
@@ -34,5 +52,32 @@ describe('persisted Run Dock restore eligibility', () => {
         ['run-recovered'],
       ),
     ).toEqual([stored[1], stored[2]]);
+  });
+
+  it('rejects openRun without a driver argument when the live run is external', () => {
+    const external = liveRun('run-external', 'external');
+    render(
+      createElement(
+        RunDockProvider,
+        null,
+        createElement(OpenRunProbe, { runs: [external], runId: external.run_id }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open run' }));
+    expect(screen.getByLabelText('open tab count').textContent).toBe('0');
+  });
+
+  it('still opens an unknown or ended run so stale tabs remain usable', () => {
+    render(
+      createElement(
+        RunDockProvider,
+        null,
+        createElement(OpenRunProbe, { runs: [], runId: 'run-ended' }),
+      ),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open run' }));
+    expect(screen.getByLabelText('open tab count').textContent).toBe('1');
   });
 });
