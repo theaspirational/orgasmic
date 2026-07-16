@@ -41,7 +41,9 @@ export function NodeListView<T>({
           <div className="flex flex-col gap-3 md:flex-row md:items-center">
             {onSearchChange ? (
               <label className="relative w-full md:max-w-xs">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-muted-foreground">
+                  <Search className="size-4" aria-hidden="true" />
+                </span>
                 <Input
                   value={search ?? ''}
                   onChange={(event) => onSearchChange(event.target.value)}

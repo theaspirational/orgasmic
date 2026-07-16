@@ -668,6 +668,16 @@ impl WorkerDriver for RmuxDriver {
             .session(session_name)
             .await
             .map_err(|e| DriverError::Transport(format!("rmux attach session: {e}")))?;
+        let rmux_bin = probe_rmux_binary()
+            .path
+            .unwrap_or_else(|| RMUX_BINARY.to_string());
+        if let Err(err) = enable_rmux_mouse(&rmux_bin, &session_name_str).await {
+            tracing::warn!(
+                ?err,
+                session = %session_name_str,
+                "failed to enable rmux mouse mode during reattach"
+            );
+        }
 
         // Choose the same output path the original run would have used. We don't
         // have the original prompt here, so derive the command from config and
@@ -729,9 +739,7 @@ impl WorkerDriver for RmuxDriver {
                     // A reattached session is, by definition, one we want to
                     // outlive the daemon — never reap it on an implicit Drop.
                     kill_on_drop: false,
-                    rmux_bin: probe_rmux_binary()
-                        .path
-                        .or_else(|| Some(RMUX_BINARY.to_string())),
+                    rmux_bin: Some(rmux_bin),
                     session_target: Some(session_name_str.clone()),
                     run_id: Some(ctx.identity.run_id.clone()),
                     harness_command: Some(plan.command.clone()),
@@ -817,6 +825,13 @@ async fn run_live_session(
         )
         .await
         .map_err(|e| DriverError::Transport(format!("rmux ensure_session: {e}")))?;
+
+    // Let attached terminal emulators report real mouse events to rmux. Its
+    // default WheelUpPane binding enters copy mode and subsequent wheel events
+    // scroll there, instead of leaking cursor-arrow sequences into the TUI.
+    if let Err(err) = enable_rmux_mouse(rmux_bin, &session_target).await {
+        tracing::warn!(?err, session = %session_target, "failed to enable rmux mouse mode");
+    }
 
     let web_share = if cfg.web_share {
         mint_web_share(&session).await
@@ -963,6 +978,14 @@ async fn run_rmux_cli(bin: &str, args: &[&str]) -> Result<(), DriverError> {
             String::from_utf8_lossy(&output.stderr).trim()
         )))
     }
+}
+
+fn rmux_mouse_args(session: &str) -> [&str; 5] {
+    ["set-option", "-t", session, "mouse", "on"]
+}
+
+async fn enable_rmux_mouse(bin: &str, session: &str) -> Result<(), DriverError> {
+    run_rmux_cli(bin, &rmux_mouse_args(session)).await
 }
 
 async fn rmux_capture_pane(bin: &str, session: &str) -> Result<String, DriverError> {
@@ -1666,6 +1689,20 @@ mod tests {
     }
 
     #[test]
+    fn mouse_mode_is_scoped_to_the_rmux_session() {
+        assert_eq!(
+            rmux_mouse_args("orgasmic-rmux-run-1-runtime-1"),
+            [
+                "set-option",
+                "-t",
+                "orgasmic-rmux-run-1-runtime-1",
+                "mouse",
+                "on"
+            ]
+        );
+    }
+
+    #[test]
     fn redact_operator_url_elides_token() {
         let redacted = redact_operator_url("https://share.example/op/abc?token=SECRET");
         assert!(!redacted.contains("SECRET"));
@@ -2147,7 +2184,21 @@ mod tests {
                 "inert live run must carry a reason"
             );
         } else {
-            assert!(capabilities["session"].is_string());
+            let session = capabilities["session"]
+                .as_str()
+                .expect("live rmux run reports its session");
+            let rmux_bin = probe.path.as_deref().unwrap_or(RMUX_BINARY);
+            let mouse = tokio::process::Command::new(rmux_bin)
+                .args(["show-options", "-v", "-t", session, "mouse"])
+                .output()
+                .await
+                .expect("query rmux mouse option");
+            assert!(
+                mouse.status.success(),
+                "show-options mouse failed: {}",
+                String::from_utf8_lossy(&mouse.stderr).trim()
+            );
+            assert_eq!(String::from_utf8_lossy(&mouse.stdout).trim(), "on");
             // Web Share proof: a spectator URL and/or operator URL, or an exact
             // recorded limitation. Never expose a raw operator token.
             let ws = &capabilities["web_share"];

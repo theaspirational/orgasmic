@@ -54,7 +54,7 @@ function parseTmuxPaneServerFrame(data: string): TmuxPaneServerFrame | null {
  *   and presses Enter server-side (`send_keys`), independent of the keyboard.
  * - Read-only mode (`readOnly`): for members without sessions.interact. The
  *   live stream still renders, but nothing is wired to the socket — no
- *   keystrokes, Shift+Enter, wheel-as-keys, or resize control frames — and the
+ *   keystrokes, Shift+Enter, mouse events, or resize control frames — and the
  *   composer sender is never handed out. A "read-only" chip marks the header.
  */
 export function ManagerTmuxPane({
@@ -287,27 +287,6 @@ export function ManagerTmuxPane({
       return true;
     };
     term.attachCustomKeyEventHandler(onShiftEnter);
-
-    // Mouse-wheel scrolling. The wrapped rmux TUI (Claude Code, Codex CLI) runs
-    // on the alternate screen buffer where xterm has no scrollback to move, so a
-    // bare wheel event is silently dropped and scrolling appears dead. Translate
-    // it into cursor up/down keys the TUI understands — the same convention
-    // terminal emulators use for "alternate scroll" mode. On the normal buffer we
-    // return true so xterm's native scrollback handling stays intact.
-    term.attachCustomWheelEventHandler((e: WheelEvent) => {
-      // Read-only viewers don't drive alternate-scroll into the PTY.
-      if (readOnly) return true;
-      if (term.buffer.active.type !== 'alternate') return true;
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return false;
-      e.preventDefault();
-      // deltaMode: 1 = lines, 0 = pixels (~24px per row), 2 = pages.
-      const rows = e.deltaMode === 1 ? Math.abs(e.deltaY) : Math.abs(e.deltaY) / 24;
-      const count = Math.min(10, Math.max(1, Math.round(rows)));
-      const seq = e.deltaY > 0 ? '\x1b[B' : '\x1b[A';
-      ws.send(codec.enc.encode(seq.repeat(count)));
-      return false;
-    });
 
     // Belt-and-suspenders: catch Shift+Enter before xterm's textarea sees it.
     const captureHandler = (ev: KeyboardEvent) => {
