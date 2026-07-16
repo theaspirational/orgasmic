@@ -98,6 +98,8 @@ export function normalizeTranscriptParts(
   const envelopes = parseSessionSource(source);
   const parts: PartDraft[] = [];
   const toolsByCallId = new Map<string, TranscriptToolPart>();
+  const pendingResultsByCallId = new Map<string, TranscriptToolPart>();
+  let terminalToolState: Extract<TranscriptToolState, 'completed' | 'error'> | null = null;
   const promptBundle = options.promptOverride ?? extractPromptBundle(envelopes);
 
   if (promptBundle) {
@@ -215,11 +217,25 @@ export function normalizeTranscriptParts(
       const callId = stringValue(event.call_id) || undefined;
       const name = compactLabel(event.name);
       const existing = callId ? toolsByCallId.get(callId) : undefined;
+      const pendingResult = callId ? pendingResultsByCallId.get(callId) : undefined;
       const summary = summarizeToolCall(name, event.args);
       if (existing) {
         existing.state = toolCallState(event.args);
         existing.summary ??= summary.summary;
         if (existing.meta.length === 0) existing.meta = summary.meta;
+        continue;
+      }
+
+      if (pendingResult) {
+        pendingResult.name = name;
+        pendingResult.label = summary.label ?? `tool ${name}`;
+        pendingResult.input = event.args ?? null;
+        pendingResult.state = pendingResult.ok === false ? 'error' : 'completed';
+        pendingResult.summary = summary.summary ?? pendingResult.summary;
+        pendingResult.meta = mergeMeta(summary.meta, pendingResult.meta);
+        pendingResult.time = envelope.time ?? pendingResult.time;
+        toolsByCallId.set(callId!, pendingResult);
+        pendingResultsByCallId.delete(callId!);
         continue;
       }
 
@@ -256,7 +272,7 @@ export function normalizeTranscriptParts(
         continue;
       }
 
-      parts.push({
+      const part: TranscriptToolPart = {
         id,
         type: 'tool',
         callId,
@@ -269,7 +285,9 @@ export function normalizeTranscriptParts(
         summary: resultSummary.summary,
         meta: resultSummary.meta,
         time: envelope.time,
-      });
+      };
+      parts.push(part);
+      if (callId) pendingResultsByCallId.set(callId, part);
       continue;
     }
 
@@ -289,6 +307,7 @@ export function normalizeTranscriptParts(
     }
 
     if (eventType === 'run_complete') {
+      terminalToolState ??= 'completed';
       const summary = stringValue(event.summary).trim();
       if (summary) {
         parts.push({
@@ -304,6 +323,7 @@ export function normalizeTranscriptParts(
     }
 
     if (eventType === 'run_fail' || eventType === 'driver_error') {
+      terminalToolState = 'error';
       parts.push({
         id,
         type: 'system',
@@ -316,6 +336,10 @@ export function normalizeTranscriptParts(
     }
 
     if (envelope.kind === 'lifecycle') {
+      if (stringValue(event.phase) === 'release') {
+        terminalToolState =
+          stringValue(event.outcome) === 'failed' ? 'error' : (terminalToolState ?? 'completed');
+      }
       const lifecyclePart = normalizeLifecyclePart(id, envelope.time, event);
       if (lifecyclePart) parts.push(lifecyclePart);
       continue;
@@ -333,6 +357,7 @@ export function normalizeTranscriptParts(
     }
   }
 
+  if (terminalToolState) closeRunningTools(parts, terminalToolState);
   return parts.map(({ mergeKey: _mergeKey, ...part }) => part);
 }
 
@@ -462,6 +487,15 @@ function mergePart(previous: PartDraft, next: TranscriptPart): boolean {
 function closeStreamingReasoning(parts: PartDraft[]): void {
   const last = parts[parts.length - 1];
   if (last?.type === 'reasoning') last.state = 'completed';
+}
+
+function closeRunningTools(
+  parts: PartDraft[],
+  state: Extract<TranscriptToolState, 'completed' | 'error'>,
+): void {
+  for (const part of parts) {
+    if (part.type === 'tool' && part.state === 'running') part.state = state;
+  }
 }
 
 function toolCallState(args: unknown): TranscriptToolState {

@@ -180,7 +180,7 @@ export function TranscriptToolCard({ part }: { part: TranscriptToolPart }) {
         <TranscriptMeta label={part.name} time={part.time} />
         {part.meta.length > 0 ? <ToolMeta meta={part.meta} /> : null}
         {hasInput ? <ToolInput input={part.input} /> : null}
-        {hasOutput ? (
+        {hasOutput || part.state === 'error' ? (
           <ToolOutput
             errorText={part.state === 'error' ? 'Tool returned an error.' : undefined}
             output={part.output}

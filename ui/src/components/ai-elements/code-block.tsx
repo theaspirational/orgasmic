@@ -137,14 +137,36 @@ const highlighterCache = new Map<
 
 // Token cache
 const tokensCache = new Map<string, TokenizedCode>();
+const MAX_TOKENS_CACHE_ENTRIES = 100;
 
 // Subscribers for async token updates
 const subscribers = new Map<string, Set<(result: TokenizedCode) => void>>();
 
-const getTokensCacheKey = (code: string, language: BundledLanguage) => {
-  const start = code.slice(0, 100);
-  const end = code.length > 100 ? code.slice(-100) : "";
-  return `${language}:${code.length}:${start}:${end}`;
+const getTokensCacheKey = (code: string, language: BundledLanguage) =>
+  `${language}\u0000${code}`;
+
+const getCachedTokens = (key: string): TokenizedCode | undefined => {
+  const cached = tokensCache.get(key);
+  if (!cached) {
+    return undefined;
+  }
+
+  // Refresh insertion order so the bounded map evicts the least-recently used entry.
+  tokensCache.delete(key);
+  tokensCache.set(key, cached);
+  return cached;
+};
+
+const cacheTokens = (key: string, tokenized: TokenizedCode): void => {
+  tokensCache.delete(key);
+  while (tokensCache.size >= MAX_TOKENS_CACHE_ENTRIES) {
+    const oldestKey = tokensCache.keys().next().value;
+    if (oldestKey === undefined) {
+      break;
+    }
+    tokensCache.delete(oldestKey);
+  }
+  tokensCache.set(key, tokenized);
 };
 
 const getHighlighter = (
@@ -190,7 +212,7 @@ export const highlightCode = (
   const tokensCacheKey = getTokensCacheKey(code, language);
 
   // Return cached result if available
-  const cached = tokensCache.get(tokensCacheKey);
+  const cached = getCachedTokens(tokensCacheKey);
   if (cached) {
     return cached;
   }
@@ -225,7 +247,7 @@ export const highlightCode = (
       };
 
       // Cache the result
-      tokensCache.set(tokensCacheKey, tokenized);
+      cacheTokens(tokensCacheKey, tokenized);
 
       // Notify all subscribers
       const subs = subscribers.get(tokensCacheKey);

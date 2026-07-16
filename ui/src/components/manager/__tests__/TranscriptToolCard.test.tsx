@@ -54,6 +54,12 @@ describe('TranscriptToolCard', () => {
     expect(screen.getByText('permission denied')).toBeInTheDocument();
   });
 
+  it('shows the fallback error detail when a failed tool has empty output', () => {
+    render(<TranscriptToolCard part={tool({ state: 'error', ok: false, output: null })} />);
+
+    expect(screen.getByText('Tool returned an error.')).toBeInTheDocument();
+  });
+
   it('uses the streaming status label for partial tool input', () => {
     render(<TranscriptToolCard part={tool({ id: 'tool-stream', state: 'streaming', output: null, ok: null })} />);
     expect(screen.getByText('Streaming')).toBeInTheDocument();

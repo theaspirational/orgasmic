@@ -6,6 +6,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  streamdownComponents,
+  streamdownMermaidOptions,
+} from "@/components/ai-elements/streamdown-config";
 import { cn } from "@/lib/utils";
 import { cjk } from "@streamdown/cjk";
 import { code } from "@streamdown/code";
@@ -216,7 +220,13 @@ export const ReasoningContent = memo(
       )}
       {...props}
     >
-      <Streamdown plugins={streamdownPlugins}>{children}</Streamdown>
+      <Streamdown
+        components={streamdownComponents}
+        mermaid={streamdownMermaidOptions}
+        plugins={streamdownPlugins}
+      >
+        {children}
+      </Streamdown>
     </CollapsibleContent>
   )
 );
