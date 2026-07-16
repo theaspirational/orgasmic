@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
 import type { ComponentProps } from "react";
 import { useCallback } from "react";
@@ -100,31 +99,36 @@ export const ConversationScrollButton = ({
   );
 };
 
-const getMessageText = (message: UIMessage): string =>
+export type ConversationMessage = {
+  role: string;
+  parts: Array<{ type: string; text?: string }>;
+};
+
+const getMessageText = (message: ConversationMessage): string =>
   message.parts
-    .filter((part) => part.type === "text")
-    .map((part) => part.text)
+    .filter((part) => part.type === "text" && typeof part.text === "string")
+    .map((part) => part.text ?? "")
     .join("");
 
 export type ConversationDownloadProps = Omit<
   ComponentProps<typeof Button>,
   "onClick"
 > & {
-  messages: UIMessage[];
+  messages: ConversationMessage[];
   filename?: string;
-  formatMessage?: (message: UIMessage, index: number) => string;
+  formatMessage?: (message: ConversationMessage, index: number) => string;
 };
 
-const defaultFormatMessage = (message: UIMessage): string => {
+const defaultFormatMessage = (message: ConversationMessage): string => {
   const roleLabel =
     message.role.charAt(0).toUpperCase() + message.role.slice(1);
   return `**${roleLabel}:** ${getMessageText(message)}`;
 };
 
 export const messagesToMarkdown = (
-  messages: UIMessage[],
+  messages: ConversationMessage[],
   formatMessage: (
-    message: UIMessage,
+    message: ConversationMessage,
     index: number
   ) => string = defaultFormatMessage
 ): string => messages.map((msg, i) => formatMessage(msg, i)).join("\n\n");

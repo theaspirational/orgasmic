@@ -2,7 +2,7 @@
 
 import { cn } from "@/lib/utils";
 import type { MotionProps } from "motion/react";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import type { CSSProperties, ElementType, JSX } from "react";
 import { memo, useMemo } from "react";
 
@@ -38,6 +38,7 @@ const ShimmerComponent = ({
   duration = 2,
   spread = 2,
 }: TextShimmerProps) => {
+  const prefersReducedMotion = useReducedMotion();
   const MotionComponent = getMotionComponent(
     Component as keyof JSX.IntrinsicElements
   );
@@ -49,13 +50,13 @@ const ShimmerComponent = ({
 
   return (
     <MotionComponent
-      animate={{ backgroundPosition: "0% center" }}
+      animate={prefersReducedMotion ? undefined : { backgroundPosition: "0% center" }}
       className={cn(
         "relative inline-block bg-[length:250%_100%,auto] bg-clip-text text-transparent",
         "[--bg:linear-gradient(90deg,#0000_calc(50%-var(--spread)),var(--color-background),#0000_calc(50%+var(--spread)))] [background-repeat:no-repeat,padding-box]",
         className
       )}
-      initial={{ backgroundPosition: "100% center" }}
+      initial={prefersReducedMotion ? false : { backgroundPosition: "100% center" }}
       style={
         {
           "--spread": `${dynamicSpread}px`,
@@ -66,7 +67,7 @@ const ShimmerComponent = ({
       transition={{
         duration,
         ease: "linear",
-        repeat: Number.POSITIVE_INFINITY,
+        repeat: prefersReducedMotion ? 0 : Number.POSITIVE_INFINITY,
       }}
     >
       {children}
