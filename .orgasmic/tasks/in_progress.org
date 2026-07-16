@@ -1,3 +1,24 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-K7P24 TASK-P0FAQ fix round: transcript normalization terminal-close, code-block cache, Streamdown CSS + edge/a11y
+:PROPERTIES:
+:ID: TASK-K7P24
+:PRIORITY: high
+:END:
+
+One-round fix of the reviewer-codex-acp pass on TASK-P0FAQ (VERDICT NEEDS-CHANGES; run-20260716T193218, gpt-5.6-sol xhigh). All 6 findings + manager rulings below. UI-only; do NOT touch crates/. Preserve every TASK-VKP5T external-run guard and the existing 242-test suite. Gate order per the worktree-npm gotcha: 'cd ui && npm install' FIRST, then npx tsc --noEmit, npx vitest run (add the new tests below), npm run build.
+
+FINDING 1 (MED correctness, ui/src/lib/transcriptParts.ts:214-273) — terminal transcripts leave real tool calls stuck 'running'. On the REAL P0FAQ implementer session (641 envelopes) 64 of 131 tool cards stayed running because the normalizer never closes unpaired calls when run_complete/run_fail/lifecycle release arrives; the real Codex shape is 'exec' + command_execution/file_change item-started with no matching completed. RULING: on a terminal marker, transition still-'running' tool parts to a terminal state — 'completed' on normal end (run_complete / clean release), 'error' on run_fail. Do NOT invent a new cancelled/interrupted state (out of scope; keep the part union as text|reasoning|tool|system). Keep 'running' only when NO terminal marker has arrived (genuinely live). Seed tests from a real Codex exec+command_execution+file_change slice (e.g. the P0FAQ implementer session jsonl under .orgasmic/tmp/sessions/), not synthetic exec_command.
+
+FINDING 2 (MED correctness/security, ui/src/components/ai-elements/code-block.tsx:144-148) — module-global token cache keyed on language+length+first100+last100 collides: two outputs with equal length+boundaries share a key, so a later run can render a prior run's middle content (data bleed across runs for the SPA lifetime). RULING: replace with a collision-safe full-content key/hash and bound+evict the cache. Add the demonstrated same-prefix/suffix/length regression test.
+
+FINDING 3 (MED design/styling, ui/src/styles.css) — Streamdown + @streamdown/{cjk,code,math,mermaid} have no Tailwind v4 @source directive and no KaTeX CSS, so the build omits dependency-only utilities (0 wrap-anywhere, 0 katex rules); long links/math/plugin controls render unstyled. RULING: RETAIN the plugins (transcripts carry agent markdown incl code/math/mermaid) and complete the integration — add @source entries for streamdown/dist and each retained @streamdown/*/dist, import KaTeX CSS. Add a production-CSS or render assertion for a dependency-only class (wrap-anywhere) + math output. Override Streamdown's default blocked-image/mermaid-error fallback renderers (raw gray/red utilities) with semantic shadcn token classes to honor the token-only contract. Chunk-size optimization / dropping unused plugins is OUT OF SCOPE (optional follow-up).
+
+FINDING 4 (LOW correctness, ui/src/lib/transcriptParts.ts:245-273) — a tool_result received before its tool_call creates a standalone running result, then the call makes a SECOND running card with the same call_id. RULING: keep a pending-result map by call_id (or reconcile in a second pass) so result-before-call yields ONE paired tool part. Add the two-envelope out-of-order regression test.
+
+FINDING 5 (LOW a11y, ui/src/components/ai-elements/conversation.tsx:13-16) — Conversation hard-codes initial='smooth'/resize='smooth' (use-stick-to-bottom rAF spring, no prefers-reduced-motion check), violating the project motion contract. RULING: select 'instant' scrolling when prefers-reduced-motion is true, including the manual scroll-to-latest button.
+
+FINDING 6 (LOW bug, ui/src/components/manager/ManagerChatTranscript.tsx:169-187) — TranscriptToolCard mounts ToolOutput only when hasDisplayValue(output); for ok=false with empty/null output the only error detail (ToolOutput's 'Tool returned an error.') is hidden, leaving just the Error badge. RULING: render ToolOutput when part.state==='error' even if output is empty; add the empty-error card test.
+
+Commit message: 'fix(ui): transcript terminal-close + code-block cache + Streamdown CSS integration (TASK-K7P24)'. End with: orgasmic dispatch finalize --summary-file <report> --commit. Report per-finding what changed + the new tests + gate results (tsc/vitest/build) + confirmation the VKP5T guard suite still passes.
