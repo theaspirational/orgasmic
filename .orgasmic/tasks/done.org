@@ -12071,3 +12071,20 @@ Operator-requested artifact collaboration bundle (2026-07-13). (1) QuestionForm 
 :END:
 
 On mobile browsers, long-press selects one word and touchend opens the inline comment composer quoting only that word. Dragging the native selection handles to extend the selection never updates the quote: handle drags do not dispatch pointerup/touchend to the page (only document.selectionchange fires), and ArtifactView captures the anchor exactly once on pointerup/touchend/keyup. Fix: keep the captured anchor in sync via a debounced document selectionchange listener while the composer is eligible, re-capturing when the selection is non-collapsed inside the artifact body and preserving the existing quote when the selection collapses (e.g. focusing the textarea).
+
+* DONE TASK-VKP5T External manager self-registration via orgasmic CLI
+:PROPERTIES:
+:ID: TASK-VKP5T
+:IMPLEMENTS: dec_3Y2E1
+:END:
+
+Implement dec_3Y2E1's registration feature so a manager started outside the app appears in Running Agents as a supervised run.
+
+Scope:
+- Daemon: registration endpoint that acquires a run with driver 'external' (no PTY) on the manager.launch:<project> lease, using the SAME lease kind the app's manager launch acquires with (currently kind=Worker per the lease-held error text) so collisions actually collide. Liveness loop: poll the registered terminal session-leader PID ~every 30s, release the run on death; TTL fallback (refreshed by re-register) when no PID was supplied. Same-session re-register = idempotent refresh; different holder = readable refusal naming the holder.
+- Drivers: export ORGASMIC_RUN_ID into the environment of every launched PTY session.
+- CLI: 'orgasmic manager register' (captures getsid; exits 0 as a no-op with a notice when ORGASMIC_RUN_ID is set) and 'orgasmic manager release'.
+- Entry router (shipped/entry/router.org): add one unconditional Manager-startup step: run 'orgasmic manager register'.
+- UI: RunningAgentsMenu renders driver 'external' as an info row — click explains that attach is unavailable, an inline End control releases the run. No dock tab.
+
+Risk to test hardest: a stale external lease must never wedge the app's manager launch (the lease-held 500 class). Cover: PID death → release; daemon restart → registration does not survive and lease is free; refusal message paths.
