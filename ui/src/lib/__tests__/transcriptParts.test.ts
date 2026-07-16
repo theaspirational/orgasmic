@@ -19,6 +19,56 @@ function event(
   return { seq, time, kind: 'driver_event', event: payload };
 }
 
+// Copied from dispatch-TASK-P0FAQ-implementer-20260716T190738.jsonl with
+// paths and payload text shortened. Codex emits the outer `exec` call plus
+// command_execution/file_change item-started calls without matching results.
+const realCodexStartedItems: SessionEnvelope[] = [
+  event(3, {
+    args: 'const result = await tools.exec_command({ cmd: "orgasmic entry" });',
+    call_id: 'call_1igTc3Sv101HjM2369zFVhiv',
+    name: 'exec',
+    seq: 0,
+    type: 'tool_call',
+  }),
+  event(4, {
+    args: {
+      aggregatedOutput: null,
+      command: "/bin/zsh -lc 'orgasmic entry'",
+      commandActions: [{ command: 'orgasmic entry', type: 'unknown' }],
+      cwd: '/repo',
+      durationMs: null,
+      exitCode: null,
+      id: 'exec-5372ffcc-d1af-4af5-af17-33edbb97a9f2',
+      processId: '33050',
+      source: 'unifiedExecStartup',
+      status: 'inProgress',
+      type: 'commandExecution',
+    },
+    call_id: 'exec-5372ffcc-d1af-4af5-af17-33edbb97a9f2',
+    name: 'command_execution',
+    seq: 1,
+    type: 'tool_call',
+  }),
+  event(234, {
+    args: {
+      changes: [
+        {
+          diff: '@@ -1 +1 @@\n-old\n+new',
+          kind: { move_path: null, type: 'update' },
+          path: '/repo/ui/src/components/ai-elements/tool.tsx',
+        },
+      ],
+      id: 'exec-9ff061ee-f824-447a-863e-5fc35022ed33',
+      status: 'inProgress',
+      type: 'fileChange',
+    },
+    call_id: 'exec-9ff061ee-f824-447a-863e-5fc35022ed33',
+    name: 'file_change',
+    seq: 110,
+    type: 'tool_call',
+  }),
+];
+
 describe('normalizeTranscriptParts', () => {
   it('coalesces adjacent text chunks by stream while preserving role and the latest time', () => {
     const parts = normalizeTranscriptParts(
@@ -119,6 +169,45 @@ describe('normalizeTranscriptParts', () => {
     expect(tools[1]).toMatchObject({ state: 'error', ok: false, output: 'permission denied' });
   });
 
+  it('keeps real Codex exec, command_execution, and file_change starts running while live', () => {
+    const tools = normalizeTranscriptParts(source(...realCodexStartedItems)).filter(
+      (part): part is TranscriptToolPart => part.type === 'tool',
+    );
+
+    expect(tools.map((tool) => [tool.name, tool.state])).toEqual([
+      ['exec', 'running'],
+      ['command_execution', 'running'],
+      ['file_change', 'running'],
+    ]);
+  });
+
+  it.each<[string, SessionEnvelope, TranscriptToolPart['state']]>([
+    ['run_complete', event(640, { type: 'run_complete' }), 'completed'],
+    ['run_fail', event(640, { type: 'run_fail', message: 'driver failed' }), 'error'],
+    [
+      'lifecycle release',
+      {
+        seq: 640,
+        time: '2026-07-16T19:26:52.835304Z',
+        kind: 'lifecycle',
+        event: {
+          finalized_by_worker: true,
+          outcome: 'cancelled',
+          phase: 'release',
+          reason: 'worker finalize for TASK-P0FAQ',
+        },
+      },
+      'completed',
+    ],
+  ])('closes real Codex item-started tools as %s reaches the transcript', (_label, terminal, state) => {
+    const tools = normalizeTranscriptParts(source(...realCodexStartedItems, terminal)).filter(
+      (part): part is TranscriptToolPart => part.type === 'tool',
+    );
+
+    expect(tools).toHaveLength(3);
+    expect(tools.every((tool) => tool.state === state)).toBe(true);
+  });
+
   it('keeps an unpaired successful tool result visible as running', () => {
     const parts = normalizeTranscriptParts(
       source(event(1, { type: 'tool_result', call_id: 'missing-call', ok: true, output: { value: 1 } })),
@@ -129,6 +218,36 @@ describe('normalizeTranscriptParts', () => {
       name: 'tool result',
       state: 'running',
       output: { value: 1 },
+      ok: true,
+    });
+  });
+
+  it('pairs a result that arrives before its call into one completed tool part', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, {
+          type: 'tool_result',
+          call_id: 'out-of-order-call',
+          ok: true,
+          output: { content: 'file contents' },
+        }),
+        event(2, {
+          type: 'tool_call',
+          call_id: 'out-of-order-call',
+          name: 'read',
+          args: { path: 'src/app.ts' },
+        }),
+      ),
+    );
+
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({
+      type: 'tool',
+      callId: 'out-of-order-call',
+      name: 'read',
+      state: 'completed',
+      input: { path: 'src/app.ts' },
+      output: { content: 'file contents' },
       ok: true,
     });
   });

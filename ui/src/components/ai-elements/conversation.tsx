@@ -3,21 +3,31 @@
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
+import { useReducedMotion } from "motion/react";
 import type { ComponentProps } from "react";
 import { useCallback } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = ComponentProps<typeof StickToBottom>;
 
-export const Conversation = ({ className, ...props }: ConversationProps) => (
-  <StickToBottom
-    className={cn("relative flex-1 overflow-y-hidden", className)}
-    initial="smooth"
-    resize="smooth"
-    role="log"
-    {...props}
-  />
-);
+export const Conversation = ({
+  className,
+  initial = "smooth",
+  resize = "smooth",
+  ...props
+}: ConversationProps) => {
+  const prefersReducedMotion = useReducedMotion();
+
+  return (
+    <StickToBottom
+      className={cn("relative flex-1 overflow-y-hidden", className)}
+      initial={prefersReducedMotion ? "instant" : initial}
+      resize={prefersReducedMotion ? "instant" : resize}
+      role="log"
+      {...props}
+    />
+  );
+};
 
 export type ConversationContentProps = ComponentProps<
   typeof StickToBottom.Content
@@ -75,10 +85,11 @@ export const ConversationScrollButton = ({
   ...props
 }: ConversationScrollButtonProps) => {
   const { isAtBottom, scrollToBottom } = useStickToBottomContext();
+  const prefersReducedMotion = useReducedMotion();
 
   const handleScrollToBottom = useCallback(() => {
-    scrollToBottom();
-  }, [scrollToBottom]);
+    scrollToBottom(prefersReducedMotion ? "instant" : "smooth");
+  }, [prefersReducedMotion, scrollToBottom]);
 
   return (
     !isAtBottom && (
