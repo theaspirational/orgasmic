@@ -1,3 +1,24 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-P0FAQ Adopt Vercel AI Elements for the run transcript chat UI
+:PROPERTIES:
+:ID: TASK-P0FAQ
+:RELATES_TO: TASK-VKP5T dec_FBBT2 dec_RDHX7
+:END:
+
+Replace the hand-rolled transcript presentation with vendored AI Elements components (https://github.com/vercel/ai-elements, docs https://elements.ai-sdk.dev/). Chosen over t3code (app, not a library; Effect-RPC-entangled), Zed (Rust/GPUI, reference only), and zvzuola/acp-components (ACP-semantic but SCSS/own theming — visually foreign). AI Elements is a shadcn registry: full component source lands in our repo, styled by the shadcn tokens we already theme, no runtime dependency on the Vercel AI SDK (components take plain props).
+
+Current state: ManagerChatTranscript.tsx (~718 lines) hand-renders daemon session events with heuristic tool summarization (summarizeToolCall/summarizeToolResult/parseToolResultOutput); RunSurface.tsx (~271 lines) hosts it. Chat bubbles and tool-call rendering are the weak points; the event normalization is worth keeping.
+
+Plan for the implementing agent:
+1. Vendor components: npx ai-elements@latest add conversation message response tool reasoning code-block — confirm they land under the components.json aliases and compile against Tailwind v4/React 19; commit them as-is first so upstream diffs stay readable, then adapt.
+2. Extract normalization from ManagerChatTranscript into a pure, unit-tested module (e.g. transcriptParts.ts) that folds raw driver events (text_chunk streams by stream+mergeKey, tool_call, tool_result pairing, stderr diagnostics, lifecycle markers) into typed parts: text | reasoning | tool {name, state, input, output, ok} | system. Pair tool_result to its tool_call; map ok=false to state 'error', unpaired/streaming to 'running'.
+3. Presentation swap: Conversation (stick-to-bottom scroll) wrapping Message/Response (markdown agent text), Tool (collapsible card, status badge streaming/running/completed/error, input/output sections), CodeBlock for command output, Reasoning for thinking chunks where the harness emits them. Keep our role/label conventions and tooltips.
+4. Preserve behaviors that live around the transcript: composer/send_input for interactive runs, readOnly mode, autoscroll-vs-user-scroll, and ALL external-manager guards from the TASK-VKP5T fix round (commit 1536cb0 — see sequencing note): external runs are excluded from taskbar buttons (RunDock), openRun rejects driver 'external' (runDock.tsx), persisted external tabs are purged on restore, RunsView shows End not Open. The new chat surface must remain unreachable for external runs; do not weaken those tests.
+5. ACP-specific widgets AI Elements lacks (permission prompts, plan/progress cards): out of scope here; if trivially adjacent, file follow-ups instead. Zed and t3code are the interaction-design references when that task comes.
+6. Gates: vitest for the new parts module + tool rendering, keep the existing suite green (226+), npx tsc --noEmit, npm run build. UI-only change: do not touch the daemon or drivers.
+
+Sequencing: depends on TASK-VKP5T's fix commit 1536cb0 (external-run UI guards) being merged to main first; the transcript refactor edits the same files (RunDock/RunsView/runDock/RunSurface) and must build on those guards, not race them.
+** Evidence
+[2026-07-16 Wed] IMPLEMENTED + MERGED 7864370 (worker impl commits 2da73fb vendor + 2e5cee3 adapt; implementer-codex-acp, gpt-5.6-sol xhigh, run-20260716T190738, ~19m; +4135/-652, 14 files, ui-only). Worker-driven finalize fired clean (implementer.done 19:26:52, last.txt intact — first codex-acp dispatch this session, dec_3M7M0 contract held). Vendored AI Elements (conversation/message/tool/reasoning/code-block + shimmer, button-group/collapsible primitives) styled on existing shadcn tokens; extracted pure ui/src/lib/transcriptParts.ts (event->typed parts text|reasoning|tool|system, tool_result paired to tool_call by call_id, ok=false->error, unpaired/streaming->running); ManagerChatTranscript rewired to the vendored surface; RunSurface untouched (send_input/readOnly/autoscroll preserved). MANAGER INDEPENDENT GATES on merged main (required npm install in ui/ first — new deps use-stick-to-bottom/streamdown+@streamdown/*/motion were in the merged lock but not this checkout's node_modules; the known worktree-npm gotcha, NOT a code defect): npx tsc --noEmit clean; npx vitest run 242/242 across 31 files (new transcriptParts.test 10/10, TranscriptToolCard 3/3); npm run build ok (5693 modules). TASK-VKP5T external-run guards verified intact: guard sources (RunsView/manager/RunDock/lib/runDock/lib/runLabels) byte-unchanged, focused guard suite 31 tests green. Upstream delta noted: AI Elements 1.9.0 dropped the standalone 'response' registry item (404); MessageResponse from 'message' used instead. Residual (non-blocking): no manual browser pixel pass; Streamdown/Shiki stack triggers vite >500kB chunk advisory.
