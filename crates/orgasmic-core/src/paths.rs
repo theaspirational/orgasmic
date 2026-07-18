@@ -106,6 +106,23 @@ pub fn prune_dispatch_stem_after_worktree(worktree_path: &Path) {
     };
     let _ = std::fs::remove_file(stem_dir.join(format!("{stem}-last.txt")));
     let _ = std::fs::remove_file(stem_dir.join(format!("{stem}-stdout.log")));
+    if let Ok(entries) = std::fs::read_dir(stem_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if (name.starts_with(&format!("{stem}-")) && name.ends_with("-last.txt"))
+                || (name.starts_with(&format!("{stem}-")) && name.ends_with("-stdout.log"))
+            {
+                let _ = if entry.path().is_file() {
+                    std::fs::remove_file(entry.path())
+                } else {
+                    Ok(())
+                };
+            }
+        }
+    }
     let leftover_worktree = stem_dir.join("worktree");
     if leftover_worktree.is_dir() {
         let _ = std::fs::remove_dir(&leftover_worktree);

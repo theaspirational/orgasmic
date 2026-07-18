@@ -4712,16 +4712,26 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
             // completion artifacts. Any tombstone with finalized_by_worker=false
             // is orphan — never synthesize last.txt/stdout.log from driver events.
             if dispatch_release_without_worker_finalize(&envelopes) {
-                tracing::warn!(
-                    run_id = %completion.run_id,
-                    reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
-                    "dispatch completion watcher: release without worker finalize, flagging orphan"
-                );
-                record_dispatch_orphaned(&state, &completion).await;
+                if dispatch_release_requires_orphan_signal(&envelopes) {
+                    tracing::warn!(
+                        run_id = %completion.run_id,
+                        reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                        "dispatch completion watcher: release without worker finalize, flagging orphan"
+                    );
+                    record_dispatch_orphaned(&state, &completion).await;
+                } else {
+                    tracing::info!(
+                        run_id = %completion.run_id,
+                        reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                        "dispatch completion watcher: cancelled release without worker finalize, no orphan"
+                    );
+                }
                 return;
             }
             if grace_elapsed {
-                if dispatch_terminal_reached(&envelopes) {
+                if dispatch_terminal_reached(&envelopes)
+                    && dispatch_release_requires_orphan_signal(&envelopes)
+                {
                     tracing::warn!(
                         run_id = %completion.run_id,
                         "dispatch completion watcher: terminal without worker finalize, flagging orphan"
@@ -4740,27 +4750,45 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
     });
 }
 
-/// True for every `timed_out_run` release reason (supervisor.rs): the run was
-/// killed by a deadline, not by the worker completing. All three are released
-/// as `ReleaseOutcome::Failed`, so the completion watcher must treat any of
-/// them (absent a worker finalize) as orphan rather than scrape a fake report.
-fn is_timeout_release_reason(reason: &str) -> bool {
+/// Whether a non-finalized release should emit `manager.dispatch_orphaned`.
+/// Intentional cancellation (`ReleaseOutcome::Cancelled`) stays artifact-free
+/// and must not trigger orphan rescue (TASK-756WX).
+// orgasmic:TASK-756WX,dec_3M7M0
+fn dispatch_release_requires_orphan_signal(envelopes: &[SessionEnvelope]) -> bool {
+    if !dispatch_release_without_worker_finalize(envelopes) {
+        return false;
+    }
+    match dispatch_release_outcome(envelopes) {
+        Some(ReleaseOutcome::Cancelled) => false,
+        Some(ReleaseOutcome::Failed) | Some(ReleaseOutcome::Interrupted) => true,
+        Some(ReleaseOutcome::Completed) => true,
+        None => dispatch_release_reason(envelopes)
+            .is_some_and(|reason| anomalous_without_finalize_release_reason(&reason)),
+    }
+}
+
+fn anomalous_without_finalize_release_reason(reason: &str) -> bool {
     matches!(
         reason,
-        "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
+        "stall_timeout_exceeded"
+            | "max_run_duration_exceeded"
+            | "idle_timeout_exceeded"
+            | "protocol_end_without_finalize"
+            | "driver terminal event"
     )
 }
 
-/// Release reasons that mean the run ended without `orgasmic dispatch
-/// finalize` and must be flagged orphan (never scraped into a fake done
-/// report). Timeouts, ACP/subprocess protocol-end without finalize
-/// (TASK-P4MGK / dec_WDR5K), and TUI pane/process terminal events
-/// (TASK-AFE5Q — no marker/scrollback scrape fallback remains).
-// orgasmic:TASK-AFE5Q,TASK-P4MGK,dec_WDR5K
-fn is_orphan_without_finalize_release_reason(reason: &str) -> bool {
-    is_timeout_release_reason(reason)
-        || reason == "protocol_end_without_finalize"
-        || reason == "driver terminal event"
+/// Last `Lifecycle::Release` event's `outcome`, if any.
+fn dispatch_release_outcome(envelopes: &[SessionEnvelope]) -> Option<ReleaseOutcome> {
+    envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()) {
+            Ok(Lifecycle::Release { outcome, .. }) => Some(outcome),
+            _ => None,
+        }
+    })
 }
 
 /// Last `Lifecycle::Release` event's `reason`, if any — used to tell a timeout
@@ -4842,32 +4870,6 @@ async fn record_dispatch_orphaned(state: &ApiState, completion: &DispatchComplet
             "manager.dispatch_orphaned tx failed"
         );
     }
-}
-
-async fn write_dispatch_completion_artifacts(
-    state: &ApiState,
-    completion: &DispatchCompletion,
-    envelopes: &[SessionEnvelope],
-) {
-    // dec_3M7M0 / TASK-ZB90M: completion report artifacts may be authored
-    // only by worker finalize. Never synthesize last.txt/stdout.log from
-    // driver events when the worker did not finalize.
-    if !dispatch_release_finalized_by_worker(envelopes) {
-        tracing::info!(
-            run_id = %completion.run_id,
-            "dispatch completion artifact write skipped: worker did not finalize"
-        );
-        return;
-    }
-    // Belt-and-suspenders: the worker already wrote last.txt/stdout.log
-    // verbatim on finalize — never overwrite that report.
-    tracing::info!(
-        run_id = %completion.run_id,
-        "dispatch completion artifact write skipped: worker finalized via `orgasmic dispatch finalize`"
-    );
-    let _ = state;
-    let _ = completion;
-    let _ = envelopes;
 }
 
 #[allow(dead_code)] // retained for unit tests of dispatch_last_summary_from_session
@@ -14671,6 +14673,18 @@ mod tests {
             },
         ];
         assert!(!dispatch_terminal_reached(&envelopes));
+        let identity = RuntimeIdentity {
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        for envelope in &envelopes {
+            writer
+                .append(envelope.kind, envelope.event.clone())
+                .unwrap();
+        }
+        drop(writer);
         let completion = DispatchCompletion {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-072".into(),
@@ -14680,30 +14694,31 @@ mod tests {
             stdout_path: stdout_path.clone(),
             worktree_path: worktree.clone(),
         };
-        write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
+        spawn_dispatch_completion_watcher(state.clone(), completion);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
             !last_path.exists(),
-            "non-finalized release must not synthesize last.txt"
+            "non-finalized interrupted release must not synthesize last.txt"
         );
         assert!(
             !stdout_path.exists(),
-            "non-finalized release must not synthesize stdout.log"
+            "non-finalized interrupted release must not synthesize stdout.log"
         );
+        let _ = deadline;
     }
 
-    /// Acceptance #4 (TASK-WFW1N, regression, dec_3M7M0): once a worker has
-    /// called `orgasmic dispatch finalize` — recorded as
-    /// `Lifecycle::Release { finalized_by_worker: true, .. }` — the
-    /// completion path must never scrape scrollback and overwrite the
-    /// worker-authored `last.txt`/`stdout.log`, even when reached directly
-    /// (e.g. the post-release grace path, not just the watcher's early
-    /// return).
+    /// Worker finalize tombstone: watcher must never overwrite worker-authored
+    /// artifacts even when invoked directly.
     #[tokio::test]
-    async fn finalized_release_suppresses_completion_artifact_write() {
+    async fn finalized_release_watcher_leaves_worker_artifacts_intact() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        let state = direct_stage_test_state(home).await;
+        let mut state = direct_stage_test_state(home).await;
+        state.dispatch_watcher_grace = Duration::from_millis(50);
+
         let session_path = tmp.path().join("session.jsonl");
         let last_path = tmp.path().join("last.txt");
         let stdout_path = tmp.path().join("stdout.log");
@@ -14715,32 +14730,34 @@ mod tests {
         std::fs::write(&last_path, worker_last).unwrap();
         std::fs::write(&stdout_path, worker_stdout).unwrap();
 
-        let envelopes = vec![
-            SessionEnvelope {
-                seq: 0,
-                time: chrono::Utc::now(),
-                run_id: "run-test".into(),
-                runtime_id: "rt-test".into(),
-                boot_id: "boot-test".into(),
-                kind: SessionEventKind::DriverEvent,
-                event: json!({"type": "text_chunk", "stream": "assistant", "chunk": "scrollback scrape candidate — must NOT land in last.txt"}),
-            },
-            SessionEnvelope {
-                seq: 1,
-                time: chrono::Utc::now(),
-                run_id: "run-test".into(),
-                runtime_id: "rt-test".into(),
-                boot_id: "boot-test".into(),
-                kind: SessionEventKind::Lifecycle,
-                event: serde_json::to_value(Lifecycle::Release {
-                    reason: "worker finalize for TASK-B05AM".into(),
-                    outcome: ReleaseOutcome::Completed,
-                    finalized_by_worker: true,
-                })
-                .unwrap(),
-            },
-        ];
+        let envelopes = vec![SessionEnvelope {
+            seq: 1,
+            time: chrono::Utc::now(),
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::Release {
+                reason: "worker finalize for TASK-B05AM".into(),
+                outcome: ReleaseOutcome::Completed,
+                finalized_by_worker: true,
+            })
+            .unwrap(),
+        }];
         assert!(dispatch_release_finalized_by_worker(&envelopes));
+
+        let identity = RuntimeIdentity {
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        for envelope in &envelopes {
+            writer
+                .append(envelope.kind, envelope.event.clone())
+                .unwrap();
+        }
+        drop(writer);
 
         let completion = DispatchCompletion {
             project_id: "proj-dispatch".into(),
@@ -14751,17 +14768,13 @@ mod tests {
             stdout_path: stdout_path.clone(),
             worktree_path: worktree.clone(),
         };
-        write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
+        spawn_dispatch_completion_watcher(state.clone(), completion);
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let last_body = std::fs::read_to_string(&last_path).unwrap();
+        assert_eq!(std::fs::read_to_string(&last_path).unwrap(), worker_last);
         assert_eq!(
-            last_body, worker_last,
-            "finalized release must not overwrite the worker-authored last.txt"
-        );
-        let stdout_body = std::fs::read_to_string(&stdout_path).unwrap();
-        assert_eq!(
-            stdout_body, worker_stdout,
-            "finalized release must not overwrite the worker-authored stdout.log"
+            std::fs::read_to_string(&stdout_path).unwrap(),
+            worker_stdout
         );
     }
 
@@ -14769,14 +14782,10 @@ mod tests {
     /// `orgasmic dispatch finalize` and the run stalls, the completion
     /// watcher must flag the run `manager.dispatch_orphaned` rather than
     /// silently synthesizing a `last.txt` that would read as a normal
-    /// completion. Drives the real `spawn_dispatch_completion_watcher`
-    /// end-to-end against a session file recorded exactly as
-    /// `Supervisor::release_first_timed_out_run_after_candidate` would
-    /// write one (`reason: "stall_timeout_exceeded"`,
-    /// `finalized_by_worker: false`).
+    /// completion.
     #[tokio::test]
-    async fn manual_release_without_worker_finalize_flags_orphan_not_done() {
-        assert_timeout_without_finalize_flags_orphan("run released").await;
+    async fn manual_release_without_worker_finalize_does_not_flag_orphan() {
+        assert_cancelled_without_finalize_emits_no_orphan("run released").await;
     }
 
     #[tokio::test]
@@ -14784,12 +14793,6 @@ mod tests {
         assert_timeout_without_finalize_flags_orphan("stall_timeout_exceeded").await;
     }
 
-    /// Reviewer #1 regression: the orphan branch keyed on the literal
-    /// `"stall_timeout_exceeded"`, but `timed_out_run` also emits
-    /// `idle_timeout_exceeded` (the ONLY timeout the persistent artifactor-rmux
-    /// path can hit — it disables stall) and `max_run_duration_exceeded`. Those
-    /// were falling through to a synthesized last.txt (silently "done"). Assert
-    /// a non-stall timeout without finalize is also flagged orphan.
     #[tokio::test]
     async fn idle_timeout_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("idle_timeout_exceeded").await;
@@ -14798,6 +14801,66 @@ mod tests {
     #[tokio::test]
     async fn max_run_duration_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("max_run_duration_exceeded").await;
+    }
+
+    async fn assert_cancelled_without_finalize_emits_no_orphan(release_reason: &str) {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let mut state = direct_stage_test_state(home).await;
+        state.dispatch_watcher_grace = Duration::from_millis(50);
+
+        let session_path = tmp.path().join("session.jsonl");
+        let last_path = tmp.path().join("last.txt");
+        let stdout_path = tmp.path().join("stdout.log");
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let identity = RuntimeIdentity {
+            run_id: format!("run-cancel-{release_reason}"),
+            runtime_id: "rt-cancel-test".into(),
+            boot_id: "boot-cancel-test".into(),
+        };
+        let mut writer =
+            orgasmic_core::SessionWriter::open(&session_path, identity.clone()).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: release_reason.into(),
+                    outcome: ReleaseOutcome::Cancelled,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        let completion = DispatchCompletion {
+            project_id: "proj-dispatch".into(),
+            task_id: "TASK-CANCEL".into(),
+            run_id: identity.run_id.clone(),
+            session_path: session_path.clone(),
+            last_path: last_path.clone(),
+            stdout_path: stdout_path.clone(),
+            worktree_path: worktree.clone(),
+        };
+        spawn_dispatch_completion_watcher(state.clone(), completion);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut tx_raw = String::new();
+        while std::time::Instant::now() < deadline {
+            if let Ok(body) = std::fs::read_to_string(&state.default_tx_path) {
+                tx_raw = body;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            !tx_raw.contains("manager.dispatch_orphaned"),
+            "cancelled release must not record manager.dispatch_orphaned: {tx_raw:?}"
+        );
+        assert!(!last_path.exists());
+        assert!(!stdout_path.exists());
     }
 
     async fn assert_timeout_without_finalize_flags_orphan(release_reason: &str) {
@@ -14904,32 +14967,44 @@ mod tests {
     }
 
     #[test]
-    fn is_timeout_release_reason_covers_all_timed_out_run_reasons() {
-        // Must stay in sync with `timed_out_run` (supervisor.rs).
-        assert!(is_timeout_release_reason("stall_timeout_exceeded"));
-        assert!(is_timeout_release_reason("idle_timeout_exceeded"));
-        assert!(is_timeout_release_reason("max_run_duration_exceeded"));
-        // A clean worker finalize / dispatch-close release is NOT a timeout.
-        assert!(!is_timeout_release_reason("worker finalize for TASK-ABC"));
-        assert!(!is_timeout_release_reason(""));
-    }
-
-    #[test]
-    fn is_orphan_without_finalize_covers_timeouts_and_protocol_end() {
-        // orgasmic:TASK-P4MGK
-        assert!(is_orphan_without_finalize_release_reason(
-            "protocol_end_without_finalize"
-        ));
-        assert!(is_orphan_without_finalize_release_reason(
-            "stall_timeout_exceeded"
-        ));
-        // TASK-AFE5Q: TUI pane/process end is orphan — never scrape scrollback.
-        assert!(is_orphan_without_finalize_release_reason(
-            "driver terminal event"
-        ));
-        assert!(!is_orphan_without_finalize_release_reason(
-            "worker finalize for TASK-ABC"
-        ));
+    fn dispatch_release_requires_orphan_signal_covers_anomalous_endings() {
+        let timeout = |reason: &str| {
+            let envelopes = vec![SessionEnvelope {
+                seq: 0,
+                time: chrono::Utc::now(),
+                run_id: "run-test".into(),
+                runtime_id: "rt-test".into(),
+                boot_id: "boot-test".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::to_value(Lifecycle::Release {
+                    reason: reason.into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            }];
+            dispatch_release_requires_orphan_signal(&envelopes)
+        };
+        assert!(timeout("stall_timeout_exceeded"));
+        assert!(timeout("idle_timeout_exceeded"));
+        assert!(timeout("max_run_duration_exceeded"));
+        assert!(timeout("protocol_end_without_finalize"));
+        assert!(timeout("driver terminal event"));
+        let cancelled = vec![SessionEnvelope {
+            seq: 0,
+            time: chrono::Utc::now(),
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::Release {
+                reason: "run released".into(),
+                outcome: ReleaseOutcome::Cancelled,
+                finalized_by_worker: false,
+            })
+            .unwrap(),
+        }];
+        assert!(!dispatch_release_requires_orphan_signal(&cancelled));
     }
 
     #[test]

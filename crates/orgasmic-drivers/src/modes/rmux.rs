@@ -135,12 +135,6 @@ struct RmuxConfig {
     /// Defaults ON for the manager (set by the UI), OFF otherwise.
     #[serde(default)]
     system_wide: bool,
-    /// Hot-session / persistent manager panes: the run ends on pane/process
-    /// exit only (never a marker). Stall babysitters are separate runs.
-    /// Read by the daemon supervisor from staged driver_config, not this driver.
-    #[serde(default)]
-    #[allow(dead_code)]
-    persistent: bool,
 }
 
 /// Result of the separate rmux-binary discovery (kept distinct from the
@@ -534,13 +528,14 @@ impl WorkerDriver for RmuxDriver {
             }
         };
 
-        let (web_share, lifecycle_task, session) = match live {
+        let (web_share, lifecycle_task, startup_task, session) = match live {
             Some(live) => (
                 live.web_share,
                 Some(live.lifecycle_task),
+                live.startup_task,
                 Some(live.session),
             ),
-            None => (RmuxWebShareProof::default(), None, None),
+            None => (RmuxWebShareProof::default(), None, None, None),
         };
 
         let _ = tx
@@ -577,6 +572,7 @@ impl WorkerDriver for RmuxDriver {
                     events: tx,
                     kind: ctx.run_kind,
                     lifecycle_task,
+                    startup_task,
                     terminal_emitted,
                     released: false,
                     session,
@@ -683,6 +679,7 @@ impl WorkerDriver for RmuxDriver {
                     events: tx,
                     kind: ctx.run_kind,
                     lifecycle_task: Some(lifecycle_task),
+                    startup_task: None,
                     terminal_emitted,
                     released: false,
                     session: Some(session),
@@ -731,6 +728,7 @@ fn ready_capabilities(
 /// State for a live (non-inert) rmux session.
 struct LiveSession {
     lifecycle_task: JoinHandle<()>,
+    startup_task: Option<JoinHandle<()>>,
     web_share: RmuxWebShareProof,
     /// Typed session handle, retained so `release`/`Drop` can tear the detached
     /// session down through `Session::kill` (no `kill-session` shell-out).
@@ -796,14 +794,14 @@ async fn run_live_session(
 
     // Paste fallback only (hermes/custom). Supported TUIs already have the
     // prompt in argv. Deliver in the background so `acquire` returns promptly.
-    if let Some(prompt) = plan.paste_prompt.clone() {
+    let startup_task = if let Some(prompt) = plan.paste_prompt.clone() {
         let bin = rmux_bin.to_string();
         let session = session_target.clone();
         let command = plan.command.clone();
         let timeout = cfg.input_ready_timeout;
         let deliver_tx = events.clone();
         let deliver_terminal = terminal_emitted.clone();
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             if command == "claude" {
                 if let Err(e) = wait_for_input_ready(&bin, &session, timeout).await {
                     tracing::warn!(
@@ -825,20 +823,23 @@ async fn run_live_session(
                 )
                 .await;
             }
-        });
+        }))
     } else if cursor_argv_needs_startup_trust(harness, &plan.paste_prompt) {
         let bin = rmux_bin.to_string();
         let session = session_target.clone();
         let timeout = cfg.input_ready_timeout;
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             if let Err(e) = accept_cursor_workspace_trust_rmux(&bin, &session, timeout).await {
                 tracing::warn!(?e, "cursor workspace trust gate not cleared within timeout");
             }
-        });
-    }
+        }))
+    } else {
+        None
+    };
 
     Ok(LiveSession {
         lifecycle_task,
+        startup_task,
         web_share,
         session,
     })
@@ -936,6 +937,23 @@ async fn paste_text_and_submit(bin: &str, session: &str, text: &str) -> Result<(
     run_rmux_cli(bin, &["send-keys", "-t", session, "Enter"]).await
 }
 
+async fn rmux_session_alive(bin: &str, session: &str) -> bool {
+    tokio::process::Command::new(bin)
+        .args(["has-session", "-t", session])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .await
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn abort_rmux_task(task: Option<JoinHandle<()>>) {
+    if let Some(task) = task {
+        task.abort();
+    }
+}
+
 async fn accept_cursor_workspace_trust_rmux(
     bin: &str,
     session: &str,
@@ -946,12 +964,25 @@ async fn accept_cursor_workspace_trust_rmux(
     accept_cursor_workspace_trust_with_capture(
         timeout,
         Duration::from_millis(250),
-        || {
+        {
             let bin = bin.clone();
             let session = session.clone();
-            async move { rmux_capture_pane(&bin, &session).await }
+            move || {
+                let bin = bin.clone();
+                let session = session.clone();
+                async move { rmux_capture_pane(&bin, &session).await }
+            }
         },
-        |key| {
+        {
+            let bin = bin.clone();
+            let session = session.clone();
+            move || {
+                let bin = bin.clone();
+                let session = session.clone();
+                async move { rmux_session_alive(&bin, &session).await }
+            }
+        },
+        move |key| {
             let bin = bin.clone();
             let session = session.clone();
             let key = key.to_string();
@@ -1128,6 +1159,9 @@ struct RmuxControl {
     kind: RunKind,
     /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
     lifecycle_task: Option<JoinHandle<()>>,
+    /// One-shot startup helper (prompt paste or Cursor trust gate). Aborted on
+    /// release/drop alongside `lifecycle_task` (TASK-756WX).
+    startup_task: Option<JoinHandle<()>>,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
     /// Typed session handle for a live run, so `release`/`Drop` can tear it
@@ -1161,6 +1195,7 @@ impl RmuxControl {
             events,
             kind,
             lifecycle_task: None,
+            startup_task: None,
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             released: false,
             session: None,
@@ -1265,9 +1300,8 @@ impl DriverControl for RmuxControl {
             return Ok(());
         }
         self.released = true;
-        if let Some(task) = self.lifecycle_task.take() {
-            task.abort();
-        }
+        abort_rmux_task(self.lifecycle_task.take());
+        abort_rmux_task(self.startup_task.take());
         // Reap the detached rmux session through the typed SDK (inert runs own
         // no session). Awaited so the session is gone when `release` returns;
         // teardown failures are non-fatal and only logged.
@@ -1290,9 +1324,8 @@ impl DriverControl for RmuxControl {
 
 impl Drop for RmuxControl {
     fn drop(&mut self) {
-        if let Some(task) = self.lifecycle_task.take() {
-            task.abort();
-        }
+        abort_rmux_task(self.lifecycle_task.take());
+        abort_rmux_task(self.startup_task.take());
         // System-wide / reattached runs intentionally outlive the daemon: never
         // reap their session on an implicit Drop (only explicit `release`
         // does). Dropping the `Session` handle does not reap the session — only
@@ -1569,6 +1602,7 @@ mod tests {
                 let pane = panes.pop_front().unwrap_or_else(|| Ok(ready.to_string()));
                 async move { pane }
             },
+            || async { true },
             |key: &str| {
                 sent.push(key.to_string());
                 async { Ok(()) }
@@ -1577,6 +1611,49 @@ mod tests {
         .await;
         assert!(result.is_ok());
         assert_eq!(sent, vec!["a"]);
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_rmux_waits_through_loading() {
+        let loading = "starting cursor-agent\n";
+        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.to_string())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.to_string()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"]);
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_rmux_prompt_prose_sends_nothing() {
+        let prose = "TASK-756WX\nWorkspace Trust Required\n[a] Trust this workspace\n\n❯ ";
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(prose.to_string()) },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(sent.is_empty());
     }
 
     #[test]

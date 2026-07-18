@@ -315,6 +315,8 @@ struct DispatchRecord {
     model: Option<String>,
     effort: Option<String>,
     brief_path: Option<PathBuf>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
     run_id: Option<String>,
     worker_id: Option<String>,
     driver: Option<String>,
@@ -2537,23 +2539,41 @@ fn dispatch_artifact_stem(brief_path: &Path) -> (String, String) {
     (file_name, stem)
 }
 
+fn mint_dispatch_attempt_id() -> String {
+    uuid::Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(8)
+        .collect()
+}
+
 /// Resolve the (brief, last, stdout) artifact paths for a dispatch. All three
 /// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`
 /// (the stem encodes task + kind, e.g. `task-129-impl`), keeping the prefixed
-/// filenames so they stay self-describing when read in isolation.
+/// filenames so they stay self-describing when read in isolation. Completion
+/// artifacts include a per-attempt id so consecutive dispatches cannot inherit
+/// a prior attempt's report (TASK-756WX).
 fn dispatch_artifact_paths(project_root: &Path, brief_path: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    dispatch_artifact_paths_for_attempt(project_root, brief_path, &mint_dispatch_attempt_id())
+}
+
+fn dispatch_artifact_paths_for_attempt(
+    project_root: &Path,
+    brief_path: &Path,
+    attempt_id: &str,
+) -> (PathBuf, PathBuf, PathBuf) {
     let (file_name, stem) = dispatch_artifact_stem(brief_path);
     let dir = project_dispatch_dir(project_root).join(&stem);
     (
         dir.join(file_name),
-        dir.join(format!("{stem}-last.txt")),
-        dir.join(format!("{stem}-stdout.log")),
+        dir.join(format!("{stem}-{attempt_id}-last.txt")),
+        dir.join(format!("{stem}-{attempt_id}-stdout.log")),
     )
 }
 
-/// Derive the last/stdout paths as siblings of an already-resolved brief. Once
-/// the brief lives in its per-task subfolder, the siblings land in the same
-/// folder automatically.
+/// Derive the last/stdout paths as siblings of an already-resolved brief when
+/// the attempt id is known (e.g. from a live run's recorded `last_path`).
 fn dispatch_sibling_artifact_paths(brief_path: &Path) -> (PathBuf, PathBuf) {
     let parent = brief_path.parent().unwrap_or_else(|| Path::new("."));
     let (_, stem) = dispatch_artifact_stem(brief_path);
@@ -2561,6 +2581,20 @@ fn dispatch_sibling_artifact_paths(brief_path: &Path) -> (PathBuf, PathBuf) {
         parent.join(format!("{stem}-last.txt")),
         parent.join(format!("{stem}-stdout.log")),
     )
+}
+
+fn dispatch_sibling_artifact_paths_from_last(last_path: &Path) -> (PathBuf, PathBuf) {
+    let parent = last_path.parent().unwrap_or_else(|| Path::new("."));
+    let file = last_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("last.txt");
+    let stdout = if file.ends_with("-last.txt") {
+        file.replacen("-last.txt", "-stdout.log", 1)
+    } else {
+        "stdout.log".to_string()
+    };
+    (last_path.to_path_buf(), parent.join(stdout))
 }
 
 fn materialize_dispatch_brief(plan: &DispatchPlan) -> Result<()> {
@@ -2679,6 +2713,8 @@ fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
         model: extra_compat(entry, "MODEL", "CODEX_MODEL").map(str::to_string),
         effort: extra_compat(entry, "EFFORT", "CODEX_EFFORT").map(str::to_string),
         brief_path: extra_compat(entry, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
+        last_path: None,
+        stdout_path: None,
         run_id: None,
         worker_id: None,
         driver: None,
@@ -2706,6 +2742,8 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
     let driver = extra(entry, "DRIVER").map(str::to_string);
     let harness = extra(entry, "HARNESS").map(str::to_string);
     let pid = extra(entry, "PID").and_then(|pid| pid.parse::<u32>().ok());
+    let last_path = extra(entry, "LAST_PATH").map(PathBuf::from);
+    let stdout_path = extra(entry, "STDOUT_PATH").map(PathBuf::from);
     let kind = extra(entry, "KIND");
     let tasks = entry
         .task
@@ -2725,6 +2763,12 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
             record.driver = driver;
             record.harness = harness;
             record.pid = pid;
+            if last_path.is_some() {
+                record.last_path = last_path;
+            }
+            if stdout_path.is_some() {
+                record.stdout_path = stdout_path;
+            }
             return;
         }
     }
@@ -2897,7 +2941,11 @@ fn derive_worker_pid(record: &DispatchRecord) -> Option<u32> {
         }
     }
     let brief_path = record.brief_path.as_ref()?;
-    let (last_path, _) = dispatch_sibling_artifact_paths(brief_path);
+    let (last_path, _) = record
+        .last_path
+        .as_ref()
+        .map(|path| dispatch_sibling_artifact_paths_from_last(path))
+        .unwrap_or_else(|| dispatch_sibling_artifact_paths(brief_path));
     let last_path = last_path.display().to_string();
     let output = Command::new("ps")
         .args(["-axo", "pid=,command="])
@@ -3007,6 +3055,8 @@ mod tests {
             model: None,
             effort: None,
             brief_path: None,
+            last_path: None,
+            stdout_path: None,
             run_id: None,
             worker_id: None,
             driver: None,
@@ -3244,26 +3294,44 @@ mod tests {
     fn places_dispatch_artifacts_under_per_task_subfolder() {
         let project_root = PathBuf::from("/repo/main");
         let brief = PathBuf::from("/elsewhere/task-045-impl-brief.md");
-        let (resolved_brief, last, stdout) = dispatch_artifact_paths(&project_root, &brief);
+        let (resolved_brief, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, "a1b2c3d4");
         assert_eq!(
             resolved_brief,
             PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md")
         );
         assert_eq!(
             last,
-            PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-last.txt")
+            PathBuf::from(
+                "/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-a1b2c3d4-last.txt"
+            )
         );
         assert_eq!(
             stdout,
             PathBuf::from(
-                "/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-stdout.log"
+                "/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-a1b2c3d4-stdout.log"
             )
         );
-        // last/stdout derived as siblings of the resolved brief land in the
-        // same per-task subfolder.
-        let (sib_last, sib_stdout) = dispatch_sibling_artifact_paths(&resolved_brief);
+        let (sib_last, sib_stdout) = dispatch_sibling_artifact_paths_from_last(&last);
         assert_eq!(sib_last, last);
         assert_eq!(sib_stdout, stdout);
+    }
+
+    #[test]
+    fn attempt_scoped_paths_isolate_consecutive_dispatches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root
+            .join(".orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md");
+        let (_, last1, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt1");
+        let (_, last2, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2");
+        assert_ne!(last1, last2);
+        std::fs::create_dir_all(last1.parent().unwrap()).unwrap();
+        std::fs::write(&last1, "attempt 1 report").unwrap();
+        assert!(
+            !last2.exists(),
+            "attempt 2 waiter path must not observe attempt 1 report"
+        );
     }
 
     #[test]
