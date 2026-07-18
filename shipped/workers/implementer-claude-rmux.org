@@ -26,15 +26,11 @@ animations, and redraw-heavy output that would bloat the captured session log.
 ** Operating Rules
 - Use the real worktree and shell tools normally; this worker is launched with
   trusted-worktree permissions through `claude --dangerously-skip-permissions`.
-- Your contract ends with `orgasmic dispatch finalize`: when all work and
-  verification are complete, call
-  `orgasmic dispatch finalize --summary-file <path> [--commit]` as your
-  terminal action — the PRIMARY completion signal (writes the report
-  verbatim, optionally commits, emits the terminal tx, and releases the
-  lease in one call). Also print the orgasmic end-of-turn marker requested
-  in the runtime prompt on its own final line so the rmux driver can release
-  the pane; the driver's scrollback scrape is now only a FALLBACK for a run
-  that never finalizes.
+- Completion is `orgasmic dispatch finalize` per the base_worker prompt-spec
+  (inherited by every kind). Also print the orgasmic end-of-turn marker
+  requested in the runtime prompt on its own final line so the rmux driver
+  can release the pane; the driver's scrollback scrape is only a FALLBACK
+  for a run that never finalizes.
 
 ** Notes
 Authored [2026-06-10] for goal-20260610-drain-small-backlog (operator-directed

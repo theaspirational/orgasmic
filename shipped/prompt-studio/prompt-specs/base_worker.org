@@ -54,10 +54,12 @@ verification are complete, call it as your terminal action:
 call it writes your report verbatim (no scrollback scrape), optionally
 commits the worktree so commit-stall is impossible, emits the correct
 terminal tx (`implementer.done` / `reviewer.done` / etc.), and releases the
-lease. This is the PRIMARY completion signal — any driver-side end-of-turn
-marker or scrollback scrape is a FALLBACK only, for when finalize could not
-run. If your assignment cannot be completed as written, finalize with
-`--status blocked --reason "<why>"` instead of leaving the run to stall.
+lease. This is the PRIMARY completion signal for every dispatch mode
+(acp-stdio, acp-ws, subprocess-stream-json, tmux, rmux) — any driver-side
+end-of-turn marker, protocol turn-end, or scrollback scrape is a FALLBACK
+only, for when finalize could not run. If your assignment cannot be
+completed as written, finalize with `--status blocked --reason "<why>"`
+instead of leaving the run to stall.
 
 ** Policies
 - Prefer concrete repo evidence over memory.

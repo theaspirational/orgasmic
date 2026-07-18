@@ -14,8 +14,8 @@ use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
     dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
-    projects, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity, TaskHeading, TxEntry,
-    WorkerKind,
+    projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
+    SessionEventKind, TaskHeading, TxEntry, WorkerKind,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -933,6 +933,11 @@ struct LiveRunInfo {
     /// worktree (TASK-QKQ3R).
     #[serde(default)]
     worktree: Option<PathBuf>,
+    /// Session JSONL path for the live run (`RunSummary::session_path`).
+    /// Used after release to read the terminal `Lifecycle::Release` tombstone
+    /// when finalize's own release lands on an already-released run.
+    #[serde(default)]
+    session_path: Option<PathBuf>,
     /// The run's own `RuntimeIdentity`, always present on `/runs.live`
     /// (`RunSummary::identity`). Presented back on the finalize release call
     /// (TASK-DWJVH item A) so the daemon can reject a stale/reclaimed-slot
@@ -1081,22 +1086,62 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         Some(&run.identity),
     )) {
         if is_release_run_not_found_error(&e) {
-            eprintln!(
-                "warning: run {} was already released before finalize's own release call \
-                 (stall-sweep race); proceeding — commit and last.txt are already durable",
-                run.run_id
-            );
+            let session_path = run.session_path.as_deref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "live run {} has no session_path; cannot verify release tombstone",
+                    run.run_id
+                )
+            })?;
+            match dispatch_release_tombstone(session_path)? {
+                DispatchReleaseTombstone::WorkerFinalized => {
+                    eprintln!(
+                        "warning: run {} was already released by a prior worker finalize; \
+                         skipping duplicate terminal tx",
+                        run.run_id
+                    );
+                    println!(
+                        "finalized: {} {} already recorded run={} last={}",
+                        task,
+                        tx_type,
+                        run.run_id,
+                        last_path.display()
+                    );
+                    return Ok(());
+                }
+                DispatchReleaseTombstone::StallSweep => {
+                    eprintln!(
+                        "warning: run {} was already released before finalize's own release call \
+                         (stall-sweep race); proceeding — commit and last.txt are already durable",
+                        run.run_id
+                    );
+                }
+                DispatchReleaseTombstone::ProtocolEndWithoutFinalize => {
+                    bail!(
+                        "run {} ended at protocol before finalize could release the lease; \
+                         refusing to emit {tx_type} (would record both done and orphaned)",
+                        run.run_id
+                    );
+                }
+                DispatchReleaseTombstone::Unrecognized | DispatchReleaseTombstone::None => {
+                    bail!(
+                        "run {} was already released but session has no worker-finalize tombstone; \
+                         refusing to emit {tx_type}",
+                        run.run_id
+                    );
+                }
+            }
         } else {
             return Err(e);
         }
     }
 
-    // 3. Emit the terminal tx last.
+    // 3. Emit the terminal tx last. Request id is deterministic per run so
+    // concurrent double-finalize cannot double-emit (writer dedupes replays).
     let tx_request = TxAppendRequest {
         request_id: Some(format!(
             "dispatch-finalize-{}-{}",
             request_slug(&task),
-            Uuid::new_v4()
+            run.run_id
         )),
         ty: tx_type.to_string(),
         actor: Some(format!("agent.{}", run.kind)),
@@ -1621,6 +1666,52 @@ async fn release_dispatch_run_with_reason(
 /// reclaimed this run_id), which must still hard-error (TASK-DWJVH item B).
 fn is_release_run_not_found_error(err: &anyhow::Error) -> bool {
     err.to_string().contains("daemon returned 404")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DispatchReleaseTombstone {
+    WorkerFinalized,
+    StallSweep,
+    ProtocolEndWithoutFinalize,
+    Unrecognized,
+    None,
+}
+
+fn is_stall_sweep_release_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
+    )
+}
+
+/// Last `Lifecycle::Release` on the run's session JSONL — the daemon's
+/// terminal tombstone once the lease is gone.
+fn dispatch_release_tombstone(session_path: &Path) -> Result<DispatchReleaseTombstone> {
+    let envelopes = read_session_file(session_path)
+        .with_context(|| format!("read session tombstone {}", session_path.display()))?;
+    for envelope in envelopes.into_iter().rev() {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        let Ok(Lifecycle::Release {
+            reason,
+            finalized_by_worker,
+            ..
+        }) = serde_json::from_value(envelope.event.clone())
+        else {
+            continue;
+        };
+        return Ok(if finalized_by_worker {
+            DispatchReleaseTombstone::WorkerFinalized
+        } else if reason == "protocol_end_without_finalize" {
+            DispatchReleaseTombstone::ProtocolEndWithoutFinalize
+        } else if is_stall_sweep_release_reason(&reason) {
+            DispatchReleaseTombstone::StallSweep
+        } else {
+            DispatchReleaseTombstone::Unrecognized
+        });
+    }
+    Ok(DispatchReleaseTombstone::None)
 }
 
 /// Test-only: artificial delay between writing last.txt and releasing the
@@ -2918,6 +3009,52 @@ mod tests {
         assert_ne!(
             default_worktree(&project_root, "TASK-086", DispatchKind::Architector),
             default_worktree(&project_root, "TASK-086", DispatchKind::Reviewer)
+        );
+    }
+
+    #[test]
+    fn dispatch_release_tombstone_reads_worker_finalize_and_protocol_end() {
+        let tmp = tempfile::tempdir().unwrap();
+        let identity = RuntimeIdentity {
+            run_id: "run-tomb".into(),
+            runtime_id: "rt-tomb".into(),
+            boot_id: "boot-tomb".into(),
+        };
+
+        let path = tmp.path().join("session.jsonl");
+        let mut writer = orgasmic_core::SessionWriter::open(&path, identity.clone()).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "protocol_end_without_finalize".into(),
+                    outcome: orgasmic_core::ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            dispatch_release_tombstone(&path).unwrap(),
+            DispatchReleaseTombstone::ProtocolEndWithoutFinalize
+        );
+
+        let path2 = tmp.path().join("session2.jsonl");
+        let mut writer2 = orgasmic_core::SessionWriter::open(&path2, identity).unwrap();
+        writer2
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-X".into(),
+                    outcome: orgasmic_core::ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            dispatch_release_tombstone(&path2).unwrap(),
+            DispatchReleaseTombstone::WorkerFinalized
         );
     }
 

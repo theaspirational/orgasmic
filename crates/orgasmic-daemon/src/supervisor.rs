@@ -333,6 +333,11 @@ struct RunRecord {
     /// them for boot reattach when the persisted `RunMeta` event has them).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    /// When true, `orgasmic dispatch finalize` is this run's completion
+    /// contract — ACP/subprocess protocol-end alone must not count as success
+    /// (TASK-P4MGK / TASK-8PXDP). Set at acquire for CLI-dispatched worker
+    /// kinds (implementer/reviewer/architector) that carry artifact paths.
+    requires_worker_finalize: bool,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -858,34 +863,38 @@ impl Supervisor {
                     finish_driver_terminal_release(&writer, release).await;
                 }
             }
-            // Stream end: surface a release-with-interrupted marker if the
-            // run record still exists (driver dropped its sender without
-            // an explicit release).
-            let g = inner_for_drain.lock().await;
-            if let Some(rec) = g.runs.get(&run_id_for_drain) {
-                let path = rec.session_path.clone();
-                let identity = rec.identity.clone();
-                let task_id = rec.task_id.clone();
-                let kind_owned = rec.kind;
-                let terminal_outcome = rec.terminal_outcome;
-                drop(g);
+            // Stream end: driver dropped its sender without an explicit
+            // finalize/release. Claim the run atomically under the lock so a
+            // concurrent `release_with_finalization` (worker finalize,
+            // TASK-P4MGK / dec_WDR5K) cannot interleave a second lease
+            // release or a second Lifecycle::Release write.
+            let claimed = {
+                let mut g = inner_for_drain.lock().await;
+                g.runs.remove(&run_id_for_drain).map(|rec| {
+                    g.leases.remove(&(rec.task_id.clone(), rec.kind));
+                    rec
+                })
+            };
+            if let Some(rec) = claimed {
+                let (reason, outcome) = stream_end_release_for_transport(
+                    &rec.transport,
+                    rec.terminal_outcome,
+                    rec.requires_worker_finalize,
+                );
                 let release = Lifecycle::Release {
-                    reason: "driver stream closed".into(),
-                    outcome: terminal_outcome.unwrap_or(ReleaseOutcome::Interrupted),
+                    reason: reason.into(),
+                    outcome,
                     finalized_by_worker: false,
                 };
                 let _ = writer
                     .append_session(SessionAppend {
                         run_id: run_id_for_drain.clone(),
-                        session_path: path,
-                        identity,
+                        session_path: rec.session_path,
+                        identity: rec.identity,
                         kind: SessionEventKind::Lifecycle,
                         event: serde_json::to_value(&release).unwrap_or(serde_json::Value::Null),
                     })
                     .await;
-                let mut g = inner_for_drain.lock().await;
-                g.leases.remove(&(task_id, kind_owned));
-                g.runs.remove(&run_id_for_drain);
             }
         });
 
@@ -905,6 +914,7 @@ impl Supervisor {
             babysitter_target: req.babysitter_target.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
+            requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1134,6 +1144,7 @@ impl Supervisor {
             babysitter_target: req.babysitter_target.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
+            requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1456,6 +1467,7 @@ impl Supervisor {
             // has dispatch artifact paths.
             last_path: None,
             stdout_path: None,
+            requires_worker_finalize: false,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1899,6 +1911,8 @@ impl Supervisor {
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.last_path = Some(last_path);
             rec.stdout_path = Some(stdout_path);
+            rec.requires_worker_finalize =
+                run_requires_worker_finalize(&rec.last_path, &rec.role);
         }
     }
 
@@ -2549,8 +2563,41 @@ fn apply_driver_event_to_record(
     }
 }
 
+/// TUI transports still auto-release on a driver terminal event (EOT-marker
+/// fallback; removed later by TASK-AFE5Q). ACP / subprocess modes do not —
+/// `orgasmic dispatch finalize` is their primary end-of-run (TASK-P4MGK).
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
+}
+
+/// Whether this run advertises the CLI dispatch finalize completion contract.
+fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
+    last_path.is_some() && matches!(role, "implementer" | "reviewer" | "architector")
+}
+
+/// Decide the stream-end Lifecycle::Release when the driver event channel
+/// closes and the run was still live (no prior finalize / TUI terminal
+/// release won the race).
+///
+/// For CLI-dispatched worker runs (`requires_worker_finalize`) in non-TUI
+/// modes, a protocol `RunComplete` alone is not success: finalize is the
+/// only success signal (dec_WDR5K item 6, narrowed by TASK-8PXDP). Stage
+/// runs, artifactor, and manager launches keep protocol-end = success.
+fn stream_end_release_for_transport(
+    transport: &str,
+    terminal_outcome: Option<ReleaseOutcome>,
+    requires_worker_finalize: bool,
+) -> (&'static str, ReleaseOutcome) {
+    match terminal_outcome {
+        Some(ReleaseOutcome::Completed)
+            if requires_worker_finalize && !terminal_event_releases_transport(transport) =>
+        (
+            "protocol_end_without_finalize",
+            ReleaseOutcome::Failed,
+        ),
+        Some(outcome) => ("driver stream closed", outcome),
+        None => ("driver stream closed", ReleaseOutcome::Interrupted),
+    }
 }
 
 fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<TerminalRelease> {
@@ -2820,6 +2867,142 @@ mod tests {
         }
     }
 
+    /// ACP-shaped test driver: emits Ready + RunComplete then drops the
+    /// event sender so the supervisor stream-end path runs. Transport is
+    /// `acp-stdio` so protocol-end must NOT auto-release as Completed
+    /// success (TASK-P4MGK).
+    struct ProtocolEndAcpDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ProtocolEndAcpDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-acp/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+                // Dropping tx closes the stream → supervisor stream-end.
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ProtocolEndAcpControl),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct ProtocolEndAcpControl;
+
+    #[async_trait::async_trait]
+    impl DriverControl for ProtocolEndAcpControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            Ok(())
+        }
+    }
+
+    /// Holds the event channel open until `release`, then emits RunComplete
+    /// and drops — models finalize-then-protocol-end for ACP modes.
+    struct FinalizeThenProtocolEndDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for FinalizeThenProtocolEndDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let _ = tx
+                .send(DriverEvent::Ready {
+                    protocol_version: "test-acp/1".into(),
+                    capabilities: json!({"simulated": true}),
+                })
+                .await;
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(FinalizeThenProtocolEndControl { events: Some(tx) }),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct FinalizeThenProtocolEndControl {
+        events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for FinalizeThenProtocolEndControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            if let Some(tx) = self.events.take() {
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol end after finalize".into()),
+                    })
+                    .await;
+                // tx drop closes the stream after finalize already released.
+            }
+            Ok(())
+        }
+    }
+
     struct LiveSessionGuard(std::fs::File);
     impl Drop for LiveSessionGuard {
         fn drop(&mut self) {
@@ -2935,6 +3118,15 @@ mod tests {
             idle_timeout_secs: None,
             babysitter: None,
         }
+    }
+
+    /// CLI-dispatch-shaped acquire: artifact paths present so the run
+    /// advertises the worker-finalize completion contract.
+    fn dispatch_impl_req(task: &str, dir: &Path) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.last_path = Some(dir.join(format!("{task}.last.txt")));
+        req.stdout_path = Some(dir.join(format!("{task}.stdout.log")));
+        req
     }
 
     fn manual_req(
@@ -4256,6 +4448,227 @@ mod tests {
             "expected a plain RunNotFound for the already-released run, got {err_display:?}"
         );
         // No leftover lease or run state from the failed second release.
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    // TASK-P4MGK: ACP protocol-end vs worker finalize must not double-release
+    // or race the lease. Cover finalize-then-protocol-end, protocol-end-then-
+    // finalize, and finalize against an already-released run.
+
+    #[tokio::test]
+    async fn finalize_then_protocol_end_does_not_double_release() {
+        // orgasmic:TASK-P4MGK
+        let (sup, dir, _w) = make_supervisor();
+        let driver = FinalizeThenProtocolEndDriver;
+        let resp = sup
+            .acquire(&driver, dispatch_impl_req("TASK-FIN-THEN-PROTO", dir.path()))
+            .await
+            .unwrap();
+        sup.release_with_finalization(
+            &resp.run_id,
+            "worker finalize for TASK-FIN-THEN-PROTO",
+            ReleaseOutcome::Completed,
+            true,
+            Some(&resp.identity),
+        )
+        .await
+        .unwrap();
+        // Let the post-release drain observe RunComplete + stream close.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let path = dir.path().join("TASK-FIN-THEN-PROTO.jsonl");
+        let releases: Vec<_> = session_events(&path)
+            .into_iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .collect();
+        assert_eq!(
+            releases.len(),
+            1,
+            "finalize then protocol-end must write exactly one Release, got {releases:?}"
+        );
+        assert_eq!(
+            releases[0]
+                .event
+                .get("finalized_by_worker")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(
+            !has_release_reason(&path, "protocol_end_without_finalize"),
+            "stream-end must not write a second release after finalize claimed the run"
+        );
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn protocol_end_then_finalize_is_clean_run_not_found() {
+        // orgasmic:TASK-P4MGK
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let resp = sup
+            .acquire(&driver, dispatch_impl_req("TASK-PROTO-THEN-FIN", dir.path()))
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-PROTO-THEN-FIN.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+
+        let err = sup
+            .release_with_finalization(
+                &resp.run_id,
+                "worker finalize for TASK-PROTO-THEN-FIN",
+                ReleaseOutcome::Completed,
+                true,
+                Some(&resp.identity),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::RunNotFound(ref id) if *id == resp.run_id),
+            "finalize after protocol-end must be clean RunNotFound, got {err}"
+        );
+        let releases: Vec<_> = session_events(&path)
+            .into_iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .collect();
+        assert_eq!(
+            releases.len(),
+            1,
+            "protocol-end must not leave a double-release trail: {releases:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn finalize_after_already_released_acp_run_is_clean_run_not_found() {
+        // orgasmic:TASK-P4MGK
+        let (sup, dir, _w) = make_supervisor();
+        let driver = FinalizeThenProtocolEndDriver;
+        let resp = sup
+            .acquire(&driver, dispatch_impl_req("TASK-ALREADY-REL", dir.path()))
+            .await
+            .unwrap();
+        sup.release(
+            &resp.run_id,
+            "manual release before finalize",
+            ReleaseOutcome::Interrupted,
+        )
+        .await
+        .unwrap();
+        let err = sup
+            .release_with_finalization(
+                &resp.run_id,
+                "worker finalize for TASK-ALREADY-REL",
+                ReleaseOutcome::Completed,
+                true,
+                Some(&resp.identity),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, SupervisorError::RunNotFound(ref id) if *id == resp.run_id),
+            "finalize on already-released ACP run must be clean RunNotFound, got {err}"
+        );
+    }
+
+    #[test]
+    fn stream_end_release_downgrades_dispatch_acp_protocol_complete_to_failed() {
+        // orgasmic:TASK-P4MGK
+        let (reason, outcome) = stream_end_release_for_transport(
+            "acp-stdio",
+            Some(ReleaseOutcome::Completed),
+            true,
+        );
+        assert_eq!(reason, "protocol_end_without_finalize");
+        assert_eq!(outcome, ReleaseOutcome::Failed);
+
+        let (reason, outcome) = stream_end_release_for_transport(
+            "subprocess-stream-json",
+            Some(ReleaseOutcome::Completed),
+            true,
+        );
+        assert_eq!(reason, "protocol_end_without_finalize");
+        assert_eq!(outcome, ReleaseOutcome::Failed);
+
+        // TUI EOT fallback path stays Completed (untouched until TASK-AFE5Q).
+        let (reason, outcome) = stream_end_release_for_transport(
+            "rmux",
+            Some(ReleaseOutcome::Completed),
+            true,
+        );
+        assert_eq!(reason, "driver stream closed");
+        assert_eq!(outcome, ReleaseOutcome::Completed);
+    }
+
+    #[test]
+    fn stream_end_release_keeps_stage_protocol_complete_success_without_finalize_contract(
+    ) {
+        // orgasmic:TASK-8PXDP
+        let (reason, outcome) = stream_end_release_for_transport(
+            "acp-stdio",
+            Some(ReleaseOutcome::Completed),
+            false,
+        );
+        assert_eq!(reason, "driver stream closed");
+        assert_eq!(outcome, ReleaseOutcome::Completed);
+    }
+
+    #[tokio::test]
+    async fn stage_acp_protocol_end_stays_completed_without_finalize_contract() {
+        // orgasmic:TASK-8PXDP
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                manual_req("TASK-STAGE-PROTO", dir.path(), Some(0), Some(0)),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-STAGE-PROTO.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "driver stream closed") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            has_release_reason(&path, "driver stream closed"),
+            "expected driver stream closed release"
+        );
+        assert!(
+            !has_release_reason(&path, "protocol_end_without_finalize"),
+            "stage/grill/plan runs must not be reclassified as protocol_end_without_finalize"
+        );
+        let releases: Vec<_> = session_events(&path)
+            .into_iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .collect();
+        assert_eq!(releases.len(), 1, "expected one release: {releases:?}");
+        assert_eq!(
+            releases[0]
+                .event
+                .get("outcome")
+                .and_then(|v| v.as_str()),
+            Some("completed")
+        );
         let snapshot = sup.snapshot().await;
         assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }

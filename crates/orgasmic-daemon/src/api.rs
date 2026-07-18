@@ -4523,12 +4523,12 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
             // scrape those into a fabricated "done" report.
             if dispatch_release_reason(&envelopes)
                 .as_deref()
-                .is_some_and(is_timeout_release_reason)
+                .is_some_and(is_orphan_without_finalize_release_reason)
             {
                 tracing::warn!(
                     run_id = %completion.run_id,
                     reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
-                    "dispatch completion watcher: timeout with no worker finalize, flagging orphan"
+                    "dispatch completion watcher: release without worker finalize, flagging orphan"
                 );
                 record_dispatch_orphaned(&state, &completion).await;
                 return;
@@ -4562,6 +4562,15 @@ fn is_timeout_release_reason(reason: &str) -> bool {
     )
 }
 
+/// Release reasons that mean the run ended without `orgasmic dispatch
+/// finalize` and must be flagged orphan (never scraped into a fake done
+/// report). Timeouts plus ACP/subprocess protocol-end without finalize
+/// (TASK-P4MGK / dec_WDR5K): TUI EOT (`driver terminal event`) stays a
+/// scrape fallback until TASK-AFE5Q.
+fn is_orphan_without_finalize_release_reason(reason: &str) -> bool {
+    is_timeout_release_reason(reason) || reason == "protocol_end_without_finalize"
+}
+
 /// Last `Lifecycle::Release` event's `reason`, if any — used to tell a timeout
 /// release apart from every other release path.
 fn dispatch_release_reason(envelopes: &[SessionEnvelope]) -> Option<String> {
@@ -4591,10 +4600,10 @@ fn dispatch_release_finalized_by_worker(envelopes: &[SessionEnvelope]) -> bool {
     })
 }
 
-/// Flag a dispatch run that stalled without the worker ever calling
-/// `orgasmic dispatch finalize` (dec_3M7M0): distinct from a normal
-/// completion tx so the manager can rescue it rather than mistake it for
-/// silent success.
+/// Flag a dispatch run that ended without the worker ever calling
+/// `orgasmic dispatch finalize` (dec_3M7M0 / TASK-P4MGK): distinct from a
+/// normal completion tx so the manager can rescue it rather than mistake
+/// it for silent success.
 async fn record_dispatch_orphaned(state: &ApiState, completion: &DispatchCompletion) {
     let extra = vec![
         ("RUN_ID".to_string(), completion.run_id.clone()),
@@ -4611,9 +4620,8 @@ async fn record_dispatch_orphaned(state: &ApiState, completion: &DispatchComplet
             project: Some(completion.project_id.clone()),
             task: Some(completion.task_id.clone()),
             target: Some(tx_safe_path(&completion.session_path, None, &state.home)),
-            reason:
-                "worker never called `orgasmic dispatch finalize` before the stall window elapsed"
-                    .to_string(),
+            reason: "worker never called `orgasmic dispatch finalize` before the run was released"
+                .to_string(),
             request_id: None,
             extra,
         },
@@ -13689,6 +13697,74 @@ mod tests {
         // A clean worker finalize / dispatch-close release is NOT a timeout.
         assert!(!is_timeout_release_reason("worker finalize for TASK-ABC"));
         assert!(!is_timeout_release_reason(""));
+    }
+
+    #[test]
+    fn is_orphan_without_finalize_covers_timeouts_and_protocol_end() {
+        // orgasmic:TASK-P4MGK
+        assert!(is_orphan_without_finalize_release_reason(
+            "protocol_end_without_finalize"
+        ));
+        assert!(is_orphan_without_finalize_release_reason(
+            "stall_timeout_exceeded"
+        ));
+        // TUI EOT fallback must keep scraping until TASK-AFE5Q removes it.
+        assert!(!is_orphan_without_finalize_release_reason(
+            "driver terminal event"
+        ));
+        assert!(!is_orphan_without_finalize_release_reason(
+            "worker finalize for TASK-ABC"
+        ));
+    }
+
+    #[test]
+    fn stage_outcome_treats_protocol_end_completed_release_as_success() {
+        // orgasmic:TASK-8PXDP — grill/plan stage runs keep protocol-end = success.
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("grill-session.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-stage".into(),
+            runtime_id: "rt-stage".into(),
+            boot_id: "boot-stage".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-GRILL".into(),
+                    kind: "grill".into(),
+                    worker_id: "griller-claude-acp".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunComplete {
+                    summary: Some("grill turn done".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "driver stream closed".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(matches!(
+            stage_outcome_from_session(&session_path),
+            StageOutcome::Completed
+        ));
     }
 
     #[test]

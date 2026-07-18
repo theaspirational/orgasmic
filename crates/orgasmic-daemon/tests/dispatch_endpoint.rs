@@ -2547,11 +2547,15 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     panic!("timed out waiting for early-exit lease auto-release");
 }
 
-/// TASK-074 item 1: subprocess-stream-json synthesizes run_complete from system tail.
+/// TASK-074 item 1 + TASK-P4MGK: subprocess-stream-json still synthesizes
+/// `run_complete` from the system tail on exit, but that protocol-end is no
+/// longer a dispatch success signal — without `orgasmic dispatch finalize`
+/// the completion watcher orphans instead of scraping last.txt.
 #[cfg(unix)]
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
+    // orgasmic:TASK-P4MGK
     let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let mut script = String::from(
@@ -2625,14 +2629,24 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
         "summary must not concatenate the full system stream: {summary}"
     );
 
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(30)).await;
+    // Protocol-end without finalize → orphan, never a scraped last.txt.
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let mut orphaned = false;
+    while std::time::Instant::now() < deadline {
+        let raw = read_project_tx(&project_root);
+        if raw.contains(":TYPE:         manager.dispatch_orphaned") {
+            orphaned = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
     assert!(
-        last_body.contains("synthetic-chunk-15"),
-        "last_path should carry distilled run_complete summary: {last_body}"
+        orphaned,
+        "protocol-end without finalize must flag manager.dispatch_orphaned"
     );
     assert!(
-        !last_body.contains("synthetic-chunk-01"),
-        "last_path must not concatenate the full system stream: {last_body}"
+        !last.exists() || std::fs::read_to_string(&last).unwrap_or_default().is_empty(),
+        "protocol-end without finalize must not scrape a fake last.txt"
     );
 
     let _ = running.shutdown.send(());
