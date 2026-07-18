@@ -1411,13 +1411,19 @@ fn resolve_persisted_terminal_contract(
             resolve_run_role(home, worker_id, kind)
         }
     });
-    let requires_worker_finalize = meta_requires.unwrap_or_else(|| {
-        if role == "terminal" || custom_terminal {
-            false
-        } else {
-            crate::supervisor::run_requires_worker_finalize(&last_path, &role)
-        }
-    });
+    let persisted_bare_terminal = custom_terminal && role == "terminal";
+    let persisted_babysitter = kind == RunKind::Babysitter && role == "babysitter";
+    let requires_worker_finalize = match meta_requires {
+        Some(false) if persisted_bare_terminal || persisted_babysitter => false,
+        // Round-2 recovery runs could persist `false` for agent roles solely
+        // because they had no last_path. That is not a terminal-shape proof:
+        // fail closed under the universal contract and let fresh recovery
+        // provision the missing path below (TASK-Y5K2C).
+        Some(false) => true,
+        Some(true) => true,
+        None if persisted_bare_terminal || persisted_babysitter => false,
+        None => crate::supervisor::run_requires_worker_finalize(&last_path, &role),
+    };
     PersistedTerminalContract {
         role,
         requires_worker_finalize,
@@ -10504,7 +10510,7 @@ async fn post_artifact_submit(
             ("VERSION".into(), "1".into()),
         ];
 
-        let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await;
+        let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
         if let Err(e) = state
             .writer
             .transaction(
@@ -10612,7 +10618,7 @@ async fn post_artifact_submit(
         });
     }
 
-    let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await;
+    let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
     if let Err(e) = state
         .writer
         .transaction(
@@ -10661,23 +10667,28 @@ async fn post_artifact_submit(
 /// rmux runs stay live with the declaration already installed by commit;
 /// one-shot transports release immediately with the tombstone.
 // orgasmic:TASK-S52X9,TASK-ARZGD
-async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) -> Option<(String, u64)> {
+async fn prepare_artifactor_submit_terminal(
+    state: &ApiState,
+    art_id: &str,
+) -> Result<Option<(String, u64)>, ApiError> {
     let task_id = format!("artifact.generate:{art_id}");
     match state
         .supervisor
         .begin_artifactor_submit_for_task(&task_id)
         .await
     {
-        Ok(pair) => Some(pair),
+        Ok(pair) => Ok(Some(pair)),
+        Err(crate::supervisor::SupervisorError::RunNotFound(_)) => Ok(None),
+        Err(crate::supervisor::SupervisorError::ArtifactorLifecycleBusy(_)) => {
+            Err(ApiError::conflict("artifactor lifecycle busy"))
+        }
         Err(e) => {
-            if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
-                tracing::warn!(
-                    art_id,
-                    error = %e,
-                    "artifact submit: failed to begin artifactor submit coordinator"
-                );
-            }
-            None
+            tracing::warn!(
+                art_id,
+                error = %e,
+                "artifact submit: failed to begin artifactor submit coordinator"
+            );
+            Err(supervisor_control_error("artifact submit coordinator", e))
         }
     }
 }
@@ -11734,6 +11745,9 @@ async fn post_artifact_regenerate(
                 crate::supervisor::SupervisorError::RunNotFound(_) => {
                     ApiError::not_found(format!("active run {}", live_run.run_id))
                 }
+                crate::supervisor::SupervisorError::ArtifactorLifecycleBusy(_) => {
+                    ApiError::conflict("artifactor lifecycle busy")
+                }
                 other => supervisor_control_error("artifact regenerate round", other),
             })?;
         let followup_payload =
@@ -11785,7 +11799,7 @@ async fn post_artifact_regenerate(
         }
         state
             .supervisor
-            .commit_artifactor_regenerate_round(&live_run.run_id)
+            .commit_artifactor_regenerate_round(&live_run.run_id, checkpoint)
             .await
             .map_err(|e| match e {
                 crate::supervisor::SupervisorError::RunNotFound(_) => {
@@ -12698,6 +12712,22 @@ mod tests {
         assert_eq!(role, "terminal");
         assert!(!requires);
 
+        // Round-2 recovery persisted an explicit false and no path for these
+        // agent roles. Boot reattach must recompute the universal contract.
+        for historical_role in ["griller", "planner", "architector"] {
+            let (role, requires) = boot_reattach_terminal_contract(
+                &home,
+                historical_role,
+                RunKind::Worker,
+                Some("claude"),
+                &None,
+                Some(historical_role.into()),
+                Some(false),
+            );
+            assert_eq!(role, historical_role);
+            assert!(requires, "historical {historical_role} must fail closed");
+        }
+
         let last = Some(PathBuf::from("/tmp/stage.last.txt"));
         let (role, requires) = boot_reattach_terminal_contract(
             &home,
@@ -12767,6 +12797,59 @@ mod tests {
         );
         assert_eq!(custom.role, "terminal");
         assert!(!custom.requires_worker_finalize);
+    }
+
+    #[test]
+    fn round2_session_contract_recomputed_for_every_recovery_entry() {
+        // `post_run_recover` resolves reattach_tmux, resume_native_fork, and
+        // start_recovery_run through this exact persisted-session parser.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        for role in ["griller", "planner", "architector"] {
+            let identity = ("run-old", "rt-old", "boot-old");
+            let envelopes = vec![
+                SessionEnvelope {
+                    seq: 0,
+                    time: Utc::now(),
+                    run_id: identity.0.into(),
+                    runtime_id: identity.1.into(),
+                    boot_id: identity.2.into(),
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "acquire",
+                        "task_id": format!("TASK-{role}"),
+                        "kind": "worker",
+                        "worker_id": role,
+                    }),
+                },
+                SessionEnvelope {
+                    seq: 1,
+                    time: Utc::now(),
+                    run_id: identity.0.into(),
+                    runtime_id: identity.1.into(),
+                    boot_id: identity.2.into(),
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "run_meta",
+                        "transport": "tmux",
+                        "harness": "claude",
+                        "role": role,
+                        "requires_worker_finalize": false,
+                        "last_path": null,
+                        "stdout_path": null,
+                        "driver_config": {},
+                    }),
+                },
+            ];
+            let contract = persisted_terminal_contract_from_session(&home, &envelopes);
+            assert_eq!(contract.role, role);
+            assert!(
+                contract.requires_worker_finalize,
+                "{role} must fail closed in every recovery action"
+            );
+            assert!(contract.last_path.is_none(), "seed remains round-2-shaped");
+        }
     }
 
     /// ACP-shaped driver that ends immediately — used for natural-end
@@ -12934,6 +13017,7 @@ mod tests {
             .expect("artifactor acquire");
         let prepared = prepare_artifactor_submit_terminal(&state, art_id)
             .await
+            .expect("begin submit coordinator")
             .expect("atomic begin must install submit token");
         assert_eq!(prepared.0, acquire.run_id);
         gate.notify_one();
@@ -12992,6 +13076,7 @@ mod tests {
             .expect("artifactor acquire");
         let prepared = prepare_artifactor_submit_terminal(&state, art_id)
             .await
+            .expect("begin submit coordinator")
             .expect("atomic begin");
         gate.notify_one();
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -13008,9 +13093,166 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn recovery_and_boot_contract_natural_end_tombstones_per_shape() {
-        // orgasmic:TASK-ARZGD — shared contract fail-closed natural end for
-        // manager/artifactor/grill/plan/architect/dispatch/custom.
+    async fn concurrent_submit_rejects_regenerate_and_resolves_one_terminal_tombstone() {
+        // orgasmic:TASK-Y5K2C — gate the real submit handler after it installs
+        // its lifecycle token but before the durable writer transaction. The
+        // real regenerate handler must reject the overlap under both terminal
+        // schedules, and the submit resolution must own the sole tombstone.
+        for operator_cancel in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = Home::at(tmp.path().join("home"));
+            home.ensure().unwrap();
+            let project_root = tmp.path().join("proj");
+            seed_project(&home, &project_root, "proj");
+            let state = direct_stage_test_state(home).await;
+            let art_id = if operator_cancel {
+                "ART-8KX2M"
+            } else {
+                "ART-9KX2M"
+            };
+
+            let _ = post_artifact_submit(
+                State(state.clone()),
+                Path(art_id.to_string()),
+                Query(artifact_query("proj")),
+                Json(ArtifactSubmitRequest {
+                    content: "<RichText>v1</RichText>\n".into(),
+                    title: Some("Lifecycle gate".into()),
+                    subject_nodes: Some(vec![]),
+                    prompt: Some("Initial".into()),
+                }),
+            )
+            .await
+            .expect("seed artifact");
+
+            let protocol_end_gate = std::sync::Arc::new(tokio::sync::Notify::new());
+            let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+            let acquire = state
+                .supervisor
+                .acquire(
+                    &ApiHoldingDriver {
+                        gate: std::sync::Arc::clone(&protocol_end_gate),
+                    },
+                    AcquireRequest {
+                        task_id: format!("artifact.generate:{art_id}"),
+                        kind: RunKind::Worker,
+                        worker_id: "artifactor".into(),
+                        role: "artifactor".into(),
+                        project_id: Some("proj".into()),
+                        worktree: Some(project_root.clone()),
+                        last_path: None,
+                        stdout_path: None,
+                        session_path: session_path.clone(),
+                        driver_config: DriverConfig::from_value(json!({})),
+                        babysitter_target: None,
+                        stall_timeout_secs: Some(0),
+                        max_run_duration_secs: Some(0),
+                        idle_timeout_secs: None,
+                        babysitter: None,
+                    },
+                )
+                .await
+                .expect("live artifactor");
+
+            let writer_gate = state.writer.gate_next_transaction().await;
+            let submit_state = state.clone();
+            let submit = tokio::spawn(async move {
+                post_artifact_submit(
+                    State(submit_state),
+                    Path(art_id.to_string()),
+                    Query(artifact_query("proj")),
+                    Json(ArtifactSubmitRequest {
+                        content: "<RichText>durable submit</RichText>\n".into(),
+                        title: None,
+                        subject_nodes: None,
+                        prompt: None,
+                    }),
+                )
+                .await
+            });
+            writer_gate.wait_until_entered().await;
+
+            let regenerate = post_artifact_regenerate(
+                State(state.clone()),
+                Extension(Identity::Admin),
+                Path(art_id.to_string()),
+                Query(artifact_query("proj")),
+                Json(ArtifactRegenerateRequest {
+                    extra_prompt: Some("must not overlap".into()),
+                }),
+            )
+            .await
+            .expect_err("regenerate must not overlap submit");
+            assert_eq!(regenerate.status, StatusCode::CONFLICT);
+            assert_eq!(regenerate.message, "artifactor lifecycle busy");
+
+            if operator_cancel {
+                assert!(matches!(
+                    state
+                        .supervisor
+                        .release_with_finalization(
+                            &acquire.run_id,
+                            "operator cancel",
+                            ReleaseOutcome::Cancelled,
+                            false,
+                            None,
+                        )
+                        .await,
+                    Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_))
+                ));
+            } else {
+                protocol_end_gate.notify_one();
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while std::time::Instant::now() < deadline {
+                    if read_session_file(&session_path)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|event| event.kind == SessionEventKind::DriverEvent)
+                        .count()
+                        >= 2
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+
+            writer_gate.release();
+            let _ = submit
+                .await
+                .expect("submit task")
+                .expect("durable submit succeeds");
+            let expected_reason = if operator_cancel {
+                "cancelled"
+            } else {
+                "artifact_submitted"
+            };
+            assert!(wait_session_reason(&session_path, expected_reason).await);
+            let events = read_session_file(&session_path).unwrap_or_default();
+            let releases: Vec<_> = events
+                .iter()
+                .filter(|event| {
+                    event.kind == SessionEventKind::Lifecycle
+                        && event.event.get("phase").and_then(|v| v.as_str()) == Some("release")
+                })
+                .collect();
+            assert_eq!(releases.len(), 1, "one terminal tombstone: {releases:?}");
+            assert_eq!(
+                releases[0].event.get("reason").and_then(|v| v.as_str()),
+                Some(expected_reason)
+            );
+            assert!(releases.iter().all(|event| {
+                event.event.get("reason").and_then(|v| v.as_str())
+                    != Some("protocol_end_without_finalize")
+            }));
+        }
+    }
+
+    #[tokio::test]
+    async fn historical_false_recovery_contract_natural_end_tombstones_per_shape() {
+        // orgasmic:TASK-Y5K2C — round-2-shaped metadata explicitly persisted
+        // false with no last_path. Every agent shape must recompute fail-closed
+        // while the harness-proven custom terminal remains exempt.
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -13018,20 +13260,19 @@ mod tests {
         seed_project(&home, &project_root, "proj");
         let state = direct_stage_test_state(home.clone()).await;
 
-        let shapes: &[(&str, &str, Option<&str>, bool)] = &[
-            ("manager", "manager", None, true),
-            ("artifactor", "artifactor", None, true),
-            ("griller", "griller", Some("grill.last.txt"), true),
-            ("planner", "planner", Some("plan.last.txt"), true),
-            ("architector", "architector", Some("arch.last.txt"), true),
-            ("implementer", "implementer", Some("impl.last.txt"), true),
-            ("terminal", "manager", None, false),
+        let shapes: &[(&str, &str, bool)] = &[
+            ("manager", "manager", true),
+            ("artifactor", "artifactor", true),
+            ("griller", "griller", true),
+            ("planner", "planner", true),
+            ("architector", "architector", true),
+            ("implementer", "implementer", true),
+            ("terminal", "manager", false),
         ];
 
-        for (role, worker_id, last_name, expect_fail_closed) in shapes {
+        for (role, worker_id, expect_fail_closed) in shapes {
             let session_path =
                 project_sessions_dir(&project_root).join(format!("shape-{role}.jsonl"));
-            let last_path = last_name.map(|n| project_root.join(n));
             let harness = if *role == "terminal" {
                 Some("custom")
             } else {
@@ -13042,22 +13283,26 @@ mod tests {
                 worker_id,
                 RunKind::Worker,
                 harness,
-                last_path.clone(),
+                None,
                 None,
                 Some((*role).into()),
-                Some(*expect_fail_closed),
+                Some(false),
             );
             assert_eq!(
                 contract.requires_worker_finalize, *expect_fail_closed,
                 "contract for {role}"
             );
             let acquire_last = if contract.requires_worker_finalize {
-                Some(last_path.unwrap_or_else(|| {
-                    provision_recovery_last_path(&session_path, &format!("prior-{role}"))
-                }))
+                Some(provision_recovery_last_path(
+                    &session_path,
+                    &format!("prior-{role}"),
+                ))
             } else {
                 None
             };
+            if *expect_fail_closed {
+                assert!(acquire_last.is_some(), "{role} recovery path provisioned");
+            }
             let _acquire = state
                 .supervisor
                 .acquire(

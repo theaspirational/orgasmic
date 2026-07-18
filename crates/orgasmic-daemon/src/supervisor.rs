@@ -57,7 +57,7 @@ use crate::writer::{SessionAppend, WriterHandle};
 static BABYSITTER_SPAWN_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_EVENTS_HANDLED: AtomicU64 = AtomicU64::new(0);
 static SPAWN_PIPELINE_POLLS: AtomicU64 = AtomicU64::new(0);
-static SUBMIT_IN_FLIGHT_TOKEN: AtomicU64 = AtomicU64::new(1);
+static ARTIFACTOR_LIFECYCLE_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 const BABYSITTER_AUTO_SPAWN_MAX_RETRIES: u32 = 10;
 const BABYSITTER_AUTO_SPAWN_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -232,6 +232,8 @@ pub enum SupervisorError {
     /// resolves it (TASK-ARZGD / TASK-S52X9 round 3).
     #[error("release deferred while artifactor in-flight: {0}")]
     DeferredWhileInFlight(String),
+    #[error("artifactor lifecycle busy: {0}")]
+    ArtifactorLifecycleBusy(String),
 }
 
 #[derive(Clone)]
@@ -354,20 +356,18 @@ struct RunRecord {
     /// idle release, and TUI terminal events promote this into the finalize
     /// tombstone when `round == terminal_round`.
     terminal_declaration: Option<TerminalDeclaration>,
-    /// In-flight artifactor submit before the durable writer transaction
-    /// commits. Never promoted to Completed on its own (TASK-99W9C).
-    submit_in_flight: Option<SubmitInFlight>,
+    /// Exactly one artifactor lifecycle transaction may be active at a time.
+    /// Submit covers the durable writer transaction; regenerate covers the
+    /// driver acknowledgement window (TASK-Y5K2C).
+    artifactor_lifecycle: ArtifactorLifecycle,
     /// Stream-end, TUI terminal event, or timeout deferred while
-    /// `submit_in_flight` / `regenerate_in_flight` is set — resolved only
+    /// `artifactor_lifecycle` is not idle — resolved only
     /// after the writer/ack outcome.
     pending_terminal_drain: bool,
     /// Operator cancel deferred while an artifactor writer/regenerate is
     /// in flight — after commit/abort/rollback, release as Cancelled
     /// (TASK-ARZGD OQ2).
     pending_cancel: bool,
-    /// Regenerate round checkpoint held until send_input commits or rolls
-    /// back — defers terminal drains across the ack window (TASK-ARZGD).
-    regenerate_in_flight: Option<ArtifactorRegenerateCheckpoint>,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -414,12 +414,20 @@ struct SubmitInFlight {
     token: u64,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ArtifactorLifecycle {
+    Idle,
+    Submit(SubmitInFlight),
+    Regenerate(ArtifactorRegenerateCheckpoint),
+}
+
 /// Snapshot taken before advancing an artifactor regenerate round so a
 /// rejected follow-up can restore the prior declaration (TASK-99W9C).
 #[derive(Clone, Copy, Debug)]
 pub struct ArtifactorRegenerateCheckpoint {
-    pub terminal_round: u64,
-    pub terminal_declaration: Option<TerminalDeclaration>,
+    terminal_round: u64,
+    terminal_declaration: Option<TerminalDeclaration>,
+    token: u64,
 }
 
 struct ResolvedTerminalRelease {
@@ -955,10 +963,9 @@ impl Supervisor {
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             terminal_round: 0,
             terminal_declaration: None,
-            submit_in_flight: None,
+            artifactor_lifecycle: ArtifactorLifecycle::Idle,
             pending_terminal_drain: false,
             pending_cancel: false,
-            regenerate_in_flight: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1190,10 +1197,9 @@ impl Supervisor {
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             terminal_round: 0,
             terminal_declaration: None,
-            submit_in_flight: None,
+            artifactor_lifecycle: ArtifactorLifecycle::Idle,
             pending_terminal_drain: false,
             pending_cancel: false,
-            regenerate_in_flight: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1521,10 +1527,9 @@ impl Supervisor {
             requires_worker_finalize,
             terminal_round: 0,
             terminal_declaration: None,
-            submit_in_flight: None,
+            artifactor_lifecycle: ArtifactorLifecycle::Idle,
             pending_terminal_drain: false,
             pending_cancel: false,
-            regenerate_in_flight: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -2117,7 +2122,7 @@ impl Supervisor {
         &self,
         task_id: &str,
     ) -> Result<(String, u64), SupervisorError> {
-        let token = SUBMIT_IN_FLIGHT_TOKEN.fetch_add(1, Ordering::Relaxed);
+        let token = ARTIFACTOR_LIFECYCLE_TOKEN.fetch_add(1, Ordering::Relaxed);
         let mut g = self.inner.lock().await;
         let run_id = g
             .runs
@@ -2129,7 +2134,10 @@ impl Supervisor {
             .runs
             .get_mut(&run_id)
             .ok_or_else(|| SupervisorError::RunNotFound(run_id.clone()))?;
-        rec.submit_in_flight = Some(SubmitInFlight {
+        if !matches!(rec.artifactor_lifecycle, ArtifactorLifecycle::Idle) {
+            return Err(SupervisorError::ArtifactorLifecycleBusy(run_id));
+        }
+        rec.artifactor_lifecycle = ArtifactorLifecycle::Submit(SubmitInFlight {
             round: rec.terminal_round,
             token,
         });
@@ -2144,13 +2152,16 @@ impl Supervisor {
         &self,
         run_id: &str,
     ) -> Result<u64, SupervisorError> {
-        let token = SUBMIT_IN_FLIGHT_TOKEN.fetch_add(1, Ordering::Relaxed);
+        let token = ARTIFACTOR_LIFECYCLE_TOKEN.fetch_add(1, Ordering::Relaxed);
         let mut g = self.inner.lock().await;
         let rec = g
             .runs
             .get_mut(run_id)
             .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-        rec.submit_in_flight = Some(SubmitInFlight {
+        if !matches!(rec.artifactor_lifecycle, ArtifactorLifecycle::Idle) {
+            return Err(SupervisorError::ArtifactorLifecycleBusy(run_id.into()));
+        }
+        rec.artifactor_lifecycle = ArtifactorLifecycle::Submit(SubmitInFlight {
             round: rec.terminal_round,
             token,
         });
@@ -2170,13 +2181,13 @@ impl Supervisor {
                 .runs
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-            let Some(in_flight) = rec.submit_in_flight else {
+            let ArtifactorLifecycle::Submit(in_flight) = rec.artifactor_lifecycle else {
                 return Ok(());
             };
             if in_flight.token != token {
                 return Ok(());
             }
-            rec.submit_in_flight = None;
+            rec.artifactor_lifecycle = ArtifactorLifecycle::Idle;
             rec.terminal_declaration = Some(TerminalDeclaration {
                 reason: "artifact_submitted",
                 round: in_flight.round,
@@ -2199,13 +2210,13 @@ impl Supervisor {
             let Some(rec) = g.runs.get_mut(run_id) else {
                 return Ok(());
             };
-            let Some(in_flight) = rec.submit_in_flight else {
+            let ArtifactorLifecycle::Submit(in_flight) = rec.artifactor_lifecycle else {
                 return Ok(());
             };
             if in_flight.token != token {
                 return Ok(());
             }
-            rec.submit_in_flight = None;
+            rec.artifactor_lifecycle = ArtifactorLifecycle::Idle;
             rec.terminal_declaration = None;
             take_deferred_artifactor_release(&mut g, run_id)
         };
@@ -2248,18 +2259,23 @@ impl Supervisor {
         &self,
         run_id: &str,
     ) -> Result<ArtifactorRegenerateCheckpoint, SupervisorError> {
+        let token = ARTIFACTOR_LIFECYCLE_TOKEN.fetch_add(1, Ordering::Relaxed);
         let mut g = self.inner.lock().await;
         let rec = g
             .runs
             .get_mut(run_id)
             .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+        if !matches!(rec.artifactor_lifecycle, ArtifactorLifecycle::Idle) {
+            return Err(SupervisorError::ArtifactorLifecycleBusy(run_id.into()));
+        }
         let checkpoint = ArtifactorRegenerateCheckpoint {
             terminal_round: rec.terminal_round,
             terminal_declaration: rec.terminal_declaration,
+            token,
         };
         rec.terminal_round = rec.terminal_round.saturating_add(1);
         rec.terminal_declaration = None;
-        rec.regenerate_in_flight = Some(checkpoint);
+        rec.artifactor_lifecycle = ArtifactorLifecycle::Regenerate(checkpoint);
         Ok(checkpoint)
     }
 
@@ -2269,6 +2285,7 @@ impl Supervisor {
     pub async fn commit_artifactor_regenerate_round(
         &self,
         run_id: &str,
+        checkpoint: ArtifactorRegenerateCheckpoint,
     ) -> Result<(), SupervisorError> {
         let outcome = {
             let mut g = self.inner.lock().await;
@@ -2276,7 +2293,13 @@ impl Supervisor {
                 .runs
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-            rec.regenerate_in_flight = None;
+            let ArtifactorLifecycle::Regenerate(active) = rec.artifactor_lifecycle else {
+                return Ok(());
+            };
+            if active.token != checkpoint.token {
+                return Ok(());
+            }
+            rec.artifactor_lifecycle = ArtifactorLifecycle::Idle;
             take_deferred_artifactor_release(&mut g, run_id)
         };
         finish_deferred_artifactor_release(&self.writer, outcome).await;
@@ -2297,9 +2320,15 @@ impl Supervisor {
                 .runs
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-            rec.terminal_round = checkpoint.terminal_round;
-            rec.terminal_declaration = checkpoint.terminal_declaration;
-            rec.regenerate_in_flight = None;
+            let ArtifactorLifecycle::Regenerate(active) = rec.artifactor_lifecycle else {
+                return Ok(());
+            };
+            if active.token != checkpoint.token {
+                return Ok(());
+            }
+            rec.terminal_round = active.terminal_round;
+            rec.terminal_declaration = active.terminal_declaration;
+            rec.artifactor_lifecycle = ArtifactorLifecycle::Idle;
             take_deferred_artifactor_release(&mut g, run_id)
         };
         finish_deferred_artifactor_release(&self.writer, outcome).await;
@@ -2912,7 +2941,7 @@ pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &s
 }
 
 fn artifactor_lifecycle_in_flight(rec: &RunRecord) -> bool {
-    rec.submit_in_flight.is_some() || rec.regenerate_in_flight.is_some()
+    !matches!(rec.artifactor_lifecycle, ArtifactorLifecycle::Idle)
 }
 
 enum DeferredArtifactorRelease {
@@ -2925,6 +2954,11 @@ fn take_deferred_artifactor_release(inner: &mut Inner, run_id: &str) -> Deferred
     let Some(rec) = inner.runs.get_mut(run_id) else {
         return DeferredArtifactorRelease::None;
     };
+    // A deferred release belongs to the lifecycle transaction that observed
+    // it. Never extract the run until that transaction has resolved.
+    if artifactor_lifecycle_in_flight(rec) {
+        return DeferredArtifactorRelease::None;
+    }
     if rec.pending_cancel {
         let Some(rec) = inner.runs.remove(run_id) else {
             return DeferredArtifactorRelease::None;
@@ -5314,7 +5348,7 @@ mod tests {
             .begin_artifactor_regenerate_round(&resp.run_id)
             .await
             .unwrap();
-        sup.commit_artifactor_regenerate_round(&resp.run_id)
+        sup.commit_artifactor_regenerate_round(&resp.run_id, _checkpoint)
             .await
             .unwrap();
         let path = dir.path().join("artifact.generate:ART-ROUND1.jsonl");
@@ -5544,6 +5578,10 @@ mod tests {
             .begin_artifactor_regenerate_round(&resp.run_id)
             .await
             .unwrap();
+        assert!(matches!(
+            sup.prepare_artifactor_submit_in_flight(&resp.run_id).await,
+            Err(SupervisorError::ArtifactorLifecycleBusy(_))
+        ));
         assert_eq!(checkpoint.terminal_round, 0);
         assert!(checkpoint.terminal_declaration.is_some());
         sup.rollback_artifactor_regenerate_round(&resp.run_id, checkpoint)
@@ -5561,6 +5599,20 @@ mod tests {
             checkpoint2.terminal_declaration.is_some(),
             "rollback must restore the prior declaration"
         );
+        sup.rollback_artifactor_regenerate_round(&resp.run_id, checkpoint2)
+            .await
+            .unwrap();
+        let token = sup
+            .prepare_artifactor_submit_in_flight(&resp.run_id)
+            .await
+            .unwrap();
+        assert!(matches!(
+            sup.begin_artifactor_regenerate_round(&resp.run_id).await,
+            Err(SupervisorError::ArtifactorLifecycleBusy(_))
+        ));
+        sup.abort_artifactor_submit_in_flight(&resp.run_id, token)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

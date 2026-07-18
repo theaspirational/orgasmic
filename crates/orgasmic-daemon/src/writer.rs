@@ -201,6 +201,26 @@ struct TransactionRequest {
 pub struct WriterHandle {
     tx: mpsc::Sender<WriterCommand>,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
+    #[cfg(test)]
+    transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
+}
+
+#[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct TestTransactionGate {
+    entered: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[cfg(test)]
+impl TestTransactionGate {
+    pub(crate) async fn wait_until_entered(&self) {
+        self.entered.notified().await;
+    }
+
+    pub(crate) fn release(&self) {
+        self.release.notify_one();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +258,11 @@ impl WriterHandle {
     }
 
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
+        #[cfg(test)]
+        if let Some(gate) = self.transaction_gate.lock().await.take() {
+            gate.entered.notify_one();
+            gate.release.notified().await;
+        }
         let request_id = tx
             .request_id
             .clone()
@@ -322,6 +347,16 @@ impl WriterHandle {
             let _ = rx.await;
         }
     }
+
+    #[cfg(test)]
+    pub(crate) async fn gate_next_transaction(&self) -> Arc<TestTransactionGate> {
+        let gate = Arc::new(TestTransactionGate {
+            entered: tokio::sync::Notify::new(),
+            release: tokio::sync::Notify::new(),
+        });
+        *self.transaction_gate.lock().await = Some(Arc::clone(&gate));
+        gate
+    }
 }
 
 /// Boot the writer task and return a clone-able handle.
@@ -329,7 +364,12 @@ pub fn spawn(events: EventBus) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
     tokio::spawn(writer_loop(rx, events));
-    WriterHandle { tx, idempotency }
+    WriterHandle {
+        tx,
+        idempotency,
+        #[cfg(test)]
+        transaction_gate: Arc::new(Mutex::new(None)),
+    }
 }
 
 async fn writer_loop(mut rx: mpsc::Receiver<WriterCommand>, events: EventBus) {
