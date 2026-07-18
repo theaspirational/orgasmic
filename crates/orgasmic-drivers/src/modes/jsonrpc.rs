@@ -237,6 +237,32 @@ pub async fn run_jsonrpc_handshake(
         .await?;
     emit_events(events, outgoing).await;
 
+    // Optional post-session RPCs (e.g. cursor ACP `session/set_config_option`
+    // for an explicit model override). Inject sessionId when the adapter omitted
+    // it because the id is only known after session/new.
+    if let Some(post_session) = session_init.get("post_session").and_then(Value::as_array) {
+        let session_id = thread_response
+            .get("sessionId")
+            .or_else(|| thread_response.get("session_id"))
+            .and_then(Value::as_str);
+        for entry in post_session {
+            let method = entry.get("method").and_then(Value::as_str).ok_or_else(|| {
+                DriverError::Transport("post_session entry missing method".into())
+            })?;
+            let mut params = entry.get("params").cloned().unwrap_or_else(|| json!({}));
+            if let (Some(session_id), Some(map)) = (session_id, params.as_object_mut()) {
+                map.entry("sessionId".to_string())
+                    .or_insert_with(|| json!(session_id));
+            }
+            let response =
+                request_response(transport, ids, method, params, events, adapter, allowlist)
+                    .await?;
+            if let Ok(events_to_emit) = adapter.on_ws_response(method, response).await {
+                emit_events(events, events_to_emit).await;
+            }
+        }
+    }
+
     let auto_turn = session_init
         .get("auto_turn")
         .and_then(Value::as_bool)

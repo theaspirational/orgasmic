@@ -232,6 +232,14 @@ async fn post_dispatch(
         .unwrap()
 }
 
+fn transport_for_worker_label(worker_id: Option<&str>) -> (&'static str, &'static str) {
+    match worker_id {
+        Some(id) if id.contains("cursor") => ("subprocess-stream-json", "cursor-agent"),
+        Some(id) if id.contains("stdio") => ("acp-stdio", "codex"),
+        _ => ("acp-ws", "codex"),
+    }
+}
+
 fn dispatch_body(
     kind: &str,
     brief: &Path,
@@ -240,8 +248,11 @@ fn dispatch_body(
     stdout: &Path,
     worker_id: Option<&str>,
 ) -> serde_json::Value {
+    let (mode, harness) = transport_for_worker_label(worker_id);
     serde_json::json!({
         "kind": kind,
+        "mode": mode,
+        "harness": harness,
         "brief_path": brief,
         "worktree_path": worktree,
         "last_path": last,
@@ -377,15 +388,11 @@ async fn dispatch_endpoint_auto_spawns_babysitter_jsonl() {
     let worker_id = "implementer-codex-appserver";
     let babysitter_id = "babysitter-stall-detector";
     let task_id = "TASK-BABYSITTER-SPAWN";
-    seed_worker_with_babysitter(
-        &home,
-        worker_id,
-        babysitter_id,
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
+    write(
+        &home.config(),
+        format!("dispatch:\n  implementer:\n    babysitter_worker: {babysitter_id}\n"),
     );
+    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_babysitter_worker(&home, babysitter_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
@@ -852,17 +859,17 @@ async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
 }
 
 #[tokio::test]
-async fn dispatch_missing_worker_is_path_free() {
+async fn dispatch_unsupported_transport_is_path_free() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
     let worker_id = "implementer-codex-appserver";
-    let task_id = "TASK-MISSING-WORKER";
+    let task_id = "TASK-UNSUPPORTED-TRANSPORT";
     seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = project_root.join("brief.txt");
-    write(&brief, "missing worker dispatch brief\n");
+    write(&brief, "unsupported transport dispatch brief\n");
     let worktree = tmp.path().join("worktree");
     std::fs::create_dir_all(&worktree).unwrap();
     let last = project_root.join("last.txt");
@@ -872,21 +879,19 @@ async fn dispatch_missing_worker_is_path_free() {
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let resp = post_dispatch(
-        &running,
-        &token,
-        "proj-dispatch",
-        task_id,
-        dispatch_body(
-            "implementer",
-            &brief,
-            &worktree,
-            &last,
-            &stdout,
-            Some("missing-worker-id"),
-        ),
-    )
-    .await;
+    let mut body = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some(worker_id),
+    );
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("mode".into(), serde_json::json!("tmux"));
+        obj.insert("harness".into(), serde_json::json!("custom"));
+    }
+    let resp = post_dispatch(&running, &token, "proj-dispatch", task_id, body).await;
     let reject = [
         project_root.as_path(),
         home.root.as_path(),
@@ -895,8 +900,8 @@ async fn dispatch_missing_worker_is_path_free() {
     ];
     let status = resp.status();
     let body = resp.text().await.unwrap();
-    assert_eq!(status, reqwest::StatusCode::NOT_FOUND);
-    assert_path_free_error(&body, "worker not found", &reject);
+    assert_eq!(status, reqwest::StatusCode::BAD_REQUEST);
+    assert_path_free_error(&body, "unsupported mode/harness", &reject);
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1703,6 +1708,8 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
         task_id,
         serde_json::json!({
             "kind": "reviewer",
+            "mode": "acp-ws",
+            "harness": "codex",
             "brief_path": review_brief,
             "worktree_path": review_worktree,
             "last_path": review_last,
@@ -1774,15 +1781,16 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
-    let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-missing-skill";
-    let task_id = "TASK-SKILL-BEFORE-BRIEF";
+    // Governance-linked skills are spawn authority (dec_WDR5K); unresolved
+    // skills must still precede brief IO so path-bearing brief errors stay secondary.
     write(
-        &home.user().join(format!("workers/{worker_id}.org")),
-        format!(
-            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:               missing-skill\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
-        ),
+        &home.config(),
+        "dispatch:\n  implementer:\n    linked_skills:\n      - missing-skill\n",
     );
+    let project_root = tmp.path().join("proj");
+    let worker_id = "implementer-codex-appserver";
+    let task_id = "TASK-SKILL-BEFORE-BRIEF";
+    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let missing_brief = tmp.path().join("missing-brief.md");
     let worktree = tmp.path().join("worktree");

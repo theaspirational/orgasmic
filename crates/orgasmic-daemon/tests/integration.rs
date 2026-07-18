@@ -954,6 +954,8 @@ async fn stage_acquire_blocked_sessions_is_path_free() {
         .bearer_auth(&ctx.token)
         .json(&serde_json::json!({
             "project": ctx.project_id,
+            "mode": "acp-stdio",
+            "harness": "codex",
             "reason": "path-free acquire error test",
         }))
         .send()
@@ -2886,6 +2888,8 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "kind": "implementer",
+            "mode": "acp-ws",
+            "harness": "codex",
             "brief_path": brief,
             "worktree_path": worktree,
             "last_path": last,

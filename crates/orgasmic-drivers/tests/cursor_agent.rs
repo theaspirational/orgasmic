@@ -78,7 +78,8 @@ async fn simulated_acquire_emits_deterministic_flow() {
         panic!("expected Ready");
     };
     assert_eq!(capabilities["simulated"], true);
-    assert_eq!(capabilities["model"], "composer-2.5-fast");
+    // No orgasmic default model: omitted config leaves model unset (dec_WDR5K).
+    assert!(capabilities["model"].is_null());
 
     let system = session.events.recv().await.unwrap();
     assert!(

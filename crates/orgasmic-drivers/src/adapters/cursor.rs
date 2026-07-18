@@ -30,7 +30,8 @@ use crate::r#trait::{
 };
 
 const TRANSPORT: &str = "cursor-agent";
-const DEFAULT_MODEL: &str = "composer-2.5-fast";
+// orgasmic:TASK-SZEWA, dec_WDR5K — no orgasmic-owned model default; omit --model
+// when dispatch does not pass an explicit override (harness default applies).
 const DEFAULT_SANDBOX: &str = "enabled";
 /// Trailing system chunks kept for synthetic subprocess-exit summaries.
 pub(crate) const SUBPROCESS_EXIT_SYSTEM_TAIL_CHUNKS: usize = 8;
@@ -133,11 +134,11 @@ impl CursorAgentConfig {
         self.endpoint.as_deref().filter(|value| !value.is_empty())
     }
 
-    fn model(&self) -> &str {
+    fn model(&self) -> Option<&str> {
         self.model
             .as_deref()
+            .map(str::trim)
             .filter(|value| !value.is_empty())
-            .unwrap_or(DEFAULT_MODEL)
     }
 
     fn sandbox(&self) -> &str {
@@ -252,11 +253,13 @@ impl HarnessEventAdapter for CursorAdapter {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--stream-partial-output".to_string(),
-            "--model".to_string(),
-            cfg.model().to_string(),
             "--sandbox".to_string(),
             cfg.sandbox().to_string(),
         ];
+        if let Some(model) = cfg.model() {
+            args.push("--model".to_string());
+            args.push(model.to_string());
+        }
         if cfg.force() {
             args.push("--force".to_string());
         }
@@ -1205,7 +1208,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cfg = CursorAgentConfig {
             endpoint: Some("stdio".into()),
-            model: Some(DEFAULT_MODEL.into()),
+            model: Some("fixture-model".into()),
             sandbox: Some(DEFAULT_SANDBOX.into()),
             force: Some(true),
             ..CursorAgentConfig::default()

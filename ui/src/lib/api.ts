@@ -73,10 +73,12 @@ export function fetchProjects(): Promise<ProjectIndex[]> {
   return get<ProjectIndex[]>('/projects');
 }
 
+/** @deprecated TASK-SZEWA — prefer `fetchManagerDrivers` + kind addressing. */
 export function fetchWorkers(): Promise<WorkerSummary[]> {
   return get<WorkerSummary[]>('/workers');
 }
 
+/** @deprecated TASK-SZEWA — worker-template validation is no longer routing authority. */
 export function fetchWorkerValidation(): Promise<WorkerValidationResult[]> {
   return get<WorkerValidationResult[]>('/workers/validate');
 }

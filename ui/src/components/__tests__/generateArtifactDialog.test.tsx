@@ -8,8 +8,23 @@ vi.mock('@tanstack/react-router', () => ({
 }));
 
 const generateArtifactMock = vi.fn();
+const fetchManagerDriversMock = vi.fn().mockResolvedValue({
+  drivers: [
+    {
+      mode: 'rmux',
+      harness: 'claude',
+      binary: 'claude',
+      display_name: 'rmux / claude',
+      mode_label: 'rmux',
+      harness_label: 'claude',
+      installed: true,
+      mode_installed: true,
+    },
+  ],
+});
 vi.mock('@/lib/api', () => ({
   generateArtifact: (...args: unknown[]) => generateArtifactMock(...args),
+  fetchManagerDrivers: (...args: unknown[]) => fetchManagerDriversMock(...args),
 }));
 
 import { GenerateArtifactDialog } from '../GenerateArtifactDialog';
@@ -17,6 +32,20 @@ import { GenerateArtifactDialog } from '../GenerateArtifactDialog';
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  fetchManagerDriversMock.mockResolvedValue({
+    drivers: [
+      {
+        mode: 'rmux',
+        harness: 'claude',
+        binary: 'claude',
+        display_name: 'rmux / claude',
+        mode_label: 'rmux',
+        harness_label: 'claude',
+        installed: true,
+        mode_installed: true,
+      },
+    ],
+  });
 });
 
 function renderDialog(props: Partial<Parameters<typeof GenerateArtifactDialog>[0]> = {}) {
@@ -29,6 +58,12 @@ function renderDialog(props: Partial<Parameters<typeof GenerateArtifactDialog>[0
   const merged = { ...defaults, ...props };
   const view = render(<GenerateArtifactDialog {...merged} />);
   return { ...view, props: merged };
+}
+
+async function waitForTransportReady(dialog: HTMLElement) {
+  await waitFor(() => {
+    expect(within(dialog).getByRole('button', { name: 'Generate' })).toBeEnabled();
+  });
 }
 
 describe('GenerateArtifactDialog prompt suggestions', () => {
@@ -89,10 +124,21 @@ describe('GenerateArtifactDialog draft preservation', () => {
     fireEvent.change(within(dialog).getByPlaceholderText('What should this artifact cover?'), {
       target: { value: 'Ship it' },
     });
+    await waitForTransportReady(dialog);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Generate' }));
 
     await waitFor(() => expect(generateArtifactMock).toHaveBeenCalled());
-    expect(generateArtifactMock).toHaveBeenCalledWith({ nodes: [], prompt: 'Ship it' }, 'proj1');
+    expect(generateArtifactMock).toHaveBeenCalledWith(
+      {
+        nodes: [],
+        prompt: 'Ship it',
+        mode: 'rmux',
+        harness: 'claude',
+        model: null,
+        effort: null,
+      },
+      'proj1',
+    );
 
     rerender(<GenerateArtifactDialog {...props} open={false} />);
     rerender(<GenerateArtifactDialog {...props} open={true} />);
@@ -109,6 +155,7 @@ describe('GenerateArtifactDialog draft preservation', () => {
     fireEvent.change(within(dialog).getByPlaceholderText('What should this artifact cover?'), {
       target: { value: 'Do not lose me' },
     });
+    await waitForTransportReady(dialog);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Generate' }));
 
     await within(dialog).findByRole('alert');

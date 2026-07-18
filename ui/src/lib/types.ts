@@ -629,6 +629,11 @@ export type Me = {
 export type ArtifactGenerateRequest = {
   nodes: string[];
   prompt: string;
+  mode: string;
+  harness: string;
+  harness_args?: string[];
+  model?: string | null;
+  effort?: string | null;
 };
 
 export type ArtifactGenerateResponse = {
@@ -638,6 +643,11 @@ export type ArtifactGenerateResponse = {
 
 export type ArtifactRegenerateRequest = {
   extraPrompt?: string;
+  mode?: string;
+  harness?: string;
+  harness_args?: string[];
+  model?: string | null;
+  effort?: string | null;
 };
 
 export type DaemonEvent = {

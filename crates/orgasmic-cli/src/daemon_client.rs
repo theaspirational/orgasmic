@@ -167,6 +167,9 @@ fn api_path(path: &str) -> String {
 #[derive(Debug, Serialize)]
 pub(crate) struct DispatchRequest {
     kind: String,
+    mode: String,
+    harness: String,
+    harness_args: Vec<String>,
     brief_path: PathBuf,
     worktree_path: PathBuf,
     last_path: PathBuf,
@@ -185,6 +188,9 @@ pub(crate) struct DispatchRequest {
 pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
     DispatchRequest {
         kind: plan.kind.as_str().to_string(),
+        mode: plan.mode.clone(),
+        harness: plan.harness.clone(),
+        harness_args: plan.harness_args.clone(),
         brief_path: plan.brief_path.clone(),
         worktree_path: plan.worktree_path.clone(),
         last_path: plan.last_path.clone(),
@@ -375,6 +381,9 @@ mod tests {
             project_id: "orgasmic".into(),
             tasks: vec!["TASK-1".into()],
             kind: DispatchKind::Implementer,
+            mode: "acp-stdio".into(),
+            harness: "cursor-agent".into(),
+            harness_args: vec!["--betas".into(), "context-1m".into()],
             brief_path: PathBuf::from("/tmp/brief.md"),
             brief_content: "brief".into(),
             from_sha: "abc123".into(),
@@ -393,11 +402,15 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_args_worker_flag_passes_through_to_daemon_request() {
-        let request = build_dispatch_request(&sample_plan(Some("foo".into())));
-        assert_eq!(request.worker_id.as_deref(), Some("foo"));
-        let request = build_dispatch_request(&sample_plan(None));
-        assert!(request.worker_id.is_none());
+    fn dispatch_request_carries_mode_harness_and_raw_argv() {
+        let request = build_dispatch_request(&sample_plan(Some("compat-label".into())));
+        assert_eq!(request.mode, "acp-stdio");
+        assert_eq!(request.harness, "cursor-agent");
+        assert_eq!(
+            request.harness_args,
+            vec!["--betas".to_string(), "context-1m".to_string()]
+        );
+        assert_eq!(request.worker_id.as_deref(), Some("compat-label"));
         assert_eq!(request.branch, "task-1-impl");
         assert_eq!(request.liveness, "abc123");
     }

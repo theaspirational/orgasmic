@@ -16,6 +16,12 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { generateArtifact } from '@/lib/api';
 
+import {
+  emptyTransportSelection,
+  TransportPicker,
+  type TransportSelection,
+} from './TransportPicker';
+
 export function GenerateArtifactDialog({
   projectId,
   open,
@@ -33,6 +39,7 @@ export function GenerateArtifactDialog({
 }) {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState('');
+  const [transport, setTransport] = useState<TransportSelection>(emptyTransportSelection);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,7 +52,8 @@ export function GenerateArtifactDialog({
     setError(null);
   }, [open]);
 
-  const canSubmit = prompt.trim().length > 0;
+  const canSubmit =
+    prompt.trim().length > 0 && transport.mode.length > 0 && transport.harness.length > 0;
   const suggestions = promptSuggestions(nodes, nodeLabels);
 
   async function submit() {
@@ -53,7 +61,17 @@ export function GenerateArtifactDialog({
     setSubmitting(true);
     setError(null);
     try {
-      const result = await generateArtifact({ nodes, prompt: prompt.trim() }, projectId);
+      const result = await generateArtifact(
+        {
+          nodes,
+          prompt: prompt.trim(),
+          mode: transport.mode,
+          harness: transport.harness,
+          model: transport.model.trim() || null,
+          effort: transport.effort.trim() || null,
+        },
+        projectId,
+      );
       toast.success('Artifact generation started');
       setPrompt('');
       onOpenChange(false);
@@ -123,6 +141,7 @@ export function GenerateArtifactDialog({
               </div>
             )}
           </div>
+          <TransportPicker kindLabel="artifactor" value={transport} onChange={setTransport} />
           <label className="flex flex-col gap-1.5 text-sm">
             <span className="font-medium">Prompt</span>
             <Textarea

@@ -46,6 +46,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::addressing::{
+    compatibility_worker_id, resolve_address_governance, validate_supported_pair,
+};
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
     new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_art_id_readable,
@@ -56,6 +59,7 @@ use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
+use crate::governance::{DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     commit_recovery_claim, index_recovery_origins_in_session, load_committed_recovery_claim,
@@ -93,6 +97,8 @@ pub struct ApiState {
     pub manager_actor: Option<String>,
     pub auto_commit_signal: bool,
     pub driver_defaults: DriverDefaults,
+    /// Sparse `dispatch:` governance overlay from config.yaml (dec_WDR5K item 3).
+    pub dispatch_governance: DispatchGovernanceOverlay,
     pub actor: String,
     pub machine: String,
     pub bind_host: String,
@@ -2729,6 +2735,17 @@ pub struct StageRequest {
     pub project: Option<String>,
     #[serde(default)]
     pub task_id: Option<String>,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED`.
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED`.
+    pub harness: String,
+    /// Extra argv for custom harnesses; preserved as an array (dec_WDR5K item 4).
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -2745,7 +2762,8 @@ pub struct StageRequest {
 struct StageSpec {
     stage: &'static str,
     requested_tx: &'static str,
-    worker_id: &'static str,
+    /// Prompt-studio kind / role; not a worker-template id.
+    kind: WorkerKind,
     prompt_kind: &'static str,
     target: &'static str,
     default_reason: &'static str,
@@ -2777,7 +2795,7 @@ fn stage_spec(stage: &str) -> StageSpec {
         "grill" => StageSpec {
             stage: "grill",
             requested_tx: "grill.requested",
-            worker_id: "griller",
+            kind: WorkerKind::Griller,
             prompt_kind: "griller",
             target: DEFAULT_TASK_FILE_REL,
             default_reason: "grill stage requested",
@@ -2785,7 +2803,7 @@ fn stage_spec(stage: &str) -> StageSpec {
         "architect" => StageSpec {
             stage: "architect",
             requested_tx: "architect.requested",
-            worker_id: "architector",
+            kind: WorkerKind::Architector,
             prompt_kind: "architector",
             target: ".orgasmic/architecture.org",
             default_reason: "architect stage requested",
@@ -2793,7 +2811,7 @@ fn stage_spec(stage: &str) -> StageSpec {
         "plan" => StageSpec {
             stage: "plan",
             requested_tx: "plan.requested",
-            worker_id: "planner",
+            kind: WorkerKind::Planner,
             prompt_kind: "planner",
             target: DEFAULT_TASK_FILE_REL,
             default_reason: "plan stage requested",
@@ -2821,7 +2839,15 @@ async fn post_stage(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     drop(snap);
 
-    let worker = load_stage_worker(&state.home, spec.worker_id)?;
+    let worker = resolve_addressed_stage_worker(
+        &state.home,
+        spec.kind,
+        &req.mode,
+        &req.harness,
+        req.harness_args.clone(),
+        &state.dispatch_governance,
+        None,
+    )?;
     if let Some(skill) = worker.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
@@ -2852,11 +2878,18 @@ async fn post_stage(
             worker.driver, worker.harness
         ))
     })?;
-    let driver_config = stage_driver_config(
+    let overrides = DriverOverrides {
+        provider: None,
+        model: non_empty_field(req.model.clone()),
+        effort: non_empty_field(req.effort.clone()),
+    };
+    let driver_config = stage_driver_config_with_overrides(
         &worker,
         &project.root,
         &project.root,
         &bundle,
+        overrides,
+        None,
         &state.driver_defaults,
         state.tmux_input_ready_timeout_secs,
     );
@@ -3020,6 +3053,51 @@ struct DriverOverrides {
 struct CompiledStagePrompt {
     id: String,
     compiled: String,
+}
+
+/// Build a spawn-time worker view from `(kind, mode, harness)` + governance.
+/// Prompt persona comes from Prompt Studio by kind; worker templates are not
+/// routing authority (dec_WDR5K / TASK-SZEWA).
+fn resolve_addressed_stage_worker(
+    home: &Home,
+    kind: WorkerKind,
+    mode: &str,
+    harness: &str,
+    harness_args: Vec<String>,
+    overlay: &DispatchGovernanceOverlay,
+    dispatch_override: Option<&GovernancePatch>,
+) -> Result<StageWorker, ApiError> {
+    validate_supported_pair(mode, harness).map_err(ApiError::bad_request)?;
+    let gov = resolve_address_governance(kind, harness, overlay, dispatch_override);
+    let missing_skills = gov
+        .linked_skills
+        .iter()
+        .filter(|skill| {
+            resolve_stage_content_path(home, &PathBuf::from("skills").join(format!("{skill}.org")))
+                .is_none()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(StageWorker {
+        id: compatibility_worker_id(kind, mode, harness),
+        kind,
+        driver: mode.trim().to_string(),
+        harness: harness.trim().to_string(),
+        models: Vec::new(),
+        reasoning_efforts: Vec::new(),
+        default_provider: None,
+        default_model: None,
+        default_effort: None,
+        linked_skills: gov.linked_skills,
+        persona: None,
+        operating_rules: None,
+        missing_skills,
+        babysitter_worker: gov.babysitter_worker,
+        stall_timeout_secs: gov.stall_timeout_secs,
+        max_run_duration_secs: gov.max_run_duration_secs,
+        sandbox_permissions: gov.sandbox_permissions,
+        harness_args,
+    })
 }
 
 fn load_stage_worker(home: &Home, id: &str) -> Result<StageWorker, ApiError> {
@@ -3571,6 +3649,7 @@ fn sandbox_allowlist_to_csv(list: &SandboxAllowlist) -> String {
     )
 }
 
+#[allow(dead_code)] // kept as the zero-override convenience wrapper
 fn stage_driver_config(
     worker: &StageWorker,
     project_root: &FsPath,
@@ -3761,10 +3840,18 @@ fn build_babysitter_auto_spawn(
 #[derive(Debug, Deserialize)]
 struct DispatchRequest {
     pub kind: String,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED` (routing authority).
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED` (routing authority).
+    pub harness: String,
+    /// Raw argv for custom harnesses; logged verbatim in tx (dec_WDR5K item 4).
+    #[serde(default)]
+    pub harness_args: Vec<String>,
     pub brief_path: PathBuf,
     pub worktree_path: PathBuf,
     pub last_path: PathBuf,
     pub stdout_path: PathBuf,
+    /// Compatibility label only — not routing authority. Prefer omitting.
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
     #[serde(default)]
@@ -4043,8 +4130,8 @@ async fn spawn_worker_run(
 /// Dispatch a manager-driven implementer/reviewer run through the supervisor.
 ///
 /// `--model` / `--effort` / `--provider` overrides in [`DispatchRequest`] are
-/// trusted manager input: they bypass worker eligibility checks and are applied
-/// directly to the staged driver config after schema validation only.
+/// trusted manager input: passed through verbatim with no orgasmic catalog
+/// validation (dec_WDR5K item 9). Transport is addressed by `(mode, harness)`.
 async fn post_task_dispatch(
     State(state): State<ApiState>,
     Path((project_id, task_id)): Path<(String, String)>,
@@ -4066,8 +4153,25 @@ async fn post_task_dispatch(
     let task_sandbox_permissions = task_summary.and_then(|task| task.sandbox_permissions.clone());
     drop(snap);
 
-    let worker_id = resolve_dispatch_worker_id(&state.home, kind, req.worker_id.as_deref())?;
-    let worker_for_bundle = load_stage_worker(&state.home, &worker_id)?;
+    let worker_for_bundle = resolve_addressed_stage_worker(
+        &state.home,
+        kind.worker_kind(),
+        &req.mode,
+        &req.harness,
+        req.harness_args.clone(),
+        &state.dispatch_governance,
+        None,
+    )?;
+    // Optional compatibility label from the client; never used for routing.
+    let worker_id = req
+        .worker_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| worker_for_bundle.id.clone());
+    let mut worker_for_bundle = worker_for_bundle;
+    worker_for_bundle.id = worker_id.clone();
     if let Some(skill) = worker_for_bundle.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
@@ -4087,7 +4191,6 @@ async fn post_task_dispatch(
         model: non_empty_field(req.model_override.clone()),
         effort: non_empty_field(req.effort_override.clone()),
     };
-    warn_dispatch_overrides(&worker_for_bundle, &overrides);
     let spawn = spawn_worker_run(
         &state,
         SpawnWorkerRequest {
@@ -4495,6 +4598,7 @@ fn validate_dispatch_worktree_dir(path: &FsPath) -> Result<(), ApiError> {
     }
 }
 
+#[allow(dead_code)] // retained for unit coverage of pass-through overrides
 fn warn_dispatch_overrides(worker: &StageWorker, overrides: &DriverOverrides) {
     if let Some(model) = overrides.model.as_deref() {
         if !worker.models.iter().any(|allowed| allowed == model) {
@@ -4519,54 +4623,6 @@ fn warn_dispatch_overrides(worker: &StageWorker, overrides: &DriverOverrides) {
                 "dispatch effort override is not listed in worker :REASONING_EFFORTS:"
             );
         }
-    }
-}
-
-fn resolve_dispatch_worker_id(
-    home: &Home,
-    kind: DispatchEndpointKind,
-    explicit: Option<&str>,
-) -> Result<String, ApiError> {
-    if let Some(worker) = explicit.map(str::trim).filter(|worker| !worker.is_empty()) {
-        return Ok(worker.to_string());
-    }
-    let worker_kind = kind.worker_kind();
-    let candidates = candidate_worker_ids_for_kind(home, worker_kind)?;
-    let available = if candidates.is_empty() {
-        "none".to_string()
-    } else {
-        candidates.join(", ")
-    };
-    Err(ApiError::bad_request(format!(
-        "no worker specified; pass --worker. available {}: {}",
-        worker_kind_plural(worker_kind),
-        available
-    )))
-}
-
-fn candidate_worker_ids_for_kind(home: &Home, kind: WorkerKind) -> Result<Vec<String>, ApiError> {
-    let mut ids = content::list_workers(home)
-        .map_err(|e| content_list_error(e, "workers"))?
-        .into_iter()
-        .filter(|worker| worker.kind == kind)
-        .map(|worker| worker.id)
-        .collect::<Vec<_>>();
-    ids.sort();
-    Ok(ids)
-}
-
-fn worker_kind_plural(kind: WorkerKind) -> &'static str {
-    match kind {
-        WorkerKind::Implementer => "implementers",
-        WorkerKind::Reviewer => "reviewers",
-        WorkerKind::Planner => "planners",
-        WorkerKind::Analyzer => "analyzers",
-        WorkerKind::Architector => "architectors",
-        WorkerKind::Griller => "grillers",
-        WorkerKind::Glossarist => "glossarists",
-        WorkerKind::Babysitter => "babysitters",
-        WorkerKind::Manager => "managers",
-        WorkerKind::Artifactor => "artifactors",
     }
 }
 
@@ -4659,6 +4715,8 @@ async fn record_dispatch_started(
     let started_at = Utc::now().format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let mut extra = vec![
         ("KIND".to_string(), record.kind.as_str().to_string()),
+        ("MODE".to_string(), record.req.mode.clone()),
+        ("HARNESS".to_string(), record.req.harness.clone()),
         (
             "WORKTREE".to_string(),
             record.req.worktree_path.display().to_string(),
@@ -4685,6 +4743,13 @@ async fn record_dispatch_started(
             dispatch_expected_next(record.kind).to_string(),
         ),
     ];
+    // Raw argv preserved as a JSON array string — never shell-joined (dec_WDR5K item 4).
+    if !record.req.harness_args.is_empty() {
+        extra.push((
+            "HARNESS_ARGS".to_string(),
+            serde_json::to_string(&record.req.harness_args).unwrap_or_else(|_| "[]".into()),
+        ));
+    }
     if let Some(model) = non_empty_field(record.req.model_override.clone()) {
         extra.push(("MODEL".to_string(), model));
     }
@@ -12573,16 +12638,41 @@ async fn post_artifact_comment_resolve(
 
 // ---- artifact generation launch (arch_045Q0 / dec_JBWB9 / dec_V44E4) -------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ArtifactGenerateRequest {
+    #[serde(default)]
     nodes: Vec<String>,
+    #[serde(default)]
     prompt: String,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED`.
+    #[serde(default)]
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED`.
+    #[serde(default)]
+    pub harness: String,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ArtifactRegenerateRequest {
     #[serde(default, rename = "extraPrompt")]
     extra_prompt: Option<String>,
+    /// Required on the cold path (no live artifactor). Hot-path followups ignore it.
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub harness: Option<String>,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -12795,8 +12885,22 @@ async fn launch_artifact_generation(
     restore_state: &'static str,
     restore_version: u32,
     bundle: String,
+    mode: &str,
+    harness: &str,
+    harness_args: Vec<String>,
+    model: Option<String>,
+    effort: Option<String>,
 ) -> Result<String, ApiError> {
-    let worker = load_stage_worker(&state.home, "artifactor")?;
+    let worker = resolve_addressed_stage_worker(
+        &state.home,
+        WorkerKind::Artifactor,
+        mode,
+        harness,
+        harness_args,
+        &state.dispatch_governance,
+        None,
+    )?;
+    let worker_id = worker.id.clone();
 
     let task_id = format!("artifact.generate:{art_id}");
     let spawn = spawn_worker_run(
@@ -12804,10 +12908,14 @@ async fn launch_artifact_generation(
         SpawnWorkerRequest {
             project_id: &entry.id,
             task_id: &task_id,
-            worker_id: "artifactor",
+            worker_id: &worker_id,
             run_kind: RunKind::Worker,
             bundle: &bundle,
-            overrides: DriverOverrides::default(),
+            overrides: DriverOverrides {
+                provider: None,
+                model: non_empty_field(model),
+                effort: non_empty_field(effort),
+            },
             project_root_path: &entry.path,
             worktree_path: &entry.path,
             last_path: None,
@@ -13114,6 +13222,11 @@ async fn post_artifact_generate(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactGenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
+    let mode = body.mode.clone();
+    let harness = body.harness.clone();
+    let harness_args = body.harness_args.clone();
+    let model = body.model.clone();
+    let effort = body.effort.clone();
     let nodes: Vec<String> = body
         .nodes
         .into_iter()
@@ -13123,6 +13236,9 @@ async fn post_artifact_generate(
     let prompt = body.prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(ApiError::bad_request("prompt is required"));
+    }
+    if mode.trim().is_empty() || harness.trim().is_empty() {
+        return Err(ApiError::bad_request("mode and harness are required"));
     }
 
     let snap = state.index.snapshot().await;
@@ -13215,28 +13331,40 @@ async fn post_artifact_generate(
     // caller can reference this freshly minted id, so any launch failure
     // here (there is no 409 case: the lease key is brand new) must revert it
     // — unlike regenerate, which mutates only after a successful launch.
-    let run_id =
-        match launch_artifact_generation(&state, &entry, &art_id, &art_dir, "failed", 0, bundle)
-            .await
-        {
-            Ok(run_id) => run_id,
-            Err(error) => {
-                revert_artifact_generation_state(
-                    &state,
-                    RevertArtifactState {
-                        entry: &entry,
-                        art_dir: &art_dir,
-                        art_id: &art_id,
-                        run_id: "no-run",
-                        reason: "worker launch failed",
-                        restore_state: "failed",
-                        restore_version: 0,
-                    },
-                )
-                .await;
-                return Err(error);
-            }
-        };
+    let run_id = match launch_artifact_generation(
+        &state,
+        &entry,
+        &art_id,
+        &art_dir,
+        "failed",
+        0,
+        bundle,
+        &mode,
+        &harness,
+        harness_args,
+        model,
+        effort,
+    )
+    .await
+    {
+        Ok(run_id) => run_id,
+        Err(error) => {
+            revert_artifact_generation_state(
+                &state,
+                RevertArtifactState {
+                    entry: &entry,
+                    art_dir: &art_dir,
+                    art_id: &art_id,
+                    run_id: "no-run",
+                    reason: "worker launch failed",
+                    restore_state: "failed",
+                    restore_version: 0,
+                },
+            )
+            .await;
+            return Err(error);
+        }
+    };
 
     Ok(Json(ArtifactGenerateResponse {
         artifact_id: art_id,
@@ -13262,6 +13390,11 @@ async fn post_artifact_regenerate(
         return Err(ApiError::not_found("artifact not found"));
     }
 
+    let mode = body.mode.clone().unwrap_or_default();
+    let harness = body.harness.clone().unwrap_or_default();
+    let harness_args = body.harness_args.clone();
+    let model = body.model.clone();
+    let effort = body.effort.clone();
     let extra_prompt = body.extra_prompt.unwrap_or_default();
 
     // Read-only: feeds the launch/followup prompt. This is NOT yet the final
@@ -13372,6 +13505,11 @@ async fn post_artifact_regenerate(
     }
 
     // COLD PATH: no live holder — spawn a fresh run (also post-restart).
+    if mode.trim().is_empty() || harness.trim().is_empty() {
+        return Err(ApiError::bad_request(
+            "mode and harness are required to launch a cold artifactor run",
+        ));
+    }
     let subject_context = assemble_artifact_context(&state, &entry.id, &nodes).await;
     let regen_context = assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
     let bundle = compile_artifact_generate_prompt_bundle(
@@ -13391,6 +13529,11 @@ async fn post_artifact_regenerate(
         "submitted",
         version,
         bundle,
+        &mode,
+        &harness,
+        harness_args,
+        model,
+        effort,
     )
     .await?;
 
@@ -14454,6 +14597,7 @@ mod tests {
             manager_actor: None,
             auto_commit_signal: true,
             driver_defaults: DriverDefaults::default(),
+            dispatch_governance: DispatchGovernanceOverlay::default(),
             actor: "test".to_string(),
             machine: "test-machine".to_string(),
             bind_host: "127.0.0.1".to_string(),
@@ -15018,6 +15162,9 @@ mod tests {
                 Query(artifact_query("proj")),
                 Json(ArtifactRegenerateRequest {
                     extra_prompt: Some("must not overlap".into()),
+                    mode: Some("rmux".into()),
+                    harness: Some("claude".into()),
+                    ..Default::default()
                 }),
             )
             .await
@@ -17075,75 +17222,64 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_worker_resolution_requires_explicit_worker_and_lists_candidates() {
+    fn dispatch_address_uses_supported_mode_harness_and_governance() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        write(
-            home.user().join("workers/implementer-a.org"),
-            "* WORKER implementer-a
-:PROPERTIES:
-:ID: implementer-a
-:KIND: implementer
-:DRIVER: acp-ws
-:HARNESS: codex
-:DEFAULT_PROVIDER: openai
-:DEFAULT_MODEL: gpt-5.5
-:LINKED_SKILLS:
-:END:
-",
-        );
-        write(
-            home.user().join("workers/implementer-b.org"),
-            "* WORKER implementer-b\n:PROPERTIES:\n:ID: implementer-b\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
-        );
-        write(
-            home.user().join("workers/reviewer-a.org"),
-            "* WORKER reviewer-a\n:PROPERTIES:\n:ID: reviewer-a\n:KIND: reviewer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
-        );
-
-        let err =
-            resolve_dispatch_worker_id(&home, DispatchEndpointKind::Implementer, None).unwrap_err();
-        assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        let message = err.message;
-
-        assert!(message.contains("no worker specified; pass --worker"));
-        assert!(message.contains("available implementers: implementer-a, implementer-b"));
-        assert!(!message.contains("reviewer-a"));
-    }
-
-    #[test]
-    fn dispatch_worker_resolution_accepts_explicit_worker() {
-        let tmp = tempfile::tempdir().unwrap();
-        let home = Home::at(tmp.path().join("home"));
-        home.ensure().unwrap();
-
-        let worker = resolve_dispatch_worker_id(
+        let overlay = DispatchGovernanceOverlay::default();
+        let worker = resolve_addressed_stage_worker(
             &home,
-            DispatchEndpointKind::Implementer,
-            Some("explicit-implementer"),
+            WorkerKind::Implementer,
+            "acp-stdio",
+            "codex",
+            Vec::new(),
+            &overlay,
+            None,
         )
         .unwrap();
-
-        assert_eq!(worker, "explicit-implementer");
+        assert_eq!(worker.driver, "acp-stdio");
+        assert_eq!(worker.harness, "codex");
+        assert!(worker.default_model.is_none());
+        assert!(worker.models.is_empty());
+        assert_eq!(worker.stall_timeout_secs, Some(600));
     }
 
     #[test]
-    fn dispatch_worker_resolution_ignores_task_worker_without_explicit_request() {
+    fn dispatch_address_rejects_unsupported_mode_harness() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        write(
-            home.user().join("workers/task-implementer.org"),
-            "* WORKER task-implementer\n:PROPERTIES:\n:ID: task-implementer\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
-        );
-
-        let err =
-            resolve_dispatch_worker_id(&home, DispatchEndpointKind::Implementer, None).unwrap_err();
+        let err = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "tmux",
+            "custom",
+            Vec::new(),
+            &DispatchGovernanceOverlay::default(),
+            None,
+        )
+        .unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        let message = err.message;
+        assert!(err.message.contains("unsupported mode/harness"));
+    }
 
-        assert!(message.contains("available implementers: task-implementer"));
+    #[test]
+    fn dispatch_address_preserves_raw_harness_args() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let args = vec!["opencode".into(), "--print-logs".into()];
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "rmux",
+            "custom",
+            args.clone(),
+            &DispatchGovernanceOverlay::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(worker.harness_args, args);
     }
 
     #[test]
@@ -19194,6 +19330,8 @@ mod tests {
             .json(&serde_json::json!({
                 "project": "orgasmic",
                 "task_id": "TASK-036-GRILL",
+                "mode": "acp-stdio",
+                "harness": "codex",
                 "request_id": "stage-requested-event-test",
                 "reason": "test stage event"
             }))
@@ -21527,7 +21665,12 @@ mod tests {
             Extension(Identity::Admin),
             Path(evil.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest { extra_prompt: None }),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: None,
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
+            }),
         )
         .await
         .expect_err("traversal regenerate must be rejected");
@@ -22649,17 +22792,6 @@ mod tests {
         write(home.user().join("workers/artifactor.org"), &worker_org);
     }
 
-    /// A worker record with an explicitly unsupported driver/harness pair —
-    /// `Worker::from_org` rejects it at load time, so `load_stage_worker`
-    /// fails before any run is ever acquired. Used to exercise the
-    /// launch-never-happened revert path deterministically.
-    fn seed_broken_test_artifactor_worker(home: &Home) {
-        write(
-            home.user().join("workers/artifactor.org"),
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      acp-ws\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:VERSION:                     1\n:END:\n",
-        );
-    }
-
     #[test]
     fn derive_artifact_title_collapses_whitespace_and_truncates() {
         assert_eq!(derive_artifact_title("  hello   world  "), "hello world");
@@ -22813,6 +22945,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "Draft a wireframe for the login flow".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await
@@ -22867,6 +23002,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
                 prompt: "Grill this idea before any decision exists".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await
@@ -22970,6 +23108,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
                 prompt: "Prompt-only artifact".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await
@@ -23042,6 +23183,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("tighten the prose".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23113,6 +23257,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first pass".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23169,6 +23316,9 @@ mod tests {
                     Query(artifact_query("test-proj")),
                     Json(ArtifactRegenerateRequest {
                         extra_prompt: Some("second pass".into()),
+                        mode: Some("rmux".into()),
+                        harness: Some("claude".into()),
+                        ..Default::default()
                     }),
                 )
                 .await
@@ -23307,6 +23457,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first pass".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23355,6 +23508,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("too soon".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23458,6 +23614,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first round".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23508,6 +23667,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("post-restart".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23585,6 +23747,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("round 2".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23621,13 +23786,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_artifact_generate_reverts_to_failed_when_worker_record_is_invalid() {
+    async fn post_artifact_generate_reverts_to_failed_when_transport_is_unsupported() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_broken_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let result = post_artifact_generate(
@@ -23637,11 +23801,15 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "test".to_string(),
+                mode: "tmux".into(),
+                harness: "custom".into(),
+                ..Default::default()
             }),
         )
         .await;
-        let err = result.expect_err("generate must fail when the worker record is invalid");
+        let err = result.expect_err("generate must fail for unsupported transport");
         assert_ne!(err.status, StatusCode::CONFLICT);
+        assert!(err.message.contains("unsupported mode/harness"));
 
         let summaries = artifacts::load_project_artifacts(&project_root);
         assert_eq!(summaries.len(), 1, "{summaries:?}");
@@ -23650,13 +23818,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_artifact_regenerate_reverts_to_submitted_when_worker_record_is_invalid() {
+    async fn post_artifact_regenerate_reverts_to_submitted_when_transport_is_unsupported() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_broken_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-BDWK1";
@@ -23666,7 +23833,7 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactSubmitRequest {
                 content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Broken worker regen".into()),
+                title: Some("Unsupported transport regen".into()),
                 subject_nodes: None,
                 prompt: None,
             }),
@@ -23679,11 +23846,17 @@ mod tests {
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest { extra_prompt: None }),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: None,
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                ..Default::default()
+            }),
         )
         .await;
-        let err = result.expect_err("regenerate must fail when the worker record is invalid");
+        let err = result.expect_err("regenerate must fail for unsupported transport");
         assert_ne!(err.status, StatusCode::CONFLICT);
+        assert!(err.message.contains("unsupported mode/harness"));
 
         let art_dir = artifact_dir(&project_root, art_id);
         let summary = load_artifact(&art_dir).unwrap();
@@ -23708,6 +23881,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "test".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await

@@ -8,6 +8,7 @@ import { ManagerChatTranscript } from './ManagerChatTranscript';
 import { ManagerComposer } from './ManagerComposer';
 import type { TmuxPaneConnectionState, TmuxSendKeys } from './ManagerTmuxPane';
 import { ReadOnlySessionBar } from './ReadOnlySessionBar';
+import { RuntimeOptionsBar } from './RuntimeOptionsBar';
 
 const ManagerTmuxPane = lazy(() =>
   import('./ManagerTmuxPane').then((module) => ({ default: module.ManagerTmuxPane })),
@@ -53,13 +54,18 @@ export function RunSurface({
     );
   }
   return (
-    <RunChatStack
-      runId={run.run_id}
-      initialSource={initialSource}
-      initialDraft={initialDraft}
-      onPromptSent={onPromptSent}
-      readOnly={readOnly}
-    />
+    <div className="flex h-full min-h-0 flex-col">
+      {!readOnly ? <RuntimeOptionsBar runId={run.run_id} /> : null}
+      <div className="min-h-0 flex-1">
+        <RunChatStack
+          runId={run.run_id}
+          initialSource={initialSource}
+          initialDraft={initialDraft}
+          onPromptSent={onPromptSent}
+          readOnly={readOnly}
+        />
+      </div>
+    </div>
   );
 }
 
