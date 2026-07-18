@@ -8,28 +8,13 @@
 //! binary is discovered via `RMUX_SDK_DAEMON_BINARY` or PATH (`rmux`) and that
 //! check is kept *distinct* from the wrapped harness binary check.
 //!
-//! ### Output + lifecycle over the typed SDK
+//! ### Lifecycle over the typed SDK (TASK-AFE5Q)
 //!
-//! Unlike the tmux driver — which scrapes `capture-pane` on a 500 ms poll,
-//! reconstructs deltas, and waits for an injected end-of-turn marker — the rmux
-//! driver streams output from the daemon and learns the session is finished
-//! when that stream ends (the daemon reports the pane's process exited).
-//! Teardown goes through the typed `Session::kill()`, not a `kill-session`
-//! shell-out. This is where rmux is genuinely better than tmux: the daemon owns
-//! the buffer/lifecycle/rendering truth, so there is no marker/poll scraping to
-//! be flaky about.
-//!
-//! Two output paths, chosen by what is being driven:
-//! - **Full-screen TUIs** (the agent harnesses: claude, codex, cursor-agent,
-//!   hermes) → `Pane::render_stream()`. The daemon does the terminal emulation
-//!   and hands us *rendered screen snapshots*, debounced and revision-filtered.
-//!   We emit the plain-text delta between successive screens — no ANSI/cursor
-//!   escape noise, event-driven instead of fixed-rate.
-//! - **Plain commands** (`sh`, custom argv) → `Pane::line_stream()` anchored at
-//!   `Oldest`, so line-oriented output is captured verbatim from session start
-//!   with no early-output race.
-//!
-//! The `force_render` config knob overrides the auto-detection.
+//! Supported TUI harnesses receive the compiled prompt as an initial-prompt
+//! argv element; hermes/custom keep paste fallback. The driver does **not**
+//! scrape render/scrollback for transcript or completion — live viewing stays
+//! on the PTY-attach WebSocket. Pane/process exit (stream end) is a terminal
+//! signal only; finalize remains the success authority.
 //!
 //! ### Honesty contract
 //!
@@ -62,13 +47,12 @@ use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
+use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
 use crate::modes::tmux::{
-    claude_native_runtime, claude_session_id, default_input_ready_timeout,
-    deserialize_duration_secs, is_dispatch_placeholder, pane_contains_eot_marker, pane_delta,
-    pane_has_input_prompt, pane_requests_folder_trust, prompt_with_eot_instruction,
-    strip_ansi_codes, tmux_eot_marker,
+    argv_prompt_delivery_applies, claude_native_runtime, claude_session_id,
+    default_input_ready_timeout, deserialize_duration_secs, is_dispatch_placeholder,
+    pane_has_input_prompt, pane_requests_folder_trust, push_initial_prompt_argv, strip_ansi_codes,
 };
 
 use crate::r#trait::{
@@ -117,9 +101,8 @@ struct RmuxConfig {
     /// pushes below, so an explicit `--model` here wins over `model`.
     #[serde(default)]
     harness_args: Vec<String>,
-    /// Compiled dispatch prompt. When present (worker dispatches), it is
-    /// pasted into the spawned TUI with the tmux-style end-of-turn marker
-    /// instruction appended, and the render stream watches for that marker.
+    /// Compiled dispatch prompt. Supported TUI harnesses receive it as an
+    /// initial-prompt argv element; hermes/custom keep paste delivery.
     #[serde(default)]
     prompt_bundle_text: Option<String>,
     /// How long to wait for the wrapped TUI's input prompt before pasting the
@@ -137,11 +120,10 @@ struct RmuxConfig {
     /// the web feature/tunnel wiring.
     #[serde(default)]
     web_share: bool,
-    /// Override the output-path auto-detection: `Some(true)` forces the
-    /// rendered-screen (`render_stream`) path, `Some(false)` forces the
-    /// line-oriented (`line_stream`) path. `None` (default) picks `render` for
-    /// full-screen agent TUIs and `line` for plain commands.
+    /// Historical knob (render vs line stream). Ignored after TASK-AFE5Q —
+    /// drivers no longer capture pane output as transcript/completion truth.
     #[serde(default)]
+    #[allow(dead_code)]
     force_render: Option<bool>,
     /// Spawn the session "system-wide": detached from the orgasmic daemon so it
     /// survives a daemon restart/rebuild. The rmux SDK already starts its daemon
@@ -152,11 +134,8 @@ struct RmuxConfig {
     /// Defaults ON for the manager (set by the UI), OFF otherwise.
     #[serde(default)]
     system_wide: bool,
-    /// Hot-session runs: keep the dispatch EOT marker in prompts (and followups)
-    /// for per-round stall detection and operator visibility, but do **not**
-    /// treat marker appearance as run completion — the run ends on pane/process
-    /// exit only. The stall babysitter is a separate run that reads the pane
-    /// itself and is unaffected by this run's completion wiring.
+    /// Hot-session / persistent manager panes: the run ends on pane/process
+    /// exit only (never a marker). Stall babysitters are separate runs.
     #[serde(default)]
     persistent: bool,
 }
@@ -255,15 +234,8 @@ struct RmuxSpawnPlan {
     command: String,
     args: Vec<String>,
     cwd: PathBuf,
-    /// Dispatch prompt (with the EOT-marker instruction appended) to paste
-    /// into the spawned TUI once it is input-ready. `None` for plain runs.
-    initial_prompt: Option<String>,
-    /// Marker whose appearance in the rendered screen completes the run.
-    eot_marker: String,
-    /// Default output path when `force_render` is unset: rendered screens for
-    /// known agent TUIs, and for `custom` dispatches (the wrapped CLI is an
-    /// interactive agent we paste the brief into, not a line-oriented command).
-    use_render_default: bool,
+    /// Prompt to paste after spawn. `None` when delivered via argv or absent.
+    paste_prompt: Option<String>,
     native_runtime: Option<NativeRuntimeMeta>,
     persistent: bool,
     /// This run's id, exported as `ORGASMIC_RUN_ID` into the spawned pane's
@@ -278,12 +250,12 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         .clone()
         .or_else(|| ctx.worktree.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
-    let eot_marker = tmux_eot_marker(&ctx.identity.run_id);
-    let initial_prompt = cfg
+    let prompt_text = cfg
         .prompt_bundle_text
         .as_deref()
-        .filter(|bundle| !bundle.trim().is_empty())
-        .map(|bundle| prompt_with_eot_instruction(bundle, &ctx.identity.run_id));
+        .map(str::trim)
+        .filter(|bundle| !bundle.is_empty())
+        .map(str::to_string);
 
     // The daemon's dispatch path stages a placeholder command for every
     // worker; like the tmux driver, swap it for the real harness invocation
@@ -345,6 +317,15 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         }
     }
 
+    // orgasmic:TASK-AFE5Q
+    let paste_prompt = match prompt_text {
+        Some(prompt) if argv_prompt_delivery_applies(harness, &command) => {
+            push_initial_prompt_argv(&mut args, &prompt);
+            None
+        }
+        other => other,
+    };
+
     let native_runtime = if is_claude {
         let session_id = claude_session_id(&ctx.identity.runtime_id);
         Some(claude_native_runtime(&session_id, &cwd, &command, &args))
@@ -359,15 +340,11 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
             resume_argv: Vec::new(),
         })
     };
-    let use_render_default =
-        command_is_tui(&command) || (harness == "custom" && initial_prompt.is_some());
     RmuxSpawnPlan {
         command,
         args,
         cwd,
-        initial_prompt,
-        eot_marker,
-        use_render_default,
+        paste_prompt,
         native_runtime,
         persistent: cfg.persistent,
         run_id: ctx.identity.run_id.clone(),
@@ -413,20 +390,6 @@ fn default_command_for_harness(harness: &str) -> (String, Vec<String>) {
         ),
         _ => ("sh".to_string(), Vec::new()),
     }
-}
-
-/// Whether a resolved command launches a full-screen agent TUI (which should be
-/// captured as rendered screens) rather than a line-oriented program. Matches
-/// the agent binaries in [`default_command_for_harness`]; everything else
-/// (`sh`, custom argv) is treated as line-oriented.
-fn command_is_tui(command: &str) -> bool {
-    // Compare on the basename so an absolute path (e.g. `/usr/local/bin/claude`)
-    // is still recognised.
-    let base = Path::new(command)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(command);
-    matches!(base, "claude" | "codex" | "cursor-agent" | "hermes")
 }
 
 /// Stable rmux session name for a run. rmux's `SessionName::new` sanitizes `.`
@@ -570,8 +533,12 @@ impl WorkerDriver for RmuxDriver {
             }
         };
 
-        let (web_share, capture_task, session) = match live {
-            Some(live) => (live.web_share, Some(live.capture_task), Some(live.session)),
+        let (web_share, lifecycle_task, session) = match live {
+            Some(live) => (
+                live.web_share,
+                Some(live.lifecycle_task),
+                Some(live.session),
+            ),
             None => (RmuxWebShareProof::default(), None, None),
         };
 
@@ -608,7 +575,7 @@ impl WorkerDriver for RmuxDriver {
                 Box::new(RmuxControl {
                     events: tx,
                     kind: ctx.run_kind,
-                    capture_task,
+                    lifecycle_task,
                     terminal_emitted,
                     released: false,
                     session,
@@ -679,36 +646,18 @@ impl WorkerDriver for RmuxDriver {
             );
         }
 
-        // Choose the same output path the original run would have used. We don't
-        // have the original prompt here, so derive the command from config and
-        // reuse the EOT marker so a worker that completes post-reattach still
-        // finalizes. The manager run carries no marker effect (it never emits
-        // one), so it simply streams until explicitly released.
+        // Reattach: watch pane/process exit only. No paste, no capture.
         let harness = cfg
             .harness
             .as_deref()
             .unwrap_or_else(|| self.adapter.harness());
         let plan = build_spawn_plan(&cfg, &ctx, harness);
-        let use_render = cfg.force_render.unwrap_or(plan.use_render_default);
-        // Persistent hot sessions complete on process exit only — see
-        // `run_live_session` for the same decoupling.
-        let eot_marker = if cfg.persistent {
-            None
-        } else {
-            Some(tmux_eot_marker(&ctx.identity.run_id))
-        };
 
         let (tx, rx) = mpsc::channel(64);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
         let pane = session.pane(0, 0);
-        let capture_task = spawn_pane_capture(
-            &pane,
-            use_render,
-            tx.clone(),
-            terminal_emitted.clone(),
-            eot_marker,
-        )
-        .await?;
+        let lifecycle_task =
+            spawn_pane_exit_watch(&pane, tx.clone(), terminal_emitted.clone()).await?;
 
         // No paste on reattach: the harness is already mid-conversation.
         let _ = tx
@@ -732,7 +681,7 @@ impl WorkerDriver for RmuxDriver {
                 control: Box::new(RmuxControl {
                     events: tx,
                     kind: ctx.run_kind,
-                    capture_task: Some(capture_task),
+                    lifecycle_task: Some(lifecycle_task),
                     terminal_emitted,
                     released: false,
                     session: Some(session),
@@ -780,17 +729,17 @@ fn ready_capabilities(
 
 /// State for a live (non-inert) rmux session.
 struct LiveSession {
-    capture_task: JoinHandle<()>,
+    lifecycle_task: JoinHandle<()>,
     web_share: RmuxWebShareProof,
     /// Typed session handle, retained so `release`/`Drop` can tear the detached
     /// session down through `Session::kill` (no `kill-session` shell-out).
     session: rmux_sdk::Session,
 }
 
-/// Drive a real detached session via the rmux SDK, stream rendered output over
-/// `Pane::line_stream`, signal completion when that stream ends (the pane's
-/// process exited), and optionally mint Web Share URLs. Returns an error
-/// (caller degrades to inert + records it) when the SDK/daemon is unreachable.
+/// Drive a real detached session via the rmux SDK, watch for pane/process exit,
+/// and optionally mint Web Share URLs. No render/scrollback capture
+/// (TASK-AFE5Q). Returns an error (caller degrades to inert) when the
+/// SDK/daemon is unreachable.
 async fn run_live_session(
     session_name: &str,
     rmux_bin: &str,
@@ -839,44 +788,13 @@ async fn run_live_session(
         RmuxWebShareProof::default()
     };
 
-    // Pick the output path: rendered screens for full-screen TUIs, line stream
-    // for plain commands. `force_render` overrides the per-command heuristic.
-    let use_render = cfg.force_render.unwrap_or(plan.use_render_default);
-
-    // The EOT marker only completes non-persistent runs that were given a dispatch
-    // prompt (which carries the marker instruction). Persistent hot sessions still
-    // append the marker to prompts for the stall babysitter's per-round pane scan
-    // (a separate run — unaffected by this completion wiring) but complete on
-    // pane/process exit only. Plain sessions without a dispatch prompt also
-    // complete on process exit alone.
-    let eot_marker = if plan.persistent {
-        None
-    } else {
-        plan.initial_prompt
-            .is_some()
-            .then(|| plan.eot_marker.clone())
-    };
-
     let pane = session.pane(0, 0);
-    let capture_task = spawn_pane_capture(
-        &pane,
-        use_render,
-        events.clone(),
-        terminal_emitted.clone(),
-        eot_marker,
-    )
-    .await?;
+    let lifecycle_task =
+        spawn_pane_exit_watch(&pane, events.clone(), terminal_emitted.clone()).await?;
 
-    // Deliver the dispatch prompt into the spawned TUI (worker dispatches) in
-    // the *background* so `acquire` returns as soon as the session is spawned
-    // instead of blocking the HTTP handler on the input-ready wait (up to 10s)
-    // + paste. Blocking here is what raced the CLI's 10s timeout and left a
-    // zombie lease. Mirrors the tmux driver: wait for the input prompt
-    // (accepting any folder-trust dialog), then paste + Enter via the rmux CLI.
-    // A delivery failure surfaces as a fatal DriverError on the stream — the
-    // run then fails and tears the session down via the normal release path,
-    // rather than a late `acquire()` error.
-    if let Some(prompt) = plan.initial_prompt.clone() {
+    // Paste fallback only (hermes/custom). Supported TUIs already have the
+    // prompt in argv. Deliver in the background so `acquire` returns promptly.
+    if let Some(prompt) = plan.paste_prompt.clone() {
         let bin = rmux_bin.to_string();
         let session = session_target.clone();
         let command = plan.command.clone();
@@ -909,51 +827,29 @@ async fn run_live_session(
     }
 
     Ok(LiveSession {
-        capture_task,
+        lifecycle_task,
         web_share,
         session,
     })
 }
 
-/// Open the appropriate pane output stream (rendered screens for full-screen
-/// TUIs, line-oriented for plain commands) and spawn the capture task that
-/// forwards it onto the driver event channel. Shared by `acquire`'s live path
-/// and `attach`'s reattach path.
-async fn spawn_pane_capture(
+/// Watch pane/process exit via the line stream. Drain without synthesizing
+/// TextChunks or scanning markers — live view stays on the PTY WebSocket.
+// orgasmic:TASK-AFE5Q
+async fn spawn_pane_exit_watch(
     pane: &rmux_sdk::Pane,
-    use_render: bool,
     events: mpsc::Sender<DriverEvent>,
     terminal_emitted: Arc<AtomicBool>,
-    eot_marker: Option<String>,
 ) -> Result<JoinHandle<()>, DriverError> {
-    if use_render {
-        // The daemon emulates the terminal and hands us debounced, revision
-        // -filtered screen snapshots — no ANSI noise, no fixed-rate polling.
-        let render_stream = pane
-            .render_stream()
-            .await
-            .map_err(|e| DriverError::Transport(format!("rmux render_stream: {e}")))?;
-        Ok(tokio::spawn(capture_render_stream(
-            render_stream,
-            events,
-            terminal_emitted,
-            eot_marker,
-        )))
-    } else {
-        // Anchor at `Oldest` so the daemon replays its retained backlog from
-        // session start — closing the race between `ensure_session` (which
-        // starts the process) and the subscription opening, unlike `Now`.
-        let line_stream = pane
-            .line_stream_starting_at(rmux_sdk::PaneOutputStart::Oldest)
-            .await
-            .map_err(|e| DriverError::Transport(format!("rmux line_stream: {e}")))?;
-        Ok(tokio::spawn(capture_line_stream(
-            line_stream,
-            events,
-            terminal_emitted,
-            eot_marker,
-        )))
-    }
+    let line_stream = pane
+        .line_stream_starting_at(rmux_sdk::PaneOutputStart::Oldest)
+        .await
+        .map_err(|e| DriverError::Transport(format!("rmux line_stream: {e}")))?;
+    Ok(tokio::spawn(watch_line_stream_exit(
+        line_stream,
+        events,
+        terminal_emitted,
+    )))
 }
 
 /// Run an rmux CLI verb against the daemon. The rmux CLI is tmux-compatible
@@ -1099,88 +995,32 @@ async fn wait_for_pane_stable(
     }
 }
 
-/// Drive `Pane::line_stream` to completion: forward each rendered line as an
-/// assistant `TextChunk` and emit the terminal event when the stream ends.
-///
-/// The stream returning `Ok(None)` is the **lifecycle signal** — the daemon
-/// reports the pane's process exited, so the run is complete. This is the
-/// replacement for tmux's poll-for-session + scrape-for-EOT-marker design:
-/// there is no marker to inject and no pane to diff.
-async fn capture_line_stream(
+/// Drain the pane line stream until process exit. No TextChunk synthesis and
+/// no marker scanning (TASK-AFE5Q). `Ok(None)` means the pane process exited;
+/// the daemon maps that terminal event through the finalize contract
+/// (`protocol_end_without_finalize` when a declaration was required).
+async fn watch_line_stream_exit(
     mut lines: rmux_sdk::PaneLineStream,
     events: mpsc::Sender<DriverEvent>,
     terminal_emitted: Arc<AtomicBool>,
-    eot_marker: Option<String>,
 ) {
-    use rmux_sdk::PaneLineItem;
-
-    let mut seq = 0_u64;
-    let mut summary_tail = WorkerSummaryTail::default();
     loop {
         match lines.next().await {
-            Ok(Some(PaneLineItem::Line { text })) => {
-                let chunk = strip_ansi_codes(&text);
-                if chunk.trim().is_empty() {
-                    continue;
+            Ok(Some(_)) => {
+                if terminal_emitted.load(Ordering::SeqCst) {
+                    break;
                 }
-                if let Some(marker) = eot_marker.as_deref() {
-                    let marker_seen = pane_contains_eot_marker(&chunk, marker);
-                    let chunk = strip_eot_marker_lines(&chunk, marker);
-                    if !chunk.trim().is_empty() {
-                        summary_tail.push(&chunk);
-                        seq += 1;
-                        if events
-                            .send(DriverEvent::TextChunk {
-                                stream: TextStream::Assistant,
-                                chunk,
-                                seq,
-                            })
-                            .await
-                            .is_err()
-                        {
-                            // Receiver gone; nothing left to stream to.
-                            break;
-                        }
-                    }
-                    if marker_seen {
-                        emit_run_complete_once(&events, &terminal_emitted, summary_tail.summary())
-                            .await;
-                        break;
-                    }
-                } else {
-                    summary_tail.push(&chunk);
-                    seq += 1;
-                    if events
-                        .send(DriverEvent::TextChunk {
-                            stream: TextStream::Assistant,
-                            chunk,
-                            seq,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        // Receiver gone; nothing left to stream to.
-                        break;
-                    }
-                }
+                continue;
             }
-            // A daemon-side gap (`Lag`) — the stream already dropped its
-            // partial-line buffer, so resume cleanly without fabricating a line.
-            // The enum is `#[non_exhaustive]`; any future non-line item is
-            // likewise skipped rather than mis-rendered as output.
-            Ok(Some(_)) => continue,
-            // Stream ended: the pane's process exited → run is complete.
             Ok(None) => {
                 emit_run_complete_once(
                     &events,
                     &terminal_emitted,
-                    Some("rmux pane output stream ended (process exited)".to_string()),
+                    Some("rmux pane ended (process exited)".to_string()),
                 )
                 .await;
                 break;
             }
-            // Transport/stream failure: surface it as a fatal terminal so the
-            // consumer is never left waiting on a dead stream.
             Err(err) => {
                 emit_fatal_driver_error_once(
                     &events,
@@ -1192,129 +1032,6 @@ async fn capture_line_stream(
             }
         }
     }
-}
-
-/// Drive `Pane::render_stream` to completion for full-screen TUIs: the daemon
-/// renders the pane into plain-text screen snapshots (debounced and
-/// revision-filtered), and we forward the *delta* between successive screens as
-/// assistant `TextChunk`s.
-///
-/// Lifecycle matches [`capture_line_stream`]: `Ok(None)` (the underlying output
-/// subscription closing on process exit) drives `RunComplete`; a stream error
-/// is a fatal terminal. Screens are already plain text — no ANSI stripping —
-/// and [`pane_delta`] keeps repaints from re-emitting the whole screen each
-/// revision.
-async fn capture_render_stream(
-    mut renders: rmux_sdk::PaneRenderStream,
-    events: mpsc::Sender<DriverEvent>,
-    terminal_emitted: Arc<AtomicBool>,
-    eot_marker: Option<String>,
-) {
-    let mut previous = String::new();
-    let mut seq = 0_u64;
-    let mut summary_tail = WorkerSummaryTail::default();
-    loop {
-        match renders.next().await {
-            Ok(Some(update)) => {
-                let screen = update.snapshot().visible_lines().join("\n");
-                let marker_seen = eot_marker
-                    .as_deref()
-                    .map(|marker| pane_contains_eot_marker(&screen, marker))
-                    .unwrap_or(false);
-                let mut chunk = pane_delta(&previous, &screen);
-                if let Some(marker) = eot_marker.as_deref() {
-                    chunk = strip_eot_marker_lines(&chunk, marker);
-                }
-                previous = screen;
-                if !chunk.trim().is_empty() {
-                    summary_tail.push(&chunk);
-                    seq += 1;
-                    if events
-                        .send(DriverEvent::TextChunk {
-                            stream: TextStream::Assistant,
-                            chunk,
-                            seq,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        // Receiver gone; nothing left to stream to.
-                        break;
-                    }
-                }
-                if marker_seen {
-                    emit_run_complete_once(&events, &terminal_emitted, summary_tail.summary())
-                        .await;
-                    break;
-                }
-            }
-            // Stream ended: the pane's process exited → run is complete.
-            Ok(None) => {
-                emit_run_complete_once(
-                    &events,
-                    &terminal_emitted,
-                    Some("rmux pane render stream ended (process exited)".to_string()),
-                )
-                .await;
-                break;
-            }
-            // Transport/stream failure: surface it as a fatal terminal so the
-            // consumer is never left waiting on a dead stream.
-            Err(err) => {
-                emit_fatal_driver_error_once(
-                    &events,
-                    &terminal_emitted,
-                    format!("rmux render stream error: {err}"),
-                )
-                .await;
-                break;
-            }
-        }
-    }
-}
-
-const WORKER_SUMMARY_TAIL_BYTES: usize = 8 * 1024;
-
-#[derive(Debug, Default)]
-struct WorkerSummaryTail {
-    text: String,
-}
-
-impl WorkerSummaryTail {
-    fn push(&mut self, chunk: &str) {
-        self.text.push_str(chunk);
-        trim_to_tail(&mut self.text, WORKER_SUMMARY_TAIL_BYTES);
-    }
-
-    fn summary(&self) -> Option<String> {
-        let summary = self.text.trim();
-        (!summary.is_empty()).then(|| summary.to_string())
-    }
-}
-
-fn trim_to_tail(text: &mut String, max_bytes: usize) {
-    if text.len() <= max_bytes {
-        return;
-    }
-    let mut start = text.len() - max_bytes;
-    while !text.is_char_boundary(start) {
-        start += 1;
-    }
-    text.drain(..start);
-}
-
-fn strip_eot_marker_lines(text: &str, marker: &str) -> String {
-    let core = marker
-        .strip_prefix('[')
-        .and_then(|m| m.strip_suffix(']'))
-        .unwrap_or(marker);
-    text.lines()
-        .filter(|line| {
-            let trimmed = line.trim();
-            !(trimmed.starts_with(marker) || trimmed.starts_with(core))
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 async fn emit_run_complete_once(
@@ -1373,7 +1090,8 @@ async fn mint_web_share(session: &rmux_sdk::Session) -> RmuxWebShareProof {
 struct RmuxControl {
     events: mpsc::Sender<DriverEvent>,
     kind: RunKind,
-    capture_task: Option<JoinHandle<()>>,
+    /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
+    lifecycle_task: Option<JoinHandle<()>>,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
     /// Typed session handle for a live run, so `release`/`Drop` can tear it
@@ -1389,7 +1107,8 @@ struct RmuxControl {
     rmux_bin: Option<String>,
     /// Detached session target name for CLI verbs. `None` on inert runs.
     session_target: Option<String>,
-    /// Run id for re-appending the end-of-turn-marker instruction on followups.
+    /// Run id retained for diagnostics / reattach identity.
+    #[allow(dead_code)]
     run_id: Option<String>,
     /// Wrapped harness command (`claude`, `codex`, …) — recorded for diagnostics
     /// and future harness-specific followup heuristics.
@@ -1405,7 +1124,7 @@ impl RmuxControl {
         Self {
             events,
             kind,
-            capture_task: None,
+            lifecycle_task: None,
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             released: false,
             session: None,
@@ -1417,12 +1136,6 @@ impl RmuxControl {
             input_ready_timeout: default_input_ready_timeout(),
         }
     }
-}
-
-/// Re-append the end-of-turn-marker instruction to a followup payload (same
-/// contract as the initial dispatch paste).
-fn followup_prompt_with_eot(input: &str, run_id: &str) -> String {
-    prompt_with_eot_instruction(input, run_id)
 }
 
 /// Poll until the harness shows a composer input prompt. Followup delivery
@@ -1485,16 +1198,10 @@ impl DriverControl for RmuxControl {
     }
 
     async fn send_input(&mut self, req: UserInputRequest) -> Result<UserInputAck, DriverError> {
-        let (bin, session, run_id) = match (
-            self.rmux_bin.as_deref(),
-            self.session_target.as_deref(),
-            self.run_id.as_deref(),
-        ) {
-            (Some(bin), Some(session), Some(run_id)) => (bin, session, run_id),
+        let (bin, session) = match (self.rmux_bin.as_deref(), self.session_target.as_deref()) {
+            (Some(bin), Some(session)) => (bin, session),
             _ => return Err(DriverError::Unsupported("send_input")),
         };
-
-        let text = followup_prompt_with_eot(&req.input, run_id);
 
         // Mid-turn policy: reject rather than queue. Pasting while the harness is
         // still streaming its previous turn corrupts the in-flight turn. Gate on
@@ -1510,7 +1217,7 @@ impl DriverControl for RmuxControl {
             });
         }
 
-        paste_text_and_submit(bin, session, &text).await?;
+        paste_text_and_submit(bin, session, &req.input).await?;
         Ok(UserInputAck {
             accepted: true,
             message: None,
@@ -1522,7 +1229,7 @@ impl DriverControl for RmuxControl {
             return Ok(());
         }
         self.released = true;
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.lifecycle_task.take() {
             task.abort();
         }
         // Reap the detached rmux session through the typed SDK (inert runs own
@@ -1547,7 +1254,7 @@ impl DriverControl for RmuxControl {
 
 impl Drop for RmuxControl {
     fn drop(&mut self) {
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.lifecycle_task.take() {
             task.abort();
         }
         // System-wide / reattached runs intentionally outlive the daemon: never
@@ -1812,12 +1519,16 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
         assert!(plan.args.iter().any(|arg| arg == "--session-id"));
-        let prompt = plan.initial_prompt.expect("dispatch prompt staged");
-        assert!(prompt.contains("do the task"));
-        assert!(prompt.contains("end-of-turn marker"));
-        // The instruction must not contain the literal marker (the screen
-        // scan would match the echoed prompt immediately).
-        assert!(!prompt.contains(&plan.eot_marker));
+        assert!(plan.paste_prompt.is_none(), "claude uses argv delivery");
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
+        assert!(!plan.args.iter().any(|arg| arg.contains("orgasmic-eot")));
+        assert!(!plan
+            .args
+            .iter()
+            .any(|arg| arg.contains("end-of-turn marker")));
         let native = plan.native_runtime.expect("claude native runtime");
         assert_eq!(native.provider, "claude");
         assert!(!native.resume_argv.is_empty());
@@ -1843,8 +1554,11 @@ mod tests {
             Some(plan.command.as_str()),
             &plan.args
         ));
-        let prompt = plan.initial_prompt.expect("dispatch prompt staged");
-        assert!(prompt.contains("do the task"));
+        assert!(plan.paste_prompt.is_none(), "codex uses argv delivery");
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
         let native = plan.native_runtime.expect("codex native runtime");
         assert_eq!(native.provider, "codex");
     }
@@ -1899,10 +1613,12 @@ mod tests {
         let plan = build_spawn_plan(&cfg, &ctx, "custom");
         assert_eq!(plan.command, "opencode");
         assert_eq!(plan.args, vec!["--print-logs"]);
-        assert!(plan.use_render_default);
-        let prompt = plan.initial_prompt.expect("dispatch prompt staged");
-        assert!(prompt.contains("do the task"));
-        assert!(prompt.contains("end-of-turn marker"));
+        assert_eq!(plan.paste_prompt.as_deref(), Some("do the task"));
+        assert!(!plan
+            .paste_prompt
+            .as_deref()
+            .unwrap()
+            .contains("orgasmic-eot"));
         let native = plan.native_runtime.expect("native runtime meta");
         assert_eq!(native.provider, "custom");
         assert_eq!(native.launch_argv, vec!["opencode", "--print-logs"]);
@@ -1920,8 +1636,7 @@ mod tests {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
         assert_eq!(plan.command, shell);
         assert!(plan.args.is_empty());
-        assert!(plan.initial_prompt.is_none());
-        assert!(!plan.use_render_default);
+        assert!(plan.paste_prompt.is_none());
     }
 
     /// A custom dispatch (prompt staged) without harness args must be refused:
@@ -1962,20 +1677,7 @@ mod tests {
         .unwrap();
         let plan = build_spawn_plan(&cfg, &ctx("run-explicit", RunKind::Worker), "claude");
         assert_eq!(plan.command, "sleep");
-        assert!(plan.initial_prompt.is_none());
-    }
-
-    #[test]
-    fn command_is_tui_matches_agent_binaries_only() {
-        for tui in ["claude", "codex", "cursor-agent", "hermes"] {
-            assert!(command_is_tui(tui), "{tui} should be a TUI");
-        }
-        // Resolved absolute paths are matched on basename.
-        assert!(command_is_tui("/usr/local/bin/claude"));
-        // Plain / custom commands are line-oriented.
-        assert!(!command_is_tui("sh"));
-        assert!(!command_is_tui("bash"));
-        assert!(!command_is_tui("/bin/sleep"));
+        assert!(plan.paste_prompt.is_none());
     }
 
     #[test]
@@ -1983,28 +1685,6 @@ mod tests {
         let id = RuntimeIdentity::new("run-x", "boot-1");
         let name = rmux_session_name(&id);
         assert!(name.starts_with("orgasmic-rmux-run-x-"));
-    }
-
-    #[test]
-    fn marker_lines_are_removed_from_worker_summary_tail() {
-        let marker = tmux_eot_marker("run-rmux-summary");
-        let chunk = format!("final worker answer\n{marker}\n");
-        let stripped = strip_eot_marker_lines(&chunk, &marker);
-
-        assert_eq!(stripped, "final worker answer");
-        let mut tail = WorkerSummaryTail::default();
-        tail.push(&stripped);
-        assert_eq!(tail.summary().as_deref(), Some("final worker answer"));
-    }
-
-    #[test]
-    fn worker_summary_tail_keeps_tail_without_splitting_utf8() {
-        let mut tail = WorkerSummaryTail::default();
-        tail.push(&"ж".repeat(WORKER_SUMMARY_TAIL_BYTES));
-
-        let summary = tail.summary().expect("summary");
-        assert!(summary.len() <= WORKER_SUMMARY_TAIL_BYTES);
-        assert!(summary.is_char_boundary(0));
     }
 
     #[tokio::test]
@@ -2259,7 +1939,7 @@ mod tests {
             return;
         }
 
-        let mut saw_line = false;
+        let mut saw_text = false;
         let mut saw_complete = false;
         for _ in 0..40 {
             let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
@@ -2267,14 +1947,12 @@ mod tests {
                 .expect("timed out waiting for rmux stream event")
                 .expect("event stream closed");
             match ev {
-                DriverEvent::TextChunk { chunk, .. } => {
-                    saw_line |= chunk.contains(SENTINEL);
-                }
+                DriverEvent::TextChunk { .. } => saw_text = true,
                 DriverEvent::RunComplete { summary } => {
                     saw_complete = true;
                     assert_eq!(
                         summary.as_deref(),
-                        Some("rmux pane output stream ended (process exited)"),
+                        Some("rmux pane ended (process exited)"),
                         "process exit should drive completion, not a marker"
                     );
                     break;
@@ -2285,7 +1963,7 @@ mod tests {
                 other => panic!("unexpected event before completion: {other:?}"),
             }
         }
-        assert!(saw_line, "expected the printed line over Pane::line_stream");
+        assert!(!saw_text, "capture removal must not emit TextChunk");
         assert!(
             saw_complete,
             "expected RunComplete when the pane process exited"
@@ -2307,10 +1985,12 @@ mod tests {
             eprintln!("skipping live_rmux_session_exports_orgasmic_run_id: rmux binary not found");
             return;
         }
+        let out_dir = tempfile::tempdir().unwrap();
+        let out_path = out_dir.path().join("run-id.txt");
         let d = driver();
         let cfg = DriverConfig::from_value(json!({
             "command": "sh",
-            "args": ["-c", "printf 'run-id=%s\\n' \"$ORGASMIC_RUN_ID\"; exit 0"],
+            "args": ["-c", format!("printf '%s' \"$ORGASMIC_RUN_ID\" > {}", out_path.display())],
         }));
         let mut s = d
             .acquire(ctx("run-env-export-test", RunKind::Worker), cfg)
@@ -2327,178 +2007,76 @@ mod tests {
             return;
         }
 
-        let mut saw_run_id = false;
-        for _ in 0..40 {
-            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
-                .await
-                .expect("timed out waiting for rmux stream event")
-                .expect("event stream closed");
-            match ev {
-                DriverEvent::TextChunk { chunk, .. } => {
-                    saw_run_id |= chunk.contains("run-id=run-env-export-test");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut body = String::new();
+        while std::time::Instant::now() < deadline {
+            if let Ok(contents) = std::fs::read_to_string(&out_path) {
+                if !contents.is_empty() {
+                    body = contents;
+                    break;
                 }
-                DriverEvent::RunComplete { .. } => break,
-                DriverEvent::DriverError { fatal, message } => {
-                    panic!("unexpected driver error (fatal={fatal}): {message}");
-                }
-                other => panic!("unexpected event before completion: {other:?}"),
             }
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        assert!(
-            saw_run_id,
-            "expected ORGASMIC_RUN_ID in the pane environment"
-        );
+        assert_eq!(body, "run-env-export-test");
         s.control.release("cleanup").await.unwrap();
     }
 
-    /// Live rmux render-path smoke. Forces `render_stream` (the TUI path) on a
-    /// command that paints a line, holds it briefly, then exits — proving the
-    /// daemon-rendered screen reaches us as a `TextChunk` and that process exit
-    /// closes the render stream into `RunComplete`. The rendered screen is plain
-    /// text (no ANSI), so the sentinel appears verbatim. Skipped without a real
-    /// rmux binary.
+    /// Process exit (stream end) emits RunComplete — no TextChunk capture.
     #[tokio::test]
-    async fn live_rmux_render_path_streams_screen_and_completes() {
+    async fn live_rmux_process_exit_emits_run_complete_without_text_chunks() {
         let _live_guard = live_session_guard();
         let probe = probe_rmux_binary();
         if !probe.found {
             eprintln!(
-                "skipping live_rmux_render_path_streams_screen_and_completes: rmux binary not found"
+                "skipping live_rmux_process_exit_emits_run_complete_without_text_chunks: rmux binary not found"
             );
             return;
         }
-        const SENTINEL: &str = "orgasmic-rmux-render-sentinel";
         let d = driver();
-        // `force_render` exercises the render path without needing a real agent
-        // TUI. Hold the screen ~1s so a snapshot is captured before exit.
         let cfg = DriverConfig::from_value(json!({
             "command": "sh",
-            "args": ["-c", format!("printf '{SENTINEL}\\n'; sleep 1; exit 0")],
-            "force_render": true,
+            "args": ["-c", "printf 'bye\\n'; exit 0"],
         }));
         let mut s = d
-            .acquire(ctx("run-render", RunKind::Worker), cfg)
+            .acquire(ctx("run-exit-only", RunKind::Worker), cfg)
             .await
             .unwrap();
-
         let ev = s.events.recv().await.unwrap();
         let DriverEvent::Ready { capabilities, .. } = ev else {
             panic!("expected Ready, got {ev:?}");
         };
         if capabilities["inert"] == true {
-            assert!(capabilities["inert_reason"].is_string());
             s.control.release("cleanup").await.unwrap();
             return;
         }
 
-        let mut saw_screen = false;
+        let mut saw_text = false;
         let mut saw_complete = false;
         for _ in 0..40 {
             let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
                 .await
-                .expect("timed out waiting for rmux render event")
+                .expect("timed out waiting for rmux exit event")
                 .expect("event stream closed");
             match ev {
-                DriverEvent::TextChunk { chunk, .. } => {
-                    saw_screen |= chunk.contains(SENTINEL);
-                }
+                DriverEvent::TextChunk { .. } => saw_text = true,
                 DriverEvent::RunComplete { summary } => {
                     saw_complete = true;
-                    assert_eq!(
-                        summary.as_deref(),
-                        Some("rmux pane render stream ended (process exited)"),
-                        "render path should report its own completion summary"
-                    );
+                    assert_eq!(summary.as_deref(), Some("rmux pane ended (process exited)"));
                     break;
                 }
                 DriverEvent::DriverError { fatal, message } => {
                     panic!("unexpected driver error (fatal={fatal}): {message}");
                 }
-                other => panic!("unexpected event before completion: {other:?}"),
+                other => panic!("unexpected event: {other:?}"),
             }
         }
-        assert!(
-            saw_screen,
-            "expected the rendered screen to carry the sentinel over render_stream"
-        );
-        assert!(
-            saw_complete,
-            "expected RunComplete when the pane process exited"
-        );
+        assert!(!saw_text, "capture removal must not emit TextChunk");
+        assert!(saw_complete, "expected RunComplete on process exit");
         s.control.release("cleanup").await.unwrap();
     }
 
-    /// Persistent hot sessions must not self-complete when the EOT marker
-    /// appears — only when the pane process exits.
-    #[tokio::test]
-    async fn live_rmux_persistent_run_does_not_complete_on_eot_marker() {
-        let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_persistent_run_does_not_complete_on_eot_marker: rmux binary not found"
-            );
-            return;
-        }
-        let run_id = "run-persistent-marker";
-        let marker = tmux_eot_marker(run_id);
-        let d = driver();
-        let cfg = DriverConfig::from_value(json!({
-            "command": "sh",
-            "args": ["-c", format!("printf '{marker}\\n'; sleep 30")],
-            "prompt_bundle_text": "do the task",
-            "persistent": true,
-            "force_render": true,
-        }));
-        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
-        let ev = s.events.recv().await.unwrap();
-        let DriverEvent::Ready { capabilities, .. } = ev else {
-            panic!("expected Ready, got {ev:?}");
-        };
-        if capabilities["inert"] == true {
-            eprintln!(
-                "skipping live_rmux_persistent_run_does_not_complete_on_eot_marker: SDK degraded to inert"
-            );
-            s.control.release("cleanup").await.unwrap();
-            return;
-        }
-
-        let mut saw_marker = false;
-        let mut saw_complete = false;
-        for _ in 0..40 {
-            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
-                .await
-                .expect("timed out waiting for rmux render event")
-                .expect("event stream closed");
-            match ev {
-                DriverEvent::TextChunk { chunk, .. } => {
-                    saw_marker |= chunk.contains(&marker);
-                }
-                DriverEvent::RunComplete { .. } => {
-                    saw_complete = true;
-                    break;
-                }
-                DriverEvent::DriverError { fatal, message } => {
-                    panic!("unexpected driver error (fatal={fatal}): {message}");
-                }
-                other => panic!("unexpected event before completion: {other:?}"),
-            }
-            if saw_marker {
-                break;
-            }
-        }
-        assert!(
-            saw_marker,
-            "expected the rendered screen to carry the EOT marker"
-        );
-        assert!(
-            !saw_complete,
-            "persistent run must not emit RunComplete when the marker appears"
-        );
-        s.control.release("cleanup").await.unwrap();
-    }
-
-    /// Persistent hot sessions complete when the pane process exits.
+    /// Persistent hot sessions complete on process exit only (no marker path).
     #[tokio::test]
     async fn live_rmux_persistent_run_completes_on_process_exit() {
         let _live_guard = live_session_guard();
@@ -2510,14 +2088,12 @@ mod tests {
             return;
         }
         let run_id = "run-persistent-exit";
-        let marker = tmux_eot_marker(run_id);
         let d = driver();
         let cfg = DriverConfig::from_value(json!({
             "command": "sh",
-            "args": ["-c", format!("printf '{marker}\\n'; exit 0")],
+            "args": ["-c", "printf 'persistent\n'; exit 0"],
             "prompt_bundle_text": "do the task",
             "persistent": true,
-            "force_render": true,
         }));
         let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
         let ev = s.events.recv().await.unwrap();
@@ -2536,20 +2112,23 @@ mod tests {
         for _ in 0..40 {
             let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
                 .await
-                .expect("timed out waiting for rmux render event")
+                .expect("timed out waiting for rmux exit event")
                 .expect("event stream closed");
             match ev {
                 DriverEvent::RunComplete { summary } => {
                     saw_complete = true;
                     assert_eq!(
                         summary.as_deref(),
-                        Some("rmux pane render stream ended (process exited)"),
+                        Some("rmux pane ended (process exited)"),
                         "persistent run should complete on process exit"
                     );
                     break;
                 }
                 DriverEvent::DriverError { fatal, message } => {
                     panic!("unexpected driver error (fatal={fatal}): {message}");
+                }
+                DriverEvent::TextChunk { .. } => {
+                    panic!("persistent run must not emit TextChunk after capture removal")
                 }
                 _ => {}
             }
@@ -2561,75 +2140,6 @@ mod tests {
         s.control.release("cleanup").await.unwrap();
     }
 
-    /// Non-persistent dispatch runs still complete when the EOT marker appears.
-    #[tokio::test]
-    async fn live_rmux_non_persistent_dispatch_completes_on_eot_marker() {
-        let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_non_persistent_dispatch_completes_on_eot_marker: rmux binary not found"
-            );
-            return;
-        }
-        let run_id = "run-non-persistent-marker";
-        let marker = tmux_eot_marker(run_id);
-        let d = driver();
-        let cfg = DriverConfig::from_value(json!({
-            "command": "sh",
-            "args": ["-c", format!("printf '{marker}\\n'; sleep 30")],
-            "prompt_bundle_text": "do the task",
-            "persistent": false,
-            "force_render": true,
-        }));
-        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
-        let ev = s.events.recv().await.unwrap();
-        let DriverEvent::Ready { capabilities, .. } = ev else {
-            panic!("expected Ready, got {ev:?}");
-        };
-        if capabilities["inert"] == true {
-            eprintln!(
-                "skipping live_rmux_non_persistent_dispatch_completes_on_eot_marker: SDK degraded to inert"
-            );
-            s.control.release("cleanup").await.unwrap();
-            return;
-        }
-
-        let mut saw_complete = false;
-        for _ in 0..40 {
-            let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
-                .await
-                .expect("timed out waiting for rmux render event")
-                .expect("event stream closed");
-            match ev {
-                DriverEvent::RunComplete { .. } => {
-                    saw_complete = true;
-                    break;
-                }
-                DriverEvent::DriverError { fatal, message } => {
-                    panic!("unexpected driver error (fatal={fatal}): {message}");
-                }
-                _ => {}
-            }
-        }
-        assert!(
-            saw_complete,
-            "non-persistent dispatch run must complete when the EOT marker appears"
-        );
-        s.control.release("cleanup").await.unwrap();
-    }
-
-    #[test]
-    fn followup_prompt_reappends_eot_instruction() {
-        let run_id = "run-followup-eot";
-        let prompt = followup_prompt_with_eot("grill me harder", run_id);
-        assert!(prompt.contains("grill me harder"));
-        assert!(prompt.contains("end-of-turn marker"));
-        assert!(prompt.contains(run_id));
-        assert!(!prompt.contains(&tmux_eot_marker(run_id)));
-    }
-
-    #[tokio::test]
     async fn inert_send_input_returns_unsupported() {
         let d = driver();
         let mut s = d
@@ -2764,9 +2274,6 @@ mod tests {
             pane.contains(FOLLOWUP),
             "followup should land as a user turn, got {pane}"
         );
-        let staged = followup_prompt_with_eot(FOLLOWUP, run_id);
-        assert!(staged.contains("end-of-turn marker"));
-
         s.control.release("cleanup").await.unwrap();
     }
 

@@ -2645,7 +2645,10 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
         "protocol-end without finalize must flag manager.dispatch_orphaned"
     );
     assert!(
-        !last.exists() || std::fs::read_to_string(&last).unwrap_or_default().is_empty(),
+        !last.exists()
+            || std::fs::read_to_string(&last)
+                .unwrap_or_default()
+                .is_empty(),
         "protocol-end without finalize must not scrape a fake last.txt"
     );
 

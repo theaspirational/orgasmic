@@ -11,8 +11,8 @@ pub mod adapters;
 pub mod modes;
 pub mod runtime_options;
 pub mod sandbox;
-pub mod transcript_finder;
 pub mod r#trait;
+pub mod transcript_finder;
 
 pub use adapters::{
     ClaudeAdapter, CodexAdapter, CursorAcpAdapter, CursorAdapter, HermesAdapter, ShellAdapter,

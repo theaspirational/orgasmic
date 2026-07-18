@@ -181,10 +181,9 @@ impl FinalizeStatus {
     }
 }
 
-/// Worker-driven dispatch finalization (dec_3M7M0): the terminal action a
-/// dispatched worker takes instead of relying on the daemon to infer
-/// completion from an EOT marker + scrollback scrape. In one daemon call it
-/// commits the worktree (`--commit`), writes `last.txt` verbatim from
+/// Worker-driven dispatch finalization (dec_3M7M0 / TASK-AFE5Q): the sole
+/// success authority for a dispatched worker. In one daemon call it commits
+/// the worktree (`--commit`), writes `last.txt` verbatim from
 /// `--summary-file`, emits the terminal tx, and releases the lease.
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
@@ -958,11 +957,10 @@ struct LiveRunsResponse {
     live: Vec<LiveRunInfo>,
 }
 
-/// The worker-driven counterpart to `dispatch-close` (dec_3M7M0): a
-/// dispatched worker calls this as its terminal action instead of relying on
-/// the daemon to infer completion from an EOT marker + scrollback scrape. In
-/// one daemon call it optionally commits the worktree, writes `last.txt`
-/// verbatim from `--summary-file`, emits the terminal tx
+/// The worker-driven counterpart to `dispatch-close` (dec_3M7M0 / TASK-AFE5Q):
+/// a dispatched worker calls this as its terminal action — the sole success
+/// authority. In one daemon call it optionally commits the worktree, writes
+/// `last.txt` verbatim from `--summary-file`, emits the terminal tx
 /// (`implementer.done`/`reviewer.done`/`manager.dispatch_aborted`), and
 /// releases the lease — converging on the same `release_dispatch_run`/`/tx`
 /// plumbing `dispatch-close` uses.

@@ -4696,11 +4696,9 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 tokio::time::sleep(poll).await;
                 continue;
             };
-            // dec_3M7M0: a worker-declared finalize (`orgasmic dispatch
-            // finalize`) is the PRIMARY completion signal. If it landed, the
-            // worker already wrote last.txt/stdout.log verbatim and emitted
-            // its own terminal tx — this watcher's scrollback-scrape is a
-            // FALLBACK and must never scrape or overwrite that report.
+            // dec_3M7M0 / TASK-AFE5Q: worker-declared finalize is the sole
+            // success authority. If it landed, the worker already wrote
+            // last.txt/stdout.log verbatim — never overwrite that report.
             if dispatch_release_finalized_by_worker(&envelopes) {
                 tracing::info!(
                     run_id = %completion.run_id,
@@ -4768,11 +4766,14 @@ fn is_timeout_release_reason(reason: &str) -> bool {
 
 /// Release reasons that mean the run ended without `orgasmic dispatch
 /// finalize` and must be flagged orphan (never scraped into a fake done
-/// report). Timeouts plus ACP/subprocess protocol-end without finalize
-/// (TASK-P4MGK / dec_WDR5K): TUI EOT (`driver terminal event`) stays a
-/// scrape fallback until TASK-AFE5Q.
+/// report). Timeouts, ACP/subprocess protocol-end without finalize
+/// (TASK-P4MGK / dec_WDR5K), and TUI pane/process terminal events
+/// (TASK-AFE5Q — no marker/scrollback scrape fallback remains).
+// orgasmic:TASK-AFE5Q,TASK-P4MGK,dec_WDR5K
 fn is_orphan_without_finalize_release_reason(reason: &str) -> bool {
-    is_timeout_release_reason(reason) || reason == "protocol_end_without_finalize"
+    is_timeout_release_reason(reason)
+        || reason == "protocol_end_without_finalize"
+        || reason == "driver terminal event"
 }
 
 /// Last `Lifecycle::Release` event's `reason`, if any — used to tell a timeout
@@ -5056,13 +5057,11 @@ fn dispatch_last_summary_from_session(envelopes: &[SessionEnvelope]) -> String {
         }
     }
     // rmux/tmux `release(reason)` synthesize a `RunComplete { summary: reason }`
-    // when they tear down a run that never emitted its own terminal event — e.g.
-    // the worker printed its report and the `[orgasmic-eot]` marker but the
-    // render stream missed the marker, so the stall detector fired and released
-    // the run (TASK-B05AM). That sentinel is not a worker report: when the
-    // run_complete summary merely echoes the release reason, drop it so the
-    // actual transcript tail is preserved in last.txt instead of being shadowed
-    // by "stall_timeout_exceeded".
+    // when they tear down a run that never emitted its own terminal event (e.g.
+    // stall detector / operator stop). That sentinel is not a worker report:
+    // when the run_complete summary merely echoes the release reason, drop it
+    // so a native-transcript or system tail can still be used if present,
+    // instead of being shadowed by "stall_timeout_exceeded".
     let run_complete_echoes_release = matches!(
         (run_complete_summary.as_deref(), release_reason.as_deref()),
         (Some(rc), Some(reason)) if rc == reason
@@ -12909,13 +12908,12 @@ mod tests {
             &mut self,
             _req: orgasmic_drivers::BabysitterRequest,
         ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
-            Err(orgasmic_drivers::DriverError::Unsupported("babysitter_action"))
+            Err(orgasmic_drivers::DriverError::Unsupported(
+                "babysitter_action",
+            ))
         }
 
-        async fn release(
-            &mut self,
-            _reason: &str,
-        ) -> Result<(), orgasmic_drivers::DriverError> {
+        async fn release(&mut self, _reason: &str) -> Result<(), orgasmic_drivers::DriverError> {
             Ok(())
         }
     }
@@ -14388,10 +14386,9 @@ mod tests {
 
     #[test]
     fn stall_release_synthetic_run_complete_does_not_shadow_worker_report() {
-        // A completed rmux run whose eot marker was missed: the worker printed
-        // its report as assistant chunks, then release("stall_timeout_exceeded")
-        // synthesized RunComplete{summary: reason} and the stall Release landed.
-        // last.txt must carry the report, not the stall sentinel (TASK-B05AM).
+        // Stall release synthesizes RunComplete{summary: reason} after the
+        // worker already printed a report as assistant chunks. last.txt must
+        // carry the report, not the stall sentinel (TASK-B05AM).
         let envelopes = vec![
             dispatch_summary_env(
                 SessionEventKind::DriverEvent,
@@ -14424,9 +14421,9 @@ mod tests {
 
     #[test]
     fn genuine_run_complete_summary_is_still_preferred() {
-        // A clean eot completion: run_complete carries the real report tail and
-        // the release reason differs, so the run_complete summary is used as-is
-        // (the B05AM fix must not disturb the normal path).
+        // A clean run_complete carries the real report tail and the release
+        // reason differs, so the run_complete summary is used as-is (the B05AM
+        // fix must not disturb the normal path).
         let envelopes = vec![
             dispatch_summary_env(
                 SessionEventKind::DriverEvent,
@@ -14980,8 +14977,8 @@ mod tests {
         assert!(is_orphan_without_finalize_release_reason(
             "stall_timeout_exceeded"
         ));
-        // TUI EOT fallback must keep scraping until TASK-AFE5Q removes it.
-        assert!(!is_orphan_without_finalize_release_reason(
+        // TASK-AFE5Q: TUI pane/process end is orphan — never scrape scrollback.
+        assert!(is_orphan_without_finalize_release_reason(
             "driver terminal event"
         ));
         assert!(!is_orphan_without_finalize_release_reason(

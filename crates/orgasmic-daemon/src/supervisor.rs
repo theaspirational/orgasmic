@@ -28,8 +28,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -1986,8 +1986,7 @@ impl Supervisor {
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.last_path = Some(last_path);
             rec.stdout_path = Some(stdout_path);
-            rec.requires_worker_finalize =
-                run_requires_worker_finalize(&rec.last_path, &rec.role);
+            rec.requires_worker_finalize = run_requires_worker_finalize(&rec.last_path, &rec.role);
         }
     }
 
@@ -2071,13 +2070,7 @@ impl Supervisor {
             }
         };
         if let Err(e) = self
-            .release_with_finalization(
-                &revalidated.run_id,
-                reason,
-                outcome,
-                finalized,
-                None,
-            )
+            .release_with_finalization(&revalidated.run_id, reason, outcome, finalized, None)
             .await
         {
             if matches!(e, SupervisorError::DeferredWhileInFlight(_)) {
@@ -2912,9 +2905,10 @@ fn apply_driver_event_to_record(
     }
 }
 
-/// TUI transports emit a terminal driver event (EOT-marker fallback; removed
-/// later by TASK-AFE5Q). ACP / subprocess modes do not — their stream-end
-/// path handles protocol end.
+/// TUI transports emit a terminal driver event on pane/process end
+/// (TASK-AFE5Q — no marker fallback). ACP / subprocess modes do not — their
+/// stream-end path handles protocol end.
+// orgasmic:TASK-AFE5Q
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
@@ -2929,9 +2923,7 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
 // orgasmic:TASK-S52X9,TASK-ARZGD,dec_WDR5K
 pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
     match role {
-        "implementer" | "reviewer" | "architector" | "griller" | "planner" => {
-            last_path.is_some()
-        }
+        "implementer" | "reviewer" | "architector" | "griller" | "planner" => last_path.is_some(),
         "artifactor" | "manager" => true,
         "terminal" | "babysitter" => false,
         // Fail closed: unknown non-terminal historical agent roles require
@@ -4631,34 +4623,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tmux_terminal_event_releases_supervisor_run_and_session() {
+    async fn tmux_process_exit_releases_supervisor_run_and_session() {
         let _live_guard = live_session_guard();
         if !tmux_spawn_usable_for_test().await || !command_available_for_test("bash") {
             eprintln!(
-                "skipping tmux_terminal_event_releases_supervisor_run_and_session: tmux/bash unavailable"
+                "skipping tmux_process_exit_releases_supervisor_run_and_session: tmux/bash unavailable"
             );
             return;
         }
         let (sup, dir, _w) = make_supervisor();
         let driver = TmuxTuiDriver;
-        let mut req = impl_req("TASK-TMUX-MOCK", dir.path());
+        let mut req = dispatch_impl_req("TASK-TMUX-MOCK", dir.path());
         req.worker_id = "implementer-claude-tmux".into();
+        // Dispatch-shaped acquire with last_path advertises finalize contract;
+        // pane exit without finalize must tombstone Failed.
         req.driver_config = DriverConfig::from_value(json!({
             "command": "bash",
-            "args": ["-lc", "printf 'mock output\\n'; cat"],
+            "args": ["-lc", "printf 'mock output\\n'; exit 0"],
         }));
         let resp = sup.acquire(&driver, req).await.unwrap();
         let session = tmux::tmux_session_name(&resp.identity);
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(tmux_has_session_for_test(&session).await);
-
-        let marker = format!("[orgasmic-eot:{}]", resp.run_id);
-        send_tmux_line_for_test(&session, &marker).await;
         wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(8)).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(
             !tmux_has_session_for_test(&session).await,
-            "tmux session should be killed after EOT release"
+            "tmux session should be killed after process-exit release"
         );
 
         let events = session_events(&dir.path().join("TASK-TMUX-MOCK.jsonl"));
@@ -4669,79 +4658,26 @@ mod tests {
                     Ok(DriverEvent::Ready { .. })
                 )
         }));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::TextChunk { chunk, .. }) if chunk.contains("mock output")
-                )
-        }));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::RunComplete { .. })
-                )
-        }));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::Lifecycle
-                && matches!(
-                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
-                    Ok(Lifecycle::Release {
-                        outcome: ReleaseOutcome::Completed,
-                        ..
-                    })
-                )
-        }));
-    }
-
-    #[tokio::test]
-    async fn tmux_real_claude_wire_smoke_releases_on_eot() {
-        if !tmux_spawn_usable_for_test().await || !command_available_for_test("claude") {
-            eprintln!(
-                "skipping tmux_real_claude_wire_smoke_releases_on_eot: tmux/claude unavailable"
-            );
-            return;
-        }
-        if std::env::var_os("ORGASMIC_RUN_REAL_CLAUDE_SMOKE").is_none() {
-            eprintln!(
-                "skipping tmux_real_claude_wire_smoke_releases_on_eot: set ORGASMIC_RUN_REAL_CLAUDE_SMOKE=1 to exercise real claude"
-            );
-            return;
-        }
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let mut req = impl_req("TASK-TMUX-CLAUDE", dir.path());
-        req.worker_id = "implementer-claude-tmux".into();
-        req.driver_config = DriverConfig::from_value(json!({
-            "prompt_bundle_text": "Respond with just the requested orgasmic end-of-turn marker and no other text.",
-        }));
-
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        let session = tmux::tmux_session_name(&resp.identity);
-        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(60)).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(
-            !tmux_has_session_for_test(&session).await,
-            "real claude tmux session should be gone after terminal release"
+            !events.iter().any(|envelope| {
+                envelope.kind == SessionEventKind::DriverEvent
+                    && matches!(
+                        serde_json::from_value::<DriverEvent>(envelope.event.clone()),
+                        Ok(DriverEvent::TextChunk { .. })
+                    )
+            }),
+            "capture removal must not synthesize TextChunk from scrollback"
         );
-
-        let events = session_events(&dir.path().join("TASK-TMUX-CLAUDE.jsonl"));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::RunComplete { .. })
-                )
-        }));
         assert!(events.iter().any(|envelope| {
             envelope.kind == SessionEventKind::Lifecycle
                 && matches!(
                     serde_json::from_value::<Lifecycle>(envelope.event.clone()),
                     Ok(Lifecycle::Release {
-                        outcome: ReleaseOutcome::Completed,
+                        reason,
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
                         ..
-                    })
+                    }) if reason == "protocol_end_without_finalize"
                 )
         }));
     }
@@ -5119,7 +5055,10 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
         let resp = sup
-            .acquire(&driver, dispatch_impl_req("TASK-FIN-THEN-PROTO", dir.path()))
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-FIN-THEN-PROTO", dir.path()),
+            )
             .await
             .unwrap();
         sup.release_with_finalization(
@@ -5168,7 +5107,10 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndAcpDriver;
         let resp = sup
-            .acquire(&driver, dispatch_impl_req("TASK-PROTO-THEN-FIN", dir.path()))
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-PROTO-THEN-FIN", dir.path()),
+            )
             .await
             .unwrap();
         let path = dir.path().join("TASK-PROTO-THEN-FIN.jsonl");
@@ -5244,11 +5186,8 @@ mod tests {
     #[test]
     fn stream_end_release_downgrades_dispatch_acp_protocol_complete_to_failed() {
         // orgasmic:TASK-P4MGK
-        let (reason, outcome) = stream_end_release_for_transport(
-            "acp-stdio",
-            Some(ReleaseOutcome::Completed),
-            true,
-        );
+        let (reason, outcome) =
+            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed), true);
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
 
@@ -5262,11 +5201,8 @@ mod tests {
 
         // TUI transports obey the same declaration gate as stream-end
         // (TASK-TZJFF / TASK-S52X9).
-        let (reason, outcome) = stream_end_release_for_transport(
-            "rmux",
-            Some(ReleaseOutcome::Completed),
-            true,
-        );
+        let (reason, outcome) =
+            stream_end_release_for_transport("rmux", Some(ReleaseOutcome::Completed), true);
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
     }
@@ -5276,11 +5212,8 @@ mod tests {
         // Runs that do not advertise the terminal-declaration contract
         // (babysitter, architect stage without last_path, etc.) still treat
         // protocol-end as success.
-        let (reason, outcome) = stream_end_release_for_transport(
-            "acp-stdio",
-            Some(ReleaseOutcome::Completed),
-            false,
-        );
+        let (reason, outcome) =
+            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed), false);
         assert_eq!(reason, "driver stream closed");
         assert_eq!(outcome, ReleaseOutcome::Completed);
     }
@@ -5308,10 +5241,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndTuiDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                stage_grill_req("TASK-GRILL-TUI-PROTO", dir.path()),
-            )
+            .acquire(&driver, stage_grill_req("TASK-GRILL-TUI-PROTO", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("TASK-GRILL-TUI-PROTO.jsonl");
@@ -5402,8 +5332,7 @@ mod tests {
                     && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "in-flight submit must not write a false Completed tombstone"
         );
@@ -5463,8 +5392,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }) {
                 break;
             }
@@ -5475,8 +5403,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "commit after deferred protocol-end must write artifact_submitted Completed"
         );
@@ -5489,10 +5416,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndTuiDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                manager_req("manager.launch:proj", dir.path()),
-            )
+            .acquire(&driver, manager_req("manager.launch:proj", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("manager.launch:proj.jsonl");
@@ -5545,10 +5469,7 @@ mod tests {
             diff_summary: "no diff".into(),
             acceptance_criteria: vec!["ac1".into()],
         };
-        let _resp = sup
-            .acquire_continuation(&driver, req, seed)
-            .await
-            .unwrap();
+        let _resp = sup.acquire_continuation(&driver, req, seed).await.unwrap();
         let path = dir.path().join("TASK-CONT-PROTO.jsonl");
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
@@ -5672,8 +5593,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "deferred timeout after successful commit must resolve Completed, not Failed"
         );
@@ -5723,10 +5643,8 @@ mod tests {
         assert!(
             session_events(&path).iter().any(|envelope| {
                 envelope.kind == SessionEventKind::Lifecycle
-                    && envelope.event.get("reason").and_then(|v| v.as_str())
-                        == Some("cancelled")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("cancelled")
+                    && envelope.event.get("reason").and_then(|v| v.as_str()) == Some("cancelled")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("cancelled")
             }),
             "deferred operator cancel must record Cancelled after writer commit"
         );
@@ -5787,8 +5705,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "rollback after deferred drain must restore prior Completed declaration"
         );
@@ -5800,10 +5717,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndAcpDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                stage_grill_req("TASK-GRILL-PROTO", dir.path()),
-            )
+            .acquire(&driver, stage_grill_req("TASK-GRILL-PROTO", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("TASK-GRILL-PROTO.jsonl");
@@ -5824,10 +5738,7 @@ mod tests {
             .collect();
         assert_eq!(releases.len(), 1, "expected one release: {releases:?}");
         assert_eq!(
-            releases[0]
-                .event
-                .get("outcome")
-                .and_then(|v| v.as_str()),
+            releases[0].event.get("outcome").and_then(|v| v.as_str()),
             Some("failed")
         );
         let snapshot = sup.snapshot().await;
@@ -5840,10 +5751,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                stage_grill_req("TASK-GRILL-FIN", dir.path()),
-            )
+            .acquire(&driver, stage_grill_req("TASK-GRILL-FIN", dir.path()))
             .await
             .unwrap();
         sup.release_with_finalization(
@@ -5872,10 +5780,7 @@ mod tests {
             Some(true)
         );
         assert_eq!(
-            releases[0]
-                .event
-                .get("outcome")
-                .and_then(|v| v.as_str()),
+            releases[0].event.get("outcome").and_then(|v| v.as_str()),
             Some("completed")
         );
     }
@@ -5938,8 +5843,7 @@ mod tests {
                         == Some(true)
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "artifact submit must write finalized_by_worker tombstone"
         );
@@ -5975,8 +5879,7 @@ mod tests {
                         == Some(true)
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("manager_released")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "manager release must write finalized_by_worker tombstone"
         );

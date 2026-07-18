@@ -138,21 +138,18 @@ impl WorkerDriver for TmuxDriver {
         let session_name = tmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
 
-        let capture_task = if !inert {
+        // orgasmic:TASK-AFE5Q
+        let lifecycle_task = if !inert {
             spawn_tmux_session(&session_name, &spawn_plan).await?;
-            let task = start_capture_loop(
+            let task = start_session_exit_watch(
                 session_name.clone(),
                 tx.clone(),
-                spawn_plan.eot_marker.clone(),
                 terminal_emitted.clone(),
             );
-            // Deliver the dispatch prompt in the *background* so `acquire`
-            // returns as soon as the session is spawned (~100ms) instead of
-            // blocking the HTTP handler for the input-ready wait (up to 10s) +
-            // paste. Blocking here is what raced the CLI's 10s timeout and left
-            // a zombie lease. A delivery failure surfaces as a fatal
-            // DriverError on the stream, not a late `acquire()` error.
-            if let Some(prompt) = spawn_plan.initial_prompt.clone() {
+            // Paste fallback only (hermes/custom, or a harness without argv
+            // delivery). Supported TUIs already received the prompt in argv.
+            // Deliver in the background so `acquire` returns promptly.
+            if let Some(prompt) = spawn_plan.paste_prompt.clone() {
                 let session = session_name.clone();
                 let command = spawn_plan.command.clone();
                 let timeout = cfg.input_ready_timeout;
@@ -215,7 +212,7 @@ impl WorkerDriver for TmuxDriver {
                 session_name,
                 kind: ctx.run_kind,
                 inert,
-                capture_task,
+                lifecycle_task,
                 terminal_emitted,
                 kill_on_drop: true,
                 released: false,
@@ -260,10 +257,9 @@ impl WorkerDriver for TmuxDriver {
                 events: rx,
                 control: {
                     let terminal_emitted = Arc::new(AtomicBool::new(false));
-                    let capture_task = start_capture_loop(
+                    let lifecycle_task = start_session_exit_watch(
                         session_name.clone(),
                         tx.clone(),
-                        tmux_eot_marker(&ctx.identity.run_id),
                         terminal_emitted.clone(),
                     );
                     Box::new(TmuxTuiControl {
@@ -271,7 +267,7 @@ impl WorkerDriver for TmuxDriver {
                         session_name: session_name.clone(),
                         kind: ctx.run_kind,
                         inert: false,
-                        capture_task: Some(capture_task),
+                        lifecycle_task: Some(lifecycle_task),
                         terminal_emitted,
                         kill_on_drop: false,
                         released: false,
@@ -288,7 +284,8 @@ struct TmuxTuiControl {
     session_name: String,
     kind: RunKind,
     inert: bool,
-    capture_task: Option<JoinHandle<()>>,
+    /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
+    lifecycle_task: Option<JoinHandle<()>>,
     terminal_emitted: Arc<AtomicBool>,
     kill_on_drop: bool,
     released: bool,
@@ -347,7 +344,7 @@ impl DriverControl for TmuxTuiControl {
             return Ok(());
         }
         self.released = true;
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.lifecycle_task.take() {
             task.abort();
         }
         if !self.inert {
@@ -367,7 +364,7 @@ impl DriverControl for TmuxTuiControl {
 
 impl Drop for TmuxTuiControl {
     fn drop(&mut self) {
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.lifecycle_task.take() {
             task.abort();
         }
         if !self.released && self.kill_on_drop && !self.inert {
@@ -406,8 +403,9 @@ struct TmuxSpawnPlan {
     command: String,
     args: Vec<String>,
     cwd: PathBuf,
-    initial_prompt: Option<String>,
-    eot_marker: String,
+    /// Prompt to paste after spawn. `None` when the prompt was delivered via
+    /// initial-prompt argv (claude/codex/cursor-agent) or when absent.
+    paste_prompt: Option<String>,
     /// Harness-aware native runtime identity recorded into the session JSONL.
     /// `None` when the harness has no known native session semantics.
     native_runtime: Option<NativeRuntimeMeta>,
@@ -423,12 +421,12 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         .clone()
         .or_else(|| ctx.worktree.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
-    let eot_marker = tmux_eot_marker(&ctx.identity.run_id);
-    let initial_prompt = cfg
+    let prompt_text = cfg
         .prompt_bundle_text
         .as_deref()
-        .filter(|bundle| !bundle.trim().is_empty())
-        .map(|bundle| prompt_with_eot_instruction(bundle, &ctx.identity.run_id));
+        .map(str::trim)
+        .filter(|bundle| !bundle.is_empty())
+        .map(str::to_string);
 
     let (command, mut args) = if should_use_default_command(cfg, harness) {
         default_command_for_harness(harness, cfg)
@@ -473,6 +471,17 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         }
     }
 
+    // orgasmic:TASK-AFE5Q — argv delivery when the resolved binary is a
+    // supported TUI harness; paste remains for hermes/custom and for
+    // non-harness commands (test fixtures, explicit wrappers).
+    let paste_prompt = match prompt_text {
+        Some(prompt) if argv_prompt_delivery_applies(harness, &command) => {
+            push_initial_prompt_argv(&mut args, &prompt);
+            None
+        }
+        other => other,
+    };
+
     let native_runtime = if is_claude {
         let session_id = claude_session_id(&ctx.identity.runtime_id);
         Some(claude_native_runtime(&session_id, &cwd, &command, &args))
@@ -494,11 +503,41 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         command,
         args,
         cwd,
-        initial_prompt,
-        eot_marker,
+        paste_prompt,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
     }
+}
+
+/// Harnesses that accept the compiled initial prompt as one trailing argv
+/// element (dec_WDR5K item 8 / TASK-AFE5Q). Hermes has no trustworthy TUI
+/// argv form — paste remains the fallback.
+// orgasmic:TASK-AFE5Q,dec_WDR5K
+pub(crate) fn harness_supports_initial_prompt_argv(harness: &str) -> bool {
+    matches!(harness, "claude" | "codex" | "cursor-agent")
+}
+
+/// True when both the harness id and the resolved binary basename support
+/// initial-prompt argv delivery.
+// orgasmic:TASK-AFE5Q
+pub(crate) fn argv_prompt_delivery_applies(harness: &str, command: &str) -> bool {
+    if !harness_supports_initial_prompt_argv(harness) {
+        return false;
+    }
+    let base = std::path::Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command);
+    base == harness
+}
+
+/// Append the compiled prompt as exactly one argv element after `--`, so
+/// quotes/newlines/metacharacters and leading dashes never reach a shell and
+/// are never option-parsed.
+// orgasmic:TASK-AFE5Q
+pub(crate) fn push_initial_prompt_argv(args: &mut Vec<String>, prompt: &str) {
+    args.push("--".to_string());
+    args.push(prompt.to_string());
 }
 
 /// Deterministic Claude native session id pinned to the run's runtime UUID.
@@ -618,21 +657,6 @@ fn command_available(command: &str) -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
-}
-
-pub(crate) fn tmux_eot_marker(run_id: &str) -> String {
-    format!("[orgasmic-eot:{run_id}]")
-}
-
-pub(crate) fn prompt_with_eot_instruction(bundle: &str, run_id: &str) -> String {
-    let mut prompt = String::new();
-    prompt.push_str(bundle.trim());
-    prompt.push_str("\n\norgasmic tmux-tui control instruction:\n");
-    prompt.push_str("When all requested work and verification is complete, print a final end-of-turn marker on its own line. Compose the marker as '[' + 'orgasmic-eot:' + the run id below + ']'.\n");
-    prompt.push_str("run_id: ");
-    prompt.push_str(run_id);
-    prompt.push('\n');
-    prompt
 }
 
 /// Initial session geometry. Matches the daemon's PTY-attach bridge init size
@@ -773,29 +797,26 @@ fn sanitize_tmux_name(session: &str) -> String {
         .collect()
 }
 
-fn start_capture_loop(
+/// Watch for pane/process end only. No scrollback scrape, no marker watch,
+/// no TextChunk synthesis — live view stays on `/ws/tmux/:run_id` (TASK-AFE5Q).
+// orgasmic:TASK-AFE5Q
+fn start_session_exit_watch(
     session_name: String,
     events: mpsc::Sender<DriverEvent>,
-    eot_marker: String,
     terminal_emitted: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        capture_loop(session_name, events, eot_marker, terminal_emitted).await;
+        session_exit_watch(session_name, events, terminal_emitted).await;
     })
 }
 
-async fn capture_loop(
+async fn session_exit_watch(
     session: String,
     events: mpsc::Sender<DriverEvent>,
-    eot_marker: String,
     terminal_emitted: Arc<AtomicBool>,
 ) {
     let mut poll = tokio::time::interval(Duration::from_millis(500));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut previous = String::new();
-    let mut recent_chunk = String::new();
-    let mut seq = 0_u64;
-    let mut approval_sent = false;
 
     loop {
         poll.tick().await;
@@ -806,51 +827,10 @@ async fn capture_loop(
             emit_fatal_driver_error_once(
                 &events,
                 &terminal_emitted,
-                format!("tmux session {session} ended before EOT marker"),
+                format!("tmux session {session} ended without finalize"),
             )
             .await;
             break;
-        }
-        let pane = match capture_pane(&session).await {
-            Ok(pane) => pane,
-            Err(e) => {
-                let _ = events
-                    .send(DriverEvent::DriverError {
-                        fatal: false,
-                        message: e.to_string(),
-                    })
-                    .await;
-                continue;
-            }
-        };
-        if pane != previous {
-            let chunk = pane_delta(&previous, &pane);
-            let chunk = strip_ansi_codes(&chunk);
-            if !chunk.trim().is_empty() && chunk != recent_chunk {
-                seq += 1;
-                recent_chunk = chunk.clone();
-                let _ = events
-                    .send(DriverEvent::TextChunk {
-                        stream: TextStream::Assistant,
-                        chunk,
-                        seq,
-                    })
-                    .await;
-            }
-            if !approval_sent && pane_requests_approval(&pane) {
-                approval_sent = true;
-                let _ = send_keys(&session, &[String::from("y"), String::from("Enter")]).await;
-            }
-            if pane_contains_eot_marker(&pane, &eot_marker) {
-                emit_run_complete_once(
-                    &events,
-                    &terminal_emitted,
-                    Some("tmux TUI end-of-turn marker observed".to_string()),
-                )
-                .await;
-                break;
-            }
-            previous = pane;
         }
     }
 }
@@ -1048,29 +1028,6 @@ fn redraw_delta(current: &str) -> String {
     format!("{REDRAW_MARKER}{content}")
 }
 
-pub(crate) fn pane_contains_eot_marker(pane: &str, marker: &str) -> bool {
-    // Wrapped agent TUIs do not render the marker verbatim: a markdown pass
-    // may strip the `[...]` (link-label syntax, observed with opencode), and
-    // full-screen layouts can pack sidebar text onto the same rendered row.
-    // Accept a line that *starts* with the bracketed marker or its
-    // bracket-less core — start-anchored so prose that merely mentions the
-    // marker mid-sentence still does not complete the run.
-    let core = marker
-        .strip_prefix('[')
-        .and_then(|m| m.strip_suffix(']'))
-        .unwrap_or(marker);
-    pane.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed.starts_with(marker) || trimmed.starts_with(core)
-    })
-}
-
-fn pane_requests_approval(pane: &str) -> bool {
-    let lower = pane.to_ascii_lowercase();
-    lower.contains("approve")
-        && (lower.contains(" yes") || lower.contains("[y") || lower.contains("allow"))
-}
-
 /// Whether the pane is showing Claude's folder-trust dialog ("Do you trust the
 /// files in this folder?") as a numbered menu. Shared by the rmux driver. Used
 /// to accept the dialog (default "Yes, proceed") so a fresh worktree's harness
@@ -1084,16 +1041,6 @@ pub(crate) fn pane_requests_folder_trust(pane: &str) -> bool {
         && pane
             .lines()
             .any(|line| line_is_numbered_menu_item(&strip_ansi_codes(line)))
-}
-
-async fn emit_run_complete_once(
-    events: &mpsc::Sender<DriverEvent>,
-    terminal_emitted: &AtomicBool,
-    summary: Option<String>,
-) {
-    if !terminal_emitted.swap(true, Ordering::SeqCst) {
-        let _ = events.send(DriverEvent::RunComplete { summary }).await;
-    }
 }
 
 async fn emit_fatal_driver_error_once(
@@ -1322,10 +1269,57 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
-        let prompt = plan.initial_prompt.unwrap();
-        assert!(prompt.contains("do the task"));
-        assert!(!prompt.contains("[orgasmic-eot:run-plan]"));
-        assert!(prompt.contains("run_id: run-plan"));
+        // Argv delivery: prompt is one trailing argv element after `--`.
+        assert!(plan.paste_prompt.is_none());
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
+        assert!(!plan.args.iter().any(|arg| arg.contains("orgasmic-eot")));
+        assert!(!plan
+            .args
+            .iter()
+            .any(|arg| arg.contains("end-of-turn marker")));
+    }
+
+    #[test]
+    fn supported_harnesses_deliver_prompt_as_single_argv_element() {
+        // Quotes, newlines, metacharacters, Unicode, and leading dashes must
+        // remain one argv element — never shell-concatenated.
+        let nasty = "line1\n\"quoted\" $HOME; `--flag` — café";
+        for harness in ["claude", "codex", "cursor-agent"] {
+            let cfg = TmuxTuiConfig {
+                harness: Some(harness.into()),
+                prompt_bundle_text: Some(nasty.into()),
+                ..TmuxTuiConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-argv", RunKind::Worker), harness);
+            assert!(
+                plan.paste_prompt.is_none(),
+                "{harness} should use argv delivery"
+            );
+            assert_eq!(plan.args[plan.args.len() - 2], "--");
+            assert_eq!(plan.args[plan.args.len() - 1], nasty);
+            let native = plan.native_runtime.expect("native meta");
+            assert_eq!(native.launch_argv.last().map(String::as_str), Some(nasty));
+        }
+    }
+
+    #[test]
+    fn hermes_and_custom_keep_paste_fallback_without_eot() {
+        let hermes_cfg = TmuxTuiConfig {
+            harness: Some("hermes".into()),
+            prompt_bundle_text: Some("do the task".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let hermes = build_spawn_plan(&hermes_cfg, &ctx("run-hermes", RunKind::Worker), "hermes");
+        assert_eq!(hermes.paste_prompt.as_deref(), Some("do the task"));
+        assert!(!hermes.args.iter().any(|arg| arg == "do the task"));
+        assert!(!hermes
+            .paste_prompt
+            .as_deref()
+            .unwrap()
+            .contains("orgasmic-eot"));
     }
 
     /// Worker `:HARNESS_ARGS:` ride along on the harness argv; a `--model`
@@ -1446,42 +1440,10 @@ mod tests {
     }
 
     #[test]
-    fn pane_delta_and_eot_detection_are_stable() {
+    fn pane_delta_is_stable() {
         let before = "hello\n";
-        let after = "hello\nworld\n[orgasmic-eot:run-x]\n";
-        assert_eq!(pane_delta(before, after), "world\n[orgasmic-eot:run-x]\n");
-        assert!(pane_contains_eot_marker(after, "[orgasmic-eot:run-x]"));
-        assert!(!pane_contains_eot_marker(after, "[orgasmic-eot:other]"));
-    }
-
-    /// Wrapped TUIs render the marker imperfectly: opencode's markdown pass
-    /// strips the `[...]` link-label brackets, and full-screen layouts pack
-    /// sidebar columns onto the marker's rendered row. Both must still
-    /// complete the run; prose mentioning the marker mid-sentence must not.
-    #[test]
-    fn pane_eot_detection_tolerates_tui_rendering() {
-        let marker = "[orgasmic-eot:run-x]";
-        // Markdown link-label pass stripped the brackets.
-        assert!(pane_contains_eot_marker("orgasmic-eot:run-x\n", marker));
-        // Sidebar text rendered on the same screen row.
-        assert!(pane_contains_eot_marker(
-            "   orgasmic-eot:run-x          2% used\n",
-            marker
-        ));
-        assert!(pane_contains_eot_marker(
-            "  [orgasmic-eot:run-x]   ctrl+p commands\n",
-            marker
-        ));
-        // Mid-sentence mention (instruction echo / agent narration) is not
-        // a completion signal.
-        assert!(!pane_contains_eot_marker(
-            "I will print [orgasmic-eot:run-x] when done\n",
-            marker
-        ));
-        assert!(!pane_contains_eot_marker(
-            "compose '[' + 'orgasmic-eot:' + run id + ']'\n",
-            marker
-        ));
+        let after = "hello\nworld\n";
+        assert_eq!(pane_delta(before, after), "world\n");
     }
 
     #[test]
@@ -1822,8 +1784,7 @@ mod tests {
             command: "claude".into(),
             args: vec!["--dangerously-skip-permissions".into()],
             cwd: std::env::current_dir().unwrap(),
-            initial_prompt: None,
-            eot_marker: tmux_eot_marker("run-input-ready"),
+            paste_prompt: None,
             native_runtime: None,
             run_id: "run-input-ready".into(),
         };
@@ -1836,53 +1797,6 @@ mod tests {
             ready.is_ok(),
             "claude input field should become ready within 10s: {ready:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn real_tmux_eot_marker_emits_run_complete() {
-        let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await || !command_available("bash") {
-            eprintln!("skipping real_tmux_eot_marker_emits_run_complete: tmux/bash unavailable");
-            return;
-        }
-        let d = driver();
-        let run_id = "run-mock-eot";
-        let marker = tmux_eot_marker(run_id);
-        let script = format!("printf 'mock output\\n{}\\n'; sleep 60", marker);
-        let cfg = DriverConfig::from_value(json!({
-            "command": "bash",
-            "args": ["-lc", script],
-        }));
-        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
-        let _guard = SessionGuard(tmux_session_name(&s.identity));
-        let ev = s.events.recv().await.unwrap();
-        assert!(matches!(ev, DriverEvent::Ready { .. }));
-
-        let mut saw_text = false;
-        let mut saw_complete = false;
-        for _ in 0..10 {
-            let ev = tokio::time::timeout(Duration::from_secs(2), s.events.recv())
-                .await
-                .expect("timed out waiting for tmux event")
-                .expect("event stream closed");
-            match ev {
-                DriverEvent::TextChunk { chunk, .. } => {
-                    saw_text |= chunk.contains("mock output");
-                }
-                DriverEvent::RunComplete { summary } => {
-                    saw_complete = true;
-                    assert_eq!(
-                        summary.as_deref(),
-                        Some("tmux TUI end-of-turn marker observed")
-                    );
-                    break;
-                }
-                other => panic!("unexpected event before completion: {other:?}"),
-            }
-        }
-        assert!(saw_text, "expected mock output text chunk");
-        assert!(saw_complete, "expected RunComplete");
-        s.control.release("cleanup").await.unwrap();
     }
 
     /// Non-blocking acquire (zombie-lease fix): with a dispatch prompt, the
@@ -1920,10 +1834,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_tmux_early_exit_before_eot_is_failure() {
+    async fn real_tmux_early_exit_without_finalize_is_failure() {
         let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await || !command_available("bash") {
-            eprintln!("skipping real_tmux_early_exit_before_eot_is_failure: tmux/bash unavailable");
+            eprintln!(
+                "skipping real_tmux_early_exit_without_finalize_is_failure: tmux/bash unavailable"
+            );
             return;
         }
         let d = driver();
@@ -1946,12 +1862,11 @@ mod tests {
                 .expect("event stream closed");
             match ev {
                 DriverEvent::DriverError { fatal, message } if fatal => {
-                    assert!(message.contains("ended before EOT marker"), "{message}");
+                    assert!(message.contains("ended without finalize"), "{message}");
                     saw_failure = true;
                     break;
                 }
                 DriverEvent::DriverError { fatal: false, .. } => {}
-                DriverEvent::TextChunk { .. } => {}
                 DriverEvent::RunComplete { .. } => {
                     panic!("early tmux exit must not emit RunComplete")
                 }
