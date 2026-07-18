@@ -333,11 +333,17 @@ struct RunRecord {
     /// them for boot reattach when the persisted `RunMeta` event has them).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
-    /// When true, `orgasmic dispatch finalize` is this run's completion
-    /// contract — ACP/subprocess protocol-end alone must not count as success
-    /// (TASK-P4MGK / TASK-8PXDP). Set at acquire for CLI-dispatched worker
-    /// kinds (implementer/reviewer/architector) that carry artifact paths.
+    /// When true, this run must end with an explicit worker-declared terminal
+    /// call writing the finalize tombstone (`finalized_by_worker` + reason).
+    /// Protocol-end alone must not count as success (dec_WDR5K item 6 /
+    /// TASK-S52X9). Set at acquire for every shape that declares termination:
+    /// dispatch workers + stage grill/plan (via `dispatch finalize`),
+    /// artifactor (`artifact submit`), manager (`manager release`).
     requires_worker_finalize: bool,
+    /// Set when a shape's terminal verb has declared success without yet
+    /// releasing the lease (hot-session artifactor submit). Stream-end and
+    /// idle release promote this into the finalize tombstone.
+    terminal_declaration: Option<&'static str>,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -876,15 +882,29 @@ impl Supervisor {
                 })
             };
             if let Some(rec) = claimed {
-                let (reason, outcome) = stream_end_release_for_transport(
-                    &rec.transport,
-                    rec.terminal_outcome,
-                    rec.requires_worker_finalize,
-                );
+                // orgasmic:TASK-S52X9 — a prior terminal declaration (e.g.
+                // hot-session artifact submit) promotes protocol-end to the
+                // finalize tombstone; otherwise the universal
+                // requires_worker_finalize gate applies.
+                let (reason, outcome, finalized_by_worker) =
+                    if let Some(declared) = rec.terminal_declaration {
+                        (
+                            declared.to_string(),
+                            ReleaseOutcome::Completed,
+                            true,
+                        )
+                    } else {
+                        let (reason, outcome) = stream_end_release_for_transport(
+                            &rec.transport,
+                            rec.terminal_outcome,
+                            rec.requires_worker_finalize,
+                        );
+                        (reason.to_string(), outcome, false)
+                    };
                 let release = Lifecycle::Release {
-                    reason: reason.into(),
+                    reason,
                     outcome,
-                    finalized_by_worker: false,
+                    finalized_by_worker,
                 };
                 let _ = writer
                     .append_session(SessionAppend {
@@ -915,6 +935,7 @@ impl Supervisor {
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
+            terminal_declaration: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1145,6 +1166,7 @@ impl Supervisor {
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
+            terminal_declaration: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1468,6 +1490,7 @@ impl Supervisor {
             last_path: None,
             stdout_path: None,
             requires_worker_finalize: false,
+            terminal_declaration: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1967,11 +1990,26 @@ impl Supervisor {
             elapsed_secs = revalidated.elapsed.as_secs(),
             "supervisor run timeout exceeded"
         );
+        // orgasmic:TASK-S52X9 — hot-session artifactor that already submitted
+        // ends idle with the finalize tombstone (Completed), not Failed.
+        let (reason, outcome, finalized) = {
+            let g = self.inner.lock().await;
+            match g
+                .runs
+                .get(&revalidated.run_id)
+                .and_then(|rec| rec.terminal_declaration)
+            {
+                Some(declared) => (declared, ReleaseOutcome::Completed, true),
+                None => (revalidated.reason, ReleaseOutcome::Failed, false),
+            }
+        };
         if let Err(e) = self
-            .release(
+            .release_with_finalization(
                 &revalidated.run_id,
-                revalidated.reason,
-                ReleaseOutcome::Failed,
+                reason,
+                outcome,
+                finalized,
+                None,
             )
             .await
         {
@@ -1979,10 +2017,37 @@ impl Supervisor {
                 warn!(
                     error = %e,
                     run_id = %revalidated.run_id,
-                    reason = revalidated.reason,
+                    reason,
                     "supervisor timeout release failed"
                 );
             }
+        }
+    }
+
+    /// Record a worker-declared terminal verb without releasing the lease
+    /// (hot-session artifactor submit). Cleared on a new regenerate round.
+    // orgasmic:TASK-S52X9
+    pub async fn mark_terminal_declaration(
+        &self,
+        run_id: &str,
+        reason: &'static str,
+    ) -> Result<(), SupervisorError> {
+        let mut g = self.inner.lock().await;
+        let rec = g
+            .runs
+            .get_mut(run_id)
+            .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+        rec.terminal_declaration = Some(reason);
+        Ok(())
+    }
+
+    /// Clear a prior terminal declaration when a new artifactor regenerate
+    /// round starts — that round needs its own submit.
+    // orgasmic:TASK-S52X9
+    pub async fn clear_terminal_declaration(&self, run_id: &str) {
+        let mut g = self.inner.lock().await;
+        if let Some(rec) = g.runs.get_mut(run_id) {
+            rec.terminal_declaration = None;
         }
     }
 
@@ -2419,8 +2484,8 @@ pub struct RunSummary {
     pub session_path: PathBuf,
     pub babysitter_target: Option<String>,
     pub event_count: u64,
-    /// Dispatch artifact paths, when this is a CLI-dispatched run (`None`
-    /// for manager/recovery/stage runs). `orgasmic dispatch finalize`
+    /// Dispatch/stage artifact path when the run advertises finalize
+    /// (`None` for manager/recovery/artifactor). `orgasmic dispatch finalize`
     /// resolves the report path for the current run from this field rather
     /// than scanning `.orgasmic/tx`, which a worker's own worktree checkout
     /// cannot see live daemon writes to.
@@ -2570,19 +2635,30 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
 
-/// Whether this run advertises the CLI dispatch finalize completion contract.
+/// Whether this run requires an explicit worker-declared terminal call
+/// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan advertise
+/// the contract when they carry a `last_path`; artifactor and manager always
+/// do (their terminal verbs are submit / release, not `dispatch finalize`).
+// orgasmic:TASK-S52X9
 fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
-    last_path.is_some() && matches!(role, "implementer" | "reviewer" | "architector")
+    match role {
+        "implementer" | "reviewer" | "architector" | "griller" | "planner" => {
+            last_path.is_some()
+        }
+        "artifactor" | "manager" => true,
+        _ => false,
+    }
 }
 
 /// Decide the stream-end Lifecycle::Release when the driver event channel
 /// closes and the run was still live (no prior finalize / TUI terminal
 /// release won the race).
 ///
-/// For CLI-dispatched worker runs (`requires_worker_finalize`) in non-TUI
-/// modes, a protocol `RunComplete` alone is not success: finalize is the
-/// only success signal (dec_WDR5K item 6, narrowed by TASK-8PXDP). Stage
-/// runs, artifactor, and manager launches keep protocol-end = success.
+/// For every run that advertises `requires_worker_finalize` in non-TUI modes,
+/// a protocol `RunComplete` alone is not success: the shape's terminal
+/// declaration (finalize / submit / release) is the only success signal
+/// (dec_WDR5K item 6 / TASK-S52X9). Protocol-end without a declaration is
+/// Failed uniformly for every shape.
 fn stream_end_release_for_transport(
     transport: &str,
     terminal_outcome: Option<ReleaseOutcome>,
@@ -3126,6 +3202,40 @@ mod tests {
         let mut req = impl_req(task, dir);
         req.last_path = Some(dir.join(format!("{task}.last.txt")));
         req.stdout_path = Some(dir.join(format!("{task}.stdout.log")));
+        req
+    }
+
+    /// Stage grill-shaped acquire: last_path present so the universal
+    /// finalize contract applies (TASK-S52X9).
+    fn stage_grill_req(task: &str, dir: &Path) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.role = "griller".into();
+        req.worker_id = "griller".into();
+        req.last_path = Some(dir.join(format!("{task}.last.txt")));
+        req.stall_timeout_secs = Some(0);
+        req.max_run_duration_secs = Some(0);
+        req
+    }
+
+    fn artifactor_req(task: &str, dir: &Path) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.role = "artifactor".into();
+        req.worker_id = "artifactor".into();
+        req.last_path = None;
+        req.stdout_path = None;
+        req.stall_timeout_secs = Some(0);
+        req.max_run_duration_secs = Some(0);
+        req
+    }
+
+    fn manager_req(task: &str, dir: &Path) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.role = "manager".into();
+        req.worker_id = "manager".into();
+        req.last_path = None;
+        req.stdout_path = None;
+        req.stall_timeout_secs = Some(0);
+        req.max_run_duration_secs = Some(0);
         req
     }
 
@@ -4614,9 +4724,10 @@ mod tests {
     }
 
     #[test]
-    fn stream_end_release_keeps_stage_protocol_complete_success_without_finalize_contract(
-    ) {
-        // orgasmic:TASK-8PXDP
+    fn stream_end_release_keeps_protocol_complete_when_finalize_contract_absent() {
+        // Runs that do not advertise the terminal-declaration contract
+        // (babysitter, architect stage without last_path, etc.) still treat
+        // protocol-end as success.
         let (reason, outcome) = stream_end_release_for_transport(
             "acp-stdio",
             Some(ReleaseOutcome::Completed),
@@ -4626,34 +4737,41 @@ mod tests {
         assert_eq!(outcome, ReleaseOutcome::Completed);
     }
 
+    #[test]
+    fn run_requires_worker_finalize_is_universal_per_shape() {
+        // orgasmic:TASK-S52X9
+        let last = Some(PathBuf::from("/tmp/x.last.txt"));
+        assert!(run_requires_worker_finalize(&last, "implementer"));
+        assert!(run_requires_worker_finalize(&last, "griller"));
+        assert!(run_requires_worker_finalize(&last, "planner"));
+        assert!(run_requires_worker_finalize(&None, "artifactor"));
+        assert!(run_requires_worker_finalize(&None, "manager"));
+        assert!(!run_requires_worker_finalize(&None, "implementer"));
+        assert!(!run_requires_worker_finalize(&None, "griller"));
+        assert!(!run_requires_worker_finalize(&None, "babysitter"));
+    }
+
     #[tokio::test]
-    async fn stage_acp_protocol_end_stays_completed_without_finalize_contract() {
-        // orgasmic:TASK-8PXDP
+    async fn grill_protocol_end_without_finalize_is_failed() {
+        // orgasmic:TASK-S52X9
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndAcpDriver;
         let resp = sup
             .acquire(
                 &driver,
-                manual_req("TASK-STAGE-PROTO", dir.path(), Some(0), Some(0)),
+                stage_grill_req("TASK-GRILL-PROTO", dir.path()),
             )
             .await
             .unwrap();
-        let path = dir.path().join("TASK-STAGE-PROTO.jsonl");
+        let path = dir.path().join("TASK-GRILL-PROTO.jsonl");
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            if has_release_reason(&path, "driver stream closed") {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        assert!(
-            has_release_reason(&path, "driver stream closed"),
-            "expected driver stream closed release"
-        );
-        assert!(
-            !has_release_reason(&path, "protocol_end_without_finalize"),
-            "stage/grill/plan runs must not be reclassified as protocol_end_without_finalize"
-        );
+        assert_release_reason(&path, "protocol_end_without_finalize");
         let releases: Vec<_> = session_events(&path)
             .into_iter()
             .filter(|envelope| {
@@ -4667,8 +4785,179 @@ mod tests {
                 .event
                 .get("outcome")
                 .and_then(|v| v.as_str()),
+            Some("failed")
+        );
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn grill_finalize_completes_with_worker_tombstone() {
+        // orgasmic:TASK-S52X9
+        let (sup, dir, _w) = make_supervisor();
+        let driver = FinalizeThenProtocolEndDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                stage_grill_req("TASK-GRILL-FIN", dir.path()),
+            )
+            .await
+            .unwrap();
+        sup.release_with_finalization(
+            &resp.run_id,
+            "worker finalize for TASK-GRILL-FIN",
+            ReleaseOutcome::Completed,
+            true,
+            Some(&resp.identity),
+        )
+        .await
+        .unwrap();
+        let path = dir.path().join("TASK-GRILL-FIN.jsonl");
+        let releases: Vec<_> = session_events(&path)
+            .into_iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .collect();
+        assert_eq!(releases.len(), 1, "expected one release: {releases:?}");
+        assert_eq!(
+            releases[0]
+                .event
+                .get("finalized_by_worker")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            releases[0]
+                .event
+                .get("outcome")
+                .and_then(|v| v.as_str()),
             Some("completed")
         );
+    }
+
+    #[tokio::test]
+    async fn artifactor_protocol_end_without_submit_is_failed() {
+        // orgasmic:TASK-S52X9
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-TEST1", dir.path()),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("artifact.generate:ART-TEST1.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn artifactor_submit_tombstone_completes() {
+        // orgasmic:TASK-S52X9
+        let (sup, dir, _w) = make_supervisor();
+        let driver = FinalizeThenProtocolEndDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-TEST2", dir.path()),
+            )
+            .await
+            .unwrap();
+        sup.release_with_finalization(
+            &resp.run_id,
+            "artifact_submitted",
+            ReleaseOutcome::Completed,
+            true,
+            Some(&resp.identity),
+        )
+        .await
+        .unwrap();
+        let path = dir.path().join("artifact.generate:ART-TEST2.jsonl");
+        assert!(
+            session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+                    && envelope
+                        .event
+                        .get("finalized_by_worker")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("artifact_submitted")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
+            }),
+            "artifact submit must write finalized_by_worker tombstone"
+        );
+    }
+
+    #[tokio::test]
+    async fn manager_release_tombstone_completes() {
+        // orgasmic:TASK-S52X9
+        let (sup, dir, _w) = make_supervisor();
+        let driver = FinalizeThenProtocolEndDriver;
+        let resp = sup
+            .acquire(&driver, manager_req("manager.launch:proj", dir.path()))
+            .await
+            .unwrap();
+        sup.release_with_finalization(
+            &resp.run_id,
+            "manager_released",
+            ReleaseOutcome::Completed,
+            true,
+            Some(&resp.identity),
+        )
+        .await
+        .unwrap();
+        let path = dir.path().join("manager.launch:proj.jsonl");
+        assert!(
+            session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+                    && envelope
+                        .event
+                        .get("finalized_by_worker")
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("manager_released")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
+            }),
+            "manager release must write finalized_by_worker tombstone"
+        );
+    }
+
+    #[tokio::test]
+    async fn manager_protocol_end_without_release_is_anomaly() {
+        // orgasmic:TASK-S52X9 — unexpected protocol death without release
+        // is Failed (anomaly), not silent Completed.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let resp = sup
+            .acquire(&driver, manager_req("manager.launch:dead", dir.path()))
+            .await
+            .unwrap();
+        let path = dir.path().join("manager.launch:dead.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
         let snapshot = sup.snapshot().await;
         assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }

@@ -1093,7 +1093,9 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
                 )
             })?;
             match dispatch_release_tombstone(session_path)? {
-                DispatchReleaseTombstone::WorkerFinalized => {
+                DispatchReleaseTombstone::WorkerFinalized
+                | DispatchReleaseTombstone::ArtifactSubmitted
+                | DispatchReleaseTombstone::ManagerReleased => {
                     eprintln!(
                         "warning: run {} was already released by a prior worker finalize; \
                          skipping duplicate terminal tx",
@@ -1671,6 +1673,10 @@ fn is_release_run_not_found_error(err: &anyhow::Error) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DispatchReleaseTombstone {
     WorkerFinalized,
+    /// Artifactor terminal declaration (`orgasmic artifact submit`).
+    ArtifactSubmitted,
+    /// Manager terminal declaration (`orgasmic manager release`).
+    ManagerReleased,
     StallSweep,
     ProtocolEndWithoutFinalize,
     Unrecognized,
@@ -1681,6 +1687,15 @@ fn is_stall_sweep_release_reason(reason: &str) -> bool {
     matches!(
         reason,
         "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
+    )
+}
+
+fn is_worker_declared_tombstone(tombstone: DispatchReleaseTombstone) -> bool {
+    matches!(
+        tombstone,
+        DispatchReleaseTombstone::WorkerFinalized
+            | DispatchReleaseTombstone::ArtifactSubmitted
+            | DispatchReleaseTombstone::ManagerReleased
     )
 }
 
@@ -1701,8 +1716,15 @@ fn dispatch_release_tombstone(session_path: &Path) -> Result<DispatchReleaseTomb
         else {
             continue;
         };
+        // orgasmic:TASK-S52X9 — extend tombstone vocab with artifact_submitted
+        // and manager_released as valid worker declarations (same
+        // finalized_by_worker flag; distinct reasons).
         return Ok(if finalized_by_worker {
-            DispatchReleaseTombstone::WorkerFinalized
+            match reason.as_str() {
+                "artifact_submitted" => DispatchReleaseTombstone::ArtifactSubmitted,
+                "manager_released" => DispatchReleaseTombstone::ManagerReleased,
+                _ => DispatchReleaseTombstone::WorkerFinalized,
+            }
         } else if reason == "protocol_end_without_finalize" {
             DispatchReleaseTombstone::ProtocolEndWithoutFinalize
         } else if is_stall_sweep_release_reason(&reason) {
@@ -1833,10 +1855,16 @@ fn done_tx_type(open: &DispatchRecord) -> Result<&'static str> {
 /// `dispatch finalize` (kind read from the daemon's live `RunSummary`) so both
 /// converge on the same terminal-tx vocabulary.
 fn done_tx_type_for_kind(kind: &str) -> Result<&'static str> {
+    // orgasmic:TASK-S52X9 — stage grill/plan accept finalize; their terminal
+    // txs mirror the dispatch-worker `*.done` vocabulary. Stage completion
+    // watchers still emit `grill.completed` / `plan.completed` from the
+    // finalize tombstone.
     match kind {
         "implementer" => Ok("implementer.done"),
         "reviewer" => Ok("reviewer.done"),
         "architector" => Ok("architector.done"),
+        "griller" => Ok("griller.done"),
+        "planner" => Ok("planner.done"),
         other => bail!("cannot close dispatch kind `{other}` as done"),
     }
 }
@@ -3056,6 +3084,66 @@ mod tests {
             dispatch_release_tombstone(&path2).unwrap(),
             DispatchReleaseTombstone::WorkerFinalized
         );
+
+        // orgasmic:TASK-S52X9 — artifact_submitted / manager_released are
+        // valid worker-declared tombstones (idempotent finalize proceeds).
+        let path3 = tmp.path().join("session3.jsonl");
+        let mut writer3 = orgasmic_core::SessionWriter::open(
+            &path3,
+            RuntimeIdentity {
+                run_id: "run-art".into(),
+                runtime_id: "rt-art".into(),
+                boot_id: "boot-art".into(),
+            },
+        )
+        .unwrap();
+        writer3
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "artifact_submitted".into(),
+                    outcome: orgasmic_core::ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            dispatch_release_tombstone(&path3).unwrap(),
+            DispatchReleaseTombstone::ArtifactSubmitted
+        );
+        assert!(is_worker_declared_tombstone(
+            DispatchReleaseTombstone::ArtifactSubmitted
+        ));
+
+        let path4 = tmp.path().join("session4.jsonl");
+        let mut writer4 = orgasmic_core::SessionWriter::open(
+            &path4,
+            RuntimeIdentity {
+                run_id: "run-mgr".into(),
+                runtime_id: "rt-mgr".into(),
+                boot_id: "boot-mgr".into(),
+            },
+        )
+        .unwrap();
+        writer4
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "manager_released".into(),
+                    outcome: orgasmic_core::ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(
+            dispatch_release_tombstone(&path4).unwrap(),
+            DispatchReleaseTombstone::ManagerReleased
+        );
+        assert!(is_worker_declared_tombstone(
+            DispatchReleaseTombstone::ManagerReleased
+        ));
     }
 
     #[test]

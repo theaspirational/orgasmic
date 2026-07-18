@@ -2653,6 +2653,21 @@ async fn post_stage(
         spec.stage,
         now.format("%Y%m%dT%H%M%S")
     ));
+    // orgasmic:TASK-S52X9 — grill/plan carry a last_path so they advertise
+    // the universal finalize contract; `orgasmic dispatch finalize` can
+    // resolve the report path. Architect stage stays without (out of scope).
+    let last_path = matches!(spec.stage, "grill" | "plan").then(|| {
+        project
+            .root
+            .join(".orgasmic")
+            .join("tmp")
+            .join("stage")
+            .join(format!(
+                "{}-{}-last.txt",
+                spec.stage,
+                now.format("%Y%m%dT%H%M%S")
+            ))
+    });
     let acquire = state
         .supervisor
         .acquire(
@@ -2664,7 +2679,7 @@ async fn post_stage(
                 role: worker_kind_name(worker.kind).to_string(),
                 project_id: Some(project_id.clone()),
                 worktree: Some(project.root.clone()),
-                last_path: None,
+                last_path,
                 stdout_path: None,
                 session_path: session_path.clone(),
                 driver_config,
@@ -5058,17 +5073,42 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
                             };
                         }
                     }
-                    Some("run_complete") => completed = true,
+                    // Protocol RunComplete alone is not stage success for
+                    // grill/plan (TASK-S52X9): only a worker-declared
+                    // finalize tombstone or an explicit Completed release
+                    // counts. Ignore run_complete here so protocol-end
+                    // without finalize (Failed release) cannot be rescued
+                    // by an earlier RunComplete event.
+                    Some("run_complete") => {}
                     _ => {}
                 }
             }
             SessionEventKind::Lifecycle => {
                 if envelope.event.get("phase").and_then(Value::as_str) == Some("release") {
+                    // orgasmic:TASK-S52X9 — worker finalize tombstone is
+                    // Completed even when the HTTP release path historically
+                    // stamped Cancelled; prefer the declaration flag.
+                    let finalized = envelope
+                        .event
+                        .get("finalized_by_worker")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if finalized {
+                        completed = true;
+                        continue;
+                    }
                     match envelope.event.get("outcome").and_then(Value::as_str) {
                         Some("completed") => completed = true,
                         Some("failed") | Some("interrupted") | Some("cancelled") => {
                             return StageOutcome::Failed {
-                                reason: driver_error_reason,
+                                reason: driver_error_reason.or_else(|| {
+                                    envelope
+                                        .event
+                                        .get("reason")
+                                        .and_then(Value::as_str)
+                                        .filter(|r| *r == "protocol_end_without_finalize")
+                                        .map(|r| r.to_string())
+                                }),
                             };
                         }
                         _ => {}
@@ -5689,12 +5729,19 @@ async fn post_run_release(
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("active run {id}")))?;
     let reason = req.reason.unwrap_or_else(|| "run released".to_string());
+    // orgasmic:TASK-S52X9 — a worker-declared terminal call is Completed;
+    // every other release path stays Cancelled (manager cancel, etc.).
+    let outcome = if req.finalized_by_worker {
+        ReleaseOutcome::Completed
+    } else {
+        ReleaseOutcome::Cancelled
+    };
     state
         .supervisor
         .release_with_finalization(
             &id,
             &reason,
-            ReleaseOutcome::Cancelled,
+            outcome,
             req.finalized_by_worker,
             req.caller_identity.as_ref(),
         )
@@ -10231,6 +10278,9 @@ async fn post_artifact_submit(
                 state: "submitted".into(),
             },
         );
+        // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
+        // declaration (writes finalize tombstone; no dispatch finalize).
+        release_artifactor_run_after_submit(&state, &art_id).await;
         return Ok(Json(json!({ "artifact_id": art_id, "version": 1 })));
     }
 
@@ -10314,9 +10364,63 @@ async fn post_artifact_submit(
             state: new_state.into(),
         },
     );
+    // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
+    // declaration (writes finalize tombstone; no dispatch finalize).
+    release_artifactor_run_after_submit(&state, &art_id).await;
     Ok(Json(
         json!({ "artifact_id": art_id, "version": new_version }),
     ))
+}
+
+/// After a successful `artifact submit`, record the artifactor's terminal
+/// declaration. Hot-session rmux runs stay live across regenerate rounds
+/// (dec_S02E2) — mark the declaration so a later idle/protocol-end writes
+/// the finalize tombstone. One-shot transports release immediately with
+/// the tombstone. Cold submits (no live artifactor run) are a no-op.
+// orgasmic:TASK-S52X9
+async fn release_artifactor_run_after_submit(state: &ApiState, art_id: &str) {
+    let task_id = format!("artifact.generate:{art_id}");
+    let snapshot = state.supervisor.snapshot().await;
+    let Some(run) = snapshot.runs.iter().find(|run| run.task_id == task_id) else {
+        return;
+    };
+    if run.driver == "rmux" {
+        if let Err(e) = state
+            .supervisor
+            .mark_terminal_declaration(&run.run_id, "artifact_submitted")
+            .await
+        {
+            if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
+                tracing::warn!(
+                    art_id,
+                    run_id = %run.run_id,
+                    error = %e,
+                    "artifact submit: failed to mark terminal declaration on hot-session run"
+                );
+            }
+        }
+        return;
+    }
+    if let Err(e) = state
+        .supervisor
+        .release_with_finalization(
+            &run.run_id,
+            "artifact_submitted",
+            ReleaseOutcome::Completed,
+            true,
+            None,
+        )
+        .await
+    {
+        if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
+            tracing::warn!(
+                art_id,
+                run_id = %run.run_id,
+                error = %e,
+                "artifact submit: failed to release artifactor run with finalize tombstone"
+            );
+        }
+    }
 }
 
 /// `POST /artifacts/:id/comments` — pin a named comment (selection-to-pin
@@ -11318,6 +11422,12 @@ async fn post_artifact_regenerate(
                 ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
         }
+        // orgasmic:TASK-S52X9 — a new regenerate round needs its own submit;
+        // clear any prior artifact_submitted declaration on this hot session.
+        state
+            .supervisor
+            .clear_terminal_declaration(&live_run.run_id)
+            .await;
         close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
             state: &state,
             entry: &entry,
@@ -13718,8 +13828,9 @@ mod tests {
     }
 
     #[test]
-    fn stage_outcome_treats_protocol_end_completed_release_as_success() {
-        // orgasmic:TASK-8PXDP — grill/plan stage runs keep protocol-end = success.
+    fn stage_outcome_treats_worker_finalize_tombstone_as_success() {
+        // orgasmic:TASK-S52X9 — grill/plan succeed only via worker-declared
+        // finalize, not protocol RunComplete alone.
         let tmp = tempfile::tempdir().unwrap();
         let session_path = tmp.path().join("grill-session.jsonl");
         let identity = RuntimeIdentity {
@@ -13752,9 +13863,9 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::Release {
-                    reason: "driver stream closed".into(),
+                    reason: "worker finalize for TASK-GRILL".into(),
                     outcome: ReleaseOutcome::Completed,
-                    finalized_by_worker: false,
+                    finalized_by_worker: true,
                 })
                 .unwrap(),
             )
@@ -13764,6 +13875,45 @@ mod tests {
         assert!(matches!(
             stage_outcome_from_session(&session_path),
             StageOutcome::Completed
+        ));
+    }
+
+    #[test]
+    fn stage_outcome_treats_protocol_end_without_finalize_as_failed() {
+        // orgasmic:TASK-S52X9
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("grill-failed.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-stage-fail".into(),
+            runtime_id: "rt-stage".into(),
+            boot_id: "boot-stage".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunComplete {
+                    summary: Some("protocol turn done".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "protocol_end_without_finalize".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(matches!(
+            stage_outcome_from_session(&session_path),
+            StageOutcome::Failed { .. }
         ));
     }
 
@@ -15981,6 +16131,8 @@ mod tests {
 
     #[tokio::test]
     async fn stage_completion_event_emitted_when_run_completes() {
+        // orgasmic:TASK-S52X9 — stage success requires a worker-declared
+        // finalize tombstone (RunComplete alone is not enough).
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -15994,13 +16146,28 @@ mod tests {
             runtime_id: "rt-stage-completed".into(),
             boot_id: "boot-stage-completed".into(),
         };
-        write_stage_session(
-            &session_path,
-            identity,
-            DriverEvent::RunComplete {
-                summary: Some("done".into()),
-            },
-        );
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunComplete {
+                    summary: Some("done".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-036-COMPLETE".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
 
         spawn_stage_completion_watcher(
             state.clone(),
