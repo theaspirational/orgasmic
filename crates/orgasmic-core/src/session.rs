@@ -275,6 +275,16 @@ pub enum Lifecycle {
         last_path: Option<PathBuf>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stdout_path: Option<PathBuf>,
+        /// Worker role at acquire time (including `terminal` for custom bare
+        /// terminals). Boot reattach restores this instead of inferring from
+        /// `worker_id` alone (TASK-99W9C / dec_WDR5K item 6).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<String>,
+        /// Whether this run advertised the universal finalize contract when
+        /// acquired. Boot reattach restores this instead of recomputing from
+        /// artifact paths alone (TASK-99W9C).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        requires_worker_finalize: Option<bool>,
         driver_config: Value,
     },
     Attach,

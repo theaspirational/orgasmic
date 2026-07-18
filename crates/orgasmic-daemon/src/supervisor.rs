@@ -28,8 +28,8 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -57,6 +57,7 @@ use crate::writer::{SessionAppend, WriterHandle};
 static BABYSITTER_SPAWN_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
 static WATCHER_EVENTS_HANDLED: AtomicU64 = AtomicU64::new(0);
 static SPAWN_PIPELINE_POLLS: AtomicU64 = AtomicU64::new(0);
+static SUBMIT_IN_FLIGHT_TOKEN: AtomicU64 = AtomicU64::new(1);
 
 const BABYSITTER_AUTO_SPAWN_MAX_RETRIES: u32 = 10;
 const BABYSITTER_AUTO_SPAWN_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -348,6 +349,12 @@ struct RunRecord {
     /// idle release, and TUI terminal events promote this into the finalize
     /// tombstone when `round == terminal_round`.
     terminal_declaration: Option<TerminalDeclaration>,
+    /// In-flight artifactor submit before the durable writer transaction
+    /// commits. Never promoted to Completed on its own (TASK-99W9C).
+    submit_in_flight: Option<SubmitInFlight>,
+    /// Stream-end or TUI terminal event deferred while `submit_in_flight` is
+    /// set — resolved only after the writer transaction commits or aborts.
+    pending_terminal_drain: bool,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -386,6 +393,20 @@ struct ReleasedRun {
 struct TerminalDeclaration {
     reason: &'static str,
     round: u64,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SubmitInFlight {
+    round: u64,
+    token: u64,
+}
+
+/// Snapshot taken before advancing an artifactor regenerate round so a
+/// rejected follow-up can restore the prior declaration (TASK-99W9C).
+#[derive(Clone, Copy, Debug)]
+pub struct ArtifactorRegenerateCheckpoint {
+    pub terminal_round: u64,
+    pub terminal_declaration: Option<TerminalDeclaration>,
 }
 
 struct ResolvedTerminalRelease {
@@ -781,6 +802,8 @@ impl Supervisor {
             req.worktree.clone(),
             req.last_path.clone(),
             req.stdout_path.clone(),
+            req.role.clone(),
+            run_requires_worker_finalize(&req.last_path, &req.role),
             req.driver_config.clone(),
         )
         .await?;
@@ -897,30 +920,7 @@ impl Supervisor {
             // concurrent `release_with_finalization` (worker finalize,
             // TASK-P4MGK / dec_WDR5K) cannot interleave a second lease
             // release or a second Lifecycle::Release write.
-            let claimed = {
-                let mut g = inner_for_drain.lock().await;
-                g.runs.remove(&run_id_for_drain).map(|rec| {
-                    g.leases.remove(&(rec.task_id.clone(), rec.kind));
-                    rec
-                })
-            };
-            if let Some(rec) = claimed {
-                let resolved = resolve_terminal_release(&rec, TerminalReleaseSource::StreamEnd);
-                let release = Lifecycle::Release {
-                    reason: resolved.reason,
-                    outcome: resolved.outcome,
-                    finalized_by_worker: resolved.finalized_by_worker,
-                };
-                let _ = writer
-                    .append_session(SessionAppend {
-                        run_id: run_id_for_drain.clone(),
-                        session_path: rec.session_path,
-                        identity: rec.identity,
-                        kind: SessionEventKind::Lifecycle,
-                        event: serde_json::to_value(&release).unwrap_or(serde_json::Value::Null),
-                    })
-                    .await;
-            }
+            finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
         });
 
         let run_started_at = Instant::now();
@@ -942,6 +942,8 @@ impl Supervisor {
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             terminal_round: 0,
             terminal_declaration: None,
+            submit_in_flight: None,
+            pending_terminal_drain: false,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1089,6 +1091,8 @@ impl Supervisor {
             req.worktree.clone(),
             req.last_path.clone(),
             req.stdout_path.clone(),
+            req.role.clone(),
+            run_requires_worker_finalize(&req.last_path, &req.role),
             req.driver_config.clone(),
         )
         .await?;
@@ -1149,10 +1153,7 @@ impl Supervisor {
                     finish_driver_terminal_release(&writer, release).await;
                 }
             }
-            let mut g = inner_for_drain.lock().await;
-            if let Some(rec) = g.runs.remove(&run_id_for_drain) {
-                g.leases.remove(&(rec.task_id, rec.kind));
-            }
+            finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
         });
 
         let run_started_at = Instant::now();
@@ -1174,6 +1175,8 @@ impl Supervisor {
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             terminal_round: 0,
             terminal_declaration: None,
+            submit_in_flight: None,
+            pending_terminal_drain: false,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1246,6 +1249,8 @@ impl Supervisor {
         worktree: Option<PathBuf>,
         last_path: Option<PathBuf>,
         stdout_path: Option<PathBuf>,
+        role: String,
+        requires_worker_finalize: bool,
         driver_config: DriverConfig,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RunMeta {
@@ -1255,6 +1260,8 @@ impl Supervisor {
             worktree,
             last_path,
             stdout_path,
+            role: Some(role),
+            requires_worker_finalize: Some(requires_worker_finalize),
             driver_config: driver_config.0,
         };
         self.writer
@@ -1343,6 +1350,7 @@ impl Supervisor {
         task_id: String,
         worker_id: String,
         role: String,
+        requires_worker_finalize: bool,
         project_id: Option<String>,
         worktree: Option<PathBuf>,
         session_path: PathBuf,
@@ -1470,10 +1478,7 @@ impl Supervisor {
                     finish_driver_terminal_release(&writer, release).await;
                 }
             }
-            let mut g = inner_for_drain.lock().await;
-            if let Some(rec) = g.runs.remove(&run_id_for_drain) {
-                g.leases.remove(&(rec.task_id, rec.kind));
-            }
+            finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
         });
 
         let run_started_at = Instant::now();
@@ -1496,9 +1501,11 @@ impl Supervisor {
             // has dispatch artifact paths.
             last_path: None,
             stdout_path: None,
-            requires_worker_finalize: false,
+            requires_worker_finalize,
             terminal_round: 0,
             terminal_declaration: None,
+            submit_in_flight: None,
+            pending_terminal_drain: false,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1947,6 +1954,21 @@ impl Supervisor {
         }
     }
 
+    /// Restore the persisted terminal contract after boot reattach when artifact
+    /// paths alone cannot reconstruct it (manager, artifactor, stage shapes).
+    pub async fn restore_terminal_contract(
+        &self,
+        run_id: &str,
+        role: String,
+        requires_worker_finalize: bool,
+    ) {
+        let mut g = self.inner.lock().await;
+        if let Some(rec) = g.runs.get_mut(run_id) {
+            rec.role = role;
+            rec.requires_worker_finalize = requires_worker_finalize;
+        }
+    }
+
     pub async fn pause_acquisition(&self) {
         self.inner.lock().await.acquisition_paused = true;
     }
@@ -2050,41 +2072,151 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Optimistic artifactor submit declaration: set before the durable
-    /// artifact transaction so a concurrent stream-end cannot falsely fail a
-    /// run whose submit is in flight (TASK-TZJFF / TASK-S52X9).
-    pub async fn prepare_artifactor_submit_declaration(
+    /// Mark an in-flight artifactor submit before the durable writer transaction.
+    /// Does not install a terminal declaration — only defers terminal resolution
+    /// until commit or abort (TASK-99W9C).
+    pub async fn prepare_artifactor_submit_in_flight(
         &self,
         run_id: &str,
+    ) -> Result<u64, SupervisorError> {
+        let token = SUBMIT_IN_FLIGHT_TOKEN.fetch_add(1, Ordering::Relaxed);
+        let mut g = self.inner.lock().await;
+        let rec = g
+            .runs
+            .get_mut(run_id)
+            .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+        rec.submit_in_flight = Some(SubmitInFlight {
+            round: rec.terminal_round,
+            token,
+        });
+        Ok(token)
+    }
+
+    /// Promote an in-flight submit to a durable declaration after the writer
+    /// transaction commits. Resolves any deferred terminal drain as Completed.
+    pub async fn commit_artifactor_submit_in_flight(
+        &self,
+        run_id: &str,
+        token: u64,
     ) -> Result<(), SupervisorError> {
-        self.mark_terminal_declaration(run_id, "artifact_submitted")
-            .await
+        let maybe_rec = {
+            let mut g = self.inner.lock().await;
+            let rec = g
+                .runs
+                .get_mut(run_id)
+                .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+            let Some(in_flight) = rec.submit_in_flight else {
+                return Ok(());
+            };
+            if in_flight.token != token {
+                return Ok(());
+            }
+            rec.submit_in_flight = None;
+            rec.terminal_declaration = Some(TerminalDeclaration {
+                reason: "artifact_submitted",
+                round: in_flight.round,
+            });
+            if rec.pending_terminal_drain {
+                if let Some(rec) = g.runs.remove(run_id) {
+                    g.leases.remove(&(rec.task_id.clone(), rec.kind));
+                    Some(rec)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(rec) = maybe_rec {
+            write_terminal_release_from_record(
+                &self.writer,
+                rec,
+                TerminalReleaseSource::StreamEnd,
+            )
+            .await;
+        }
+        Ok(())
+    }
+
+    /// Clear an in-flight submit after writer failure. Resolves any deferred
+    /// terminal drain as Failed — never Completed.
+    pub async fn abort_artifactor_submit_in_flight(
+        &self,
+        run_id: &str,
+        token: u64,
+    ) -> Result<(), SupervisorError> {
+        let maybe_rec = {
+            let mut g = self.inner.lock().await;
+            let Some(rec) = g.runs.get_mut(run_id) else {
+                return Ok(());
+            };
+            let Some(in_flight) = rec.submit_in_flight else {
+                return Ok(());
+            };
+            if in_flight.token != token {
+                return Ok(());
+            }
+            rec.submit_in_flight = None;
+            rec.terminal_declaration = None;
+            if rec.pending_terminal_drain {
+                if let Some(rec) = g.runs.remove(run_id) {
+                    g.leases.remove(&(rec.task_id.clone(), rec.kind));
+                    Some(rec)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(rec) = maybe_rec {
+            let resolved = ResolvedTerminalRelease {
+                reason: "artifact_submit_failed".into(),
+                outcome: ReleaseOutcome::Failed,
+                finalized_by_worker: false,
+            };
+            append_terminal_release(&self.writer, rec, resolved).await;
+        }
+        Ok(())
     }
 
     /// Clear a prior terminal declaration and bump the artifactor round when a
-    /// new regenerate round starts — that round needs its own submit.
+    /// new regenerate round starts — that round needs its own submit. Returns a
+    /// checkpoint so a rejected follow-up can restore the prior declaration.
     // orgasmic:TASK-S52X9
     pub async fn begin_artifactor_regenerate_round(
         &self,
         run_id: &str,
+    ) -> Result<ArtifactorRegenerateCheckpoint, SupervisorError> {
+        let mut g = self.inner.lock().await;
+        let rec = g
+            .runs
+            .get_mut(run_id)
+            .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+        let checkpoint = ArtifactorRegenerateCheckpoint {
+            terminal_round: rec.terminal_round,
+            terminal_declaration: rec.terminal_declaration,
+        };
+        rec.terminal_round = rec.terminal_round.saturating_add(1);
+        rec.terminal_declaration = None;
+        Ok(checkpoint)
+    }
+
+    /// Restore the artifactor round/declaration after a rejected regenerate
+    /// follow-up (TASK-99W9C).
+    pub async fn rollback_artifactor_regenerate_round(
+        &self,
+        run_id: &str,
+        checkpoint: ArtifactorRegenerateCheckpoint,
     ) -> Result<(), SupervisorError> {
         let mut g = self.inner.lock().await;
         let rec = g
             .runs
             .get_mut(run_id)
             .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-        rec.terminal_round = rec.terminal_round.saturating_add(1);
-        rec.terminal_declaration = None;
+        rec.terminal_round = checkpoint.terminal_round;
+        rec.terminal_declaration = checkpoint.terminal_declaration;
         Ok(())
-    }
-
-    /// Back-compat alias for callers that only need to drop an optimistic
-    /// submit declaration without advancing the artifactor round.
-    pub async fn revert_artifactor_submit_declaration(&self, run_id: &str) {
-        let mut g = self.inner.lock().await;
-        if let Some(rec) = g.runs.get_mut(run_id) {
-            rec.terminal_declaration = None;
-        }
     }
 
     fn check_ownership(
@@ -2678,7 +2810,7 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
 /// `dispatch finalize`). Custom bare terminals are exempt (dec_WDR5K item 6
 /// seventh amendment / TASK-TZJFF).
 // orgasmic:TASK-S52X9,dec_WDR5K
-fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
+pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
     match role {
         "implementer" | "reviewer" | "architector" | "griller" | "planner" => {
             last_path.is_some()
@@ -2694,6 +2826,13 @@ fn resolve_terminal_release(
     rec: &RunRecord,
     source: TerminalReleaseSource,
 ) -> ResolvedTerminalRelease {
+    if rec.submit_in_flight.is_some() {
+        return ResolvedTerminalRelease {
+            reason: "artifact_submit_in_flight".into(),
+            outcome: ReleaseOutcome::Failed,
+            finalized_by_worker: false,
+        };
+    }
     if let Some(decl) = rec.terminal_declaration {
         if decl.round == rec.terminal_round {
             return ResolvedTerminalRelease {
@@ -2762,6 +2901,17 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     {
         return None;
     }
+    if inner
+        .runs
+        .get(run_id)
+        .and_then(|rec| rec.submit_in_flight)
+        .is_some()
+    {
+        if let Some(rec) = inner.runs.get_mut(run_id) {
+            rec.pending_terminal_drain = true;
+        }
+        return None;
+    }
 
     let rec = inner.runs.remove(run_id)?;
     inner.leases.remove(&(rec.task_id.clone(), rec.kind));
@@ -2775,6 +2925,62 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
         finalized_by_worker: resolved.finalized_by_worker,
         control: rec.control,
     })
+}
+
+fn claim_run_on_stream_end(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
+    let mut rec = inner.runs.remove(run_id)?;
+    inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+    if rec.submit_in_flight.is_some() {
+        rec.pending_terminal_drain = true;
+        inner.runs.insert(run_id.to_string(), rec);
+        return None;
+    }
+    Some(rec)
+}
+
+async fn append_terminal_release(
+    writer: &WriterHandle,
+    rec: RunRecord,
+    resolved: ResolvedTerminalRelease,
+) {
+    let evt = Lifecycle::Release {
+        reason: resolved.reason,
+        outcome: resolved.outcome,
+        finalized_by_worker: resolved.finalized_by_worker,
+    };
+    let _ = writer
+        .append_session(SessionAppend {
+            run_id: rec.identity.run_id.clone(),
+            session_path: rec.session_path,
+            identity: rec.identity,
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(&evt).unwrap_or(serde_json::Value::Null),
+        })
+        .await;
+    drop(rec.control);
+}
+
+async fn write_terminal_release_from_record(
+    writer: &WriterHandle,
+    rec: RunRecord,
+    source: TerminalReleaseSource,
+) {
+    let resolved = resolve_terminal_release(&rec, source);
+    append_terminal_release(writer, rec, resolved).await;
+}
+
+async fn finish_stream_end_terminal_drain(
+    writer: &WriterHandle,
+    inner: &tokio::sync::Mutex<Inner>,
+    run_id: &str,
+) {
+    let rec = {
+        let mut g = inner.lock().await;
+        claim_run_on_stream_end(&mut g, run_id)
+    };
+    if let Some(rec) = rec {
+        write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
+    }
 }
 
 async fn finish_driver_terminal_release(writer: &WriterHandle, release: TerminalRelease) {
@@ -3066,6 +3272,49 @@ mod tests {
     }
 
     struct ProtocolEndAcpControl;
+
+    /// Holds the driver stream open until the test signals `gate`, so in-flight
+    /// submit can be prepared before protocol-end (TASK-99W9C).
+    struct GatedProtocolEndDriver {
+        gate: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for GatedProtocolEndDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let gate = Arc::clone(&self.gate);
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-acp/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                gate.notified().await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ProtocolEndAcpControl),
+                native_runtime: None,
+            })
+        }
+    }
 
     /// TUI-shaped test driver: same as [`ProtocolEndAcpDriver`] but transport
     /// is `tmux-tui` so terminal events (not stream-end) claim release.
@@ -4927,30 +5176,108 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn artifactor_prepared_submit_survives_concurrent_protocol_end() {
-        // orgasmic:TASK-TZJFF — optimistic declaration before durable submit
-        // closes the stream-end race where submit completed but mark had not
-        // yet landed.
+    async fn artifactor_in_flight_submit_defers_protocol_end_without_false_completed() {
+        // orgasmic:TASK-99W9C — in-flight submit must never write Completed
+        // before the durable writer transaction commits.
         let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let driver = GatedProtocolEndDriver {
+            gate: Arc::clone(&gate),
+        };
         let resp = sup
             .acquire(
                 &driver,
-                artifactor_req("artifact.generate:ART-PREP", dir.path()),
+                artifactor_req("artifact.generate:ART-INFLIGHT", dir.path()),
             )
             .await
             .unwrap();
-        sup.prepare_artifactor_submit_declaration(&resp.run_id)
+        let token = sup
+            .prepare_artifactor_submit_in_flight(&resp.run_id)
             .await
             .unwrap();
-        let path = dir.path().join("artifact.generate:ART-PREP.jsonl");
+        gate.notify_one();
+        let path = dir.path().join("artifact.generate:ART-INFLIGHT.jsonl");
         let deadline = Instant::now() + Duration::from_secs(2);
         while Instant::now() < deadline {
-            if session_events(&path).iter().any(|envelope| {
+            if session_events(&path)
+                .iter()
+                .filter(|envelope| envelope.kind == SessionEventKind::DriverEvent)
+                .count()
+                >= 2
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            !session_events(&path).iter().any(|envelope| {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
+            }),
+            "in-flight submit must not write a false Completed tombstone"
+        );
+        sup.abort_artifactor_submit_in_flight(&resp.run_id, token)
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "artifact_submit_failed") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "artifact_submit_failed");
+    }
+
+    #[tokio::test]
+    async fn artifactor_in_flight_submit_commit_resolves_deferred_protocol_end_completed() {
+        // orgasmic:TASK-99W9C — deferred terminal resolves Completed only after
+        // commit promotes the durable declaration.
+        let (sup, dir, _w) = make_supervisor();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let driver = GatedProtocolEndDriver {
+            gate: Arc::clone(&gate),
+        };
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-COMMIT", dir.path()),
+            )
+            .await
+            .unwrap();
+        let token = sup
+            .prepare_artifactor_submit_in_flight(&resp.run_id)
+            .await
+            .unwrap();
+        gate.notify_one();
+        let path = dir.path().join("artifact.generate:ART-COMMIT.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if session_events(&path)
+                .iter()
+                .filter(|envelope| envelope.kind == SessionEventKind::DriverEvent)
+                .count()
+                >= 2
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        sup.commit_artifactor_submit_in_flight(&resp.run_id, token)
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("artifact_submitted")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
             }) {
                 break;
             }
@@ -4964,7 +5291,122 @@ mod tests {
                     && envelope.event.get("outcome").and_then(|v| v.as_str())
                         == Some("completed")
             }),
-            "prepared submit declaration must promote protocol-end to completed"
+            "commit after deferred protocol-end must write artifact_submitted Completed"
+        );
+    }
+
+    #[tokio::test]
+    async fn manager_protocol_end_without_finalize_is_failed_after_contract_restore() {
+        // orgasmic:TASK-99W9C — manager runs with the terminal contract must
+        // fail closed on protocol-end without a declaration.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndTuiDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                manager_req("manager.launch:proj", dir.path()),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("manager.launch:proj.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn custom_terminal_protocol_end_is_exempt_from_finalize_contract() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let mut req = manager_req("manager.launch:proj:custom", dir.path());
+        req.role = "terminal".into();
+        let _resp = sup.acquire(&driver, req).await.unwrap();
+        let path = dir.path().join("manager.launch:proj:custom.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if session_events(&path)
+                .iter()
+                .any(|envelope| envelope.kind == SessionEventKind::Lifecycle)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            !has_release_reason(&path, "protocol_end_without_finalize"),
+            "custom terminal must be exempt from the finalize contract"
+        );
+    }
+
+    #[tokio::test]
+    async fn continuation_protocol_end_without_finalize_is_failed() {
+        // orgasmic:TASK-99W9C — continuation drains use the same terminal gate.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let mut req = dispatch_impl_req("TASK-CONT-PROTO", dir.path());
+        req.role = "implementer".into();
+        let seed = ContinuationSeed {
+            previous_run: "run-prev".into(),
+            previous_session_path: dir.path().join("prev.jsonl"),
+            diff_summary: "no diff".into(),
+            acceptance_criteria: vec!["ac1".into()],
+        };
+        let _resp = sup
+            .acquire_continuation(&driver, req, seed)
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-CONT-PROTO.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+    }
+
+    #[tokio::test]
+    async fn artifactor_regenerate_rejected_followup_restores_declaration() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = tmux::driver();
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-ROLLBACK", dir.path()),
+            )
+            .await
+            .unwrap();
+        sup.mark_terminal_declaration(&resp.run_id, "artifact_submitted")
+            .await
+            .unwrap();
+        let checkpoint = sup
+            .begin_artifactor_regenerate_round(&resp.run_id)
+            .await
+            .unwrap();
+        assert_eq!(checkpoint.terminal_round, 0);
+        assert!(checkpoint.terminal_declaration.is_some());
+        sup.rollback_artifactor_regenerate_round(&resp.run_id, checkpoint)
+            .await
+            .unwrap();
+        let checkpoint2 = sup
+            .begin_artifactor_regenerate_round(&resp.run_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            checkpoint2.terminal_round, 0,
+            "rollback must restore the prior round"
+        );
+        assert!(
+            checkpoint2.terminal_declaration.is_some(),
+            "rollback must restore the prior declaration"
         );
     }
 

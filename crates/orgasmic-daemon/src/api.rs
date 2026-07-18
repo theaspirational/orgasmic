@@ -1372,6 +1372,34 @@ fn resolve_run_role(home: &Home, worker_id: &str, kind: RunKind) -> String {
     }
 }
 
+/// Restore role/requires_worker_finalize from persisted RunMeta, deriving from
+/// harness for pre-upgrade records (fail closed — never silently exempt).
+fn boot_reattach_terminal_contract(
+    home: &Home,
+    worker_id: &str,
+    kind: RunKind,
+    harness: Option<&str>,
+    last_path: &Option<PathBuf>,
+    meta_role: Option<String>,
+    meta_requires: Option<bool>,
+) -> (String, bool) {
+    let role = meta_role.unwrap_or_else(|| {
+        if worker_id == "manager" {
+            if harness.map(manager_terminal_harness).unwrap_or(false) {
+                "terminal".into()
+            } else {
+                "manager".into()
+            }
+        } else {
+            resolve_run_role(home, worker_id, kind)
+        }
+    });
+    let requires_worker_finalize = meta_requires.unwrap_or_else(|| {
+        crate::supervisor::run_requires_worker_finalize(last_path, &role)
+    });
+    (role, requires_worker_finalize)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TaskCommentRequest {
     pub actor: String,
@@ -5993,6 +6021,15 @@ async fn post_run_recover(
                 runtime_id: prior.runtime_id.clone(),
                 boot_id: prior.boot_id.clone(),
             };
+            let (role, requires_worker_finalize) = boot_reattach_terminal_contract(
+                &state.home,
+                &worker_id,
+                run_kind,
+                None,
+                &None,
+                None,
+                None,
+            );
             let acquire = state
                 .supervisor
                 .reattach(
@@ -6003,7 +6040,8 @@ async fn post_run_recover(
                         .map(|m| m.task_id.clone())
                         .unwrap_or_else(|| format!("recover:{id}")),
                     worker_id.clone(),
-                    resolve_run_role(&state.home, &worker_id, run_kind),
+                    role,
+                    requires_worker_finalize,
                     req.project.clone(),
                     worktree,
                     prior.session_path.clone(),
@@ -6202,12 +6240,14 @@ struct BootReattachCandidate {
     /// enables respawning its completion watcher (TASK-567JG).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    role: Option<String>,
+    requires_worker_finalize: Option<bool>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
 }
 
-/// `(transport, harness, project_id, worktree, last_path, stdout_path,
-/// driver_config)` from a `RunMeta` lifecycle event.
+/// `(transport, harness, project_id, worktree, last_path, stdout_path, role,
+/// requires_worker_finalize, driver_config)` from a `RunMeta` lifecycle event.
 type RunMetaFields = (
     String,
     Option<String>,
@@ -6215,6 +6255,8 @@ type RunMetaFields = (
     Option<PathBuf>,
     Option<PathBuf>,
     Option<PathBuf>,
+    Option<String>,
+    Option<bool>,
     serde_json::Value,
 );
 
@@ -6269,6 +6311,8 @@ fn boot_reattach_candidate(
                 worktree,
                 last_path,
                 stdout_path,
+                role,
+                requires_worker_finalize,
                 driver_config,
             }) => {
                 meta = Some((
@@ -6278,6 +6322,8 @@ fn boot_reattach_candidate(
                     worktree,
                     last_path,
                     stdout_path,
+                    role,
+                    requires_worker_finalize,
                     driver_config,
                 ))
             }
@@ -6286,7 +6332,17 @@ fn boot_reattach_candidate(
     }
 
     let (task_id, kind_str, worker_id) = acquire?;
-    let (transport, harness, project_id, worktree, last_path, stdout_path, driver_config) = meta?;
+    let (
+        transport,
+        harness,
+        project_id,
+        worktree,
+        last_path,
+        stdout_path,
+        meta_role,
+        meta_requires,
+        driver_config,
+    ) = meta?;
     let kind = match kind_str.as_str() {
         // Babysitters watch another run; they are re-derived, not reattached.
         "babysitter" => return None,
@@ -6306,6 +6362,8 @@ fn boot_reattach_candidate(
         worktree,
         last_path,
         stdout_path,
+        role: meta_role,
+        requires_worker_finalize: meta_requires,
         driver_config,
         session_path: session_path.to_path_buf(),
     })
@@ -6385,6 +6443,15 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             runtime_id: c.runtime_id.clone(),
             boot_id: c.boot_id.clone(),
         };
+        let (role, requires_worker_finalize) = boot_reattach_terminal_contract(
+            home,
+            &c.worker_id,
+            c.kind,
+            c.harness.as_deref(),
+            &c.last_path,
+            c.role.clone(),
+            c.requires_worker_finalize,
+        );
         match supervisor
             .reattach(
                 driver.as_ref(),
@@ -6392,7 +6459,8 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                 c.kind,
                 c.task_id.clone(),
                 c.worker_id.clone(),
-                resolve_run_role(home, &c.worker_id, c.kind),
+                role.clone(),
+                requires_worker_finalize,
                 c.project_id.clone(),
                 c.worktree.clone(),
                 c.session_path.clone(),
@@ -6407,6 +6475,11 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                     task_id = %c.task_id,
                     "boot reattach: rehydrated live run"
                 );
+                if c.last_path.is_none() && c.stdout_path.is_none() {
+                    supervisor
+                        .restore_terminal_contract(&c.run_id, role, requires_worker_finalize)
+                        .await;
+                }
                 match (
                     c.last_path.clone(),
                     c.stdout_path.clone(),
@@ -10283,7 +10356,7 @@ async fn post_artifact_submit(
             ("VERSION".into(), "1".into()),
         ];
 
-        prepare_artifactor_submit_terminal(&state, &art_id).await;
+        let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await;
         if let Err(e) = state
             .writer
             .transaction(
@@ -10314,8 +10387,13 @@ async fn post_artifact_submit(
             )
             .await
         {
-            revert_artifactor_submit_terminal(&state, &art_id).await;
+            if let Some((_, token)) = submit_in_flight {
+                abort_artifactor_submit_terminal(&state, &art_id, token).await;
+            }
             return Err(ApiError::internal(format!("write artifact files: {e}")));
+        }
+        if let Some((_, token)) = submit_in_flight {
+            commit_artifactor_submit_terminal(&state, &art_id, token).await;
         }
 
         let _ = state.index.refresh_project(&entry.id).await;
@@ -10386,7 +10464,7 @@ async fn post_artifact_submit(
         });
     }
 
-    prepare_artifactor_submit_terminal(&state, &art_id).await;
+    let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await;
     if let Err(e) = state
         .writer
         .transaction(
@@ -10404,8 +10482,13 @@ async fn post_artifact_submit(
         )
         .await
     {
-        revert_artifactor_submit_terminal(&state, &art_id).await;
+        if let Some((_, token)) = submit_in_flight {
+            abort_artifactor_submit_terminal(&state, &art_id, token).await;
+        }
         return Err(ApiError::internal(format!("write artifact files: {e}")));
+    }
+    if let Some((_, token)) = submit_in_flight {
+        commit_artifactor_submit_terminal(&state, &art_id, token).await;
     }
 
     let _ = state.index.refresh_project(&entry.id).await;
@@ -10441,13 +10524,35 @@ async fn artifactor_submit_live_run_id(state: &ApiState, art_id: &str) -> Option
         .map(|run| run.run_id.clone())
 }
 
-async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) {
+async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) -> Option<(String, u64)> {
+    let run_id = artifactor_submit_live_run_id(state, art_id).await?;
+    match state
+        .supervisor
+        .prepare_artifactor_submit_in_flight(&run_id)
+        .await
+    {
+        Ok(token) => Some((run_id, token)),
+        Err(e) => {
+            if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
+                tracing::warn!(
+                    art_id,
+                    run_id = %run_id,
+                    error = %e,
+                    "artifact submit: failed to prepare in-flight submit marker"
+                );
+            }
+            None
+        }
+    }
+}
+
+async fn commit_artifactor_submit_terminal(state: &ApiState, art_id: &str, token: u64) {
     let Some(run_id) = artifactor_submit_live_run_id(state, art_id).await else {
         return;
     };
     if let Err(e) = state
         .supervisor
-        .prepare_artifactor_submit_declaration(&run_id)
+        .commit_artifactor_submit_in_flight(&run_id, token)
         .await
     {
         if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
@@ -10455,19 +10560,19 @@ async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) {
                 art_id,
                 run_id = %run_id,
                 error = %e,
-                "artifact submit: failed to prepare terminal declaration"
+                "artifact submit: failed to commit in-flight submit marker"
             );
         }
     }
 }
 
-async fn revert_artifactor_submit_terminal(state: &ApiState, art_id: &str) {
+async fn abort_artifactor_submit_terminal(state: &ApiState, art_id: &str, token: u64) {
     let Some(run_id) = artifactor_submit_live_run_id(state, art_id).await else {
         return;
     };
     state
         .supervisor
-        .revert_artifactor_submit_declaration(&run_id)
+        .abort_artifactor_submit_in_flight(&run_id, token)
         .await;
 }
 
@@ -11501,7 +11606,7 @@ async fn post_artifact_regenerate(
         // orgasmic:TASK-TZJFF — invalidate any prior submit declaration and
         // bump the artifactor round before accepting the followup so a
         // concurrent stream-end cannot promote a stale declaration.
-        state
+        let checkpoint = state
             .supervisor
             .begin_artifactor_regenerate_round(&live_run.run_id)
             .await
@@ -11513,17 +11618,37 @@ async fn post_artifact_regenerate(
             })?;
         let followup_payload =
             assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
-        let ack = state
+        let ack = match state
             .supervisor
             .send_input(&live_run.run_id, followup_payload, &live_run.identity)
             .await
-            .map_err(|e| match e {
-                crate::supervisor::SupervisorError::RunNotFound(_) => {
-                    ApiError::not_found(format!("active run {}", live_run.run_id))
-                }
-                other => supervisor_control_error("artifact regenerate followup", other),
-            })?;
+        {
+            Ok(ack) => ack,
+            Err(e) => {
+                state
+                    .supervisor
+                    .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
+                    .await
+                    .ok();
+                return Err(match e {
+                    crate::supervisor::SupervisorError::RunNotFound(_) => {
+                        ApiError::not_found(format!("active run {}", live_run.run_id))
+                    }
+                    other => supervisor_control_error("artifact regenerate followup", other),
+                });
+            }
+        };
         if !ack.accepted {
+            state
+                .supervisor
+                .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
+                .await
+                .map_err(|e| match e {
+                    crate::supervisor::SupervisorError::RunNotFound(_) => {
+                        ApiError::not_found(format!("active run {}", live_run.run_id))
+                    }
+                    other => supervisor_control_error("artifact regenerate rollback", other),
+                })?;
             return Err(ApiError::conflict(
                 ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
@@ -12417,6 +12542,85 @@ mod tests {
     }
 
     #[test]
+    fn boot_reattach_terminal_contract_restores_persisted_role_and_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "manager",
+            RunKind::Worker,
+            Some("custom"),
+            &None,
+            Some("terminal".into()),
+            Some(false),
+        );
+        assert_eq!(role, "terminal");
+        assert!(!requires);
+
+        let last = Some(PathBuf::from("/tmp/stage.last.txt"));
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "griller",
+            RunKind::Worker,
+            Some("codex"),
+            &last,
+            None,
+            None,
+        );
+        assert_eq!(role, "griller");
+        assert!(requires);
+    }
+
+    #[tokio::test]
+    async fn custom_terminal_acquire_is_exempt_from_finalize_contract() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let driver = orgasmic_drivers::TmuxTuiDriver;
+        let session_path = project_sessions_dir(&project_root).join("custom-terminal.jsonl");
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj:custom-terminal".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "terminal".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("custom terminal acquire");
+        let run_id = acquire.run_id;
+        state
+            .supervisor
+            .release(&run_id, "custom terminal closed", ReleaseOutcome::Completed)
+            .await
+            .expect("custom terminal release");
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            !body.contains("protocol_end_without_finalize"),
+            "custom terminal must be exempt: {body}"
+        );
+        assert!(body.contains("custom terminal closed"));
+    }
+
+    #[test]
     fn a_terminal_task_id_still_reads_as_operator_paced() {
         // The prefix gates the supervisor's stall/max-duration detectors; an
         // idle terminal sitting at a prompt must never read as a stalled worker.
@@ -13019,6 +13223,8 @@ mod tests {
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
                 last_path: None,
                 stdout_path: None,
+                role: None,
+                requires_worker_finalize: None,
                 driver_config: json!({"system_wide": true}),
             })
             .unwrap(),
@@ -13088,6 +13294,8 @@ mod tests {
                             worktree: Some(tmp.path().join("proj")),
                             last_path: None,
                             stdout_path: None,
+                            role: None,
+                            requires_worker_finalize: None,
                             driver_config: json!({}),
                         })
                         .unwrap(),
@@ -13242,6 +13450,8 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: Some(last_path.clone()),
                     stdout_path: Some(stdout_path.clone()),
+                    role: None,
+                    requires_worker_finalize: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -13495,6 +13705,8 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    role: None,
+                    requires_worker_finalize: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -18586,10 +18798,37 @@ mod tests {
             std::fs::read_to_string(art_dir.join("reviews.org")).unwrap()
         );
 
-        let _ = state
+        let session_path = state
             .supervisor
-            .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .find(|run| run.run_id == first.0.run_id)
+            .map(|run| run.session_path.clone())
+            .expect("live artifactor run after round-2 regenerate");
+        let pre_release = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            !pre_release.contains("protocol_end_without_finalize"),
+            "round-2 hot path must not false-fail before final release: {pre_release}"
+        );
+        state
+            .supervisor
+            .release_with_finalization(
+                &first.0.run_id,
+                "artifact_submitted",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("declaration-aware final release");
+
+        let session_body = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            session_body.contains("artifact_submitted"),
+            "round-2 hot path must preserve the v2 submit declaration through final release: {session_body}"
+        );
     }
 
     #[tokio::test]
