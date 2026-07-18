@@ -28,7 +28,7 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Child;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
@@ -158,6 +158,8 @@ impl WorkerDriver for TmuxDriver {
                 let timeout = cfg.input_ready_timeout;
                 let deliver_tx = tx.clone();
                 let deliver_terminal = terminal_emitted.clone();
+                let send_child = send_child.clone();
+                let cancel = startup_cancel.clone();
                 Some(tokio::spawn(async move {
                     deliver_prompt(
                         &session,
@@ -166,6 +168,8 @@ impl WorkerDriver for TmuxDriver {
                         timeout,
                         &deliver_tx,
                         &deliver_terminal,
+                        Some(send_child),
+                        Some(cancel),
                     )
                     .await;
                 }))
@@ -360,19 +364,23 @@ pub(crate) async fn cancel_and_join_driver_task(
 /// Owns the in-flight tmux CLI child for send-keys and related verbs.
 #[derive(Clone)]
 pub(crate) struct SendChildOwner {
-    pub(crate) active: Arc<Mutex<Option<Child>>>,
+    active: Arc<std::sync::Mutex<Option<Child>>>,
 }
 
 impl SendChildOwner {
     pub(crate) fn new() -> Self {
         Self {
-            active: Arc::new(Mutex::new(None)),
+            active: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
+    pub(crate) fn register(&self, child: Child) {
+        *self.active.lock().unwrap() = Some(child);
+    }
+
     pub(crate) async fn kill_and_reap(&self) {
-        let mut guard = self.active.lock().await;
-        if let Some(mut child) = guard.take() {
+        let child = self.active.lock().unwrap().take();
+        if let Some(mut child) = child {
             let _ = child.kill().await;
             let _ = child.wait().await;
         }
@@ -810,7 +818,12 @@ async fn spawn_tmux_session(session: &str, plan: &TmuxSpawnPlan) -> Result<(), D
     Ok(())
 }
 
-async fn paste_text_into_pane(session: &str, text: &str) -> Result<(), DriverError> {
+async fn paste_text_into_pane(
+    session: &str,
+    text: &str,
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
     if text.is_empty() {
         return Ok(());
     }
@@ -842,11 +855,11 @@ async fn paste_text_into_pane(session: &str, text: &str) -> Result<(), DriverErr
     }
     run_tmux(
         &["paste-buffer", "-p", "-b", &buffer_name, "-t", session],
-        None,
-        None,
+        send_child,
+        cancel,
     )
     .await?;
-    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name], None, None).await;
+    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name], send_child, cancel).await;
     Ok(())
 }
 
@@ -878,7 +891,7 @@ async fn run_tmux(
         .spawn()
         .map_err(|e| DriverError::Transport(format!("tmux {:?}: {e}", args)))?;
     if let Some(owner) = send_child {
-        *owner.active.lock().await = Some(child);
+        owner.register(child);
         wait_for_owned_send_child(owner, cancel).await
     } else {
         wait_for_send_child(child, cancel).await
@@ -894,26 +907,36 @@ pub(crate) async fn wait_for_owned_send_child(
             owner.kill_and_reap().await;
             return Ok(());
         }
-        let mut guard = owner.active.lock().await;
-        let Some(child) = guard.as_mut() else {
-            return Ok(());
-        };
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                guard.take();
-                if status.success() {
-                    return Ok(());
+        let wait_result = {
+            let mut guard = owner.active.lock().unwrap();
+            let Some(child) = guard.as_mut() else {
+                return Ok(());
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    guard.take();
+                    if status.success() {
+                        Ok(Some(true))
+                    } else {
+                        Ok(Some(false))
+                    }
                 }
-                return Err(DriverError::Transport(format!(
-                    "tmux send child exited with {status}"
-                )));
+                Ok(None) => Ok(None),
+                Err(e) => {
+                    guard.take();
+                    Err(e)
+                }
             }
-            Ok(None) => {
-                drop(guard);
-                tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+        match wait_result {
+            Ok(Some(true)) => return Ok(()),
+            Ok(Some(false)) => {
+                return Err(DriverError::Transport(
+                    "tmux send child exited with failure".into(),
+                ));
             }
+            Ok(None) => tokio::time::sleep(Duration::from_millis(10)).await,
             Err(e) => {
-                guard.take();
                 return Err(DriverError::Transport(format!("tmux send child wait: {e}")));
             }
         }
@@ -1023,6 +1046,7 @@ async fn capture_pane(session: &str) -> Result<String, DriverError> {
 /// brief and submit. Runs in the background after `acquire` returns; a failure
 /// becomes a fatal `DriverError` on the event stream so the run fails cleanly
 /// instead of leaving the worker idle without its brief.
+#[allow(clippy::too_many_arguments)]
 async fn deliver_prompt(
     session: &str,
     command: &str,
@@ -1030,6 +1054,8 @@ async fn deliver_prompt(
     input_ready_timeout: Duration,
     events: &mpsc::Sender<DriverEvent>,
     terminal_emitted: &AtomicBool,
+    send_child: Option<SendChildOwner>,
+    cancel: Option<Arc<AtomicBool>>,
 ) {
     if command == "claude" {
         if let Err(e) = wait_for_input_ready(session, input_ready_timeout).await {
@@ -1042,8 +1068,20 @@ async fn deliver_prompt(
         tokio::time::sleep(Duration::from_millis(800)).await;
     }
     let result = async {
-        paste_text_into_pane(session, prompt).await?;
-        send_keys(session, &[String::from("Enter")], None, None).await
+        paste_text_into_pane(
+            session,
+            prompt,
+            send_child.as_ref(),
+            cancel.as_ref().map(|flag| flag.as_ref()),
+        )
+        .await?;
+        send_keys(
+            session,
+            &[String::from("Enter")],
+            send_child.as_ref(),
+            cancel.as_ref().map(|flag| flag.as_ref()),
+        )
+        .await
     }
     .await;
     if let Err(e) = result {
@@ -1145,7 +1183,8 @@ fn parse_cursor_trust_component(pane: &str, workspace_path: &str) -> Option<()> 
         return None;
     }
     i += 1;
-    if i < lines.len() && lines[i] == CURSOR_TRUST_MCP_DESCRIPTION {
+    let has_mcp_description = i < lines.len() && lines[i] == CURSOR_TRUST_MCP_DESCRIPTION;
+    if has_mcp_description {
         i += 1;
     }
     if i >= lines.len() || lines[i] != CURSOR_TRUST_QUESTION {
@@ -1160,7 +1199,12 @@ fn parse_cursor_trust_component(pane: &str, workspace_path: &str) -> Option<()> 
         return None;
     }
     i += 1;
-    if i < lines.len() && lines[i].to_ascii_lowercase() == CURSOR_TRUST_MCP_ACTION {
+    let has_mcp_action =
+        i < lines.len() && lines[i].to_ascii_lowercase() == CURSOR_TRUST_MCP_ACTION;
+    if has_mcp_description != has_mcp_action {
+        return None;
+    }
+    if has_mcp_action {
         i += 1;
     }
     if i >= lines.len() || lines[i].to_ascii_lowercase() != CURSOR_TRUST_QUIT {
@@ -1174,13 +1218,20 @@ fn parse_cursor_trust_component(pane: &str, workspace_path: &str) -> Option<()> 
 }
 
 fn workspace_path_matches(displayed: &str, expected: &str) -> bool {
-    fn normalize(path: &str) -> String {
-        path.trim().trim_end_matches('/').to_string()
+    fn normalize(path: &str) -> Option<PathBuf> {
+        let trimmed = path.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            return None;
+        }
+        std::path::Path::new(trimmed)
+            .canonicalize()
+            .ok()
+            .or_else(|| Some(PathBuf::from(trimmed)))
     }
-    if expected.is_empty() {
-        return false;
+    match (normalize(displayed), normalize(expected)) {
+        (Some(displayed), Some(expected)) => displayed == expected,
+        _ => false,
     }
-    normalize(displayed) == normalize(expected)
 }
 
 fn cursor_startup_frame_is_loading(pane: &str) -> bool {
@@ -1303,7 +1354,14 @@ where
                             if startup_cancelled(&cancel) {
                                 return Ok(());
                             }
-                            send_key("a").await?;
+                            match capture().await {
+                                Ok(pane)
+                                    if is_cursor_trust_dialog_layout(&pane, &workspace_path) =>
+                                {
+                                    send_key("a").await?;
+                                }
+                                _ => {}
+                            }
                             return Ok(());
                         }
                         CursorStartupFrame::Ready => return Ok(()),
@@ -1315,7 +1373,7 @@ where
 }
 
 /// Canonical bounded Cursor trust-screen layout for tests and probes.
-#[allow(dead_code)]
+#[cfg(test)]
 pub(crate) fn cursor_trust_dialog_frame(workspace: &str) -> String {
     format!(
         "Workspace Trust Required\n\n\
@@ -1327,6 +1385,7 @@ pub(crate) fn cursor_trust_dialog_frame(workspace: &str) -> String {
     )
 }
 
+#[cfg(test)]
 pub(crate) fn cursor_trust_dialog_frame_with_mcp(workspace: &str) -> String {
     format!(
         "Workspace Trust Required\n\n\
@@ -1413,6 +1472,7 @@ pub(crate) fn pane_has_input_prompt(pane: &str) -> bool {
 
 /// Cursor composer readiness: bounded to the harness input component (`❯`
 /// at column zero), not generic `>` blockquotes from prompt/model output.
+#[cfg(test)]
 pub(crate) fn pane_has_cursor_composer_ready(pane: &str) -> bool {
     pane.lines().any(|line| {
         let line = strip_ansi_codes(line);
@@ -2012,7 +2072,8 @@ mod tests {
     async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
         let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let ready = "cursor-agent\n❯ \n";
-        let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
+        let mut panes =
+            VecDeque::from([Ok(trust.clone()), Ok(trust.clone()), Ok(ready.to_string())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             "/tmp/worktree",
@@ -2035,10 +2096,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accept_cursor_workspace_trust_skips_send_when_frame_transitions() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let ready = "cursor-agent\n❯ \n";
+        let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(ready.to_string()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            sent.is_empty(),
+            "must not send after trust frame transitions"
+        );
+    }
+
+    #[test]
+    fn parse_cursor_trust_rejects_impossible_mcp_only_variant() {
+        let workspace = "/tmp/worktree";
+        let pane = cursor_trust_dialog_frame_with_mcp(workspace).replace(
+            "[w] Trust this workspace, but don't enable all MCP servers\n",
+            "",
+        );
+        assert!(
+            !is_cursor_trust_dialog_layout(&pane, workspace),
+            "MCP description without paired action must fail closed"
+        );
+    }
+
+    #[tokio::test]
     async fn accept_cursor_workspace_trust_waits_through_loading_then_trust() {
         let loading = "\n\n";
         let trust = cursor_trust_dialog_frame("/tmp/worktree");
-        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.clone())]);
+        let mut panes = VecDeque::from([
+            Ok(loading.to_string()),
+            Ok(trust.clone()),
+            Ok(trust.clone()),
+        ]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             "/tmp/worktree",

@@ -60,7 +60,8 @@ use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, DiffSummarizer, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
+    BabysitterAutoSpawn, DiffSummarizer, DispatchCleanupOutcome, Supervisor,
+    DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
@@ -4205,9 +4206,9 @@ async fn post_task_dispatch_cleanup(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     drop(snap);
 
-    let released_run_id = state
+    let cleanup = match state
         .supervisor
-        .release_dispatch_worker_for_cleanup(
+        .prepare_dispatch_cleanup(
             &task_id,
             kind.run_kind(),
             req.dispatch_attempt_token.as_deref(),
@@ -4216,7 +4217,21 @@ async fn post_task_dispatch_cleanup(
             req.stdout_path.as_deref(),
         )
         .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
+    {
+        Ok(DispatchCleanupOutcome::Conflict) => {
+            return Ok(Json(DispatchCleanupResponse {
+                status: "conflict".into(),
+                released_run_id: None,
+                worktree_removed: false,
+                branch_deleted: false,
+                error: Some("cleanup identity mismatch with live or newer tokened attempt".into()),
+            }));
+        }
+        Ok(DispatchCleanupOutcome::Proceed { released_run_id }) => released_run_id,
+        Err(error) => return Err(ApiError::internal(error.to_string())),
+    };
+
+    let released_run_id = cleanup;
 
     let mut errors = Vec::new();
     let worktree_removed = match remove_dispatch_worktree(
@@ -6388,14 +6403,16 @@ struct BootReattachCandidate {
     /// enables respawning its completion watcher (TASK-567JG).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    dispatch_attempt_token: Option<String>,
     role: Option<String>,
     requires_worker_finalize: Option<bool>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
 }
 
-/// `(transport, harness, project_id, worktree, last_path, stdout_path, role,
-/// requires_worker_finalize, driver_config)` from a `RunMeta` lifecycle event.
+/// `(transport, harness, project_id, worktree, last_path, stdout_path,
+/// dispatch_attempt_token, role, requires_worker_finalize, driver_config)` from a
+/// `RunMeta` lifecycle event.
 type RunMetaFields = (
     String,
     Option<String>,
@@ -6403,6 +6420,7 @@ type RunMetaFields = (
     Option<PathBuf>,
     Option<PathBuf>,
     Option<PathBuf>,
+    Option<String>,
     Option<String>,
     Option<bool>,
     serde_json::Value,
@@ -6459,6 +6477,7 @@ fn boot_reattach_candidate(
                 worktree,
                 last_path,
                 stdout_path,
+                dispatch_attempt_token,
                 role,
                 requires_worker_finalize,
                 driver_config,
@@ -6471,6 +6490,7 @@ fn boot_reattach_candidate(
                     worktree,
                     last_path,
                     stdout_path,
+                    dispatch_attempt_token,
                     role,
                     requires_worker_finalize,
                     driver_config,
@@ -6488,6 +6508,7 @@ fn boot_reattach_candidate(
         worktree,
         last_path,
         stdout_path,
+        dispatch_attempt_token,
         meta_role,
         meta_requires,
         driver_config,
@@ -6511,6 +6532,7 @@ fn boot_reattach_candidate(
         worktree,
         last_path,
         stdout_path,
+        dispatch_attempt_token,
         role: meta_role,
         requires_worker_finalize: meta_requires,
         driver_config,
@@ -6649,6 +6671,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                                 &c.run_id,
                                 last_path.clone(),
                                 stdout_path.clone(),
+                                c.dispatch_attempt_token.clone(),
                             )
                             .await;
                         spawn_dispatch_completion_watcher(
@@ -14007,6 +14030,7 @@ mod tests {
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 role: None,
                 requires_worker_finalize: None,
                 driver_config: json!({"system_wide": true}),
@@ -14078,6 +14102,7 @@ mod tests {
                             worktree: Some(tmp.path().join("proj")),
                             last_path: None,
                             stdout_path: None,
+                            dispatch_attempt_token: None,
                             role: None,
                             requires_worker_finalize: None,
                             driver_config: json!({}),
@@ -14232,6 +14257,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: Some(last_path.clone()),
                     stdout_path: Some(stdout_path.clone()),
+                    dispatch_attempt_token: None,
                     role: None,
                     requires_worker_finalize: None,
                     driver_config: json!({}),
@@ -14481,6 +14507,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: None,
                     requires_worker_finalize: None,
                     driver_config: json!({}),

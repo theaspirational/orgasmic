@@ -2716,6 +2716,7 @@ async fn continuation_early_exit_auto_releases_stuck_lease() {
         worktree: Some(worktree.clone()),
         last_path: None,
         stdout_path: None,
+        dispatch_attempt_token: None,
         session_path: session_path.clone(),
         driver_config: driver_config.clone(),
         babysitter_target: None,
@@ -2911,6 +2912,8 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
             "kind": "implementer",
             "worktree_path": worktree,
             "branch": "task-cleanup-ep-impl",
+            "last_path": last,
+            "stdout_path": stdout,
         }),
     )
     .await;

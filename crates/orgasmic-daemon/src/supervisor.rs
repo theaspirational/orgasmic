@@ -1994,11 +1994,15 @@ impl Supervisor {
         run_id: &str,
         last_path: PathBuf,
         stdout_path: PathBuf,
+        dispatch_attempt_token: Option<String>,
     ) {
         let mut g = self.inner.lock().await;
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.last_path = Some(last_path);
             rec.stdout_path = Some(stdout_path);
+            if dispatch_attempt_token.is_some() {
+                rec.dispatch_attempt_token = dispatch_attempt_token;
+            }
             rec.requires_worker_finalize = run_requires_worker_finalize(&rec.last_path, &rec.role);
         }
     }
@@ -2427,6 +2431,64 @@ impl Supervisor {
         Ok(Some(run_id))
     }
 
+    /// Authorize and optionally release a dispatch worker for cleanup. Returns
+    /// `Conflict` when the live run or a newer tokened attempt owns the same
+    /// worktree/artifacts so filesystem cleanup must not proceed (TASK-KE0JW).
+    pub async fn prepare_dispatch_cleanup(
+        &self,
+        task_id: &str,
+        kind: RunKind,
+        dispatch_attempt_token: Option<&str>,
+        worktree_path: &Path,
+        last_path: Option<&Path>,
+        stdout_path: Option<&Path>,
+    ) -> Result<DispatchCleanupOutcome, SupervisorError> {
+        let worktree_key = normalize_cleanup_worktree(worktree_path);
+        {
+            let g = self.inner.lock().await;
+            for rec in g.runs.values() {
+                if rec.task_id != task_id || rec.kind != kind {
+                    continue;
+                }
+                if rec.worktree.as_ref().map(|p| normalize_cleanup_worktree(p))
+                    != Some(worktree_key.clone())
+                {
+                    continue;
+                }
+                if !dispatch_cleanup_identity_matches(
+                    rec,
+                    dispatch_attempt_token,
+                    worktree_path,
+                    last_path,
+                    stdout_path,
+                ) {
+                    return Ok(DispatchCleanupOutcome::Conflict);
+                }
+            }
+            if dispatch_attempt_token.is_none() {
+                let tokened_owner = g.runs.values().any(|rec| {
+                    rec.worktree.as_ref().map(|p| normalize_cleanup_worktree(p))
+                        == Some(worktree_key.clone())
+                        && rec.dispatch_attempt_token.is_some()
+                });
+                if tokened_owner {
+                    return Ok(DispatchCleanupOutcome::Conflict);
+                }
+            }
+        }
+        let released_run_id = self
+            .release_dispatch_worker_for_cleanup(
+                task_id,
+                kind,
+                dispatch_attempt_token,
+                worktree_path,
+                last_path,
+                stdout_path,
+            )
+            .await?;
+        Ok(DispatchCleanupOutcome::Proceed { released_run_id })
+    }
+
     /// Clear an *orphaned* lease: one held for `(task_id, kind)` whose run
     /// record no longer exists (e.g. the CLI timed out while the daemon
     /// completed the acquire, then the run died without releasing). Returns
@@ -2448,6 +2510,15 @@ impl Supervisor {
         g.leases.remove(&key);
         OrphanedLeaseOutcome::Released { run_id }
     }
+}
+
+/// Whether a dispatch cleanup request may proceed with filesystem mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchCleanupOutcome {
+    /// Identity matches; optional released run id when a live worker was stopped.
+    Proceed { released_run_id: Option<String> },
+    /// A live or newer tokened attempt owns the same worktree/artifacts.
+    Conflict,
 }
 
 /// Result of [`Supervisor::release_orphaned_lease`].
@@ -2958,6 +3029,10 @@ fn dispatch_cleanup_identity_matches(
         && path_eq(rec.last_path.as_ref(), last_path)
         && path_eq(rec.stdout_path.as_ref(), stdout_path)
         && rec.dispatch_attempt_token.as_deref() == dispatch_attempt_token
+}
+
+fn normalize_cleanup_worktree(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Whether this run requires an explicit worker-declared terminal call
@@ -3772,6 +3847,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.join(format!("{task}.jsonl")),
             driver_config: tmux::inert_config(),
             babysitter_target: None,
@@ -4809,6 +4885,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join(format!("{}.babysitter.jsonl", r1.run_id)),
             driver_config: tmux::inert_config(),
             babysitter_target: Some(r1.run_id.clone()),
@@ -6094,6 +6171,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-CONT.jsonl"),
             driver_config: orgasmic_drivers::adapters::claude::simulated_config(),
             babysitter_target: None,
@@ -6147,6 +6225,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("bs.jsonl"),
             driver_config: tmux::inert_config(),
             babysitter_target: None,
@@ -6229,6 +6308,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-079.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -6273,6 +6353,7 @@ mod tests {
                 worktree: None,
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 session_path: dir.path().join(format!("spin-{idx}.jsonl")),
                 driver_config: tmux::inert_config(),
                 babysitter_target: None,
@@ -6320,6 +6401,7 @@ mod tests {
                     worktree: None,
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: dir.path().join("held.babysitter.jsonl"),
                     driver_config: tmux::inert_config(),
                     babysitter_target: Some("external-target".into()),
@@ -6415,6 +6497,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-082.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -6490,6 +6573,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-083-BS-FIRST.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -6584,6 +6668,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-083-DOUBLE.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -6750,5 +6835,65 @@ mod tests {
             .status();
         let _ = wrapper.kill();
         let _ = wrapper.wait();
+    }
+
+    #[tokio::test]
+    async fn prepare_dispatch_cleanup_conflicts_on_live_token_mismatch() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let mut req = dispatch_impl_req("TASK-CLEANUP-A", dir.path());
+        req.worktree = Some(worktree.clone());
+        req.dispatch_attempt_token = Some("aaaa1111bbbb2222cccc3333dddd4444".into());
+        req.last_path = Some(dir.path().join("a-last.txt"));
+        req.stdout_path = Some(dir.path().join("a-stdout.log"));
+        sup.acquire(&tmux::driver(), req).await.unwrap();
+
+        let outcome = sup
+            .prepare_dispatch_cleanup(
+                "TASK-CLEANUP-A",
+                RunKind::Worker,
+                Some("bbbb1111cccc2222dddd3333eeee4444"),
+                &worktree,
+                Some(Path::new("a-last.txt")),
+                Some(Path::new("a-stdout.log")),
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, DispatchCleanupOutcome::Conflict);
+    }
+
+    #[tokio::test]
+    async fn prepare_dispatch_cleanup_releases_matching_live_attempt() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("wt");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let last = dir.path().join("a-last.txt");
+        let stdout = dir.path().join("a-stdout.log");
+        let token = "aaaa1111bbbb2222cccc3333dddd4444";
+        let mut req = dispatch_impl_req("TASK-CLEANUP-B", dir.path());
+        req.worktree = Some(worktree.clone());
+        req.dispatch_attempt_token = Some(token.into());
+        req.last_path = Some(last.clone());
+        req.stdout_path = Some(stdout.clone());
+        let acquired = sup.acquire(&tmux::driver(), req).await.unwrap();
+
+        let outcome = sup
+            .prepare_dispatch_cleanup(
+                "TASK-CLEANUP-B",
+                RunKind::Worker,
+                Some(token),
+                &worktree,
+                Some(&last),
+                Some(&stdout),
+            )
+            .await
+            .unwrap();
+        match outcome {
+            DispatchCleanupOutcome::Proceed {
+                released_run_id: Some(run_id),
+            } => assert_eq!(run_id, acquired.run_id),
+            other => panic!("expected proceed with release, got {other:?}"),
+        }
     }
 }

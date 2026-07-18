@@ -815,6 +815,8 @@ async fn run_live_session(
         let timeout = cfg.input_ready_timeout;
         let deliver_tx = events.clone();
         let deliver_terminal = terminal_emitted.clone();
+        let send_child = send_child.clone();
+        let cancel = startup_cancel.clone();
         Some(tokio::spawn(async move {
             if command == "claude" {
                 if let Err(e) = wait_for_input_ready(&bin, &session, timeout).await {
@@ -829,7 +831,10 @@ async fn run_live_session(
                     "rmux pane did not settle within timeout; pasting anyway"
                 );
             }
-            if let Err(e) = paste_text_and_submit(&bin, &session, &prompt).await {
+            if let Err(e) =
+                paste_text_and_submit(&bin, &session, &prompt, Some(&send_child), Some(&cancel))
+                    .await
+            {
                 emit_fatal_driver_error_once(
                     &deliver_tx,
                     &deliver_terminal,
@@ -914,7 +919,7 @@ async fn run_rmux_cli_with_owner(
             DriverError::Transport(format!("rmux {}: {e}", args.first().unwrap_or(&"")))
         })?;
     if let Some(owner) = send_child {
-        *owner.active.lock().await = Some(child);
+        owner.register(child);
         wait_for_owned_send_child(owner, cancel).await
     } else {
         wait_for_rmux_child(child, cancel).await
@@ -987,16 +992,41 @@ async fn rmux_capture_pane_bounded(
 
 /// Paste `text` into the session's pane and press Enter, via the rmux CLI's
 /// tmux-compatible buffer verbs (the same path the daemon's composer uses).
-async fn paste_text_and_submit(bin: &str, session: &str, text: &str) -> Result<(), DriverError> {
+async fn paste_text_and_submit(
+    bin: &str,
+    session: &str,
+    text: &str,
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
     if text.is_empty() {
         return Ok(());
     }
     let buffer = format!("orgasmic-dispatch-{session}");
-    run_rmux_cli(bin, &["set-buffer", "-b", &buffer, "--", text]).await?;
-    let paste = run_rmux_cli(bin, &["paste-buffer", "-p", "-b", &buffer, "-t", session]).await;
-    let _ = run_rmux_cli(bin, &["delete-buffer", "-b", &buffer]).await;
+    run_rmux_cli_with_owner(
+        bin,
+        &["set-buffer", "-b", &buffer, "--", text],
+        send_child,
+        cancel,
+    )
+    .await?;
+    let paste = run_rmux_cli_with_owner(
+        bin,
+        &["paste-buffer", "-p", "-b", &buffer, "-t", session],
+        send_child,
+        cancel,
+    )
+    .await;
+    let _ =
+        run_rmux_cli_with_owner(bin, &["delete-buffer", "-b", &buffer], send_child, cancel).await;
     paste?;
-    run_rmux_cli(bin, &["send-keys", "-t", session, "Enter"]).await
+    run_rmux_cli_with_owner(
+        bin,
+        &["send-keys", "-t", session, "Enter"],
+        send_child,
+        cancel,
+    )
+    .await
 }
 
 async fn rmux_session_alive(bin: &str, session: &str) -> bool {
@@ -1376,7 +1406,7 @@ impl DriverControl for RmuxControl {
             });
         }
 
-        paste_text_and_submit(bin, session, &req.input).await?;
+        paste_text_and_submit(bin, session, &req.input, None, None).await?;
         Ok(UserInputAck {
             accepted: true,
             message: None,
@@ -1690,7 +1720,8 @@ mod tests {
     async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
         let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let ready = "cursor-agent\n❯ \n";
-        let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
+        let mut panes =
+            VecDeque::from([Ok(trust.clone()), Ok(trust.clone()), Ok(ready.to_string())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             "/tmp/worktree",
@@ -1716,7 +1747,11 @@ mod tests {
     async fn accept_cursor_workspace_trust_rmux_waits_through_loading() {
         let loading = "starting cursor-agent\n";
         let trust = cursor_trust_dialog_frame("/tmp/worktree");
-        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.clone())]);
+        let mut panes = VecDeque::from([
+            Ok(loading.to_string()),
+            Ok(trust.clone()),
+            Ok(trust.clone()),
+        ]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             "/tmp/worktree",

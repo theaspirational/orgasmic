@@ -249,6 +249,20 @@ impl DispatchPlan {
     pub(crate) fn dispatch_task(&self) -> String {
         task_list_property(&self.tasks)
     }
+
+    fn with_artifacts(
+        mut self,
+        brief_path: PathBuf,
+        last_path: PathBuf,
+        stdout_path: PathBuf,
+        dispatch_attempt_token: String,
+    ) -> Self {
+        self.brief_path = brief_path;
+        self.last_path = last_path;
+        self.stdout_path = stdout_path;
+        self.dispatch_attempt_token = dispatch_attempt_token;
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -412,9 +426,21 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     }
 
     if plan.dry_run {
-        print_dispatch_plan(&plan);
+        let attempt_id = mint_dispatch_attempt_id();
+        let (brief, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&plan.project_root, &plan.brief_path, &attempt_id);
+        print_dispatch_plan(&plan.with_artifacts(brief, last, stdout, attempt_id));
         return Ok(());
     }
+
+    let mut reservation =
+        DispatchArtifactReservation::reserve(&plan.project_root, &plan.brief_path)?;
+    let plan = plan.with_artifacts(
+        reservation.brief_path(),
+        reservation.last_path(),
+        reservation.stdout_path(),
+        reservation.attempt_token(),
+    );
 
     materialize_dispatch_brief(&plan)?;
 
@@ -517,6 +543,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     } else {
         println!("watch: orgasmic run show {}", response.run_id);
     }
+    reservation.commit();
     Ok(())
 }
 
@@ -1553,8 +1580,6 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let branch = args
         .branch
         .unwrap_or_else(|| default_branch(first_task(&tasks), args.kind));
-    let (brief_path, last_path, stdout_path, dispatch_attempt_token) =
-        reserve_dispatch_artifact_paths(&project_root, &brief_path)?;
     let goal_id = read_active_goal_id(&project_root)?;
     Ok(DispatchPlan {
         project_root,
@@ -1574,9 +1599,9 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .effort
             .map(|s| sanitize_tx_value(&s))
             .filter(|s| !s.is_empty()),
-        last_path,
-        stdout_path,
-        dispatch_attempt_token,
+        last_path: PathBuf::new(),
+        stdout_path: PathBuf::new(),
+        dispatch_attempt_token: String::new(),
         goal_id,
         reason: args
             .reason
@@ -2603,42 +2628,139 @@ fn mint_dispatch_attempt_id() -> String {
 
 const DISPATCH_ARTIFACT_RESERVE_RETRIES: usize = 8;
 
+/// RAII reservation for dispatch last/stdout artifact pair. Rolls back only
+/// files this attempt created on drop unless committed (TASK-KE0JW).
+struct DispatchArtifactReservation {
+    owned: Vec<PathBuf>,
+    brief_path: PathBuf,
+    last_path: PathBuf,
+    stdout_path: PathBuf,
+    attempt_token: String,
+    committed: bool,
+}
+
+impl DispatchArtifactReservation {
+    fn reserve(project_root: &Path, brief_path: &Path) -> Result<Self> {
+        for _ in 0..DISPATCH_ARTIFACT_RESERVE_RETRIES {
+            let attempt_id = mint_dispatch_attempt_id();
+            let (brief, last, stdout) =
+                dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
+            if let Some(parent) = brief.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("create dispatch artifact dir {}", parent.display())
+                })?;
+            }
+            match reserve_dispatch_artifact_pair(&last, &stdout) {
+                Ok(owned) => {
+                    return Ok(Self {
+                        owned,
+                        brief_path: brief,
+                        last_path: last,
+                        stdout_path: stdout,
+                        attempt_token: attempt_id,
+                        committed: false,
+                    });
+                }
+                Err(ReservePairError::Collision) => continue,
+                Err(ReservePairError::Io(err)) => return Err(err.into()),
+            }
+        }
+        bail!("failed to reserve dispatch artifact pair after {DISPATCH_ARTIFACT_RESERVE_RETRIES} attempts");
+    }
+
+    fn brief_path(&self) -> PathBuf {
+        self.brief_path.clone()
+    }
+
+    fn last_path(&self) -> PathBuf {
+        self.last_path.clone()
+    }
+
+    fn stdout_path(&self) -> PathBuf {
+        self.stdout_path.clone()
+    }
+
+    fn attempt_token(&self) -> String {
+        self.attempt_token.clone()
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+        self.owned.clear();
+    }
+}
+
+impl Drop for DispatchArtifactReservation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        for path in &self.owned {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+enum ReservePairError {
+    Collision,
+    Io(std::io::Error),
+}
+
+fn reserve_dispatch_artifact_pair(
+    last: &Path,
+    stdout: &Path,
+) -> Result<Vec<PathBuf>, ReservePairError> {
+    let mut owned = Vec::new();
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(last)
+    {
+        Ok(_) => owned.push(last.to_path_buf()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(ReservePairError::Collision);
+        }
+        Err(err) => return Err(ReservePairError::Io(err)),
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(stdout)
+    {
+        Ok(_) => {
+            owned.push(stdout.to_path_buf());
+            Ok(owned)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            for path in owned {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(ReservePairError::Collision)
+        }
+        Err(err) => {
+            for path in owned {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(ReservePairError::Io(err))
+        }
+    }
+}
+
 /// Atomically reserve the (brief, last, stdout) artifact paths for a dispatch.
-/// Creates zero-length files with `create_new`; rolls back partial reservation
-/// and retries with a fresh full UUID on collision (TASK-ZGT1X).
+/// Prefer [`DispatchArtifactReservation`] in production dispatch paths.
 fn reserve_dispatch_artifact_paths(
     project_root: &Path,
     brief_path: &Path,
 ) -> Result<(PathBuf, PathBuf, PathBuf, String)> {
-    for _ in 0..DISPATCH_ARTIFACT_RESERVE_RETRIES {
-        let attempt_id = mint_dispatch_attempt_id();
-        let (brief, last, stdout) =
-            dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
-        if let Some(parent) = brief.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("create dispatch artifact dir {}", parent.display()))?;
-        }
-        match (
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&last),
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&stdout),
-        ) {
-            (Ok(_), Ok(_)) => return Ok((brief, last, stdout, attempt_id)),
-            (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
-                let _ = std::fs::remove_file(&last);
-                let _ = std::fs::remove_file(&stdout);
-            }
-            (Err(left), Err(_)) if left.kind() == std::io::ErrorKind::AlreadyExists => {}
-            (Err(err), _) => return Err(err.into()),
-            (_, Err(err)) => return Err(err.into()),
-        }
-    }
-    bail!("failed to reserve dispatch artifact pair after {DISPATCH_ARTIFACT_RESERVE_RETRIES} attempts");
+    let mut reservation = DispatchArtifactReservation::reserve(project_root, brief_path)?;
+    let paths = (
+        reservation.brief_path(),
+        reservation.last_path(),
+        reservation.stdout_path(),
+        reservation.attempt_token(),
+    );
+    reservation.commit();
+    Ok(paths)
 }
 
 /// Resolve the (brief, last, stdout) artifact paths for a dispatch. All three
@@ -3404,6 +3526,23 @@ mod tests {
         assert_eq!(std::fs::metadata(&stdout).unwrap().len(), 0);
         assert_eq!(attempt.len(), 32);
         assert!(attempt.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn reserve_dispatch_artifact_pair_preserves_preexisting_collider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root.join("task-reserve-brief.md");
+        let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+        let (_, last, stdout) = dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt);
+        std::fs::create_dir_all(last.parent().unwrap()).unwrap();
+        std::fs::write(&last, "existing").unwrap();
+        assert!(matches!(
+            reserve_dispatch_artifact_pair(&last, &stdout),
+            Err(ReservePairError::Collision)
+        ));
+        assert_eq!(std::fs::read_to_string(&last).unwrap(), "existing");
+        assert!(!stdout.exists());
     }
 
     #[test]

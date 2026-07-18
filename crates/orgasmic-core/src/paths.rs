@@ -87,13 +87,15 @@ pub fn project_dispatch_dir(project_root: &Path) -> PathBuf {
     project_tmp_dir(project_root).join("dispatch")
 }
 
-/// Validated dispatch attempt artifact pair for cleanup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Validated dispatch attempt artifact pair for cleanup. Stores the opened
+/// stem directory handle and relative artifact names — never canonicalized
+/// sibling paths that could be redirected by symlink/TOCTOU (TASK-KE0JW).
 pub struct DispatchAttemptArtifacts {
     pub stem: String,
     pub attempt_id: Option<String>,
-    pub last_path: PathBuf,
-    pub stdout_path: PathBuf,
+    stem_dir_handle: std::fs::File,
+    last_name: String,
+    stdout_name: String,
 }
 
 /// Validate that `worktree_path` and the artifact pair belong to the selected
@@ -129,11 +131,8 @@ pub fn prune_dispatch_stem_after_worktree(
 pub fn prune_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
 ) -> Result<(), String> {
-    for path in [&artifacts.last_path, &artifacts.stdout_path] {
-        if path.is_file() {
-            std::fs::remove_file(path).map_err(|err| err.to_string())?;
-        }
-    }
+    unlink_artifact_in_stem_dir(&artifacts.stem_dir_handle, &artifacts.last_name)?;
+    unlink_artifact_in_stem_dir(&artifacts.stem_dir_handle, &artifacts.stdout_name)?;
     Ok(())
 }
 
@@ -174,18 +173,10 @@ fn validate_dispatch_artifact_pair(
     last_path: &Path,
     stdout_path: &Path,
 ) -> Result<DispatchAttemptArtifacts, String> {
-    let canonical_last = validate_dispatch_artifact_file(stem_dir, stem, last_path)?;
-    let canonical_stdout = validate_dispatch_artifact_file(stem_dir, stem, stdout_path)?;
-    let last_name = canonical_last
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| "last artifact has no filename".to_string())?;
-    let stdout_name = canonical_stdout
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| "stdout artifact has no filename".to_string())?;
-    let (last_attempt, last_kind) = parse_dispatch_artifact_name(stem, last_name)?;
-    let (stdout_attempt, stdout_kind) = parse_dispatch_artifact_name(stem, stdout_name)?;
+    let last_name = validate_dispatch_artifact_file(stem_dir, stem, last_path)?;
+    let stdout_name = validate_dispatch_artifact_file(stem_dir, stem, stdout_path)?;
+    let (last_attempt, last_kind) = parse_dispatch_artifact_name(stem, &last_name)?;
+    let (stdout_attempt, stdout_kind) = parse_dispatch_artifact_name(stem, &stdout_name)?;
     if last_kind != "last" || stdout_kind != "stdout" {
         return Err("artifact pair must be last.txt and stdout.log".into());
     }
@@ -198,39 +189,114 @@ fn validate_dispatch_artifact_pair(
     Ok(DispatchAttemptArtifacts {
         stem: stem.to_string(),
         attempt_id: last_attempt,
-        last_path: canonical_last,
-        stdout_path: canonical_stdout,
+        stem_dir_handle: open_stem_dir(stem_dir)?,
+        last_name,
+        stdout_name,
     })
+}
+
+#[cfg(unix)]
+fn open_stem_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .open(stem_dir)
+        .map_err(|err| err.to_string())
+}
+
+#[cfg(not(unix))]
+fn open_stem_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
+    std::fs::File::open(stem_dir).map_err(|err| err.to_string())
 }
 
 fn validate_dispatch_artifact_file(
     stem_dir: &Path,
     stem: &str,
     artifact: &Path,
-) -> Result<PathBuf, String> {
-    let canonical = canonicalize_path(artifact)?;
-    if canonical.parent() != Some(stem_dir) {
-        return Err(format!(
-            "artifact {} not directly under expected stem dir",
-            artifact.display()
-        ));
+) -> Result<String, String> {
+    if artifact
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("path contains ..: {}", artifact.display()));
     }
-    let meta = std::fs::metadata(&canonical).map_err(|err| err.to_string())?;
-    if !meta.is_file() {
-        return Err(format!("{} is not a regular file", artifact.display()));
-    }
+    let meta = std::fs::symlink_metadata(artifact).map_err(|err| err.to_string())?;
     if meta.file_type().is_symlink() {
         return Err(format!("{} is a symlink", artifact.display()));
     }
-    let file_name = canonical
+    if !meta.is_file() {
+        return Err(format!("{} is not a regular file", artifact.display()));
+    }
+    let file_name = artifact
         .file_name()
         .and_then(|s| s.to_str())
         .ok_or_else(|| "artifact has no filename".to_string())?;
     if file_name == format!("{stem}-brief.md") {
         return Err("brief path cannot be deleted as dispatch artifact".into());
     }
+    let parent = artifact
+        .parent()
+        .ok_or_else(|| format!("artifact {} has no parent", artifact.display()))?;
+    let canonical_parent = std::fs::canonicalize(parent).map_err(|err| err.to_string())?;
+    if canonical_parent != stem_dir {
+        return Err(format!(
+            "artifact {} not directly under expected stem dir",
+            artifact.display()
+        ));
+    }
     parse_dispatch_artifact_name(stem, file_name)?;
-    Ok(canonical)
+    Ok(file_name.to_string())
+}
+
+#[cfg(unix)]
+fn unlink_artifact_in_stem_dir(stem_dir: &std::fs::File, name: &str) -> Result<(), String> {
+    use std::ffi::CString;
+    use std::os::unix::io::AsRawFd;
+
+    if name.contains('/') || name.contains('\0') {
+        return Err(format!("invalid artifact name {name}"));
+    }
+    let dir_fd = stem_dir.as_raw_fd();
+    let name_c = CString::new(name).map_err(|_| format!("invalid artifact name {name}"))?;
+    let file_fd = unsafe {
+        libc::openat(
+            dir_fd,
+            name_c.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if file_fd < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::NotFound {
+            return Ok(());
+        }
+        return Err(err.to_string());
+    }
+    unsafe {
+        libc::close(file_fd);
+    }
+    let rc = unsafe { libc::unlinkat(dir_fd, name_c.as_ptr(), 0) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::NotFound {
+            Ok(())
+        } else {
+            Err(err.to_string())
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn unlink_artifact_in_stem_dir(stem_dir: &std::fs::File, name: &str) -> Result<(), String> {
+    let path = stem_dir.metadata().ok().and_then(|_| {
+        // Best-effort non-unix fallback: use parent path from open handle is unavailable.
+        None
+    });
+    let _ = path;
+    Err("no-follow dispatch artifact deletion requires unix".into())
 }
 
 fn parse_dispatch_artifact_name(
@@ -421,5 +487,78 @@ mod tests {
             Some(&stdout)
         )
         .is_err());
+    }
+
+    #[test]
+    fn validate_dispatch_cleanup_rejects_symlink_artifacts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let victim_last = stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-last.txt");
+        let victim_stdout =
+            stem_dir.join("task-dispatch-bbbb1111cccc2222dddd3333eeee4444-stdout.log");
+        std::fs::write(&victim_last, "victim").unwrap();
+        std::fs::write(&victim_stdout, "victim").unwrap();
+        let attempt_id = "aaaa1111bbbb2222cccc3333dddd4444";
+        let link_last = stem_dir.join(format!("task-dispatch-{attempt_id}-last.txt"));
+        let link_stdout = stem_dir.join(format!("task-dispatch-{attempt_id}-stdout.log"));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&victim_last, &link_last).unwrap();
+            std::os::unix::fs::symlink(&victim_stdout, &link_stdout).unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            return;
+        }
+        assert!(validate_dispatch_cleanup_targets(
+            &project_root,
+            &worktree,
+            Some(&link_last),
+            Some(&link_stdout)
+        )
+        .is_err());
+        assert!(victim_last.exists());
+        assert!(victim_stdout.exists());
+    }
+
+    #[test]
+    fn prune_validated_dispatch_attempt_survives_stem_dir_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let attempt_id = "aaaa1111bbbb2222cccc3333dddd4444";
+        let last_name = format!("task-dispatch-{attempt_id}-last.txt");
+        let stdout_name = format!("task-dispatch-{attempt_id}-stdout.log");
+        std::fs::write(stem_dir.join(&last_name), "last").unwrap();
+        std::fs::write(stem_dir.join(&stdout_name), "stdout").unwrap();
+        let artifacts = validate_dispatch_cleanup_targets(
+            &project_root,
+            &worktree,
+            Some(&stem_dir.join(&last_name)),
+            Some(&stem_dir.join(&stdout_name)),
+        )
+        .unwrap();
+        // Simulate TOCTOU: rename stem dir and replace with symlink elsewhere.
+        let renamed = project_root.join(".orgasmic/tmp/dispatch/task-dispatch-old");
+        std::fs::rename(&stem_dir, &renamed).unwrap();
+        let bait = tmp.path().join("bait");
+        std::fs::create_dir_all(&bait).unwrap();
+        std::fs::write(bait.join(&last_name), "bait-last").unwrap();
+        std::fs::write(bait.join(&stdout_name), "bait-stdout").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&bait, &stem_dir).unwrap();
+        #[cfg(not(unix))]
+        return;
+
+        prune_validated_dispatch_attempt(&artifacts).unwrap();
+        assert!(!renamed.join(&last_name).exists());
+        assert!(!renamed.join(&stdout_name).exists());
+        assert!(bait.join(&last_name).exists());
+        assert!(bait.join(&stdout_name).exists());
     }
 }
