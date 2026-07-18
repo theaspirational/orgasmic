@@ -11,6 +11,7 @@ pub mod adapters;
 pub mod modes;
 pub mod runtime_options;
 pub mod sandbox;
+pub mod transcript_finder;
 pub mod r#trait;
 
 pub use adapters::{
@@ -30,6 +31,10 @@ pub use runtime_options::{
     RuntimeOptionsRequest, RuntimeOptionsState, RuntimeProviderOption, RuntimeSpeed,
 };
 pub use sandbox::{allowlist_from_driver_config, ApprovalResponse, SandboxAllowlist};
+pub use transcript_finder::{
+    find_native_transcript, lookup_from_envelopes, NativeTranscriptHit, TranscriptConfidence,
+    TranscriptFindResult, TranscriptLookup, TranscriptRoots,
+};
 
 /// Stable legacy transport ids known to the registry.
 pub const TRANSPORTS: &[&str] = &[

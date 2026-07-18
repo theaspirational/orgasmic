@@ -37,8 +37,9 @@ use orgasmic_core::{
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
-    driver_for, driver_for_mode_harness, DriverConfig, DriverContext, RunKind,
-    RuntimeOptionsCatalog, RuntimeOptionsRequest, WorkerDriver,
+    driver_for, driver_for_mode_harness, find_native_transcript, lookup_from_envelopes,
+    DriverConfig, DriverContext, RunKind, RuntimeOptionsCatalog, RuntimeOptionsRequest,
+    TranscriptRoots, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -187,6 +188,10 @@ pub fn router(state: ApiState) -> Router {
         // Stubs — wired so callers can discover them; tracked tasks owned elsewhere.
         .route("/runs", get(get_runs).post(stub("TASK-006")))
         .route("/runs/:id", get(get_run).post(stub("TASK-006")))
+        .route(
+            "/runs/:id/native-transcript",
+            get(get_run_native_transcript),
+        )
         .route("/runs/:id/recover", post(post_run_recover))
         .route("/runs/:id/input", post(post_run_input))
         .route(
@@ -5421,6 +5426,95 @@ async fn get_run(
         }
     }
     Err(ApiError::not_found(format!("run {id}")))
+}
+
+/// Resolve harness-native session transcript for a run (TASK-0SADP / dec_WDR5K item 7).
+async fn get_run_native_transcript(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    let session_path = resolve_run_session_path(&state, &id)
+        .await
+        .ok_or_else(|| ApiError::not_found(format!("run {id}")))?;
+    let envelopes = read_session_file(&session_path).map_err(|e| {
+        ApiError::internal(format!(
+            "failed to read session {}: {e}",
+            session_path.display()
+        ))
+    })?;
+    let Some(lookup) = lookup_from_envelopes(&envelopes) else {
+        return Ok(Json(json!({
+            "run_id": id,
+            "orgasmic_session_path": session_path,
+            "result": {
+                "status": "not_found",
+                "reason": "session JSONL has no RunMeta harness / NativeRuntime provider to select an adapter",
+            },
+        })));
+    };
+    let roots = TranscriptRoots::from_env_home().ok_or_else(|| {
+        ApiError::internal("HOME is unset; cannot resolve harness transcript roots")
+    })?;
+    let result = find_native_transcript(&lookup, &roots);
+    Ok(Json(json!({
+        "run_id": id,
+        "harness": lookup.harness,
+        "session_id": lookup.session_id,
+        "cwd": lookup.cwd,
+        "orgasmic_session_path": session_path,
+        "result": result,
+    })))
+}
+
+/// Locate the orgasmic session JSONL for `run_id` across live, recovered, and
+/// on-disk project session directories.
+async fn resolve_run_session_path(state: &ApiState, run_id: &str) -> Option<PathBuf> {
+    let live = state.supervisor.snapshot().await;
+    if let Some(run) = live.runs.iter().find(|run| run.run_id == run_id) {
+        return Some(run.session_path.clone());
+    }
+    let recovery = recovery_status(state).await;
+    for runs in [
+        &recovery.interrupted_runs,
+        &recovery.reattached_runs,
+        &recovery.terminal_noop_runs,
+        &recovery.ambiguous_runs,
+    ] {
+        if let Some(run) = runs.iter().find(|run| run.run_id == run_id) {
+            return Some(run.session_path.clone());
+        }
+    }
+    let project_roots: Vec<PathBuf> = state
+        .index
+        .snapshot()
+        .await
+        .board
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect();
+    let mut seen = BTreeSet::new();
+    for root in project_roots {
+        let dir = project_sessions_dir(&root);
+        if !seen.insert(dir.clone()) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(envelopes) = read_session_file(&path) else {
+                continue;
+            };
+            if envelopes.iter().any(|e| e.run_id == run_id) {
+                return Some(path);
+            }
+        }
+    }
+    None
 }
 
 #[derive(Debug, Deserialize)]
@@ -12350,6 +12444,155 @@ mod tests {
         assert!(source.contains("\"kind\":\"lifecycle\""));
         assert!(source.contains("\"task_id\":\"manager.launch:orgasmic\""));
         assert_eq!(detail["run"]["driver"], "tmux-tui");
+    }
+
+    #[tokio::test]
+    async fn get_run_native_transcript_uses_recorded_session_path() {
+        // orgasmic:TASK-0SADP
+        struct RestoreEnv {
+            key: &'static str,
+            value: Option<std::ffi::OsString>,
+        }
+        impl Drop for RestoreEnv {
+            fn drop(&mut self) {
+                match &self.value {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("user-home");
+        std::fs::create_dir_all(&user_home).unwrap();
+        let _restore_home = RestoreEnv {
+            key: "HOME",
+            value: std::env::var_os("HOME"),
+        };
+        std::env::set_var("HOME", &user_home);
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let claude_projects = user_home.join(".claude").join("projects");
+        std::fs::create_dir_all(&claude_projects).unwrap();
+        let native = claude_projects.join("recorded-native-claude.jsonl");
+        std::fs::write(&native, "{\"msg\":\"hi\"}\n").unwrap();
+
+        let run_id = "run-20260718T120000-native-transcript-probe";
+        let session_path = project_sessions_dir(&project_root).join(format!("{run_id}.jsonl"));
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        let identity = RuntimeIdentity {
+            run_id: run_id.into(),
+            runtime_id: "rt-native".into(),
+            boot_id: "boot-native".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({
+                    "phase": "acquire",
+                    "task_id": "TASK-0SADP",
+                    "kind": "worker",
+                    "worker_id": "implementer-claude-rmux"
+                }),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({
+                    "phase": "run_meta",
+                    "transport": "rmux",
+                    "harness": "claude",
+                    "worktree": project_root,
+                    "driver_config": {}
+                }),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({
+                    "phase": "native_runtime",
+                    "provider": "claude",
+                    "session_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "session_path": native,
+                    "launch_argv": ["claude"],
+                    "resume_argv": []
+                }),
+            )
+            .unwrap();
+        drop(writer);
+
+        let state = direct_stage_test_state(home).await;
+        let Json(body) = get_run_native_transcript(State(state), Path(run_id.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(body["run_id"], run_id);
+        assert_eq!(body["harness"], "claude");
+        assert_eq!(body["result"]["status"], "found");
+        assert_eq!(
+            body["result"]["path"].as_str().unwrap(),
+            native.canonicalize().unwrap().to_str().unwrap()
+        );
+        assert_eq!(body["result"]["confidence"], "high");
+        assert_eq!(
+            body["result"]["correlation"],
+            "recorded_native_runtime_session_path"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_run_native_transcript_custom_is_unsupported() {
+        // orgasmic:TASK-0SADP
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+
+        let run_id = "run-20260718T120000-custom-unsupported";
+        let session_path = project_sessions_dir(&project_root).join(format!("{run_id}.jsonl"));
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        let identity = RuntimeIdentity {
+            run_id: run_id.into(),
+            runtime_id: "rt-custom".into(),
+            boot_id: "boot-custom".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({
+                    "phase": "acquire",
+                    "task_id": "TASK-CUSTOM",
+                    "kind": "worker",
+                    "worker_id": "manager"
+                }),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({
+                    "phase": "run_meta",
+                    "transport": "rmux",
+                    "harness": "custom",
+                    "worktree": project_root,
+                    "driver_config": {}
+                }),
+            )
+            .unwrap();
+        drop(writer);
+
+        let state = direct_stage_test_state(home).await;
+        let Json(body) = get_run_native_transcript(State(state), Path(run_id.to_string()))
+            .await
+            .unwrap();
+        assert_eq!(body["result"]["status"], "unsupported");
+        assert_eq!(body["result"]["harness"], "custom");
     }
 
     #[tokio::test]
