@@ -1,3 +1,18 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-AYXPB Governance rehoming: per-kind code defaults + sparse config.yaml overlay
+:PROPERTIES:
+:ID: TASK-AYXPB
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Hardcode per-kind defaults (iterations, context budget, timeouts, applicable states, linked skills, babysitter attachment, sandbox) in the daemon. Add a dispatch: section to ~/.orgasmic/config.yaml as a sparse overlay keyed by kind or (kind,harness): absent key = code default, per-dispatch overrides win. Startup warns on unrecognized config keys instead of silently ignoring them. Model and effort are OUT OF SCOPE: per dec_WDR5K item 9 (third amendment) no model/effort identifier lives in orgasmic code or config — see TASK-SZEWA for live discovery.
+
+* IN_PROGRESS TASK-S52X9 Universal finalize contract: every run shape declares termination (grill/plan/artifactor/manager)
+:PROPERTIES:
+:ID: TASK-S52X9
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+dec_WDR5K item 6 sixth amendment (operator-directed). Generalize the merged requires_worker_finalize capability gate from dispatch-kinds-only into universal worker-declared termination: stage runs (grill/plan) finalize, artifactor submit is its terminal declaration, manager release is its terminal declaration; protocol-end without a declaration is Failed/anomaly for every shape. Keeps TASK-8PXDP idempotent tombstone handling, extends tombstone vocab (artifact_submitted, manager_released). Reverses the fifth amendment; subsumes TASK-FN18B.

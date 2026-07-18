@@ -1,3 +1,21 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-0SADP Transcript finder adapters: harness-native session logs replace pane capture
+:PROPERTIES:
+:ID: TASK-0SADP
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Per-harness adapters that locate the harness's own session JSONL for a run (claude ~/.claude/projects/..., codex, cursor-agent, hermes) and map run id -> native transcript. Consumers: continuation runs (term_A8GT3), artifactor, failure diagnosis (last inner message). Custom harnesses have no adapter -> no transcript, accepted per dec_WDR5K item 7.
+Sequencing: MUST land before TUI capture removal or rmux/tmux runs lose transcripts in the gap.
+
+* IN_REVIEW TASK-P4MGK Universal dispatch finalize: accept worker-declared completion from every mode
+:PROPERTIES:
+:ID: TASK-P4MGK
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Make orgasmic dispatch finalize (dec_3M7M0) the completion signal for ALL modes, not just rmux: daemon accepts finalize from acp-stdio, acp-ws, subprocess-stream-json, tmux, rmux runs; each driver treats it as the primary end-of-run. Move the finalize contract prose from the rmux worker templates into prompt-specs/base_worker.org so every kind inherits it once.
+Risk to test hardest: ACP modes already have protocol turn-end events — finalize and protocol-end must not double-release or race the lease.
+

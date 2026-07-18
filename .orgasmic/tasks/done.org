@@ -12135,3 +12135,30 @@ Sequencing: depends on TASK-VKP5T's fix commit 1536cb0 (external-run UI guards) 
 ** Evidence
 [2026-07-16 Wed] IMPLEMENTED + MERGED 7864370 (worker impl commits 2da73fb vendor + 2e5cee3 adapt; implementer-codex-acp, gpt-5.6-sol xhigh, run-20260716T190738, ~19m; +4135/-652, 14 files, ui-only). Worker-driven finalize fired clean (implementer.done 19:26:52, last.txt intact — first codex-acp dispatch this session, dec_3M7M0 contract held). Vendored AI Elements (conversation/message/tool/reasoning/code-block + shimmer, button-group/collapsible primitives) styled on existing shadcn tokens; extracted pure ui/src/lib/transcriptParts.ts (event->typed parts text|reasoning|tool|system, tool_result paired to tool_call by call_id, ok=false->error, unpaired/streaming->running); ManagerChatTranscript rewired to the vendored surface; RunSurface untouched (send_input/readOnly/autoscroll preserved). MANAGER INDEPENDENT GATES on merged main (required npm install in ui/ first — new deps use-stick-to-bottom/streamdown+@streamdown/*/motion were in the merged lock but not this checkout's node_modules; the known worktree-npm gotcha, NOT a code defect): npx tsc --noEmit clean; npx vitest run 242/242 across 31 files (new transcriptParts.test 10/10, TranscriptToolCard 3/3); npm run build ok (5693 modules). TASK-VKP5T external-run guards verified intact: guard sources (RunsView/manager/RunDock/lib/runDock/lib/runLabels) byte-unchanged, focused guard suite 31 tests green. Upstream delta noted: AI Elements 1.9.0 dropped the standalone 'response' registry item (404); MessageResponse from 'message' used instead. Residual (non-blocking): no manual browser pixel pass; Streamdown/Shiki stack triggers vite >500kB chunk advisory.
 [2026-07-16 Wed] REVIEWER + FIX ROUND COMPLETE -> DONE. reviewer-codex-acp (gpt-5.6-sol xhigh, run-20260716T193218) VERDICT NEEDS-CHANGES, 6 findings (3 MED + 3 LOW), guards + XSS + gates all PASS. Sharpest catch: 64/131 tool cards stuck 'running' on the REAL session because synthetic tests masked the true Codex exec/command_execution event shape. All 6 fixed in one-round fix subtask TASK-K7P24 (impl c6518a8, merged): terminal-close, collision-safe code-block cache, Streamdown/KaTeX CSS integration, out-of-order pairing, reduced-motion scroll, empty tool-error output. Final gates on merged main: tsc clean, vitest 253/253 (35 files), VKP5T guard suite 45/45, build ok. P0FAQ acceptance met; transcript chat surface now on vendored AI Elements with correct tool-state rendering. NOT deployed to the live daemon (UI ships with the next runtime publish).
+
+* DONE TASK-63MPH TASK-AYXPB fix round: sandbox per-field patch merge + overlay key normalization
+:PROPERTIES:
+:ID: TASK-63MPH
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AYXPB
+:END:
+
+Resolve the two codex review findings on TASK-AYXPB (review: .orgasmic/tmp/dispatch/task-ayxpb-review/task-ayxpb-review-last.txt). HIGH: SandboxPermissionsPatch materializes from trust-all default and replaces the resolved sandbox — merge per field instead; permission-widening regression test across three layers. MEDIUM: overlay keys stored raw but looked up canonical — normalize once, insert canonical only, warn readably on malformed/extra-comma keys. Work on branch task-ayxpb-impl atop 74ec948.
+
+* DONE TASK-WTPYT TASK-0SADP fix round: Codex misattribution, TUI-id gap, Hermes pairing, path containment
+:PROPERTIES:
+:ID: TASK-WTPYT
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-0SADP
+:END:
+
+Resolve 5 codex review findings on TASK-0SADP transcript finder adapters (review: .orgasmic/tmp/dispatch/task-0sadp-review/task-0sadp-review-last.txt). 3 HIGH: Codex cwd fallback maps earlier runs to later rollouts (reproduced on real data); Cursor/Hermes TUI runs have no session-id lookup input (gates TASK-AFE5Q capture removal); Hermes returns Ambiguous on its normal .json+.jsonl pair (78 real pairs). MEDIUM path traversal; LOW probe. Branch task-0sadp-impl atop 29bd525.
+
+* DONE TASK-8PXDP TASK-P4MGK fix round: finalize idempotency + scope Failed to dispatched-worker runs
+:PROPERTIES:
+:ID: TASK-8PXDP
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-P4MGK
+:END:
+
+Resolve 2 codex HIGH findings on TASK-P4MGK (review: .orgasmic/tmp/dispatch/task-p4mgk-review/task-p4mgk-review-last.txt). HIGH1: finalize/release not idempotent — CLI masks any 404 as success so protocol-end-during-finalize yields a run both done AND orphaned; concurrent double-finalize double-emits. HIGH2: transport-keyed Failed reclassifies ALL non-TUI protocol-end runs, breaking /grill /plan ACP artifactor ACP manager (they legitimately never finalize). Fix scopes finalize to dispatched-worker runs via a per-run capability flag; narrows dec_WDR5K item 6. Branch task-p4mgk-impl atop 4fb51fd.

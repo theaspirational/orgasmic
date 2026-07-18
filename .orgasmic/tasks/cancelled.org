@@ -204,3 +204,10 @@ Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specif
 ** Evidence
 [2026-07-06 Mon] CANCELLED by operator decision during goal-20260706-drain-the-full. The task is technically valid (path_env::relink_source_binary still bails on non-unix; Home::from_env uses $HOME only), but native Windows (PowerShell/cmd) is NOT a supported target right now — WSL and Git-Bash/MSYS2 already work via the unix path. Re-file if/when native Windows becomes a target. No code shipped.
 
+* CANCELLED TASK-FN18B base_worker.org still tells stage kinds to call finalize they cannot use
+:PROPERTIES:
+:ID: TASK-FN18B
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Post-TASK-8PXDP residual (dec_WDR5K item 6 fifth amendment). The daemon now correctly keeps protocol-end = Completed for /grill, /plan stage runs, but base_worker.org (which those kinds inherit) still carries the universal 'call orgasmic dispatch finalize' instruction. The CLI rejects finalize for non-dispatch kinds, so a grill/plan worker may waste a turn attempting it. Fix: make the inherited finalize instruction conditional on being a dispatched worker (implementer/reviewer/architector), or move it out of base_worker into the dispatch-kind specs. Cosmetic/efficiency, not corrupting — daemon behavior is already correct.
