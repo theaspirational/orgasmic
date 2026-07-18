@@ -74,6 +74,19 @@ impl RuntimeIdentity {
             boot_id: boot_id.into(),
         }
     }
+
+    /// Predeclared identity for crash-recoverable acquire (recovery claims).
+    pub fn planned(
+        run_id: impl Into<String>,
+        runtime_id: impl Into<String>,
+        boot_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            runtime_id: runtime_id.into(),
+            boot_id: boot_id.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -335,6 +348,20 @@ pub enum Lifecycle {
         launch_argv: Vec<String>,
         #[serde(default)]
         resume_argv: Vec<String>,
+    },
+    /// Typed link from a replacement recovery run back to its Failed origin.
+    /// Written into the replacement session after acquire succeeds so daemon
+    /// session truth can verify committed recovery claims.
+    RecoveryOrigin {
+        project_id: String,
+        origin_run_id: String,
+        origin_session_path: PathBuf,
+        request_id: String,
+        replacement_run_id: String,
+        replacement_session_path: PathBuf,
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
     },
     /// A recovery prompt staged for the operator. `sent = false` means the
     /// draft is pending an explicit composer send.

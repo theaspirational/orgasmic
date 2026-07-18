@@ -58,9 +58,11 @@ use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
-    commit_recovery_claim, create_pending_recovery_claim, load_committed_recovery_claim,
-    load_recovery_claim, recovery_origin_lock, remove_recovery_claim, RecoveryClaim,
-    RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus,
+    commit_recovery_claim, load_committed_recovery_claim, load_recovery_claim,
+    plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
+    remove_recovery_claim, verify_committed_claim_against_session, CommitRecoveryDetails,
+    PendingRecoveryPlan, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
+    RecoveryClaimStatus,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -5614,6 +5616,8 @@ pub struct RecoveredRun {
     pub runtime_id: String,
     pub boot_id: String,
     pub session_path: PathBuf,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     pub classification: String,
     pub reason: String,
     /// Backend-owned, ordered, harness-aware recovery actions (dec_052). The
@@ -6112,6 +6116,9 @@ async fn post_run_recover(
     Path(id): Path<String>,
     Json(req): Json<RunRecoverRequest>,
 ) -> Result<Json<RunRecoverResponse>, ApiError> {
+    let project_id = req.project.clone().ok_or_else(|| {
+        ApiError::bad_request("project is required for recovery")
+    })?;
     let recovery = recovery_status(&state).await;
     let prior = recovery
         .interrupted_runs
@@ -6119,7 +6126,9 @@ async fn post_run_recover(
         .chain(recovery.reattached_runs.iter())
         .chain(recovery.failed_recoverable_runs.iter())
         .chain(recovery.ambiguous_runs.iter())
-        .find(|run| run.run_id == id)
+        .find(|run| {
+            run.run_id == id && run.project_id.as_deref() == Some(project_id.as_str())
+        })
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("recoverable run {id}")))?;
 
@@ -6133,20 +6142,35 @@ async fn post_run_recover(
     let claim_lock = state.recovery_claim_lock(&id);
     let _claim_guard = claim_lock.lock().await;
 
+    let mut pending_plan: Option<PendingRecoveryPlan> = None;
     if failed_origin {
-        if let Some(claim) = load_recovery_claim(&prior.session_path, &id) {
+        if let Some(claim) = load_recovery_claim(&state.home, &project_id, &id)
+            .map_err(|err| ApiError::internal(format!("recovery claim load failed: {err:?}")))?
+        {
             match claim.status {
                 RecoveryClaimStatus::Committed => {
-                    if claim.request_id == request_id {
-                        return recovery_response_from_claim(&claim);
+                    if verify_committed_claim_against_session(&claim) {
+                        if claim.request_id == request_id {
+                            return recovery_response_from_claim(&claim);
+                        }
+                        return Err(recovery_claim_conflict(&id, &claim));
                     }
-                    return Err(recovery_claim_conflict(&id, &claim));
                 }
                 RecoveryClaimStatus::Pending => {
-                    if claim.request_id == request_id {
-                        let _ = remove_recovery_claim(&prior.session_path, &id);
-                    } else {
+                    if claim.request_id != request_id {
                         return Err(recovery_claim_conflict(&id, &claim));
+                    }
+                    let plan = reconcile_pending_claim(&state.home, &claim, &state.boot.boot_id)
+                        .map_err(|err| {
+                            ApiError::internal(format!("recovery claim reconcile failed: {err:?}"))
+                        })?;
+                    if let Some(plan) = plan {
+                        if plan.claim.status == RecoveryClaimStatus::Committed
+                            && verify_committed_claim_against_session(&plan.claim)
+                        {
+                            return recovery_response_from_claim(&plan.claim);
+                        }
+                        pending_plan = Some(plan);
                     }
                 }
             }
@@ -6167,11 +6191,20 @@ async fn post_run_recover(
             [single] => single.kind.clone(),
             [] => {
                 if failed_origin {
-                    if let Some(claim) = load_committed_recovery_claim(&prior.session_path, &id) {
-                        if claim.request_id == request_id {
-                            return recovery_response_from_claim(&claim);
+                    if let Some(claim) = load_committed_recovery_claim(
+                        &state.home,
+                        &project_id,
+                        &id,
+                    )
+                    .map_err(|err| {
+                        ApiError::internal(format!("recovery claim load failed: {err:?}"))
+                    })? {
+                        if verify_committed_claim_against_session(&claim) {
+                            if claim.request_id == request_id {
+                                return recovery_response_from_claim(&claim);
+                            }
+                            return Err(recovery_claim_conflict(&id, &claim));
                         }
-                        return Err(recovery_claim_conflict(&id, &claim));
                     }
                 }
                 return Err(ApiError::not_found(format!(
@@ -6201,40 +6234,82 @@ async fn post_run_recover(
         .map(|act| act.target.clone())
         .unwrap_or_else(|| "worker".to_string());
 
-    if failed_origin {
-        create_pending_recovery_claim(&prior.session_path, &id, &request_id).map_err(|err| {
-            match err {
-                RecoveryClaimError::AlreadyClaimed(claim) => recovery_claim_conflict(&id, &claim),
+    if failed_origin && pending_plan.is_none() {
+        let replacement_session_path = prior
+            .session_path
+            .parent()
+            .map(|dir| dir.join(format!("recover-{}.jsonl", uuid::Uuid::new_v4())))
+            .ok_or_else(|| ApiError::internal("origin session path has no parent"))?;
+        pending_plan = Some(
+            plan_pending_recovery_claim(
+                &state.home,
+                &project_id,
+                &id,
+                &request_id,
+                &prior.session_path,
+                replacement_session_path,
+                &state.boot.boot_id,
+            )
+            .map_err(|err| match err {
+                RecoveryClaimError::AlreadyClaimed(claim) => {
+                    recovery_claim_conflict(&id, &claim)
+                }
                 other => ApiError::internal(format!("recovery claim acquire failed: {other:?}")),
-            }
-        })?;
+            })?,
+        );
     }
 
-    let execute = execute_run_recover_action(&state, &id, &prior, &action, &target, &req).await;
+    let execute = execute_run_recover_action(
+        &state,
+        &id,
+        &prior,
+        &action,
+        &target,
+        &req,
+        pending_plan.as_ref(),
+    )
+    .await;
     match execute {
         Ok(response) => {
             if failed_origin {
-                let _ = commit_recovery_claim(
-                    &prior.session_path,
+                state
+                    .supervisor
+                    .write_recovery_origin(
+                        &response.run_id,
+                        &response.session_path,
+                        &RuntimeIdentity::planned(
+                            response.run_id.clone(),
+                            response.runtime_id.clone(),
+                            response.boot_id.clone(),
+                        ),
+                        &project_id,
+                        &id,
+                        &prior.session_path,
+                        &request_id,
+                        &response.action,
+                        &response.target,
+                    )
+                    .await
+                    .map_err(supervisor_recover_error)?;
+                commit_recovery_claim(
+                    &state.home,
+                    &project_id,
                     &id,
-                    &request_id,
-                    &response.run_id,
-                    &response.session_path,
-                    &response.runtime_id,
-                    &response.boot_id,
-                    &response.action,
-                    &response.target,
-                    response.draft_prompt.as_deref(),
-                );
+                    CommitRecoveryDetails {
+                        runtime_id: response.runtime_id.clone(),
+                        boot_id: response.boot_id.clone(),
+                        action: response.action.clone(),
+                        target: response.target.clone(),
+                        draft_prompt: response.draft_prompt.clone(),
+                    },
+                )
+                .map_err(|err| {
+                    ApiError::internal(format!("recovery claim commit failed: {err:?}"))
+                })?;
             }
             Ok(Json(response))
         }
-        Err(err) => {
-            if failed_origin {
-                let _ = remove_recovery_claim(&prior.session_path, &id);
-            }
-            Err(err)
-        }
+        Err(err) => Err(err),
     }
 }
 
@@ -6245,6 +6320,7 @@ async fn execute_run_recover_action(
     action: &str,
     target: &str,
     req: &RunRecoverRequest,
+    pending_plan: Option<&PendingRecoveryPlan>,
 ) -> Result<RunRecoverResponse, ApiError> {
     let envelopes = read_session_file(&prior.session_path).unwrap_or_default();
     let meta = session_acquire_meta(&envelopes);
@@ -6316,12 +6392,23 @@ async fn execute_run_recover_action(
                 .to_string();
             let prompt = build_recovery_prompt(id, &prior.session_path, &envelopes, &diff_stat);
 
-            let recover_name = format!("recover-{}.jsonl", uuid::Uuid::new_v4());
-            let session_path = prior
-                .session_path
-                .parent()
-                .map(|dir| dir.join(&recover_name))
+            let recover_name = pending_plan
+                .map(|plan| {
+                    plan.claim
+                        .replacement_session_path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .map(str::to_string)
+                })
+                .flatten()
+                .unwrap_or_else(|| format!("recover-{}.jsonl", uuid::Uuid::new_v4()));
+            let session_path = pending_plan
+                .map(|plan| plan.claim.replacement_session_path.clone())
+                .or_else(|| {
+                    prior.session_path.parent().map(|dir| dir.join(&recover_name))
+                })
                 .unwrap_or_else(|| state.home.sessions().join(&recover_name));
+            let planned_identity = pending_plan.map(|plan| plan.planned_identity.clone());
 
             // start_recovery_run uses the original harness; resume_native_fork
             // reconstructs Claude resume/fork from validated structured identity.
@@ -6329,22 +6416,24 @@ async fn execute_run_recover_action(
                 let native = native.ok_or_else(|| {
                     ApiError::bad_request("resume_native_fork requires recorded native metadata")
                 })?;
-                let session_id = validated_claude_native_session_id(&native).ok_or_else(|| {
-                    ApiError::bad_request(
-                        "recorded native metadata does not prove a trustworthy Claude session",
-                    )
-                })?;
-                let (command, args) = reconstruct_claude_native_resume_command(&session_id);
+                let session_id =
+                    validated_claude_native_session_id(&state.home, &native).ok_or_else(|| {
+                        ApiError::bad_request(
+                            "recorded native metadata does not prove a trustworthy Claude session",
+                        )
+                    })?;
+                let (command, args) =
+                    reconstruct_claude_native_resume_command(&state.home, &session_id);
                 let driver = driver_for_mode_harness("tmux", "claude").ok_or_else(|| {
                     ApiError::internal("tmux/claude driver unavailable for native resume")
                 })?;
                 let cfg = DriverConfig::from_value(json!({
-                    "command": command,
+                    "command": command.to_string_lossy(),
                     "args": args,
                     "harness": "claude",
                     "cwd": state.home.source(),
                     "force_inert": req.force_inert.unwrap_or(false),
-                    // Idle launch: do NOT auto-send the recovery prompt.
+                    "native_resume_mode": true,
                 }));
                 (driver, cfg)
             } else {
@@ -6835,7 +6924,9 @@ async fn classify_session_files(
         if !seen_dirs.insert(dir.clone()) {
             continue;
         }
-        classify_session_dir(home, &dir, &live_ids, &mut runs).await;
+        let project_id = read_existing_project_identity(&root.join(".orgasmic/project.org"))
+            .map(|identity| identity.project_id);
+        classify_session_dir(home, &dir, project_id, &live_ids, &mut runs).await;
     }
     runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
     runs
@@ -6847,6 +6938,7 @@ async fn classify_session_files(
 async fn classify_session_dir(
     home: &Home,
     dir: &FsPath,
+    project_id: Option<String>,
     live_ids: &std::collections::BTreeSet<&str>,
     runs: &mut Vec<RecoveredRun>,
 ) {
@@ -6868,6 +6960,7 @@ async fn classify_session_dir(
                 runtime_id: String::new(),
                 boot_id: String::new(),
                 session_path: path,
+                project_id: project_id.clone(),
                 classification: "ambiguous".to_string(),
                 reason: "session JSONL could not be parsed".to_string(),
                 recovery_actions: Vec::new(),
@@ -6924,6 +7017,7 @@ async fn classify_session_dir(
             runtime_id: first.runtime_id.clone(),
             boot_id: first.boot_id.clone(),
             session_path: path,
+            project_id: project_id.clone(),
             classification,
             reason,
             recovery_actions,
@@ -7137,8 +7231,50 @@ fn validate_safe_session_id(id: &str) -> bool {
             .all(|c| matches!(c, Component::Normal(_)))
 }
 
+/// Resolve the trusted Claude executable from daemon-owned harness discovery.
+fn resolve_trusted_claude_binary(home: &Home) -> Option<PathBuf> {
+    if let Ok(custom) = std::env::var("ORGASMIC_CLAUDE_BINARY") {
+        let path = PathBuf::from(custom);
+        if path.is_file() {
+            return path.canonicalize().ok().or(Some(path));
+        }
+    }
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join("claude");
+            if candidate.is_file() {
+                return candidate.canonicalize().ok().or(Some(candidate));
+            }
+        }
+    }
+    let candidate = home.bin().join("claude");
+    if candidate.is_file() {
+        return candidate.canonicalize().ok().or(Some(candidate));
+    }
+    None
+}
+
+fn resume_argv_proves_claude_fork(resume_argv: &[String], session_id: &str) -> bool {
+    let mut saw_resume = false;
+    let mut saw_fork = false;
+    for (idx, arg) in resume_argv.iter().enumerate() {
+        if arg == "--resume" {
+            if resume_argv.get(idx + 1).is_some_and(|id| id == session_id) {
+                saw_resume = true;
+            }
+        }
+        if arg == "--fork-session" {
+            saw_fork = true;
+        }
+    }
+    saw_resume && saw_fork
+}
+
 /// Prove structured Claude native identity without trusting persisted argv.
-fn validated_claude_native_session_id(native: &SessionNativeRuntime) -> Option<String> {
+fn validated_claude_native_session_id(
+    home: &Home,
+    native: &SessionNativeRuntime,
+) -> Option<String> {
     if native.provider != "claude" {
         return None;
     }
@@ -7147,20 +7283,34 @@ fn validated_claude_native_session_id(native: &SessionNativeRuntime) -> Option<S
         return None;
     }
     if !native.resume_argv.is_empty() {
-        let (command, args) = reconstruct_claude_native_resume_command(session_id);
-        let expected: Vec<String> = std::iter::once(command).chain(args).collect();
-        if native.resume_argv != expected {
+        if !resume_argv_proves_claude_fork(&native.resume_argv, session_id) {
             return None;
+        }
+        if let Some(cmd) = native.resume_argv.first() {
+            if (cmd.contains('/') || cmd.contains('\\'))
+                && resolve_trusted_claude_binary(home)
+                    .is_some_and(|trusted| trusted.to_string_lossy() != cmd.as_str())
+            {
+                return None;
+            }
+            if cmd == "sh" || cmd.ends_with("/sh") {
+                return None;
+            }
         }
     }
     Some(session_id.clone())
 }
 
 /// Reconstruct the daemon-owned Claude resume/fork command from validated identity.
-fn reconstruct_claude_native_resume_command(session_id: &str) -> (String, Vec<String>) {
+fn reconstruct_claude_native_resume_command(
+    home: &Home,
+    session_id: &str,
+) -> (PathBuf, Vec<String>) {
+    let command = resolve_trusted_claude_binary(home).unwrap_or_else(|| PathBuf::from("claude"));
     (
-        "claude".to_string(),
+        command,
         vec![
+            "--dangerously-skip-permissions".to_string(),
             "--resume".to_string(),
             session_id.to_string(),
             "--fork-session".to_string(),

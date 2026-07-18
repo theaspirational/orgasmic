@@ -162,6 +162,10 @@ pub struct AcquireRequest {
     /// When set on an implementer acquire, spawn this babysitter worker after
     /// the implementer run is live.
     pub babysitter: Option<BabysitterAutoSpawn>,
+    /// Predeclared run/runtime identity for crash-recoverable acquire paths
+    /// (Failed recovery claims). When set, the supervisor uses this instead of
+    /// minting a fresh hidden identity at acquire time.
+    pub planned_identity: Option<RuntimeIdentity>,
 }
 
 /// Companion worker to spawn automatically after implementer acquire.
@@ -376,6 +380,14 @@ struct RunRecord {
     event_drain: tokio::task::JoinHandle<()>,
     /// Babysitter coalescing buffer (None on implementer runs).
     babysitter_summary: Option<BabysitterSummaryBuffer>,
+    /// PID-backed early-exit watcher owns canonical no-work release when set.
+    early_exit_watcher_pid: Option<u32>,
+    /// In-memory driver coordination oracle — updated as events are applied.
+    driver_has_work: bool,
+    driver_has_terminal: bool,
+    driver_has_ready: bool,
+    /// Exactly-once guard for canonical early-exit Failed release.
+    early_exit_release_taken: bool,
 }
 
 struct BabysitterAutoSpawnBackoff {
@@ -716,7 +728,15 @@ impl Supervisor {
         // Lease enforcement (AC #2). We hold the lock only long enough to
         // reserve the slot — the actual driver spawn is awaited without
         // the lock so a slow driver doesn't block other runs.
-        let run_id = make_run_id(&req.kind);
+        let (run_id, identity) = if let Some(planned) = req.planned_identity.clone() {
+            (planned.run_id.clone(), planned)
+        } else {
+            let run_id = make_run_id(&req.kind);
+            (
+                run_id.clone(),
+                RuntimeIdentity::new(&run_id, &self.boot.boot_id),
+            )
+        };
         let lease_key = (req.task_id.clone(), req.kind);
         {
             let mut guard = self.inner.lock().await;
@@ -736,7 +756,8 @@ impl Supervisor {
 
         // Build the driver context and spawn. If the driver fails, release
         // the lease before returning.
-        let identity = RuntimeIdentity::new(&run_id, &self.boot.boot_id);
+        let identity = identity;
+        let run_id = run_id;
         let ctx = DriverContext {
             identity: identity.clone(),
             run_kind: req.kind,
@@ -801,15 +822,78 @@ impl Supervisor {
                 .await?;
         }
 
+        let run_started_at = Instant::now();
+        let control = session.control;
+        let events = session.events;
+        let kind = req.kind;
+        // Insert the run record before the drain task starts so stream-end and
+        // early-exit coordination always find a resolvable lease owner.
+        {
+            let record = RunRecord {
+                task_id: req.task_id.clone(),
+                kind,
+                worker_id: req.worker_id.clone(),
+                role: req.role.clone(),
+                transport: transport.clone(),
+                harness: harness.clone(),
+                project_id: req.project_id.clone(),
+                worktree: req.worktree.clone(),
+                sub_state: initial_working_sub_state(&req.role),
+                identity: identity.clone(),
+                session_path: req.session_path.clone(),
+                babysitter_target: req.babysitter_target.clone(),
+                last_path: req.last_path.clone(),
+                stdout_path: req.stdout_path.clone(),
+                requires_worker_finalize: run_requires_worker_finalize(
+                    &req.last_path,
+                    &req.role,
+                ),
+                terminal_round: 0,
+                terminal_declaration: None,
+                artifactor_lifecycle: ArtifactorLifecycle::Idle,
+                pending_terminal_drain: false,
+                pending_cancel: false,
+                babysitter_run_id: None,
+                last_driver_event_at: run_started_at,
+                run_started_at,
+                last_input_at: run_started_at,
+                stall_timeout: resolve_timeout_secs(
+                    req.stall_timeout_secs,
+                    DEFAULT_STALL_TIMEOUT,
+                ),
+                max_run_duration: resolve_timeout_secs(
+                    req.max_run_duration_secs,
+                    DEFAULT_MAX_RUN_DURATION,
+                ),
+                idle_timeout: resolve_idle_timeout_secs(req.idle_timeout_secs),
+                next_event_seq: 0,
+                terminal_outcome: None,
+                control,
+                event_drain: tokio::spawn(async {}),
+                babysitter_summary: if kind == RunKind::Worker {
+                    Some(BabysitterSummaryBuffer::default())
+                } else {
+                    None
+                },
+                early_exit_watcher_pid: pid,
+                driver_has_work: false,
+                driver_has_terminal: false,
+                driver_has_ready: false,
+                early_exit_release_taken: false,
+            };
+            let mut g = self.inner.lock().await;
+            g.runs.insert(run_id.clone(), record);
+        }
+        lease.commit();
+
         // Drain driver events into the JSONL session in a background task.
         let writer = self.writer.clone();
         let session_path = req.session_path.clone();
         let inner_for_drain = self.inner.clone();
         let run_id_for_drain = run_id.clone();
         let identity_for_drain = identity.clone();
-        let kind = req.kind;
         let drain = tokio::spawn(async move {
-            let mut events = session.events;
+            let mut events = events;
             while let Some(evt) = events.recv().await {
                 let payload = match serde_json::to_value(&evt) {
                     Ok(v) => v,
@@ -907,52 +991,12 @@ impl Supervisor {
             // release or a second Lifecycle::Release write.
             finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
         });
-
-        let run_started_at = Instant::now();
-        let record = RunRecord {
-            task_id: req.task_id.clone(),
-            kind,
-            worker_id: req.worker_id.clone(),
-            role: req.role.clone(),
-            transport,
-            harness,
-            project_id: req.project_id.clone(),
-            worktree: req.worktree.clone(),
-            sub_state: initial_working_sub_state(&req.role),
-            identity: identity.clone(),
-            session_path: req.session_path.clone(),
-            babysitter_target: req.babysitter_target.clone(),
-            last_path: req.last_path.clone(),
-            stdout_path: req.stdout_path.clone(),
-            requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
-            terminal_round: 0,
-            terminal_declaration: None,
-            artifactor_lifecycle: ArtifactorLifecycle::Idle,
-            pending_terminal_drain: false,
-            pending_cancel: false,
-            babysitter_run_id: None,
-            last_driver_event_at: run_started_at,
-            run_started_at,
-            last_input_at: run_started_at,
-            stall_timeout: resolve_timeout_secs(req.stall_timeout_secs, DEFAULT_STALL_TIMEOUT),
-            max_run_duration: resolve_timeout_secs(
-                req.max_run_duration_secs,
-                DEFAULT_MAX_RUN_DURATION,
-            ),
-            idle_timeout: resolve_idle_timeout_secs(req.idle_timeout_secs),
-            next_event_seq: 0,
-            terminal_outcome: None,
-            control: session.control,
-            event_drain: drain,
-            babysitter_summary: if kind == RunKind::Worker {
-                Some(BabysitterSummaryBuffer::default())
-            } else {
-                None
-            },
-        };
-        let mut g = self.inner.lock().await;
-        g.runs.insert(run_id.clone(), record);
-        lease.commit();
+        {
+            let mut g = self.inner.lock().await;
+            if let Some(rec) = g.runs.get_mut(&run_id) {
+                rec.event_drain = drain;
+            }
+        }
         if let Some(pid) = pid {
             spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
         }
@@ -979,6 +1023,42 @@ impl Supervisor {
             session_path: native.session_path,
             launch_argv: native.launch_argv,
             resume_argv: native.resume_argv,
+        };
+        self.writer
+            .append_session(SessionAppend {
+                run_id: run_id.to_string(),
+                session_path: session_path.to_path_buf(),
+                identity: identity.clone(),
+                kind: SessionEventKind::Lifecycle,
+                event: serde_json::to_value(&evt).map_err(into_anyhow)?,
+            })
+            .await
+            .map_err(SupervisorError::Session)?;
+        Ok(())
+    }
+
+    /// Write a typed `Lifecycle::RecoveryOrigin` link into the replacement session.
+    pub async fn write_recovery_origin(
+        &self,
+        run_id: &str,
+        session_path: &Path,
+        identity: &RuntimeIdentity,
+        project_id: &str,
+        origin_run_id: &str,
+        origin_session_path: &Path,
+        request_id: &str,
+        action: &str,
+        target: &str,
+    ) -> Result<(), SupervisorError> {
+        let evt = Lifecycle::RecoveryOrigin {
+            project_id: project_id.to_string(),
+            origin_run_id: origin_run_id.to_string(),
+            origin_session_path: origin_session_path.to_path_buf(),
+            request_id: request_id.to_string(),
+            replacement_run_id: run_id.to_string(),
+            replacement_session_path: session_path.to_path_buf(),
+            action: action.to_string(),
+            target: Some(target.to_string()),
         };
         self.writer
             .append_session(SessionAppend {
@@ -1288,6 +1368,11 @@ impl Supervisor {
             } else {
                 None
             },
+            early_exit_watcher_pid: None,
+            driver_has_work: false,
+            driver_has_terminal: false,
+            driver_has_ready: false,
+            early_exit_release_taken: false,
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
@@ -2318,16 +2403,15 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
             if Instant::now() >= safety {
                 return;
             }
-            let session_path = {
+            let should_continue = {
                 let guard = supervisor.inner.lock().await;
-                guard
-                    .runs
-                    .get(&run_id)
-                    .map(|record| record.session_path.clone())
+                guard.runs.get(&run_id).is_some_and(|rec| {
+                    rec.early_exit_watcher_pid == Some(pid) && !rec.early_exit_release_taken
+                })
             };
-            let Some(session_path) = session_path else {
+            if !should_continue {
                 return;
-            };
+            }
             if !subprocess_exited(pid) {
                 exit_observed = None;
                 tokio::time::sleep(Duration::from_millis(250)).await;
@@ -2338,29 +2422,36 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
             }
-            let Ok(envelopes) = read_session_file(&session_path) else {
-                if exit_at.elapsed() >= Duration::from_secs(10) {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
+            let no_work = {
+                let guard = supervisor.inner.lock().await;
+                guard
+                    .runs
+                    .get(&run_id)
+                    .is_some_and(session_is_early_exit_no_work_record)
             };
-            if session_has_work_envelope(&envelopes) {
+            if !no_work {
                 return;
             }
-            if session_is_early_exit_no_work(&envelopes) {
+            let taken = {
+                let mut guard = supervisor.inner.lock().await;
+                try_take_early_exit_release(&mut guard, &run_id)
+            };
+            if let Some(rec) = taken {
                 tracing::info!(
                     run_id = %run_id,
                     pid,
                     "auto-releasing early-exit subprocess run with no work envelopes"
                 );
-                let _ = supervisor
-                    .release(
-                        &run_id,
-                        "early-exit subprocess with no work envelopes",
-                        ReleaseOutcome::Failed,
-                    )
-                    .await;
+                append_terminal_release(
+                    &supervisor.writer,
+                    rec,
+                    ResolvedTerminalRelease {
+                        reason: "early-exit subprocess with no work envelopes".into(),
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
+                    },
+                )
+                .await;
                 return;
             }
             if exit_at.elapsed() >= Duration::from_secs(10) {
@@ -2632,11 +2723,66 @@ fn apply_driver_event_to_record(
     if let Some(outcome) = terminal_outcome {
         rec.terminal_outcome = Some(outcome);
     }
+    if matches!(evt, DriverEvent::Ready { .. }) {
+        rec.driver_has_ready = true;
+    }
+    if driver_event_counts_as_work(evt) {
+        rec.driver_has_work = true;
+    }
+    if matches!(
+        evt,
+        DriverEvent::RunComplete { .. } | DriverEvent::RunFail { .. }
+    ) {
+        rec.driver_has_terminal = true;
+    }
     if let DriverEvent::TransitionState { to, .. } = evt {
         if let Ok(sub_state) = RunSubState::new(to.clone()) {
             rec.sub_state = Some(sub_state);
         }
     }
+}
+
+fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
+    match evt {
+        DriverEvent::Ready { .. } | DriverEvent::DriverError { .. } | DriverEvent::Heartbeat { .. } => {
+            false
+        }
+        _ => true,
+    }
+}
+
+fn session_is_early_exit_no_work_record(rec: &RunRecord) -> bool {
+    rec.driver_has_ready && !rec.driver_has_work && !rec.driver_has_terminal
+}
+
+enum StreamEndEarlyExitDecision {
+    DeferToWatcher,
+    Release,
+}
+
+fn stream_end_early_exit_decision(rec: &RunRecord) -> StreamEndEarlyExitDecision {
+    if !session_is_early_exit_no_work_record(rec) {
+        return StreamEndEarlyExitDecision::Release;
+    }
+    if rec.early_exit_watcher_pid.is_some() && !rec.early_exit_release_taken {
+        StreamEndEarlyExitDecision::DeferToWatcher
+    } else {
+        StreamEndEarlyExitDecision::Release
+    }
+}
+
+fn try_take_early_exit_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
+    let rec = inner.runs.get(run_id)?;
+    if rec.early_exit_release_taken
+        || !session_is_early_exit_no_work_record(rec)
+        || rec.early_exit_watcher_pid.is_none()
+    {
+        return None;
+    }
+    let mut rec = inner.runs.remove(run_id)?;
+    rec.early_exit_release_taken = true;
+    inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+    Some(rec)
 }
 
 /// TUI transports emit a terminal driver event (EOT-marker fallback; removed
@@ -2878,22 +3024,22 @@ async fn finish_stream_end_terminal_drain(
     inner: &tokio::sync::Mutex<Inner>,
     run_id: &str,
 ) {
-    let rec = {
+    let release = {
         let mut g = inner.lock().await;
-        claim_run_on_stream_end(&mut g, run_id)
-    };
-    if let Some(rec) = rec {
-        if let Ok(envelopes) = read_session_file(&rec.session_path) {
-            if session_is_early_exit_no_work(&envelopes) {
-                // Ready-only/no-work subprocess exits are released by
-                // spawn_early_exit_watcher with the canonical Failed tombstone.
-                let mut g = inner.lock().await;
+        let Some(rec) = claim_run_on_stream_end(&mut g, run_id) else {
+            return;
+        };
+        match stream_end_early_exit_decision(&rec) {
+            StreamEndEarlyExitDecision::DeferToWatcher => {
                 let lease_key = (rec.task_id.clone(), rec.kind);
                 g.leases.insert(lease_key, run_id.to_string());
                 g.runs.insert(run_id.to_string(), rec);
-                return;
+                None
             }
+            StreamEndEarlyExitDecision::Release => Some(rec),
         }
+    };
+    if let Some(rec) = release {
         write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
     }
 }

@@ -75,6 +75,10 @@ struct TmuxTuiConfig {
     /// Test-only knob; production callers leave this unset.
     #[serde(default)]
     force_inert: bool,
+    /// When true, launch argv is trusted resume/fork only — do not append a
+    /// fresh `--session-id`, initial prompt bundle, or other fresh-launch flags.
+    #[serde(default)]
+    native_resume_mode: bool,
     #[serde(default)]
     prompt_bundle_text: Option<String>,
     #[serde(
@@ -409,11 +413,14 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         .or_else(|| ctx.worktree.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
     let eot_marker = tmux_eot_marker(&ctx.identity.run_id);
-    let initial_prompt = cfg
-        .prompt_bundle_text
-        .as_deref()
-        .filter(|bundle| !bundle.trim().is_empty())
-        .map(|bundle| prompt_with_eot_instruction(bundle, &ctx.identity.run_id));
+    let initial_prompt = if cfg.native_resume_mode {
+        None
+    } else {
+        cfg.prompt_bundle_text
+            .as_deref()
+            .filter(|bundle| !bundle.trim().is_empty())
+            .map(|bundle| prompt_with_eot_instruction(bundle, &ctx.identity.run_id))
+    };
 
     let (command, mut args) = if should_use_default_command(cfg, harness) {
         default_command_for_harness(harness, cfg)
@@ -432,7 +439,7 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
     }
 
     let is_claude = harness == "claude" && command == "claude";
-    if is_claude {
+    if is_claude && !cfg.native_resume_mode {
         if !args
             .iter()
             .any(|arg| arg == "--dangerously-skip-permissions")
@@ -455,6 +462,13 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         if !args.iter().any(|arg| arg == "--session-id") {
             args.push("--session-id".to_string());
             args.push(session_id);
+        }
+    } else if is_claude && cfg.native_resume_mode {
+        if !args
+            .iter()
+            .any(|arg| arg == "--dangerously-skip-permissions")
+        {
+            args.push("--dangerously-skip-permissions".to_string());
         }
     }
 
