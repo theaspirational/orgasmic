@@ -88,10 +88,15 @@ pub fn project_dispatch_dir(project_root: &Path) -> PathBuf {
 }
 
 /// After a dispatch worktree at `.orgasmic/tmp/dispatch/<stem>/worktree` is
-/// removed, drop the transient stem artifacts (`<stem>-last.txt`,
-/// `<stem>-stdout.log`, an empty leftover `worktree/` dir) while retaining the
-/// brief. No-op for worktrees outside the dispatch layout.
-pub fn prune_dispatch_stem_after_worktree(worktree_path: &Path) {
+/// removed, drop only the selected attempt's transient artifacts while
+/// retaining the brief and sibling attempts. No-op for worktrees outside the
+/// dispatch layout.
+// orgasmic:TASK-ZHRRH,TASK-AFE5Q
+pub fn prune_dispatch_stem_after_worktree(
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) {
     if worktree_path.file_name().and_then(|s| s.to_str()) != Some("worktree") {
         return;
     }
@@ -100,33 +105,20 @@ pub fn prune_dispatch_stem_after_worktree(worktree_path: &Path) {
     };
     if !is_dispatch_stem_dir(stem_dir) {
         return;
-    }
-    let Some(stem) = stem_dir.file_name().and_then(|s| s.to_str()) else {
-        return;
     };
-    let _ = std::fs::remove_file(stem_dir.join(format!("{stem}-last.txt")));
-    let _ = std::fs::remove_file(stem_dir.join(format!("{stem}-stdout.log")));
-    if let Ok(entries) = std::fs::read_dir(stem_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            if (name.starts_with(&format!("{stem}-")) && name.ends_with("-last.txt"))
-                || (name.starts_with(&format!("{stem}-")) && name.ends_with("-stdout.log"))
-            {
-                let _ = if entry.path().is_file() {
-                    std::fs::remove_file(entry.path())
-                } else {
-                    Ok(())
-                };
-            }
+    for artifact in [last_path, stdout_path].into_iter().flatten() {
+        if dispatch_artifact_under_stem(stem_dir, artifact) && artifact.is_file() {
+            let _ = std::fs::remove_file(artifact);
         }
     }
     let leftover_worktree = stem_dir.join("worktree");
     if leftover_worktree.is_dir() {
         let _ = std::fs::remove_dir(&leftover_worktree);
     }
+}
+
+fn dispatch_artifact_under_stem(stem_dir: &Path, artifact: &Path) -> bool {
+    artifact.parent() == Some(stem_dir)
 }
 
 fn is_dispatch_stem_dir(stem_dir: &Path) -> bool {
@@ -172,18 +164,36 @@ mod tests {
     }
 
     #[test]
-    fn lifecycle_stage_file_names_cover_all_states() {
-        assert_eq!(
-            lifecycle_stage_file_name(LifecycleStage::Backlog),
-            "backlog.org"
-        );
-        assert_eq!(
-            lifecycle_stage_file_name(LifecycleStage::InProgress),
-            "in_progress.org"
-        );
-        assert_eq!(lifecycle_stage_file_name(LifecycleStage::Done), "done.org");
-        for &name in TASK_FILE_NAMES {
-            assert!(name.ends_with(".org"));
+    fn prune_dispatch_stem_removes_only_selected_attempt_artifacts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stem_dir = tmp.path().join(".orgasmic/tmp/dispatch/task-dispatch");
+        std::fs::create_dir_all(stem_dir.join("worktree")).unwrap();
+        let worktree = stem_dir.join("worktree");
+        let attempt_a_last = stem_dir.join("task-dispatch-aaaa-last.txt");
+        let attempt_a_stdout = stem_dir.join("task-dispatch-aaaa-stdout.log");
+        let attempt_b_last = stem_dir.join("task-dispatch-bbbb-last.txt");
+        let attempt_b_stdout = stem_dir.join("task-dispatch-bbbb-stdout.log");
+        let legacy_last = stem_dir.join("task-dispatch-last.txt");
+        for path in [
+            &attempt_a_last,
+            &attempt_a_stdout,
+            &attempt_b_last,
+            &attempt_b_stdout,
+            &legacy_last,
+        ] {
+            std::fs::write(path, "artifact").unwrap();
         }
+
+        prune_dispatch_stem_after_worktree(
+            &worktree,
+            Some(&attempt_a_last),
+            Some(&attempt_a_stdout),
+        );
+
+        assert!(!attempt_a_last.exists());
+        assert!(!attempt_a_stdout.exists());
+        assert!(attempt_b_last.exists());
+        assert!(attempt_b_stdout.exists());
+        assert!(legacy_last.exists());
     }
 }

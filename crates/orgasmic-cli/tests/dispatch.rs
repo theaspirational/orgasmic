@@ -431,6 +431,31 @@ fn append_partial_close_tx(
     write(&path, raw);
 }
 
+fn tx_property_for(raw: &str, ty: &str, task: &str, key: &str) -> String {
+    for block in raw.split("\n\n* TX ") {
+        if block.contains(&format!(":TYPE:         {ty}"))
+            && block.contains(&format!(":TASK:         {task}"))
+        {
+            let prefix = format!(":{key}:");
+            for line in block.lines() {
+                if let Some(value) = line.trim_start().strip_prefix(prefix.as_str()) {
+                    return value.trim().to_string();
+                }
+            }
+        }
+    }
+    panic!("missing {key} for type={ty} task={task}\n{raw}");
+}
+
+fn resolve_project_path(project_root: &Path, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_relative() {
+        project_root.join(path)
+    } else {
+        path
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_dispatch_status_close_done_with_stub_codex() {
     let tmp = tempfile::tempdir().unwrap();
@@ -2192,8 +2217,25 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     );
     let worktree = stem_dir.join("worktree");
     assert!(worktree.is_dir());
-    write(&stem_dir.join("task-dispatch-last.txt"), "worker summary");
-    write(&stem_dir.join("task-dispatch-stdout.log"), "worker stdout");
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+    let sibling_last = stem_dir.join("task-dispatch-attempt2-last.txt");
+    let sibling_stdout = stem_dir.join("task-dispatch-attempt2-stdout.log");
+    let legacy_last = stem_dir.join("task-dispatch-last.txt");
+    let legacy_stdout = stem_dir.join("task-dispatch-stdout.log");
+    write(&sibling_last, "sibling attempt report");
+    write(&sibling_stdout, "sibling attempt stdout");
+    write(&legacy_last, "legacy summary");
+    write(&legacy_stdout, "legacy stdout");
 
     let _ = run_orgasmic(
         &home,
@@ -2218,12 +2260,28 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
 
     assert!(!worktree.exists(), "worktree should be removed on close");
     assert!(
-        !stem_dir.join("task-dispatch-last.txt").exists(),
-        "last.txt should be pruned on close"
+        !attempt_last.exists(),
+        "selected attempt last.txt should be pruned on close"
     );
     assert!(
-        !stem_dir.join("task-dispatch-stdout.log").exists(),
-        "stdout.log should be pruned on close"
+        !attempt_stdout.exists(),
+        "selected attempt stdout.log should be pruned on close"
+    );
+    assert!(
+        sibling_last.exists(),
+        "sibling attempt last.txt must survive close"
+    );
+    assert!(
+        sibling_stdout.exists(),
+        "sibling attempt stdout.log must survive close"
+    );
+    assert!(
+        legacy_last.exists(),
+        "legacy last.txt must survive when not selected"
+    );
+    assert!(
+        legacy_stdout.exists(),
+        "legacy stdout.log must survive when not selected"
     );
     assert!(brief.is_file(), "brief should be retained after close");
 

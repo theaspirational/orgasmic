@@ -112,6 +112,8 @@ impl DaemonClient {
             "kind": plan.kind.as_str(),
             "worktree_path": plan.worktree_path,
             "branch": plan.branch,
+            "last_path": plan.last_path,
+            "stdout_path": plan.stdout_path,
         });
         self.post_json(
             &format!("/projects/{project}/tasks/{task}/dispatch/cleanup"),

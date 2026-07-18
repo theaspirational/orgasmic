@@ -137,6 +137,7 @@ impl WorkerDriver for TmuxDriver {
         let inert = inert_reason.is_some();
         let session_name = tmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let startup_cancel = Arc::new(AtomicBool::new(false));
 
         // orgasmic:TASK-AFE5Q,TASK-756WX
         let (lifecycle_task, startup_task) = if !inert {
@@ -171,8 +172,11 @@ impl WorkerDriver for TmuxDriver {
                 // fresh worktrees block until `[a] Trust this workspace` is sent.
                 let session = session_name.clone();
                 let timeout = cfg.input_ready_timeout;
+                let cancel = startup_cancel.clone();
                 Some(tokio::spawn(async move {
-                    if let Err(e) = accept_cursor_workspace_trust(&session, timeout).await {
+                    if let Err(e) =
+                        accept_cursor_workspace_trust(&session, timeout, Some(cancel)).await
+                    {
                         tracing::warn!(
                             ?e,
                             "cursor workspace trust gate not cleared within timeout"
@@ -229,6 +233,7 @@ impl WorkerDriver for TmuxDriver {
                 inert,
                 lifecycle_task,
                 startup_task,
+                startup_cancel,
                 terminal_emitted,
                 kill_on_drop: true,
                 released: false,
@@ -285,6 +290,7 @@ impl WorkerDriver for TmuxDriver {
                         inert: false,
                         lifecycle_task: Some(lifecycle_task),
                         startup_task: None,
+                        startup_cancel: Arc::new(AtomicBool::new(false)),
                         terminal_emitted,
                         kill_on_drop: false,
                         released: false,
@@ -303,9 +309,10 @@ struct TmuxTuiControl {
     inert: bool,
     /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
     lifecycle_task: Option<JoinHandle<()>>,
-    /// One-shot startup helper (prompt paste or Cursor trust gate). Aborted on
-    /// release/drop alongside `lifecycle_task` (TASK-756WX).
+    /// One-shot startup helper (prompt paste or Cursor trust gate). Cancelled
+    /// and joined on release; aborted on drop (TASK-ZHRRH).
     startup_task: Option<JoinHandle<()>>,
+    startup_cancel: Arc<AtomicBool>,
     terminal_emitted: Arc<AtomicBool>,
     kill_on_drop: bool,
     released: bool,
@@ -314,6 +321,14 @@ struct TmuxTuiControl {
 fn abort_driver_task(task: Option<JoinHandle<()>>) {
     if let Some(task) = task {
         task.abort();
+    }
+}
+
+pub(crate) async fn cancel_and_join_driver_task(cancel: &AtomicBool, task: Option<JoinHandle<()>>) {
+    cancel.store(true, Ordering::SeqCst);
+    if let Some(task) = task {
+        task.abort();
+        let _ = task.await;
     }
 }
 
@@ -371,7 +386,7 @@ impl DriverControl for TmuxTuiControl {
         }
         self.released = true;
         abort_driver_task(self.lifecycle_task.take());
-        abort_driver_task(self.startup_task.take());
+        cancel_and_join_driver_task(&self.startup_cancel, self.startup_task.take()).await;
         if !self.inert {
             kill_tmux_session(&self.session_name).await;
         }
@@ -389,6 +404,7 @@ impl DriverControl for TmuxTuiControl {
 
 impl Drop for TmuxTuiControl {
     fn drop(&mut self) {
+        self.startup_cancel.store(true, Ordering::SeqCst);
         abort_driver_task(self.lifecycle_task.take());
         abort_driver_task(self.startup_task.take());
         if !self.released && self.kill_on_drop && !self.inert {
@@ -950,22 +966,39 @@ pub(crate) enum CursorStartupFrame {
     Ready,
 }
 
-/// Whether the visible frame matches Cursor's bounded trust-screen layout: the
-/// title line and the `[a]` action line must both be present as whole lines.
-// orgasmic:TASK-756WX,TASK-AFE5Q
+/// Whether the visible frame matches Cursor's bounded trust-screen layout.
+/// Requires the full interactive component (title, description, trust/quit
+/// actions) and the absence of the real composer input — two matching lines
+/// or prompt/model prose must not suffice (TASK-ZHRRH).
+// orgasmic:TASK-756WX,TASK-AFE5Q,TASK-ZHRRH
 pub(crate) fn is_cursor_trust_dialog_layout(pane: &str) -> bool {
+    if pane_has_cursor_composer_ready(pane) {
+        return false;
+    }
     let mut has_title = false;
-    let mut has_action = false;
+    let mut has_description = false;
+    let mut has_trust_action = false;
+    let mut has_quit_action = false;
     for line in pane.lines() {
         let trimmed = strip_ansi_codes(line).trim().to_string();
-        if trimmed.eq_ignore_ascii_case("workspace trust required") {
+        if trimmed.is_empty() {
+            continue;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if lower == "workspace trust required" {
             has_title = true;
         }
-        if trimmed.eq_ignore_ascii_case("[a] trust this workspace") {
-            has_action = true;
+        if lower == "do you trust the contents of this directory?" {
+            has_description = true;
+        }
+        if lower == "[a] trust this workspace" {
+            has_trust_action = true;
+        }
+        if lower == "[q] quit" {
+            has_quit_action = true;
         }
     }
-    has_title && has_action
+    has_title && has_description && has_trust_action && has_quit_action
 }
 
 pub(crate) fn classify_cursor_startup_frame(pane: &str) -> CursorStartupFrame {
@@ -973,9 +1006,7 @@ pub(crate) fn classify_cursor_startup_frame(pane: &str) -> CursorStartupFrame {
     if trimmed.is_empty() || cursor_startup_frame_is_loading(trimmed) {
         return CursorStartupFrame::BlankOrLoading;
     }
-    // Composer-visible means the argv prompt is already live — trust phrases in
-    // prompt/model output must not re-trigger the gate (TASK-756WX).
-    if pane_has_input_prompt(pane) {
+    if pane_has_cursor_composer_ready(pane) {
         return CursorStartupFrame::Ready;
     }
     if is_cursor_trust_dialog_layout(pane) {
@@ -1007,6 +1038,7 @@ fn cursor_startup_frame_is_loading(pane: &str) -> bool {
 async fn accept_cursor_workspace_trust(
     session: &str,
     timeout: Duration,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), DriverError> {
     let session = session.to_string();
     accept_cursor_workspace_trust_with_capture(
@@ -1031,8 +1063,15 @@ async fn accept_cursor_workspace_trust(
             let key = key.to_string();
             async move { send_keys(&session, &[key]).await }
         },
+        cancel,
     )
     .await
+}
+
+fn startup_cancelled(cancel: &Option<Arc<AtomicBool>>) -> bool {
+    cancel
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::SeqCst))
 }
 
 pub(crate) async fn accept_cursor_workspace_trust_with_capture<C, Fut, A, AFut, S, SFut>(
@@ -1041,6 +1080,7 @@ pub(crate) async fn accept_cursor_workspace_trust_with_capture<C, Fut, A, AFut, 
     mut capture: C,
     mut is_alive: A,
     mut send_key: S,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), DriverError>
 where
     C: FnMut() -> Fut,
@@ -1054,13 +1094,15 @@ where
     let mut poll = tokio::time::interval(poll_interval);
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     poll.tick().await;
-    let mut trust_sent = false;
     loop {
         tokio::select! {
             _ = tokio::time::sleep_until(deadline) => {
                 return Err(DriverError::InputNotReady(timeout));
             }
             _ = poll.tick() => {
+                if startup_cancelled(&cancel) {
+                    return Ok(());
+                }
                 if !is_alive().await {
                     return Ok(());
                 }
@@ -1068,17 +1110,32 @@ where
                     Err(_) => continue,
                     Ok(pane) => match classify_cursor_startup_frame(&pane) {
                         CursorStartupFrame::BlankOrLoading => continue,
-                        CursorStartupFrame::TrustDialog if !trust_sent => {
+                        CursorStartupFrame::TrustDialog => {
+                            if startup_cancelled(&cancel) {
+                                return Ok(());
+                            }
                             send_key("a").await?;
                             return Ok(());
                         }
-                        CursorStartupFrame::TrustDialog => return Ok(()),
                         CursorStartupFrame::Ready => return Ok(()),
                     },
                 }
             }
         }
     }
+}
+
+/// Canonical bounded Cursor trust-screen layout for tests and probes.
+#[allow(dead_code)]
+pub(crate) fn cursor_trust_dialog_frame(workspace: &str) -> String {
+    format!(
+        "Workspace Trust Required\n\n\
+         Cursor needs your permission to read files and access files in this directory.\n\n\
+         Do you trust the contents of this directory?\n\n\
+         {workspace}\n\n\
+         [a] Trust this workspace\n\
+         [q] Quit\n"
+    )
 }
 
 async fn wait_for_input_ready(session: &str, timeout: Duration) -> Result<(), DriverError> {
@@ -1149,6 +1206,15 @@ pub(crate) fn pane_has_input_prompt(pane: &str) -> bool {
         // prompt; treating them as ready would paste the dispatch brief into
         // the menu's filter/selector. Require a real composer prompt.
         is_prompt && !line_is_numbered_menu_item(&line)
+    })
+}
+
+/// Cursor composer readiness: bounded to the harness input component (`❯`
+/// at column zero), not generic `>` blockquotes from prompt/model output.
+pub(crate) fn pane_has_cursor_composer_ready(pane: &str) -> bool {
+    pane.lines().any(|line| {
+        let line = strip_ansi_codes(line);
+        line_starts_with_prompt(&line, "❯") && !line_is_numbered_menu_item(&line)
     })
 }
 
@@ -1621,6 +1687,14 @@ mod tests {
     }
 
     #[test]
+    fn pane_has_cursor_composer_ready_rejects_markdown_blockquote() {
+        assert!(!pane_has_cursor_composer_ready(
+            "model output\n> quoted line\n"
+        ));
+        assert!(pane_has_cursor_composer_ready("cursor-agent\n❯ \n"));
+    }
+
+    #[test]
     fn pane_has_input_prompt_detects_claude_indicators() {
         assert!(pane_has_input_prompt("banner\n❯ \nfooter"));
         assert!(pane_has_input_prompt("banner\n❯\u{00a0}\nfooter"));
@@ -1653,18 +1727,39 @@ mod tests {
 
     #[test]
     fn is_cursor_trust_dialog_layout_matches_bounded_dialog() {
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
-        assert!(is_cursor_trust_dialog_layout(trust));
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        assert!(is_cursor_trust_dialog_layout(&trust));
         assert!(!is_cursor_trust_dialog_layout("cursor-agent ready\n❯ "));
-        // Prose mentioning both phrases on one line is not the dialog layout.
+        assert!(!is_cursor_trust_dialog_layout(
+            "Workspace Trust Required\n\n[a] Trust this workspace\n"
+        ));
         assert!(!is_cursor_trust_dialog_layout(
             "prompt: Workspace Trust Required — choose [a] Trust this workspace now"
         ));
     }
 
     #[test]
+    fn classify_cursor_startup_frame_rejects_partial_trust_phrases_and_blockquotes() {
+        assert_eq!(
+            classify_cursor_startup_frame("Workspace Trust Required\n\n[a] Trust this workspace\n"),
+            CursorStartupFrame::BlankOrLoading,
+            "partial two-line trust prose must not trigger"
+        );
+        assert_eq!(
+            classify_cursor_startup_frame("model working\n> blockquote line\n"),
+            CursorStartupFrame::BlankOrLoading,
+            "markdown blockquote must not terminate trust handling early"
+        );
+        assert_eq!(
+            classify_cursor_startup_frame(&cursor_trust_dialog_frame("/tmp/worktree")),
+            CursorStartupFrame::TrustDialog
+        );
+    }
+
+    #[test]
     fn classify_cursor_startup_frame_rejects_prompt_prose() {
-        let prompt = "TASK-756WX fix round 2: Workspace Trust Required\n\n[a] Trust this workspace in the brief\n\n❯ ";
+        let prompt = "TASK-756WX fix round 2: Workspace Trust Required\n\n\
+                      [a] Trust this workspace in the brief\n\n❯ ";
         assert_eq!(
             classify_cursor_startup_frame(prompt),
             CursorStartupFrame::Ready,
@@ -1672,11 +1767,22 @@ mod tests {
         );
     }
 
+    #[test]
+    fn classify_cursor_startup_frame_rejects_exact_phrases_without_composer() {
+        let prose = "Implement TASK-756WX\nWorkspace Trust Required\n\
+                     [a] Trust this workspace\n";
+        assert_eq!(
+            classify_cursor_startup_frame(prose),
+            CursorStartupFrame::BlankOrLoading,
+            "exact title/action without full dialog layout must not trigger"
+        );
+    }
+
     #[tokio::test]
     async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let ready = "cursor-agent\n❯ \n";
-        let mut panes = VecDeque::from([Ok(trust.to_string()), Ok(ready.to_string())]);
+        let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             Duration::from_millis(50),
@@ -1690,6 +1796,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1699,14 +1806,14 @@ mod tests {
     #[tokio::test]
     async fn accept_cursor_workspace_trust_waits_through_loading_then_trust() {
         let loading = "\n\n";
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
-        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.to_string())]);
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.clone())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             Duration::from_millis(50),
             Duration::from_millis(1),
             || {
-                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.to_string()));
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.clone()));
                 async move { pane }
             },
             || async { true },
@@ -1714,6 +1821,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1733,6 +1841,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1741,17 +1850,18 @@ mod tests {
 
     #[tokio::test]
     async fn accept_cursor_workspace_trust_repeated_frames_send_once() {
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             Duration::from_millis(50),
             Duration::from_millis(1),
-            || async { Ok(trust.to_string()) },
+            || async { Ok(trust.clone()) },
             || async { true },
             |key: &str| {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1772,6 +1882,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1780,7 +1891,7 @@ mod tests {
 
     #[tokio::test]
     async fn accept_cursor_workspace_trust_recovers_after_capture_errors() {
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let mut attempts = 0;
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
@@ -1788,11 +1899,12 @@ mod tests {
             Duration::from_millis(1),
             || {
                 attempts += 1;
+                let trust = trust.clone();
                 async move {
                     if attempts == 1 {
                         Err(DriverError::Transport("capture failed".into()))
                     } else {
-                        Ok(trust.to_string())
+                        Ok(trust)
                     }
                 }
             },
@@ -1801,6 +1913,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1809,21 +1922,122 @@ mod tests {
 
     #[tokio::test]
     async fn accept_cursor_workspace_trust_exits_when_pane_gone_without_input() {
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             Duration::from_millis(50),
             Duration::from_millis(1),
-            || async { Ok(trust.to_string()) },
+            || async { Ok(trust.clone()) },
             || async { false },
             |key: &str| {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
         assert!(sent.is_empty(), "pane/process exit must not send input");
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_honours_cancel_before_send() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let cancel = Arc::new(AtomicBool::new(true));
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(trust.clone()) },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            Some(cancel),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            sent.is_empty(),
+            "cancelled startup must not inject trust input"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_waits_for_delayed_trust_after_blockquote() {
+        let working = "Thinking...\n> quoted model output\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut panes = VecDeque::from([Ok(working.to_string()), Ok(trust.clone())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.clone()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(
+            sent,
+            vec!["a"],
+            "delayed real dialog must still trigger once"
+        );
+    }
+
+    #[tokio::test]
+    async fn cursor_trust_probe_fresh_worktree_when_enabled() {
+        if std::env::var("ORGASMIC_PROBE_CURSOR_TRUST").as_deref() != Ok("1") {
+            eprintln!(
+                "SKIP cursor_trust_probe_fresh_worktree_when_enabled: set ORGASMIC_PROBE_CURSOR_TRUST=1"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let session = format!("orgasmic-trust-probe-{}", std::process::id());
+        let _guard = live_session_guard();
+        let output = tokio::process::Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                &session,
+                "-c",
+                tmp.path().to_str().unwrap(),
+                "cursor-agent",
+            ])
+            .output()
+            .await
+            .expect("spawn tmux session for cursor trust probe");
+        assert!(
+            output.status.success(),
+            "tmux new-session failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let pane = capture_pane_visible(&session)
+            .await
+            .expect("capture probe pane");
+        let _ = tokio::process::Command::new("tmux")
+            .args(["kill-session", "-t", &session])
+            .status()
+            .await;
+        let frame = classify_cursor_startup_frame(&pane);
+        assert!(
+            matches!(
+                frame,
+                CursorStartupFrame::TrustDialog | CursorStartupFrame::Ready
+            ),
+            "fresh cursor-agent pane should be trust dialog or already-trusted composer, got {frame:?}\n{pane}"
+        );
     }
 
     #[test]

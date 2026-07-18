@@ -4157,6 +4157,10 @@ pub struct DispatchCleanupRequest {
     pub kind: String,
     pub worktree_path: PathBuf,
     pub branch: String,
+    #[serde(default)]
+    pub last_path: Option<PathBuf>,
+    #[serde(default)]
+    pub stdout_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4199,7 +4203,12 @@ async fn post_task_dispatch_cleanup(
         .map_err(|error| ApiError::internal(error.to_string()))?;
 
     let mut errors = Vec::new();
-    let worktree_removed = match remove_dispatch_worktree(&project.root, &req.worktree_path) {
+    let worktree_removed = match remove_dispatch_worktree(
+        &project.root,
+        &req.worktree_path,
+        req.last_path.as_deref(),
+        req.stdout_path.as_deref(),
+    ) {
         Ok(removed) => removed,
         Err(err) => {
             errors.push(format!("worktree: {err}"));
@@ -4234,7 +4243,12 @@ async fn post_task_dispatch_cleanup(
     }))
 }
 
-fn remove_dispatch_worktree(project_root: &FsPath, path: &FsPath) -> Result<bool, String> {
+fn remove_dispatch_worktree(
+    project_root: &FsPath,
+    path: &FsPath,
+    last_path: Option<&FsPath>,
+    stdout_path: Option<&FsPath>,
+) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
@@ -4245,7 +4259,7 @@ fn remove_dispatch_worktree(project_root: &FsPath, path: &FsPath) -> Result<bool
         .output()
         .map_err(|err| err.to_string())?;
     if output.status.success() {
-        orgasmic_core::prune_dispatch_stem_after_worktree(path);
+        orgasmic_core::prune_dispatch_stem_after_worktree(path, last_path, stdout_path);
         Ok(true)
     } else {
         Err(format!(

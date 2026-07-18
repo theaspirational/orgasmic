@@ -434,8 +434,13 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         &dispatch_lifecycle_transitions(plan.kind, &plan.tasks),
     ) {
         let reason = format!("lifecycle update failed: {err}");
-        let cleanup =
-            cleanup_created_resources(&plan.project_root, &plan.worktree_path, &plan.branch);
+        let cleanup = cleanup_created_resources(
+            &plan.project_root,
+            &plan.worktree_path,
+            &plan.branch,
+            &plan.last_path,
+            &plan.stdout_path,
+        );
         if cleanup.status != CleanupStatus::Ok {
             bail!(
                 "{reason}; cleanup status={} error={}",
@@ -470,7 +475,13 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
                         },
                     }
                 } else {
-                    cleanup_created_resources(&plan.project_root, &plan.worktree_path, &plan.branch)
+                    cleanup_created_resources(
+                        &plan.project_root,
+                        &plan.worktree_path,
+                        &plan.branch,
+                        &plan.last_path,
+                        &plan.stdout_path,
+                    )
                 };
             restore_task_lifecycle_stages(&client, &plan.project_id, &pre_dispatch_stages);
             if cleanup.status != CleanupStatus::Ok {
@@ -1926,14 +1937,24 @@ fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &st
     Ok(())
 }
 
-fn remove_worktree_if_present(project_root: &Path, path: &Path) -> Result<()> {
+fn remove_worktree_if_present(
+    project_root: &Path,
+    path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    remove_worktree_required(project_root, path)
+    remove_worktree_required(project_root, path, last_path, stdout_path)
 }
 
-fn remove_worktree_required(project_root: &Path, path: &Path) -> Result<()> {
+fn remove_worktree_required(
+    project_root: &Path,
+    path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> Result<()> {
     if !path.exists() {
         bail!("worktree path missing: {}", path.display());
     }
@@ -1950,7 +1971,7 @@ fn remove_worktree_required(project_root: &Path, path: &Path) -> Result<()> {
             String::from_utf8_lossy(&output.stdout)
         );
     }
-    orgasmic_core::prune_dispatch_stem_after_worktree(path);
+    orgasmic_core::prune_dispatch_stem_after_worktree(path, last_path, stdout_path);
     Ok(())
 }
 
@@ -1993,12 +2014,18 @@ fn daemon_cleanup_to_outcome(
     })
 }
 
-fn cleanup_created_resources(project_root: &Path, path: &Path, branch: &str) -> CleanupOutcome {
+fn cleanup_created_resources(
+    project_root: &Path,
+    path: &Path,
+    branch: &str,
+    last_path: &Path,
+    stdout_path: &Path,
+) -> CleanupOutcome {
     let mut worktree_failed = false;
     let mut branch_failed = false;
     let mut errors = Vec::new();
 
-    match remove_worktree_if_present(project_root, path) {
+    match remove_worktree_if_present(project_root, path, Some(last_path), Some(stdout_path)) {
         Ok(()) => {}
         Err(err) => {
             worktree_failed = true;
@@ -2026,12 +2053,23 @@ fn cleanup_created_resources(project_root: &Path, path: &Path, branch: &str) -> 
     }
 }
 
+fn resolve_project_path(project_root: &Path, path: Option<PathBuf>) -> Option<PathBuf> {
+    path.map(|mut path| {
+        if path.is_relative() {
+            path = project_root.join(path);
+        }
+        path
+    })
+}
+
 fn cleanup_dispatch(
     project_root: &Path,
     open: &DispatchRecord,
     remove_worktree: bool,
     branch_delete: bool,
 ) -> CleanupOutcome {
+    let last_path = resolve_project_path(project_root, open.last_path.clone());
+    let stdout_path = resolve_project_path(project_root, open.stdout_path.clone());
     let mut worktree_failed = false;
     let mut branch_failed = false;
     let mut worktree_missing = false;
@@ -2040,7 +2078,12 @@ fn cleanup_dispatch(
     if remove_worktree {
         match &open.worktree {
             Some(worktree) => {
-                if let Err(err) = remove_worktree_required(project_root, worktree) {
+                if let Err(err) = remove_worktree_required(
+                    project_root,
+                    worktree,
+                    last_path.as_deref(),
+                    stdout_path.as_deref(),
+                ) {
                     worktree_failed = true;
                     errors.push(format!("worktree: {err}"));
                 }
@@ -2540,22 +2583,21 @@ fn dispatch_artifact_stem(brief_path: &Path) -> (String, String) {
 }
 
 fn mint_dispatch_attempt_id() -> String {
-    uuid::Uuid::new_v4()
-        .simple()
-        .to_string()
-        .chars()
-        .take(8)
-        .collect()
+    uuid::Uuid::new_v4().simple().to_string()
 }
 
 /// Resolve the (brief, last, stdout) artifact paths for a dispatch. All three
-/// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`
-/// (the stem encodes task + kind, e.g. `task-129-impl`), keeping the prefixed
-/// filenames so they stay self-describing when read in isolation. Completion
-/// artifacts include a per-attempt id so consecutive dispatches cannot inherit
-/// a prior attempt's report (TASK-756WX).
+/// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`.
+/// Completion artifacts include a per-attempt id so consecutive dispatches cannot
+/// inherit a prior attempt's report (TASK-756WX, TASK-ZHRRH).
 fn dispatch_artifact_paths(project_root: &Path, brief_path: &Path) -> (PathBuf, PathBuf, PathBuf) {
-    dispatch_artifact_paths_for_attempt(project_root, brief_path, &mint_dispatch_attempt_id())
+    loop {
+        let attempt_id = mint_dispatch_attempt_id();
+        let paths = dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
+        if !paths.1.exists() && !paths.2.exists() {
+            return paths;
+        }
+    }
 }
 
 fn dispatch_artifact_paths_for_attempt(
@@ -3321,8 +3363,8 @@ mod tests {
     fn attempt_scoped_paths_isolate_consecutive_dispatches() {
         let tmp = tempfile::tempdir().unwrap();
         let project_root = tmp.path().join("repo");
-        let brief = project_root
-            .join(".orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md");
+        let brief =
+            project_root.join(".orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md");
         let (_, last1, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt1");
         let (_, last2, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2");
         assert_ne!(last1, last2);

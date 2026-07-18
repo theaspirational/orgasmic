@@ -51,9 +51,10 @@ use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
 use crate::modes::tmux::{
     accept_cursor_workspace_trust_with_capture, argv_prompt_delivery_applies,
-    claude_native_runtime, claude_session_id, cursor_argv_needs_startup_trust,
-    default_input_ready_timeout, deserialize_duration_secs, is_dispatch_placeholder,
-    pane_has_input_prompt, pane_requests_folder_trust, push_initial_prompt_argv,
+    cancel_and_join_driver_task, claude_native_runtime, claude_session_id,
+    cursor_argv_needs_startup_trust, default_input_ready_timeout, deserialize_duration_secs,
+    is_dispatch_placeholder, pane_has_input_prompt, pane_requests_folder_trust,
+    push_initial_prompt_argv,
 };
 
 use crate::r#trait::{
@@ -478,6 +479,7 @@ impl WorkerDriver for RmuxDriver {
         let inert = inert_reason.is_some();
         let session_name = rmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let startup_cancel = Arc::new(AtomicBool::new(false));
 
         let live = if inert {
             None
@@ -497,6 +499,7 @@ impl WorkerDriver for RmuxDriver {
                 &cfg,
                 tx.clone(),
                 terminal_emitted.clone(),
+                startup_cancel.clone(),
             )
             .await
             {
@@ -573,6 +576,7 @@ impl WorkerDriver for RmuxDriver {
                     kind: ctx.run_kind,
                     lifecycle_task,
                     startup_task,
+                    startup_cancel,
                     terminal_emitted,
                     released: false,
                     session,
@@ -680,6 +684,7 @@ impl WorkerDriver for RmuxDriver {
                     kind: ctx.run_kind,
                     lifecycle_task: Some(lifecycle_task),
                     startup_task: None,
+                    startup_cancel: Arc::new(AtomicBool::new(false)),
                     terminal_emitted,
                     released: false,
                     session: Some(session),
@@ -739,6 +744,7 @@ struct LiveSession {
 /// and optionally mint Web Share URLs. No render/scrollback capture
 /// (TASK-AFE5Q). Returns an error (caller degrades to inert) when the
 /// SDK/daemon is unreachable.
+#[allow(clippy::too_many_arguments)]
 async fn run_live_session(
     session_name: &str,
     rmux_bin: &str,
@@ -747,6 +753,7 @@ async fn run_live_session(
     cfg: &RmuxConfig,
     events: mpsc::Sender<DriverEvent>,
     terminal_emitted: Arc<AtomicBool>,
+    startup_cancel: Arc<AtomicBool>,
 ) -> Result<LiveSession, DriverError> {
     use rmux_sdk::{EnsureSession, EnsureSessionPolicy, ProcessSpec, Rmux, TerminalSizeSpec};
 
@@ -828,8 +835,11 @@ async fn run_live_session(
         let bin = rmux_bin.to_string();
         let session = session_target.clone();
         let timeout = cfg.input_ready_timeout;
+        let cancel = startup_cancel.clone();
         Some(tokio::spawn(async move {
-            if let Err(e) = accept_cursor_workspace_trust_rmux(&bin, &session, timeout).await {
+            if let Err(e) =
+                accept_cursor_workspace_trust_rmux(&bin, &session, timeout, Some(cancel)).await
+            {
                 tracing::warn!(?e, "cursor workspace trust gate not cleared within timeout");
             }
         }))
@@ -958,6 +968,7 @@ async fn accept_cursor_workspace_trust_rmux(
     bin: &str,
     session: &str,
     timeout: Duration,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), DriverError> {
     let bin = bin.to_string();
     let session = session.to_string();
@@ -988,6 +999,7 @@ async fn accept_cursor_workspace_trust_rmux(
             let key = key.to_string();
             async move { run_rmux_cli(&bin, &["send-keys", "-t", &session, &key]).await }
         },
+        cancel,
     )
     .await
 }
@@ -1159,9 +1171,10 @@ struct RmuxControl {
     kind: RunKind,
     /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
     lifecycle_task: Option<JoinHandle<()>>,
-    /// One-shot startup helper (prompt paste or Cursor trust gate). Aborted on
-    /// release/drop alongside `lifecycle_task` (TASK-756WX).
+    /// One-shot startup helper (prompt paste or Cursor trust gate). Cancelled
+    /// and joined on release; aborted on drop (TASK-ZHRRH).
     startup_task: Option<JoinHandle<()>>,
+    startup_cancel: Arc<AtomicBool>,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
     /// Typed session handle for a live run, so `release`/`Drop` can tear it
@@ -1196,6 +1209,7 @@ impl RmuxControl {
             kind,
             lifecycle_task: None,
             startup_task: None,
+            startup_cancel: Arc::new(AtomicBool::new(false)),
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             released: false,
             session: None,
@@ -1301,7 +1315,7 @@ impl DriverControl for RmuxControl {
         }
         self.released = true;
         abort_rmux_task(self.lifecycle_task.take());
-        abort_rmux_task(self.startup_task.take());
+        cancel_and_join_driver_task(&self.startup_cancel, self.startup_task.take()).await;
         // Reap the detached rmux session through the typed SDK (inert runs own
         // no session). Awaited so the session is gone when `release` returns;
         // teardown failures are non-fatal and only logged.
@@ -1324,6 +1338,7 @@ impl DriverControl for RmuxControl {
 
 impl Drop for RmuxControl {
     fn drop(&mut self) {
+        self.startup_cancel.store(true, Ordering::SeqCst);
         abort_rmux_task(self.lifecycle_task.take());
         abort_rmux_task(self.startup_task.take());
         // System-wide / reattached runs intentionally outlive the daemon: never
@@ -1421,6 +1436,9 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::tmux::{
+        classify_cursor_startup_frame, cursor_trust_dialog_frame, CursorStartupFrame,
+    };
     use std::collections::VecDeque;
 
     /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
@@ -1591,9 +1609,9 @@ mod tests {
 
     #[tokio::test]
     async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
         let ready = "cursor-agent\n❯ \n";
-        let mut panes = VecDeque::from([Ok(trust.to_string()), Ok(ready.to_string())]);
+        let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             Duration::from_millis(50),
@@ -1607,6 +1625,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1616,14 +1635,14 @@ mod tests {
     #[tokio::test]
     async fn accept_cursor_workspace_trust_rmux_waits_through_loading() {
         let loading = "starting cursor-agent\n";
-        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
-        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.to_string())]);
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.clone())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
             Duration::from_millis(50),
             Duration::from_millis(1),
             || {
-                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.to_string()));
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.clone()));
                 async move { pane }
             },
             || async { true },
@@ -1631,6 +1650,7 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
@@ -1650,10 +1670,56 @@ mod tests {
                 sent.push(key.to_string());
                 async { Ok(()) }
             },
+            None,
         )
         .await;
         assert!(result.is_ok());
         assert!(sent.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cursor_trust_rmux_probe_fresh_worktree_when_enabled() {
+        if std::env::var("ORGASMIC_PROBE_CURSOR_TRUST").as_deref() != Ok("1") {
+            eprintln!(
+                "SKIP cursor_trust_rmux_probe_fresh_worktree_when_enabled: set ORGASMIC_PROBE_CURSOR_TRUST=1"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let session = format!("orgasmic-rmux-trust-probe-{}", std::process::id());
+        let rmux_bin = std::env::var_os("RMUX_SDK_DAEMON_BINARY")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("rmux"));
+        let rmux = rmux_sdk::Rmux::builder()
+            .default_timeout(Duration::from_secs(5))
+            .connect_or_start()
+            .await
+            .expect("connect rmux for trust probe");
+        let session_name =
+            rmux_sdk::SessionName::new(session.clone()).expect("valid rmux probe session name");
+        let session_handle = rmux
+            .ensure_session(
+                rmux_sdk::EnsureSession::named(session_name)
+                    .policy(rmux_sdk::EnsureSessionPolicy::CreateOrReuse)
+                    .detached(true)
+                    .working_directory(tmp.path().to_string_lossy().into_owned())
+                    .process(rmux_sdk::ProcessSpec::argv(["cursor-agent"])),
+            )
+            .await
+            .expect("ensure rmux probe session");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let pane = rmux_capture_pane(rmux_bin.to_str().expect("rmux bin path"), &session)
+            .await
+            .expect("capture rmux probe pane");
+        let _ = session_handle.kill().await;
+        let frame = classify_cursor_startup_frame(&pane);
+        assert!(
+            matches!(
+                frame,
+                CursorStartupFrame::TrustDialog | CursorStartupFrame::Ready
+            ),
+            "fresh cursor-agent rmux pane should be trust dialog or composer-ready, got {frame:?}\n{pane}"
+        );
     }
 
     #[test]
