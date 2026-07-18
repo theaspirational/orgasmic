@@ -3196,3 +3196,192 @@ async fn dispatch_finalize_refuses_commit_when_git_root_does_not_match_dispatche
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// TASK-P4MGK: `orgasmic dispatch finalize` is accepted from acp-stdio, not
+/// only rmux/acp-ws. PATH has no `codex` so the driver stays Simulated and
+/// the lease stays live until finalize (protocol-end is not the success
+/// signal).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_from_acp_stdio_mode() {
+    // orgasmic:TASK-P4MGK
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    write(
+        &home.user().join("workers/implementer-codex-acp.org"),
+        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+    );
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_git_proxy(&bin_dir);
+    // No `codex` on PATH → acp-stdio stays Simulated (Ready only, lease live).
+    let path_env = path_only(&bin_dir);
+    let brief = tmp.path().join("brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch-acp-stdio");
+    write(&brief, "acp-stdio finalize smoke");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--worker",
+            "implementer-codex-acp",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-dispatch-acp-stdio-impl",
+            "--reason",
+            "acp-stdio finalize smoke",
+        ],
+    );
+    assert!(
+        dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="),
+        "unexpected dispatch output: {dispatch_stdout}"
+    );
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "acp-stdio finalize report");
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+    let last_path = finalized_last_path(&finalize_stdout);
+    assert_eq!(
+        std::fs::read_to_string(&last_path).unwrap(),
+        "acp-stdio finalize report"
+    );
+    let tx_raw = tx_log(&project_root);
+    assert!(
+        tx_raw.contains(":TYPE:         implementer.done"),
+        "acp-stdio finalize must emit implementer.done: {tx_raw}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-P4MGK: finalize accepted from subprocess-stream-json (cursor-agent).
+/// No `cursor-agent` on PATH → Simulated mode; control keeps the event
+/// channel open so protocol RunComplete at acquire does not release the
+/// lease before finalize.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_from_subprocess_stream_json_mode() {
+    // orgasmic:TASK-P4MGK
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    write(
+        &home.user().join("workers/implementer-cursor.org"),
+        "* WORKER implementer-cursor\n:PROPERTIES:\n:ID:                          implementer-cursor\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   cursor\n:MODELS:                      composer-2.5-fast\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            cursor\n:DEFAULT_MODEL:               composer-2.5-fast\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest subprocess-stream-json implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+    );
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_git_proxy(&bin_dir);
+    let path_env = path_only(&bin_dir);
+    let brief = tmp.path().join("brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch-stream-json");
+    write(&brief, "subprocess-stream-json finalize smoke");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--worker",
+            "implementer-cursor",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-dispatch-stream-json-impl",
+            "--reason",
+            "subprocess-stream-json finalize smoke",
+        ],
+    );
+    assert!(
+        dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="),
+        "unexpected dispatch output: {dispatch_stdout}"
+    );
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "subprocess-stream-json finalize report");
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+    let last_path = finalized_last_path(&finalize_stdout);
+    assert_eq!(
+        std::fs::read_to_string(&last_path).unwrap(),
+        "subprocess-stream-json finalize report"
+    );
+    let tx_raw = tx_log(&project_root);
+    assert!(
+        tx_raw.contains(":TYPE:         implementer.done"),
+        "subprocess-stream-json finalize must emit implementer.done: {tx_raw}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

@@ -36,6 +36,9 @@ use crate::runtime_options::{
 use crate::sandbox::allowlist_from_driver_config;
 
 const MODE: &str = "acp-stdio";
+// orgasmic:TASK-P4MGK — protocol turn-end emits RunComplete but does not
+// release the daemon lease; `orgasmic dispatch finalize` is the primary
+// end-of-run (supervisor stream-end without finalize → orphan).
 
 /// Cadence for liveness heartbeats emitted while the harness is quiet.
 ///

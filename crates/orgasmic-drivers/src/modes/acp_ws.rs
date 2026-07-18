@@ -29,6 +29,8 @@ use crate::runtime_options::{RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOp
 use crate::sandbox::allowlist_from_driver_config;
 
 const MODE: &str = "acp-ws";
+// orgasmic:TASK-P4MGK — protocol turn-end is not the dispatch success
+// signal; `orgasmic dispatch finalize` is the primary end-of-run.
 
 pub struct AcpWsDriver {
     adapter: Box<dyn HarnessEventAdapter>,

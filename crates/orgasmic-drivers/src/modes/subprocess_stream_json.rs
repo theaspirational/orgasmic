@@ -23,6 +23,8 @@ use crate::r#trait::{
 };
 
 const MODE: &str = "subprocess-stream-json";
+// orgasmic:TASK-P4MGK — harness exit / synthesized RunComplete is not the
+// dispatch success signal; `orgasmic dispatch finalize` is primary.
 
 pub struct SubprocessStreamJsonDriver {
     adapter: Box<dyn HarnessEventAdapter>,
