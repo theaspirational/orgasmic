@@ -271,13 +271,31 @@ fn run_orgasmic_output_with_env(
     args: &[&str],
     extra_env: &[(&str, &str)],
 ) -> Output {
+    run_orgasmic_output_with_daemon_url(
+        home,
+        &format!("http://{}", running.addr),
+        project_root,
+        path_env,
+        args,
+        extra_env,
+    )
+}
+
+fn run_orgasmic_output_with_daemon_url(
+    home: &Home,
+    daemon_url: &str,
+    project_root: &Path,
+    path_env: &std::ffi::OsString,
+    args: &[&str],
+    extra_env: &[(&str, &str)],
+) -> Output {
     let exe = orgasmic_exe();
     let mut command = Command::new(exe);
     command
         .args(args)
         .current_dir(project_root)
         .env("ORGASMIC_HOME", &home.root)
-        .env("ORGASMIC_DAEMON_URL", format!("http://{}", running.addr))
+        .env("ORGASMIC_DAEMON_URL", daemon_url)
         .env("PATH", path_env);
     for (key, value) in extra_env {
         command.env(key, value);
@@ -3380,6 +3398,256 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
     assert!(
         tx_raw.contains(":TYPE:         implementer.done"),
         "subprocess-stream-json finalize must emit implementer.done: {tx_raw}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-8PXDP / HIGH1: when protocol-end wins the finalize race, finalize must
+/// not mask the 404 and emit `implementer.done` (which would orphan AND done).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
+    // orgasmic:TASK-8PXDP
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    write(
+        &home.user().join("workers/implementer-codex-acp.org"),
+        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+    );
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    write_git_proxy(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch-protocol-race");
+    write(&brief, "protocol-end race brief");
+
+    let running = boot(home.clone()).await;
+    run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--worker",
+            "implementer-codex-acp",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-dispatch-protocol-race-impl",
+            "--reason",
+            "protocol-end race",
+        ],
+    );
+
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let http = reqwest::Client::new();
+    let runs: serde_json::Value = http
+        .get(format!("http://{}/api/runs", running.addr))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let live = runs["live"].as_array().expect("live runs array");
+    let run = live
+        .iter()
+        .find(|run| run["task_id"] == "TASK-DISPATCH")
+        .expect("live run for TASK-DISPATCH");
+    let run_id = run["run_id"].as_str().unwrap().to_string();
+    let last_path = PathBuf::from(run["last_path"].as_str().expect("last_path"));
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "would-be finalize report");
+
+    let racer_http = http.clone();
+    let racer_addr = running.addr.clone();
+    let racer_token = token.clone();
+    let racer_run_id = run_id.clone();
+    let racer_last_path = last_path.clone();
+    let racer = tokio::spawn(async move {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while !racer_last_path.exists() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for {} before racing protocol-end",
+                racer_last_path.display()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        racer_http
+            .post(format!(
+                "http://{racer_addr}/api/runs/{racer_run_id}/release"
+            ))
+            .header(AUTHORIZATION, format!("Bearer {racer_token}"))
+            .json(&serde_json::json!({
+                "reason": "protocol_end_without_finalize",
+                "finalized_by_worker": false,
+            }))
+            .send()
+            .await
+            .expect("racer release request")
+    });
+
+    let finalize_output = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+        &[("ORGASMIC_TEST_FINALIZE_RELEASE_DELAY_MS", "300")],
+    );
+
+    let _ = racer.await.expect("racer task panicked");
+
+    assert!(
+        !finalize_output.status.success(),
+        "finalize must refuse done tx when protocol-end tombstone is present\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&finalize_output.stdout),
+        String::from_utf8_lossy(&finalize_output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&finalize_output.stderr);
+    assert!(
+        stderr.contains("protocol before finalize")
+            || stderr.contains("no worker-finalize tombstone"),
+        "expected protocol-end refusal on stderr: {stderr}"
+    );
+
+    let tx_raw = tx_log(&project_root);
+    assert!(
+        !tx_raw.contains(":TYPE:         implementer.done"),
+        "protocol-end race must never emit implementer.done: {tx_raw}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-8PXDP / HIGH1: two concurrent finalizers must emit at most one
+/// terminal `*.done` tx (deterministic request_id + writer dedupe).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dispatch_finalize_concurrent_double_finalize_emits_single_done_tx() {
+    // orgasmic:TASK-8PXDP
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch-double-finalize");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "concurrent finalize smoke");
+
+    let daemon_url = format!("http://{}", running.addr);
+    let home_a = home.clone();
+    let daemon_url_a = daemon_url.clone();
+    let worktree_a = worktree.clone();
+    let path_env_a = path_env.clone();
+    let summary_a = summary_path.clone();
+    let first = std::thread::spawn(move || {
+        run_orgasmic_output_with_daemon_url(
+            &home_a,
+            &daemon_url_a,
+            &worktree_a,
+            &path_env_a,
+            &[
+                "dispatch",
+                "finalize",
+                "--task",
+                "TASK-DISPATCH",
+                "--summary-file",
+                summary_a.to_str().unwrap(),
+            ],
+            &[("ORGASMIC_TEST_FINALIZE_RELEASE_DELAY_MS", "200")],
+        )
+    });
+    let home_b = home.clone();
+    let daemon_url_b = daemon_url.clone();
+    let worktree_b = worktree.clone();
+    let path_env_b = path_env.clone();
+    let summary_b = summary_path.clone();
+    let second = std::thread::spawn(move || {
+        run_orgasmic_output_with_daemon_url(
+            &home_b,
+            &daemon_url_b,
+            &worktree_b,
+            &path_env_b,
+            &[
+                "dispatch",
+                "finalize",
+                "--task",
+                "TASK-DISPATCH",
+                "--summary-file",
+                summary_b.to_str().unwrap(),
+            ],
+            &[("ORGASMIC_TEST_FINALIZE_RELEASE_DELAY_MS", "200")],
+        )
+    });
+
+    let out_a = first.join().expect("first finalize thread panicked");
+    let out_b = second.join().expect("second finalize thread panicked");
+    assert!(
+        out_a.status.success() || out_b.status.success(),
+        "at least one concurrent finalize must succeed\na={:?}\nb={:?}",
+        out_a.status,
+        out_b.status
+    );
+
+    let tx_raw = tx_log(&project_root);
+    let done_count = tx_raw.matches(":TYPE:         implementer.done").count();
+    assert_eq!(
+        done_count, 1,
+        "concurrent double-finalize must emit exactly one implementer.done: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());

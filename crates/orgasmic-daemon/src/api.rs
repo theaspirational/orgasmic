@@ -13475,6 +13475,56 @@ mod tests {
     }
 
     #[test]
+    fn stage_outcome_treats_protocol_end_completed_release_as_success() {
+        // orgasmic:TASK-8PXDP — grill/plan stage runs keep protocol-end = success.
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("grill-session.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-stage".into(),
+            runtime_id: "rt-stage".into(),
+            boot_id: "boot-stage".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-GRILL".into(),
+                    kind: "grill".into(),
+                    worker_id: "griller-claude-acp".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunComplete {
+                    summary: Some("grill turn done".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "driver stream closed".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(matches!(
+            stage_outcome_from_session(&session_path),
+            StageOutcome::Completed
+        ));
+    }
+
+    #[test]
     fn dispatch_last_summary_prefers_run_complete_over_dispatch_close_release() {
         let envelopes = vec![
             SessionEnvelope {

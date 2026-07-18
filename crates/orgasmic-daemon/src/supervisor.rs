@@ -333,6 +333,11 @@ struct RunRecord {
     /// them for boot reattach when the persisted `RunMeta` event has them).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    /// When true, `orgasmic dispatch finalize` is this run's completion
+    /// contract — ACP/subprocess protocol-end alone must not count as success
+    /// (TASK-P4MGK / TASK-8PXDP). Set at acquire for CLI-dispatched worker
+    /// kinds (implementer/reviewer/architector) that carry artifact paths.
+    requires_worker_finalize: bool,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -871,8 +876,11 @@ impl Supervisor {
                 })
             };
             if let Some(rec) = claimed {
-                let (reason, outcome) =
-                    stream_end_release_for_transport(&rec.transport, rec.terminal_outcome);
+                let (reason, outcome) = stream_end_release_for_transport(
+                    &rec.transport,
+                    rec.terminal_outcome,
+                    rec.requires_worker_finalize,
+                );
                 let release = Lifecycle::Release {
                     reason: reason.into(),
                     outcome,
@@ -906,6 +914,7 @@ impl Supervisor {
             babysitter_target: req.babysitter_target.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
+            requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1135,6 +1144,7 @@ impl Supervisor {
             babysitter_target: req.babysitter_target.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
+            requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1457,6 +1467,7 @@ impl Supervisor {
             // has dispatch artifact paths.
             last_path: None,
             stdout_path: None,
+            requires_worker_finalize: false,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1900,6 +1911,8 @@ impl Supervisor {
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.last_path = Some(last_path);
             rec.stdout_path = Some(stdout_path);
+            rec.requires_worker_finalize =
+                run_requires_worker_finalize(&rec.last_path, &rec.role);
         }
     }
 
@@ -2557,20 +2570,28 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
 
+/// Whether this run advertises the CLI dispatch finalize completion contract.
+fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
+    last_path.is_some() && matches!(role, "implementer" | "reviewer" | "architector")
+}
+
 /// Decide the stream-end Lifecycle::Release when the driver event channel
 /// closes and the run was still live (no prior finalize / TUI terminal
 /// release won the race).
 ///
-/// For non-TUI modes a protocol `RunComplete` alone is not success: finalize
-/// is the only success signal (dec_WDR5K item 6). Downgrade that case to
-/// Failed with `protocol_end_without_finalize` so the completion watcher
-/// orphans instead of scraping a fake report. TUI EOT path is unchanged.
+/// For CLI-dispatched worker runs (`requires_worker_finalize`) in non-TUI
+/// modes, a protocol `RunComplete` alone is not success: finalize is the
+/// only success signal (dec_WDR5K item 6, narrowed by TASK-8PXDP). Stage
+/// runs, artifactor, and manager launches keep protocol-end = success.
 fn stream_end_release_for_transport(
     transport: &str,
     terminal_outcome: Option<ReleaseOutcome>,
+    requires_worker_finalize: bool,
 ) -> (&'static str, ReleaseOutcome) {
     match terminal_outcome {
-        Some(ReleaseOutcome::Completed) if !terminal_event_releases_transport(transport) => (
+        Some(ReleaseOutcome::Completed)
+            if requires_worker_finalize && !terminal_event_releases_transport(transport) =>
+        (
             "protocol_end_without_finalize",
             ReleaseOutcome::Failed,
         ),
@@ -3097,6 +3118,15 @@ mod tests {
             idle_timeout_secs: None,
             babysitter: None,
         }
+    }
+
+    /// CLI-dispatch-shaped acquire: artifact paths present so the run
+    /// advertises the worker-finalize completion contract.
+    fn dispatch_impl_req(task: &str, dir: &Path) -> AcquireRequest {
+        let mut req = impl_req(task, dir);
+        req.last_path = Some(dir.join(format!("{task}.last.txt")));
+        req.stdout_path = Some(dir.join(format!("{task}.stdout.log")));
+        req
     }
 
     fn manual_req(
@@ -4432,7 +4462,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
         let resp = sup
-            .acquire(&driver, impl_req("TASK-FIN-THEN-PROTO", dir.path()))
+            .acquire(&driver, dispatch_impl_req("TASK-FIN-THEN-PROTO", dir.path()))
             .await
             .unwrap();
         sup.release_with_finalization(
@@ -4481,7 +4511,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndAcpDriver;
         let resp = sup
-            .acquire(&driver, impl_req("TASK-PROTO-THEN-FIN", dir.path()))
+            .acquire(&driver, dispatch_impl_req("TASK-PROTO-THEN-FIN", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("TASK-PROTO-THEN-FIN.jsonl");
@@ -4528,7 +4558,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
         let resp = sup
-            .acquire(&driver, impl_req("TASK-ALREADY-REL", dir.path()))
+            .acquire(&driver, dispatch_impl_req("TASK-ALREADY-REL", dir.path()))
             .await
             .unwrap();
         sup.release(
@@ -4555,25 +4585,92 @@ mod tests {
     }
 
     #[test]
-    fn stream_end_release_downgrades_acp_protocol_complete_to_failed() {
+    fn stream_end_release_downgrades_dispatch_acp_protocol_complete_to_failed() {
         // orgasmic:TASK-P4MGK
-        let (reason, outcome) =
-            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed));
+        let (reason, outcome) = stream_end_release_for_transport(
+            "acp-stdio",
+            Some(ReleaseOutcome::Completed),
+            true,
+        );
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
 
         let (reason, outcome) = stream_end_release_for_transport(
             "subprocess-stream-json",
             Some(ReleaseOutcome::Completed),
+            true,
         );
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
 
         // TUI EOT fallback path stays Completed (untouched until TASK-AFE5Q).
-        let (reason, outcome) =
-            stream_end_release_for_transport("rmux", Some(ReleaseOutcome::Completed));
+        let (reason, outcome) = stream_end_release_for_transport(
+            "rmux",
+            Some(ReleaseOutcome::Completed),
+            true,
+        );
         assert_eq!(reason, "driver stream closed");
         assert_eq!(outcome, ReleaseOutcome::Completed);
+    }
+
+    #[test]
+    fn stream_end_release_keeps_stage_protocol_complete_success_without_finalize_contract(
+    ) {
+        // orgasmic:TASK-8PXDP
+        let (reason, outcome) = stream_end_release_for_transport(
+            "acp-stdio",
+            Some(ReleaseOutcome::Completed),
+            false,
+        );
+        assert_eq!(reason, "driver stream closed");
+        assert_eq!(outcome, ReleaseOutcome::Completed);
+    }
+
+    #[tokio::test]
+    async fn stage_acp_protocol_end_stays_completed_without_finalize_contract() {
+        // orgasmic:TASK-8PXDP
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                manual_req("TASK-STAGE-PROTO", dir.path(), Some(0), Some(0)),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-STAGE-PROTO.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "driver stream closed") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            has_release_reason(&path, "driver stream closed"),
+            "expected driver stream closed release"
+        );
+        assert!(
+            !has_release_reason(&path, "protocol_end_without_finalize"),
+            "stage/grill/plan runs must not be reclassified as protocol_end_without_finalize"
+        );
+        let releases: Vec<_> = session_events(&path)
+            .into_iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .collect();
+        assert_eq!(releases.len(), 1, "expected one release: {releases:?}");
+        assert_eq!(
+            releases[0]
+                .event
+                .get("outcome")
+                .and_then(|v| v.as_str()),
+            Some("completed")
+        );
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }
 
     #[tokio::test]
