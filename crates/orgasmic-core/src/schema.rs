@@ -134,6 +134,23 @@ pub enum WorkerKind {
     Artifactor,
 }
 
+impl WorkerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Implementer => "implementer",
+            Self::Reviewer => "reviewer",
+            Self::Planner => "planner",
+            Self::Analyzer => "analyzer",
+            Self::Architector => "architector",
+            Self::Griller => "griller",
+            Self::Glossarist => "glossarist",
+            Self::Babysitter => "babysitter",
+            Self::Manager => "manager",
+            Self::Artifactor => "artifactor",
+        }
+    }
+}
+
 impl FromStr for WorkerKind {
     type Err = ();
     fn from_str(s: &str) -> Result<Self, ()> {
@@ -150,6 +167,12 @@ impl FromStr for WorkerKind {
             "artifactor" => Self::Artifactor,
             _ => return Err(()),
         })
+    }
+}
+
+impl fmt::Display for WorkerKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 

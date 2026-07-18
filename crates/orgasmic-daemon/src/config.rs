@@ -1,16 +1,26 @@
 // arch: arch_C87Z9.1
-// orgasmic:arch_C87Z9, dec_N17XX
+// orgasmic:arch_C87Z9, dec_N17XX, TASK-AYXPB, dec_WDR5K
 //! Daemon runtime configuration.
 //!
 //! Loaded from `$ORGASMIC_HOME/config.yaml` with CLI overrides for
 //! `--bind` / `--port`. Local-first defaults per dec_021.
+//!
+//! `dispatch:` accepts a sparse governance overlay keyed by kind or
+//! `kind,harness` (dec_WDR5K item 3). Absent keys keep code defaults; the file
+//! never requires the full schema (`serde(default)` everywhere).
 
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use orgasmic_core::Home;
 use serde::{Deserialize, Serialize};
+
+use crate::governance::{
+    is_governance_overlay_key, known_governance_patch_keys, known_sandbox_permission_keys,
+    DispatchGovernanceOverlay, GovernancePatch,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DaemonConfig {
@@ -32,6 +42,12 @@ pub struct DaemonConfig {
     pub auto_commit_signal: bool,
     #[serde(default)]
     pub driver_defaults: DriverDefaults,
+    /// Sparse per-kind / per-(kind,harness) governance overlays from `dispatch:`.
+    #[serde(skip)]
+    pub dispatch_governance: DispatchGovernanceOverlay,
+    /// Config keys present in YAML but absent from the known schema.
+    #[serde(skip)]
+    pub unrecognized_keys: Vec<String>,
     pub home_root: PathBuf,
 }
 
@@ -77,8 +93,12 @@ impl DaemonConfig {
         let mut cfg = if path.exists() {
             let raw = std::fs::read_to_string(&path)
                 .with_context(|| format!("read {}", path.display()))?;
-            let parsed: YamlConfig =
+            let value: serde_yaml::Value =
                 serde_yaml::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+            let unrecognized_keys = collect_unrecognized_keys(&value);
+            let parsed: YamlConfig = serde_yaml::from_value(value)
+                .with_context(|| format!("parse {}", path.display()))?;
+            let (auto_commit_signal, dispatch_governance) = dispatch_from_yaml(parsed.dispatch);
             DaemonConfig {
                 bind: parsed
                     .bind_host
@@ -103,12 +123,10 @@ impl DaemonConfig {
                     .manager
                     .and_then(|manager| manager.actor)
                     .and_then(non_empty),
-                auto_commit_signal: parsed
-                    .dispatch
-                    .as_ref()
-                    .and_then(|dispatch| dispatch.auto_commit_signal)
-                    .unwrap_or_else(default_auto_commit_signal),
+                auto_commit_signal,
                 driver_defaults: driver_defaults(parsed.drivers),
+                dispatch_governance,
+                unrecognized_keys,
                 home_root: home.root.clone(),
             }
         } else {
@@ -123,6 +141,8 @@ impl DaemonConfig {
                 manager_actor: None,
                 auto_commit_signal: default_auto_commit_signal(),
                 driver_defaults: driver_defaults(None),
+                dispatch_governance: DispatchGovernanceOverlay::default(),
+                unrecognized_keys: Vec::new(),
                 home_root: home.root.clone(),
             }
         };
@@ -142,6 +162,40 @@ impl DaemonConfig {
         self.port = port;
         self
     }
+}
+
+fn dispatch_from_yaml(parsed: Option<DispatchYaml>) -> (bool, DispatchGovernanceOverlay) {
+    let Some(parsed) = parsed else {
+        return (
+            default_auto_commit_signal(),
+            DispatchGovernanceOverlay::default(),
+        );
+    };
+    let auto_commit_signal = parsed
+        .auto_commit_signal
+        .unwrap_or_else(default_auto_commit_signal);
+    let mut map = BTreeMap::new();
+    for (key, value) in parsed.governance {
+        if !is_governance_overlay_key(&key) {
+            continue;
+        }
+        match serde_yaml::from_value::<GovernancePatch>(value) {
+            Ok(patch) => {
+                map.insert(key, patch);
+            }
+            Err(err) => {
+                tracing::warn!(
+                    key = %key,
+                    error = %err,
+                    "ignoring invalid dispatch governance overlay entry"
+                );
+            }
+        }
+    }
+    (
+        auto_commit_signal,
+        DispatchGovernanceOverlay::from_map(map),
+    )
 }
 
 fn driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
@@ -195,6 +249,135 @@ fn non_empty(value: String) -> Option<String> {
     }
 }
 
+/// Walk a parsed YAML document and return dotted paths for keys outside the
+/// known config schema. Unknown keys are warnings, not errors.
+pub fn collect_unrecognized_keys(value: &serde_yaml::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(map) = value.as_mapping() else {
+        return out;
+    };
+    for (key, child) in map {
+        let Some(name) = key.as_str() else {
+            continue;
+        };
+        match name {
+            "bind_host" | "bind_port" | "lan_enabled" | "bind" | "port" | "lan" | "mdns"
+            | "log_level" | "watcher_debounce_ms" => {}
+            "watcher" => collect_object_keys(child, "watcher", &["debounce_ms"], &mut out),
+            "tx" => collect_object_keys(child, "tx", &["commit_to_project"], &mut out),
+            "manager" => collect_object_keys(child, "manager", &["actor"], &mut out),
+            "dispatch" => collect_dispatch_keys(child, &mut out),
+            "drivers" => collect_drivers_keys(child, &mut out),
+            other => out.push(other.to_string()),
+        }
+    }
+    out
+}
+
+fn collect_object_keys(
+    value: &serde_yaml::Value,
+    prefix: &str,
+    known: &[&str],
+    out: &mut Vec<String>,
+) {
+    let Some(map) = value.as_mapping() else {
+        return;
+    };
+    for (key, child) in map {
+        let Some(name) = key.as_str() else {
+            continue;
+        };
+        if known.contains(&name) {
+            continue;
+        }
+        let path = format!("{prefix}.{name}");
+        out.push(path);
+        // Still surface nested unknowns under an already-unknown parent? No —
+        // the parent key itself is enough signal.
+        let _ = child;
+    }
+}
+
+fn collect_dispatch_keys(value: &serde_yaml::Value, out: &mut Vec<String>) {
+    let Some(map) = value.as_mapping() else {
+        return;
+    };
+    for (key, child) in map {
+        let Some(name) = key.as_str() else {
+            continue;
+        };
+        if name == "auto_commit_signal" {
+            continue;
+        }
+        if is_governance_overlay_key(name) {
+            collect_governance_patch_keys(child, &format!("dispatch.{name}"), out);
+            continue;
+        }
+        out.push(format!("dispatch.{name}"));
+    }
+}
+
+fn collect_governance_patch_keys(value: &serde_yaml::Value, prefix: &str, out: &mut Vec<String>) {
+    let Some(map) = value.as_mapping() else {
+        return;
+    };
+    let known = known_governance_patch_keys();
+    for (key, child) in map {
+        let Some(name) = key.as_str() else {
+            continue;
+        };
+        if !known.contains(&name) {
+            out.push(format!("{prefix}.{name}"));
+            continue;
+        }
+        if name == "sandbox_permissions" {
+            collect_object_keys(
+                child,
+                &format!("{prefix}.sandbox_permissions"),
+                known_sandbox_permission_keys(),
+                out,
+            );
+        }
+    }
+}
+
+fn collect_drivers_keys(value: &serde_yaml::Value, out: &mut Vec<String>) {
+    let Some(map) = value.as_mapping() else {
+        return;
+    };
+    for (key, child) in map {
+        let Some(name) = key.as_str() else {
+            continue;
+        };
+        if name != "hermes" {
+            out.push(format!("drivers.{name}"));
+            continue;
+        }
+        collect_hermes_keys(child, out);
+    }
+}
+
+fn collect_hermes_keys(value: &serde_yaml::Value, out: &mut Vec<String>) {
+    let Some(map) = value.as_mapping() else {
+        return;
+    };
+    for (key, child) in map {
+        let Some(name) = key.as_str() else {
+            continue;
+        };
+        if name != "acp_ws" {
+            out.push(format!("drivers.hermes.{name}"));
+            continue;
+        }
+        collect_object_keys(
+            child,
+            "drivers.hermes.acp_ws",
+            &["endpoint", "session_token_env"],
+            out,
+        );
+    }
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct YamlConfig {
     bind_host: Option<IpAddr>,
@@ -230,7 +413,13 @@ struct ManagerYaml {
 
 #[derive(Debug, Default, Deserialize)]
 struct DispatchYaml {
+    #[serde(default)]
     auto_commit_signal: Option<bool>,
+    /// Kind or `kind,harness` sparse patches stored as raw YAML so unknown or
+    /// non-object sibling keys (warned by [`collect_unrecognized_keys`]) cannot
+    /// fail the whole config parse.
+    #[serde(default, flatten)]
+    governance: BTreeMap<String, serde_yaml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -252,6 +441,8 @@ struct AcpWsDriverYaml {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::governance::resolve_governance;
+    use orgasmic_core::WorkerKind;
 
     #[test]
     fn loads_defaults_when_no_config() {
@@ -266,6 +457,8 @@ mod tests {
         assert!(cfg.manager_actor.is_none());
         assert!(cfg.auto_commit_signal);
         assert_eq!(cfg.driver_defaults, DriverDefaults::default());
+        assert!(cfg.dispatch_governance.is_empty());
+        assert!(cfg.unrecognized_keys.is_empty());
     }
 
     #[test]
@@ -351,5 +544,113 @@ mod tests {
             defaults.hermes.acp_ws.session_token_env.as_deref(),
             Some("HERMES_ACP_WS_SESSION_TOKEN")
         );
+    }
+
+    #[test]
+    fn loads_sparse_dispatch_governance_overlay() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(
+            home.config(),
+            r#"
+dispatch:
+  auto_commit_signal: false
+  implementer:
+    max_iterations: 30
+    context_budget: 200000
+  "implementer,codex":
+    stall_timeout_secs: 120
+    sandbox_permissions:
+      allow_exec: false
+      allow_network: true
+"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        assert!(!cfg.auto_commit_signal);
+        assert!(cfg.unrecognized_keys.is_empty());
+
+        let kind_only = resolve_governance(
+            WorkerKind::Implementer,
+            Some("claude"),
+            &cfg.dispatch_governance,
+            None,
+        );
+        assert_eq!(kind_only.max_iterations, Some(30));
+        assert_eq!(kind_only.context_budget, Some(200_000));
+        // kind overlay does not set stall; code default remains
+        assert_eq!(kind_only.stall_timeout_secs, Some(600));
+
+        let kind_harness = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &cfg.dispatch_governance,
+            None,
+        );
+        assert_eq!(kind_harness.max_iterations, Some(30));
+        assert_eq!(kind_harness.stall_timeout_secs, Some(120));
+        let sandbox = kind_harness.sandbox_permissions.expect("sandbox overlay");
+        assert!(!sandbox.allow_exec);
+        assert!(sandbox.allow_network);
+    }
+
+    #[test]
+    fn warns_on_unrecognized_config_keys() {
+        let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+            r#"
+bind_host: 127.0.0.1
+totally_unknown: 1
+watcher:
+  debounce_ms: 200
+  mystery: true
+dispatch:
+  auto_commit_signal: true
+  not_a_kind: 1
+  implementer:
+    max_iterations: 20
+    invent_field: 9
+    sandbox_permissions:
+      allow_exec: true
+      allow_telepathy: true
+drivers:
+  hermes:
+    acp_ws:
+      endpoint: ws://x
+      extra: 1
+  other_driver: {}
+"#,
+        )
+        .unwrap();
+        let keys = collect_unrecognized_keys(&yaml);
+        assert!(keys.iter().any(|k| k == "totally_unknown"), "{keys:?}");
+        assert!(keys.iter().any(|k| k == "watcher.mystery"), "{keys:?}");
+        assert!(keys.iter().any(|k| k == "dispatch.not_a_kind"), "{keys:?}");
+        assert!(
+            keys.iter().any(|k| k == "dispatch.implementer.invent_field"),
+            "{keys:?}"
+        );
+        assert!(
+            keys.iter()
+                .any(|k| k == "dispatch.implementer.sandbox_permissions.allow_telepathy"),
+            "{keys:?}"
+        );
+        assert!(
+            keys.iter().any(|k| k == "drivers.hermes.acp_ws.extra"),
+            "{keys:?}"
+        );
+        assert!(keys.iter().any(|k| k == "drivers.other_driver"), "{keys:?}");
+        assert!(!keys.iter().any(|k| k.contains("auto_commit_signal")));
+        assert!(!keys.iter().any(|k| k.contains("max_iterations")));
+    }
+
+    #[test]
+    fn load_surfaces_unrecognized_keys_for_startup_warnings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(home.config(), "bind_port: 4848\nnope: true\n").unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        assert_eq!(cfg.unrecognized_keys, vec!["nope".to_string()]);
     }
 }
