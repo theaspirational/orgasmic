@@ -2158,6 +2158,13 @@ async fn post_manager_launch(
     let ids = manager_launch_ids(&req.project_id, &req.harness, Utc::now());
     let session_path = project_sessions_dir(&project.root).join(ids.session_file);
     let task_id = ids.task_id;
+    let manager_role = if manager_terminal_harness(&req.harness) {
+        // Custom bare terminals are not agent runs (dec_WDR5K item 6 seventh
+        // amendment / TASK-TZJFF): exempt from manager terminal-declaration.
+        "terminal".into()
+    } else {
+        "manager".into()
+    };
     let acquire = state
         .supervisor
         .acquire(
@@ -2166,7 +2173,7 @@ async fn post_manager_launch(
                 task_id,
                 kind: RunKind::Worker,
                 worker_id: "manager".into(),
-                role: "manager".into(),
+                role: manager_role,
                 project_id: Some(req.project_id.clone()),
                 worktree: Some(project.root),
                 last_path: None,
@@ -2296,6 +2303,11 @@ async fn post_manager_register(
 #[derive(Debug, Deserialize)]
 pub struct ManagerReleaseRegistrationRequest {
     pub project_id: String,
+    /// App-launched manager run id exported as `ORGASMIC_RUN_ID` into the
+    /// pane. Used when the external-registration map does not own the run
+    /// (TASK-TZJFF / TASK-S52X9).
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2313,20 +2325,53 @@ async fn post_manager_release(
         .manager_registry
         .release(&state.supervisor, &req.project_id)
         .await;
-    Ok(Json(match outcome {
-        crate::manager_registration::ManagerReleaseOutcome::Released { run_id } => {
-            ManagerReleaseRegistrationResponse {
-                status: "released".to_string(),
-                run_id: Some(run_id),
-            }
+    if let crate::manager_registration::ManagerReleaseOutcome::Released { run_id } = outcome {
+        return Ok(Json(ManagerReleaseRegistrationResponse {
+            status: "released".to_string(),
+            run_id: Some(run_id),
+        }));
+    }
+    if let Some(run_id) = req.run_id.as_deref().filter(|id| !id.trim().is_empty()) {
+        if let Some(response) =
+            release_app_manager_run(&state, &req.project_id, run_id.trim()).await
+        {
+            return Ok(Json(response));
         }
-        crate::manager_registration::ManagerReleaseOutcome::NotRegistered => {
-            ManagerReleaseRegistrationResponse {
-                status: "not_registered".to_string(),
-                run_id: None,
-            }
-        }
+    }
+    Ok(Json(ManagerReleaseRegistrationResponse {
+        status: "not_registered".to_string(),
+        run_id: None,
     }))
+}
+
+async fn release_app_manager_run(
+    state: &ApiState,
+    project_id: &str,
+    run_id: &str,
+) -> Option<ManagerReleaseRegistrationResponse> {
+    let snapshot = state.supervisor.snapshot().await;
+    let run = snapshot.runs.iter().find(|run| run.run_id == run_id)?;
+    if run.project_id.as_deref() != Some(project_id) {
+        return None;
+    }
+    if !run.task_id.starts_with("manager.launch:") {
+        return None;
+    }
+    state
+        .supervisor
+        .release_with_finalization(
+            run_id,
+            "manager_released",
+            ReleaseOutcome::Completed,
+            true,
+            None,
+        )
+        .await
+        .ok()?;
+    Some(ManagerReleaseRegistrationResponse {
+        status: "released".to_string(),
+        run_id: Some(run_id.to_string()),
+    })
 }
 
 async fn post_manager_action(
@@ -2653,10 +2698,10 @@ async fn post_stage(
         spec.stage,
         now.format("%Y%m%dT%H%M%S")
     ));
-    // orgasmic:TASK-S52X9 — grill/plan carry a last_path so they advertise
-    // the universal finalize contract; `orgasmic dispatch finalize` can
-    // resolve the report path. Architect stage stays without (out of scope).
-    let last_path = matches!(spec.stage, "grill" | "plan").then(|| {
+    // orgasmic:TASK-S52X9 — grill/plan/architect carry a last_path so they
+    // advertise the universal finalize contract; `orgasmic dispatch finalize`
+    // can resolve the report path via ORGASMIC_RUN_ID (TASK-TZJFF).
+    let last_path = matches!(spec.stage, "grill" | "plan" | "architect").then(|| {
         project
             .root
             .join(".orgasmic")
@@ -10238,7 +10283,8 @@ async fn post_artifact_submit(
             ("VERSION".into(), "1".into()),
         ];
 
-        state
+        prepare_artifactor_submit_terminal(&state, &art_id).await;
+        if let Err(e) = state
             .writer
             .transaction(
                 vec![
@@ -10267,7 +10313,10 @@ async fn post_artifact_submit(
                 },
             )
             .await
-            .map_err(|e| ApiError::internal(format!("write artifact files: {e}")))?;
+        {
+            revert_artifactor_submit_terminal(&state, &art_id).await;
+            return Err(ApiError::internal(format!("write artifact files: {e}")));
+        }
 
         let _ = state.index.refresh_project(&entry.id).await;
         state.events.publish(
@@ -10337,7 +10386,8 @@ async fn post_artifact_submit(
         });
     }
 
-    state
+    prepare_artifactor_submit_terminal(&state, &art_id).await;
+    if let Err(e) = state
         .writer
         .transaction(
             rewrites,
@@ -10353,7 +10403,10 @@ async fn post_artifact_submit(
             },
         )
         .await
-        .map_err(|e| ApiError::internal(format!("write artifact files: {e}")))?;
+    {
+        revert_artifactor_submit_terminal(&state, &art_id).await;
+        return Err(ApiError::internal(format!("write artifact files: {e}")));
+    }
 
     let _ = state.index.refresh_project(&entry.id).await;
     state.events.publish(
@@ -10378,6 +10431,46 @@ async fn post_artifact_submit(
 /// the finalize tombstone. One-shot transports release immediately with
 /// the tombstone. Cold submits (no live artifactor run) are a no-op.
 // orgasmic:TASK-S52X9
+async fn artifactor_submit_live_run_id(state: &ApiState, art_id: &str) -> Option<String> {
+    let task_id = format!("artifact.generate:{art_id}");
+    let snapshot = state.supervisor.snapshot().await;
+    snapshot
+        .runs
+        .iter()
+        .find(|run| run.task_id == task_id)
+        .map(|run| run.run_id.clone())
+}
+
+async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) {
+    let Some(run_id) = artifactor_submit_live_run_id(state, art_id).await else {
+        return;
+    };
+    if let Err(e) = state
+        .supervisor
+        .prepare_artifactor_submit_declaration(&run_id)
+        .await
+    {
+        if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
+            tracing::warn!(
+                art_id,
+                run_id = %run_id,
+                error = %e,
+                "artifact submit: failed to prepare terminal declaration"
+            );
+        }
+    }
+}
+
+async fn revert_artifactor_submit_terminal(state: &ApiState, art_id: &str) {
+    let Some(run_id) = artifactor_submit_live_run_id(state, art_id).await else {
+        return;
+    };
+    state
+        .supervisor
+        .revert_artifactor_submit_declaration(&run_id)
+        .await;
+}
+
 async fn release_artifactor_run_after_submit(state: &ApiState, art_id: &str) {
     let task_id = format!("artifact.generate:{art_id}");
     let snapshot = state.supervisor.snapshot().await;
@@ -11405,6 +11498,19 @@ async fn post_artifact_regenerate(
 
     if let Some(live_run) = live {
         // HOT PATH: route the followup into the live session — no new lease.
+        // orgasmic:TASK-TZJFF — invalidate any prior submit declaration and
+        // bump the artifactor round before accepting the followup so a
+        // concurrent stream-end cannot promote a stale declaration.
+        state
+            .supervisor
+            .begin_artifactor_regenerate_round(&live_run.run_id)
+            .await
+            .map_err(|e| match e {
+                crate::supervisor::SupervisorError::RunNotFound(_) => {
+                    ApiError::not_found(format!("active run {}", live_run.run_id))
+                }
+                other => supervisor_control_error("artifact regenerate round", other),
+            })?;
         let followup_payload =
             assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
         let ack = state
@@ -11422,12 +11528,6 @@ async fn post_artifact_regenerate(
                 ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
         }
-        // orgasmic:TASK-S52X9 — a new regenerate round needs its own submit;
-        // clear any prior artifact_submitted declaration on this hot session.
-        state
-            .supervisor
-            .clear_terminal_declaration(&live_run.run_id)
-            .await;
         close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
             state: &state,
             entry: &entry,
@@ -12398,6 +12498,7 @@ mod tests {
             State(state.clone()),
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
+                run_id: None,
             }),
         )
         .await
@@ -12416,11 +12517,79 @@ mod tests {
             State(state.clone()),
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
+                run_id: None,
             }),
         )
         .await
         .expect("release is a no-op when nothing is registered");
         assert_eq!(no_op.status, "not_registered");
+    }
+
+    #[tokio::test]
+    async fn app_manager_release_via_run_id_writes_manager_released_tombstone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+
+        let driver = orgasmic_drivers::TmuxTuiDriver;
+        let session_path = project_sessions_dir(&project_root).join("manager-app-release.jsonl");
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "manager".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("app manager acquire succeeds");
+        let run_id = acquire.run_id;
+
+        let Json(released) = post_manager_release(
+            State(state.clone()),
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(run_id.clone()),
+            }),
+        )
+        .await
+        .expect("app manager release via run_id succeeds");
+        assert_eq!(released.status, "released");
+        assert_eq!(released.run_id.as_deref(), Some(run_id.as_str()));
+        assert!(!state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .any(|run| run.run_id == run_id));
+
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            body.contains("manager_released"),
+            "release must write manager_released tombstone: {body}"
+        );
+        assert!(
+            body.contains("\"finalized_by_worker\":true"),
+            "manager release must be worker-declared: {body}"
+        );
     }
 
     #[tokio::test]
@@ -12517,6 +12686,7 @@ mod tests {
                 State(state.clone()),
                 Json(ManagerReleaseRegistrationRequest {
                     project_id: "proj".into(),
+                    run_id: None,
                 }),
             )
             .await

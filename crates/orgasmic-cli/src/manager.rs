@@ -873,6 +873,8 @@ pub fn cmd_manager_register(home: &Home, args: ManagerRegisterArgs) -> Result<()
 #[derive(Debug, Serialize)]
 struct ManagerReleaseHttpRequest {
     project_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -888,12 +890,17 @@ pub fn cmd_manager_release(home: &Home, args: ManagerReleaseArgs) -> Result<()> 
         Some(project) => project,
         None => read_project_id(&find_project_root()?)?,
     };
+    let run_id = std::env::var("ORGASMIC_RUN_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let response: ManagerReleaseHttpResponse = runtime.block_on(client.post_json(
         "/manager/release",
         &ManagerReleaseHttpRequest {
             project_id: project_id.clone(),
+            run_id,
         },
     ))?;
 
@@ -983,16 +990,30 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         bail!("--reason is required when --status blocked");
     }
 
-    let task = resolve_finalize_task(&git_root, args.task.clone())?;
-
     let client = DaemonClient::from_home_autostart(home)?;
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-    let run = runtime.block_on(resolve_finalize_run(
-        &client,
-        project_id.as_deref(),
-        &task,
-        args.run_id.clone(),
-    ))?;
+    let env_run_id = std::env::var("ORGASMIC_RUN_ID")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let explicit_run_id = args.run_id.clone().or(env_run_id);
+    let (task, run) = if let Some(run_id) = explicit_run_id {
+        let run = runtime.block_on(resolve_finalize_run_by_id(
+            &client,
+            project_id.as_deref(),
+            &run_id,
+        ))?;
+        (run.task_id.clone(), run)
+    } else {
+        let task = resolve_finalize_task(&git_root, args.task.clone())?;
+        let run = runtime.block_on(resolve_finalize_run(
+            &client,
+            project_id.as_deref(),
+            &task,
+            None,
+        ))?;
+        (task, run)
+    };
 
     // Authoritative cross-check (TASK-QKQ3R part B): the daemon knows the
     // worktree it dispatched for this run. If the resolved git toplevel
@@ -1331,6 +1352,30 @@ fn resolve_finalize_task(project_root: &Path, task_override: Option<String>) -> 
     })
 }
 
+/// Resolve the live run to finalize from an explicit run id (typically
+/// `ORGASMIC_RUN_ID` exported into a stage or dispatch pane). Derives task
+/// identity from the daemon record instead of the git branch (TASK-TZJFF).
+async fn resolve_finalize_run_by_id(
+    client: &DaemonClient,
+    project_id: Option<&str>,
+    run_id: &str,
+) -> Result<LiveRunInfo> {
+    let live = client.get::<LiveRunsResponse>("/runs").await?.live;
+    let run = live
+        .into_iter()
+        .find(|run| run.run_id == run_id)
+        .ok_or_else(|| anyhow::anyhow!("no live run {run_id}; already released?"))?;
+    if let (Some(run_project), Some(project_id)) = (run.project_id.as_deref(), project_id) {
+        if run_project != project_id {
+            bail!(
+                "run {} belongs to project {run_project}, not {project_id}; refusing to finalize",
+                run.run_id
+            );
+        }
+    }
+    Ok(run)
+}
+
 /// Resolve the live run to finalize: an explicit `--run-id` is used as-is
 /// (still fetched from `/runs` to recover its kind/last_path); otherwise the
 /// single live run matching `task` (and `project_id`, when the daemon reports
@@ -1349,34 +1394,10 @@ async fn resolve_finalize_run(
     task: &str,
     run_id: Option<String>,
 ) -> Result<LiveRunInfo> {
-    let live = client.get::<LiveRunsResponse>("/runs").await?.live;
     if let Some(run_id) = run_id {
-        let run = live
-            .into_iter()
-            .find(|run| run.run_id == run_id)
-            .ok_or_else(|| anyhow::anyhow!("no live run {run_id}; already released?"))?;
-        // Guard against finalizing a run that belongs to a different task or
-        // project than the one this invocation resolved (cross-run confusion /
-        // forge vector): the tx is stamped with `task`, so the target run's
-        // own task/project must agree before we write its last.txt + release
-        // its lease.
-        if run.task_id != task {
-            bail!(
-                "run {} belongs to task {}, not {task}; refusing to finalize",
-                run.run_id,
-                run.task_id
-            );
-        }
-        if let (Some(run_project), Some(project_id)) = (run.project_id.as_deref(), project_id) {
-            if run_project != project_id {
-                bail!(
-                    "run {} belongs to project {run_project}, not {project_id}; refusing to finalize",
-                    run.run_id
-                );
-            }
-        }
-        return Ok(run);
+        return resolve_finalize_run_by_id(client, project_id, &run_id).await;
     }
+    let live = client.get::<LiveRunsResponse>("/runs").await?.live;
     let mut matches: Vec<LiveRunInfo> = live
         .into_iter()
         .filter(|run| {

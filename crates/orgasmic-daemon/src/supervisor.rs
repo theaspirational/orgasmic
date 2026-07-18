@@ -340,10 +340,14 @@ struct RunRecord {
     /// dispatch workers + stage grill/plan (via `dispatch finalize`),
     /// artifactor (`artifact submit`), manager (`manager release`).
     requires_worker_finalize: bool,
+    /// Monotonic artifactor regenerate counter. A terminal declaration is
+    /// valid only when its `round` matches this value (TASK-S52X9 / TASK-TZJFF).
+    terminal_round: u64,
     /// Set when a shape's terminal verb has declared success without yet
-    /// releasing the lease (hot-session artifactor submit). Stream-end and
-    /// idle release promote this into the finalize tombstone.
-    terminal_declaration: Option<&'static str>,
+    /// releasing the lease (hot-session artifactor submit). Stream-end,
+    /// idle release, and TUI terminal events promote this into the finalize
+    /// tombstone when `round == terminal_round`.
+    terminal_declaration: Option<TerminalDeclaration>,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -378,11 +382,30 @@ struct ReleasedRun {
     babysitter_run_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TerminalDeclaration {
+    reason: &'static str,
+    round: u64,
+}
+
+struct ResolvedTerminalRelease {
+    reason: String,
+    outcome: ReleaseOutcome,
+    finalized_by_worker: bool,
+}
+
+enum TerminalReleaseSource {
+    StreamEnd,
+    TerminalEvent,
+}
+
 struct TerminalRelease {
     run_id: String,
     session_path: PathBuf,
     identity: RuntimeIdentity,
+    reason: String,
     outcome: ReleaseOutcome,
+    finalized_by_worker: bool,
     control: Box<dyn DriverControl>,
 }
 
@@ -882,29 +905,11 @@ impl Supervisor {
                 })
             };
             if let Some(rec) = claimed {
-                // orgasmic:TASK-S52X9 — a prior terminal declaration (e.g.
-                // hot-session artifact submit) promotes protocol-end to the
-                // finalize tombstone; otherwise the universal
-                // requires_worker_finalize gate applies.
-                let (reason, outcome, finalized_by_worker) =
-                    if let Some(declared) = rec.terminal_declaration {
-                        (
-                            declared.to_string(),
-                            ReleaseOutcome::Completed,
-                            true,
-                        )
-                    } else {
-                        let (reason, outcome) = stream_end_release_for_transport(
-                            &rec.transport,
-                            rec.terminal_outcome,
-                            rec.requires_worker_finalize,
-                        );
-                        (reason.to_string(), outcome, false)
-                    };
+                let resolved = resolve_terminal_release(&rec, TerminalReleaseSource::StreamEnd);
                 let release = Lifecycle::Release {
-                    reason,
-                    outcome,
-                    finalized_by_worker,
+                    reason: resolved.reason,
+                    outcome: resolved.outcome,
+                    finalized_by_worker: resolved.finalized_by_worker,
                 };
                 let _ = writer
                     .append_session(SessionAppend {
@@ -935,6 +940,7 @@ impl Supervisor {
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
+            terminal_round: 0,
             terminal_declaration: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
@@ -1166,6 +1172,7 @@ impl Supervisor {
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
+            terminal_round: 0,
             terminal_declaration: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
@@ -1490,6 +1497,7 @@ impl Supervisor {
             last_path: None,
             stdout_path: None,
             requires_worker_finalize: false,
+            terminal_round: 0,
             terminal_declaration: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
@@ -1994,11 +2002,11 @@ impl Supervisor {
         // ends idle with the finalize tombstone (Completed), not Failed.
         let (reason, outcome, finalized) = {
             let g = self.inner.lock().await;
-            match g
-                .runs
-                .get(&revalidated.run_id)
-                .and_then(|rec| rec.terminal_declaration)
-            {
+            match g.runs.get(&revalidated.run_id).and_then(|rec| {
+                rec.terminal_declaration
+                    .filter(|decl| decl.round == rec.terminal_round)
+                    .map(|decl| decl.reason)
+            }) {
                 Some(declared) => (declared, ReleaseOutcome::Completed, true),
                 None => (revalidated.reason, ReleaseOutcome::Failed, false),
             }
@@ -2037,14 +2045,42 @@ impl Supervisor {
             .runs
             .get_mut(run_id)
             .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-        rec.terminal_declaration = Some(reason);
+        let round = rec.terminal_round;
+        rec.terminal_declaration = Some(TerminalDeclaration { reason, round });
         Ok(())
     }
 
-    /// Clear a prior terminal declaration when a new artifactor regenerate
-    /// round starts — that round needs its own submit.
+    /// Optimistic artifactor submit declaration: set before the durable
+    /// artifact transaction so a concurrent stream-end cannot falsely fail a
+    /// run whose submit is in flight (TASK-TZJFF / TASK-S52X9).
+    pub async fn prepare_artifactor_submit_declaration(
+        &self,
+        run_id: &str,
+    ) -> Result<(), SupervisorError> {
+        self.mark_terminal_declaration(run_id, "artifact_submitted")
+            .await
+    }
+
+    /// Clear a prior terminal declaration and bump the artifactor round when a
+    /// new regenerate round starts — that round needs its own submit.
     // orgasmic:TASK-S52X9
-    pub async fn clear_terminal_declaration(&self, run_id: &str) {
+    pub async fn begin_artifactor_regenerate_round(
+        &self,
+        run_id: &str,
+    ) -> Result<(), SupervisorError> {
+        let mut g = self.inner.lock().await;
+        let rec = g
+            .runs
+            .get_mut(run_id)
+            .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+        rec.terminal_round = rec.terminal_round.saturating_add(1);
+        rec.terminal_declaration = None;
+        Ok(())
+    }
+
+    /// Back-compat alias for callers that only need to drop an optimistic
+    /// submit declaration without advancing the artifactor round.
+    pub async fn revert_artifactor_submit_declaration(&self, run_id: &str) {
         let mut g = self.inner.lock().await;
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.terminal_declaration = None;
@@ -2628,18 +2664,20 @@ fn apply_driver_event_to_record(
     }
 }
 
-/// TUI transports still auto-release on a driver terminal event (EOT-marker
-/// fallback; removed later by TASK-AFE5Q). ACP / subprocess modes do not —
-/// `orgasmic dispatch finalize` is their primary end-of-run (TASK-P4MGK).
+/// TUI transports emit a terminal driver event (EOT-marker fallback; removed
+/// later by TASK-AFE5Q). ACP / subprocess modes do not — their stream-end
+/// path handles protocol end.
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
 
 /// Whether this run requires an explicit worker-declared terminal call
-/// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan advertise
-/// the contract when they carry a `last_path`; artifactor and manager always
-/// do (their terminal verbs are submit / release, not `dispatch finalize`).
-// orgasmic:TASK-S52X9
+/// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan/architect
+/// advertise the contract when they carry a `last_path`; artifactor and
+/// manager always do (their terminal verbs are submit / release, not
+/// `dispatch finalize`). Custom bare terminals are exempt (dec_WDR5K item 6
+/// seventh amendment / TASK-TZJFF).
+// orgasmic:TASK-S52X9,dec_WDR5K
 fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
     match role {
         "implementer" | "reviewer" | "architector" | "griller" | "planner" => {
@@ -2650,27 +2688,58 @@ fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool
     }
 }
 
+/// Resolve the terminal release tombstone for stream-end and TUI terminal
+/// events. One state machine for both paths (TASK-TZJFF / TASK-S52X9).
+fn resolve_terminal_release(
+    rec: &RunRecord,
+    source: TerminalReleaseSource,
+) -> ResolvedTerminalRelease {
+    if let Some(decl) = rec.terminal_declaration {
+        if decl.round == rec.terminal_round {
+            return ResolvedTerminalRelease {
+                reason: decl.reason.to_string(),
+                outcome: ReleaseOutcome::Completed,
+                finalized_by_worker: true,
+            };
+        }
+    }
+    if rec.requires_worker_finalize {
+        return ResolvedTerminalRelease {
+            reason: "protocol_end_without_finalize".into(),
+            outcome: ReleaseOutcome::Failed,
+            finalized_by_worker: false,
+        };
+    }
+    let reason = match source {
+        TerminalReleaseSource::StreamEnd => "driver stream closed",
+        TerminalReleaseSource::TerminalEvent => "driver terminal event",
+    };
+    match rec.terminal_outcome {
+        Some(outcome) => ResolvedTerminalRelease {
+            reason: reason.into(),
+            outcome,
+            finalized_by_worker: false,
+        },
+        None => ResolvedTerminalRelease {
+            reason: reason.into(),
+            outcome: ReleaseOutcome::Interrupted,
+            finalized_by_worker: false,
+        },
+    }
+}
+
 /// Decide the stream-end Lifecycle::Release when the driver event channel
-/// closes and the run was still live (no prior finalize / TUI terminal
-/// release won the race).
-///
-/// For every run that advertises `requires_worker_finalize` in non-TUI modes,
-/// a protocol `RunComplete` alone is not success: the shape's terminal
-/// declaration (finalize / submit / release) is the only success signal
-/// (dec_WDR5K item 6 / TASK-S52X9). Protocol-end without a declaration is
-/// Failed uniformly for every shape.
+/// closes and the run was still live (no prior finalize / terminal
+/// release won the race). Thin wrapper kept for unit tests.
 fn stream_end_release_for_transport(
-    transport: &str,
+    _transport: &str,
     terminal_outcome: Option<ReleaseOutcome>,
     requires_worker_finalize: bool,
 ) -> (&'static str, ReleaseOutcome) {
+    if requires_worker_finalize {
+        return ("protocol_end_without_finalize", ReleaseOutcome::Failed);
+    }
     match terminal_outcome {
-        Some(ReleaseOutcome::Completed)
-            if requires_worker_finalize && !terminal_event_releases_transport(transport) =>
-        (
-            "protocol_end_without_finalize",
-            ReleaseOutcome::Failed,
-        ),
         Some(outcome) => ("driver stream closed", outcome),
         None => ("driver stream closed", ReleaseOutcome::Interrupted),
     }
@@ -2685,14 +2754,25 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     if !should_release {
         return None;
     }
+    if inner
+        .runs
+        .get(run_id)
+        .and_then(|rec| rec.terminal_outcome)
+        .is_none()
+    {
+        return None;
+    }
 
     let rec = inner.runs.remove(run_id)?;
     inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+    let resolved = resolve_terminal_release(&rec, TerminalReleaseSource::TerminalEvent);
     Some(TerminalRelease {
         run_id: run_id.to_string(),
         session_path: rec.session_path,
         identity: rec.identity,
-        outcome: rec.terminal_outcome.unwrap_or(ReleaseOutcome::Interrupted),
+        reason: resolved.reason,
+        outcome: resolved.outcome,
+        finalized_by_worker: resolved.finalized_by_worker,
         control: rec.control,
     })
 }
@@ -2702,9 +2782,9 @@ async fn finish_driver_terminal_release(writer: &WriterHandle, release: Terminal
     let _ = control.release("driver terminal event").await;
     drop(control);
     let evt = Lifecycle::Release {
-        reason: "driver terminal event".into(),
+        reason: release.reason,
         outcome: release.outcome,
-        finalized_by_worker: false,
+        finalized_by_worker: release.finalized_by_worker,
     };
     let _ = writer
         .append_session(SessionAppend {
@@ -2986,6 +3066,45 @@ mod tests {
     }
 
     struct ProtocolEndAcpControl;
+
+    /// TUI-shaped test driver: same as [`ProtocolEndAcpDriver`] but transport
+    /// is `tmux-tui` so terminal events (not stream-end) claim release.
+    struct ProtocolEndTuiDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ProtocolEndTuiDriver {
+        fn transport(&self) -> &'static str {
+            "tmux-tui"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-tui/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ProtocolEndAcpControl),
+                native_runtime: None,
+            })
+        }
+    }
 
     #[async_trait::async_trait]
     impl DriverControl for ProtocolEndAcpControl {
@@ -4713,14 +4832,15 @@ mod tests {
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
 
-        // TUI EOT fallback path stays Completed (untouched until TASK-AFE5Q).
+        // TUI transports obey the same declaration gate as stream-end
+        // (TASK-TZJFF / TASK-S52X9).
         let (reason, outcome) = stream_end_release_for_transport(
             "rmux",
             Some(ReleaseOutcome::Completed),
             true,
         );
-        assert_eq!(reason, "driver stream closed");
-        assert_eq!(outcome, ReleaseOutcome::Completed);
+        assert_eq!(reason, "protocol_end_without_finalize");
+        assert_eq!(outcome, ReleaseOutcome::Failed);
     }
 
     #[test]
@@ -4749,6 +4869,103 @@ mod tests {
         assert!(!run_requires_worker_finalize(&None, "implementer"));
         assert!(!run_requires_worker_finalize(&None, "griller"));
         assert!(!run_requires_worker_finalize(&None, "babysitter"));
+        assert!(!run_requires_worker_finalize(&None, "terminal"));
+    }
+
+    #[tokio::test]
+    async fn grill_tui_protocol_end_without_finalize_is_failed() {
+        // orgasmic:TASK-TZJFF
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndTuiDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                stage_grill_req("TASK-GRILL-TUI-PROTO", dir.path()),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-GRILL-TUI-PROTO.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn artifactor_stale_declaration_after_regenerate_round_fails_on_protocol_end() {
+        // orgasmic:TASK-TZJFF
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndTuiDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-ROUND1", dir.path()),
+            )
+            .await
+            .unwrap();
+        sup.mark_terminal_declaration(&resp.run_id, "artifact_submitted")
+            .await
+            .unwrap();
+        sup.begin_artifactor_regenerate_round(&resp.run_id)
+            .await
+            .unwrap();
+        let path = dir.path().join("artifact.generate:ART-ROUND1.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+    }
+
+    #[tokio::test]
+    async fn artifactor_prepared_submit_survives_concurrent_protocol_end() {
+        // orgasmic:TASK-TZJFF — optimistic declaration before durable submit
+        // closes the stream-end race where submit completed but mark had not
+        // yet landed.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-PREP", dir.path()),
+            )
+            .await
+            .unwrap();
+        sup.prepare_artifactor_submit_declaration(&resp.run_id)
+            .await
+            .unwrap();
+        let path = dir.path().join("artifact.generate:ART-PREP.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("artifact_submitted")
+            }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("artifact_submitted")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
+            }),
+            "prepared submit declaration must promote protocol-end to completed"
+        );
     }
 
     #[tokio::test]
