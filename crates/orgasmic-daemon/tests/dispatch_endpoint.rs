@@ -2492,6 +2492,10 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     std::fs::create_dir_all(&worktree).unwrap();
     init_git_worktree(&worktree);
 
+    let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let session_count_before = count_session_jsonl(&sessions_dir);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let first = post_dispatch(
@@ -2513,6 +2517,84 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
         first.status().is_success(),
         "first dispatch: {}",
         first.status()
+    );
+    let first_body: serde_json::Value = first.json().await.unwrap();
+    let session_path = PathBuf::from(first_body["session_path"].as_str().unwrap());
+    assert_eq!(
+        count_session_jsonl(&sessions_dir),
+        session_count_before + 1,
+        "dispatch should create exactly one session file"
+    );
+
+    let orphan_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut orphaned = false;
+    while std::time::Instant::now() < orphan_deadline {
+        let raw = read_project_tx(&project_root);
+        if raw.contains(":TYPE:         manager.dispatch_orphaned") {
+            orphaned = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        orphaned,
+        "early-exit without work envelopes must flag manager.dispatch_orphaned"
+    );
+
+    let release_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut release_count = 0usize;
+    while std::time::Instant::now() < release_deadline {
+        if let Ok(envelopes) = read_session_file(&session_path) {
+            release_count = envelopes
+                .iter()
+                .filter(|envelope| {
+                    envelope.kind == SessionEventKind::Lifecycle
+                        && envelope.event.get("phase").and_then(|phase| phase.as_str())
+                            == Some("release")
+                })
+                .count();
+            if release_count == 1 {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(release_count, 1, "early-exit must release exactly once");
+    let session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        session_raw.contains("early-exit subprocess with no work envelopes")
+            || session_raw.contains("protocol_end_without_finalize"),
+        "early-exit tombstone must preserve an orphan-worthy release reason: {session_raw}"
+    );
+    assert!(
+        !last.exists()
+            || std::fs::read_to_string(&last)
+                .unwrap_or_default()
+                .is_empty(),
+        "early-exit orphan must not synthesize last.txt"
+    );
+    assert!(
+        !stdout.exists()
+            || std::fs::read_to_string(&stdout)
+                .unwrap_or_default()
+                .is_empty(),
+        "early-exit orphan must not synthesize stdout.log"
+    );
+    let runs = get_runs_json(&running, &token).await;
+    let live = runs["live"].as_array().cloned().unwrap_or_default();
+    assert!(
+        live.is_empty(),
+        "early-exit orphan must leave zero live runs: {live:?}"
+    );
+    assert_eq!(
+        count_session_jsonl(&sessions_dir),
+        session_count_before + 1,
+        "early-exit orphan must not create a replacement session"
+    );
+    assert!(
+        !session_raw.contains("\"phase\":\"continuation\"")
+            && !session_raw.contains("\"phase\": \"continuation\""),
+        "early-exit orphan must not write Lifecycle::Continuation"
     );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -2545,6 +2627,19 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     panic!("timed out waiting for early-exit lease auto-release");
+}
+
+fn count_session_jsonl(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry.path().extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                })
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 /// TASK-074 item 1 + TASK-P4MGK: subprocess-stream-json still synthesizes
@@ -2592,6 +2687,8 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
+    let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
+    let session_count_before = count_session_jsonl(&sessions_dir);
     let response = post_dispatch(
         &running,
         &token,
@@ -2663,6 +2760,11 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
         !session_raw.contains("\"phase\":\"continuation\"")
             && !session_raw.contains("\"phase\": \"continuation\""),
         "failed dispatch must not write Lifecycle::Continuation"
+    );
+    assert_eq!(
+        count_session_jsonl(&sessions_dir),
+        session_count_before + 1,
+        "protocol-end orphan must not create a replacement session"
     );
 
     let _ = running.shutdown.send(());

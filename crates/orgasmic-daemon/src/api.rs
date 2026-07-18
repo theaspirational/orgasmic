@@ -4767,13 +4767,20 @@ fn is_timeout_release_reason(reason: &str) -> bool {
     )
 }
 
+/// Subprocess harness exited after `Ready` (or fatal startup error) with no
+/// work envelopes — same orphan contract as protocol-end without finalize
+/// (TASK-R28CP / TASK-QPKCD review).
+const EARLY_EXIT_NO_WORK_REASON: &str = "early-exit subprocess with no work envelopes";
+
 /// Release reasons that mean the run ended without `orgasmic dispatch
 /// finalize` and must be flagged orphan (never scraped into a fake done
 /// report). Timeouts plus ACP/subprocess protocol-end without finalize
 /// (TASK-P4MGK / dec_WDR5K): TUI EOT (`driver terminal event`) stays a
 /// scrape fallback until TASK-AFE5Q.
 fn is_orphan_without_finalize_release_reason(reason: &str) -> bool {
-    is_timeout_release_reason(reason) || reason == "protocol_end_without_finalize"
+    is_timeout_release_reason(reason)
+        || reason == "protocol_end_without_finalize"
+        || reason == EARLY_EXIT_NO_WORK_REASON
 }
 
 /// Last `Lifecycle::Release` event's `reason`, if any — used to tell a timeout
@@ -5582,6 +5589,9 @@ pub struct RecoveryResponse {
     pub live_runs: Vec<crate::supervisor::RunSummary>,
     pub interrupted_runs: Vec<RecoveredRun>,
     pub reattached_runs: Vec<RecoveredRun>,
+    /// Terminal `ReleaseOutcome::Failed` tombstones that remain immutable but
+    /// expose manager-authorized recovery actions (TASK-R28CP / TASK-QPKCD).
+    pub failed_recoverable_runs: Vec<RecoveredRun>,
     pub terminal_noop_runs: Vec<RecoveredRun>,
     pub ambiguous_runs: Vec<RecoveredRun>,
     pub note: &'static str,
@@ -5636,6 +5646,7 @@ async fn get_runs(State(state): State<ApiState>) -> Json<Value> {
         "live": recovery.live_runs,
         "interrupted": recovery.interrupted_runs,
         "reattached": recovery.reattached_runs,
+        "failed_recoverable": recovery.failed_recoverable_runs,
         "terminal_noop": recovery.terminal_noop_runs,
         "ambiguous": recovery.ambiguous_runs,
     }))
@@ -5653,6 +5664,7 @@ async fn get_run(
     for (classification, runs) in [
         ("interrupted", &recovery.interrupted_runs),
         ("reattached", &recovery.reattached_runs),
+        ("failed_recoverable", &recovery.failed_recoverable_runs),
         ("terminal_noop", &recovery.terminal_noop_runs),
         ("ambiguous", &recovery.ambiguous_runs),
     ] {
@@ -5715,6 +5727,7 @@ async fn resolve_run_session_path(state: &ApiState, run_id: &str) -> Option<Path
     for runs in [
         &recovery.interrupted_runs,
         &recovery.reattached_runs,
+        &recovery.failed_recoverable_runs,
         &recovery.terminal_noop_runs,
         &recovery.ambiguous_runs,
     ] {
@@ -6087,6 +6100,7 @@ async fn post_run_recover(
         .interrupted_runs
         .iter()
         .chain(recovery.reattached_runs.iter())
+        .chain(recovery.failed_recoverable_runs.iter())
         .chain(recovery.ambiguous_runs.iter())
         .find(|run| run.run_id == id)
         .cloned()
@@ -6354,6 +6368,7 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         classify_session_files(&state.home, &state.boot.boot_id, &live.runs, &project_roots).await;
     let mut interrupted_runs = Vec::new();
     let mut reattached_runs = Vec::new();
+    let mut failed_recoverable_runs = Vec::new();
     let mut terminal_noop_runs = Vec::new();
     let mut ambiguous_runs = Vec::new();
     for run in recovered {
@@ -6363,6 +6378,7 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
             "reattached" => reattached_runs.push(run),
+            "failed_recoverable" => failed_recoverable_runs.push(run),
             "terminal_noop" => terminal_noop_runs.push(run),
             _ => ambiguous_runs.push(run),
         }
@@ -6373,6 +6389,7 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         live_runs: live.runs,
         interrupted_runs,
         reattached_runs,
+        failed_recoverable_runs,
         terminal_noop_runs,
         ambiguous_runs,
         note: "boot reconciliation classifies durable session JSONL without restoring snapshots or mutating graph state",
@@ -6761,7 +6778,8 @@ async fn classify_session_dir(
             continue;
         };
         let last = envelopes.last().unwrap_or(first);
-        let terminal = if let Some(outcome) = release_outcome(last) {
+        let terminal_outcome = release_outcome(last);
+        let terminal = if let Some(outcome) = terminal_outcome {
             match outcome {
                 ReleaseOutcome::Completed | ReleaseOutcome::Failed | ReleaseOutcome::Cancelled => {
                     Some("session ended with terminal release".to_string())
@@ -6778,8 +6796,17 @@ async fn classify_session_dir(
             None
         };
 
-        let (classification, reason, recovery_actions) = if let Some(reason) = terminal {
-            ("terminal_noop".to_string(), reason, Vec::new())
+        let (classification, reason, recovery_actions) = if let Some(terminal_reason) = terminal {
+            if terminal_outcome == Some(ReleaseOutcome::Failed) {
+                // Failed tombstones stay terminal/immutable; recovery is a
+                // distinct manager-authorized run (TASK-R28CP / TASK-QPKCD).
+                let attach = classify_current_boot_session(home, envelopes, first, live_ids).await;
+                let actions =
+                    resolve_recovery_actions(home, envelopes, attach.classification).await;
+                ("failed_recoverable".to_string(), terminal_reason, actions)
+            } else {
+                ("terminal_noop".to_string(), terminal_reason, Vec::new())
+            }
         } else {
             // Non-terminal: prove liveness (live tmux from any boot reattaches
             // before being marked interrupted, dec_052) and compute the
@@ -14979,6 +15006,9 @@ mod tests {
         assert!(is_orphan_without_finalize_release_reason(
             "stall_timeout_exceeded"
         ));
+        assert!(is_orphan_without_finalize_release_reason(
+            EARLY_EXIT_NO_WORK_REASON
+        ));
         // TUI EOT fallback must keep scraping until TASK-AFE5Q removes it.
         assert!(!is_orphan_without_finalize_release_reason(
             "driver terminal event"
@@ -14986,6 +15016,11 @@ mod tests {
         assert!(!is_orphan_without_finalize_release_reason(
             "worker finalize for TASK-ABC"
         ));
+    }
+
+    #[tokio::test]
+    async fn early_exit_without_worker_finalize_flags_orphan_not_done() {
+        assert_timeout_without_finalize_flags_orphan(EARLY_EXIT_NO_WORK_REASON).await;
     }
 
     #[test]
@@ -17625,6 +17660,280 @@ mod tests {
         assert_eq!(kinds, ["resume_native_fork", "start_recovery_run"]);
         // Manager worker_id routes recovery to the manager surface.
         assert_eq!(actions[0].target, "manager");
+    }
+
+    fn write_failed_recoverable_session(
+        project_root: &FsPath,
+        run_id: &str,
+        release_reason: &str,
+        with_native: bool,
+    ) -> PathBuf {
+        let path = project_sessions_dir(project_root).join(format!("{run_id}.jsonl"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let identity = RuntimeIdentity {
+            run_id: run_id.into(),
+            runtime_id: format!("rt-{run_id}"),
+            boot_id: "boot-failed".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-FAILED-RECOVER".into(),
+                    kind: "implementer".into(),
+                    worker_id: "implementer-claude-acp".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        if with_native {
+            writer
+                .append(
+                    SessionEventKind::Lifecycle,
+                    serde_json::to_value(Lifecycle::NativeRuntime {
+                        provider: "claude".into(),
+                        session_id: Some(format!("native-{run_id}")),
+                        session_path: None,
+                        launch_argv: vec!["claude".into()],
+                        resume_argv: vec![
+                            "claude".into(),
+                            "--resume".into(),
+                            format!("native-{run_id}"),
+                            "--fork-session".into(),
+                        ],
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: release_reason.into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn failed_terminal_release_is_recoverable_via_explicit_post() {
+        // orgasmic:TASK-R28CP — Failed tombstones stay terminal but expose
+        // read-only recovery actions; nothing starts until POST /recover.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let failed_path = write_failed_recoverable_session(
+            &project_root,
+            "run-failed-recover",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let sessions_dir = project_sessions_dir(&project_root);
+        let session_count_before = std::fs::read_dir(&sessions_dir)
+            .map(|entries| entries.count())
+            .unwrap_or(0);
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+
+        let recovery: serde_json::Value = client
+            .get(format!("http://{}/api/recovery/status", running.addr))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let failed = recovery["failed_recoverable_runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["run_id"] == "run-failed-recover")
+            .expect("failed tombstone must classify as failed_recoverable");
+        assert_eq!(failed["classification"], "failed_recoverable");
+        let actions = failed["recovery_actions"].as_array().unwrap();
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0]["kind"], "start_recovery_run");
+
+        let runs: serde_json::Value = client
+            .get(format!("http://{}/api/runs", running.addr))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            runs["live"].as_array().unwrap().is_empty(),
+            "GET /runs must not start recovery before POST"
+        );
+
+        let resp = client
+            .post(format!(
+                "http://{}/api/runs/run-failed-recover/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "start_recovery_run",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "task-r28cp-failed-recover",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(resp.status().is_success(), "recover: {}", resp.status());
+        let continued: serde_json::Value = resp.json().await.unwrap();
+        assert_ne!(continued["run_id"], "run-failed-recover");
+        assert_eq!(continued["action"], "start_recovery_run");
+        assert!(continued["draft_prompt"].as_str().is_some());
+
+        let failed_raw = std::fs::read_to_string(&failed_path).unwrap();
+        assert!(
+            failed_raw.contains("\"outcome\":\"failed\"")
+                || failed_raw.contains("\"outcome\": \"failed\""),
+            "original Failed tombstone must remain unchanged: {failed_raw}"
+        );
+        assert!(
+            std::fs::read_dir(&sessions_dir)
+                .map(|entries| entries.count())
+                .unwrap_or(0)
+                > session_count_before,
+            "explicit recover POST must create a distinct recovery session"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[test]
+    fn historical_continuation_lifecycle_deserializes_and_classifies_nonterminal() {
+        // orgasmic:TASK-R28CP — old `phase: continuation` JSONL stays readable
+        // and must not corrupt acquire metadata or terminal classification.
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("proj");
+        let path = project_sessions_dir(&project_root).join("run-historical-continuation.jsonl");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        write(
+            path.clone(),
+            r#"{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"acquire","task_id":"TASK-HIST","kind":"implementer","worker_id":"implementer-claude-acp"}}
+{"seq":1,"time":"2026-05-21T20:00:01Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"continuation","previous_run":"run-prior","previous_session_path":"/tmp/run-prior.jsonl","diff_summary":"1 file changed","acceptance_criteria":["gate passes"]}}
+{"seq":2,"time":"2026-05-21T20:00:02Z","run_id":"run-historical-continuation","runtime_id":"rt-hist","boot_id":"boot-old","kind":"driver_event","event":{"type":"ready","protocol_version":"acp/1","capabilities":{}}}
+"#,
+        );
+        let envelopes = read_session_file(&path).unwrap();
+        assert_eq!(envelopes.len(), 3);
+        let lifecycle: Lifecycle =
+            serde_json::from_value(envelopes[1].event.clone()).expect("continuation deserializes");
+        assert!(matches!(lifecycle, Lifecycle::Continuation { .. }));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let recovered = rt.block_on(classify_session_files(
+            &home,
+            "boot-test",
+            &[],
+            std::slice::from_ref(&project_root),
+        ));
+        let run = recovered
+            .iter()
+            .find(|run| run.run_id == "run-historical-continuation")
+            .expect("historical continuation session classifies");
+        assert_eq!(run.classification, "interrupted");
+        assert!(
+            run.recovery_actions
+                .iter()
+                .any(|action| action.kind == "start_recovery_run"),
+            "historical continuation must not block recovery actions: {:?}",
+            run.recovery_actions
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_native_fork_recovery_starts_idle_without_auto_prompt_send() {
+        // orgasmic:TASK-R28CP — native resume/fork must not auto-send the
+        // recovery draft; ComposerSend must not land in the new session JSONL.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        write(
+            home.user().join("workers/implementer-claude-acp.org"),
+            "* WORKER implementer-claude-acp\n:PROPERTIES:\n:ID:                          implementer-claude-acp\n:KIND:                        implementer\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-20250514\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-20250514\n:DEFAULT_EFFORT:              high\n:VERSION:                     1\n:END:\n\n** Persona\nTest worker.\n",
+        );
+        write_failed_recoverable_session(
+            &project_root,
+            "run-native-resume-idle",
+            "stall_timeout_exceeded",
+            true,
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!(
+                "http://{}/api/runs/run-native-resume-idle/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "task-r28cp-native-idle",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "resume_native_fork recover: {}",
+            resp.status()
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert!(
+            body["draft_prompt"]
+                .as_str()
+                .is_some_and(|draft| draft.contains("run-native-resume-idle")),
+            "recovery draft is returned for manual send only: {body}"
+        );
+        let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+        let session_raw = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            !session_raw.contains("\"phase\":\"composer_send\"")
+                && !session_raw.contains("\"phase\": \"composer_send\""),
+            "native resume/fork must not auto-send ComposerSend: {session_raw}"
+        );
+        assert!(
+            session_raw.contains("\"phase\":\"prompt_draft\"")
+                || session_raw.contains("\"phase\": \"prompt_draft\""),
+            "recovery draft must be staged unsent: {session_raw}"
+        );
+        assert!(
+            !session_raw.contains("prompt_bundle_text"),
+            "native resume/fork must not inject an initial prompt bundle"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     #[test]
