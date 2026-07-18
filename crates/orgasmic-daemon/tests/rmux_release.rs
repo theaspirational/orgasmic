@@ -141,6 +141,7 @@ fn request(
         max_run_duration_secs: Some(0),
         idle_timeout_secs: None,
         babysitter: None,
+        planned_identity: None,
     }
 }
 

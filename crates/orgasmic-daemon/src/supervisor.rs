@@ -34,9 +34,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use orgasmic_core::{
-    compute_all, compute_eligibility, read_session_file, BabysitterSummaryChunk, BabysitterTool,
-    DriverEvent, Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEnvelope,
-    SessionEventKind, TaskConstraints, Worker, WorkerEligibility,
+    compute_all, compute_eligibility, BabysitterSummaryChunk, BabysitterTool, DriverEvent,
+    Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TaskConstraints,
+    Worker, WorkerEligibility,
 };
 use orgasmic_drivers::{
     driver_for_mode_harness, AttachOutcome, DriverConfig, DriverContext, DriverControl,
@@ -756,8 +756,6 @@ impl Supervisor {
 
         // Build the driver context and spawn. If the driver fails, release
         // the lease before returning.
-        let identity = identity;
-        let run_id = run_id;
         let ctx = DriverContext {
             identity: identity.clone(),
             run_kind: req.kind,
@@ -844,10 +842,7 @@ impl Supervisor {
                 babysitter_target: req.babysitter_target.clone(),
                 last_path: req.last_path.clone(),
                 stdout_path: req.stdout_path.clone(),
-                requires_worker_finalize: run_requires_worker_finalize(
-                    &req.last_path,
-                    &req.role,
-                ),
+                requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
                 terminal_round: 0,
                 terminal_declaration: None,
                 artifactor_lifecycle: ArtifactorLifecycle::Idle,
@@ -857,10 +852,7 @@ impl Supervisor {
                 last_driver_event_at: run_started_at,
                 run_started_at,
                 last_input_at: run_started_at,
-                stall_timeout: resolve_timeout_secs(
-                    req.stall_timeout_secs,
-                    DEFAULT_STALL_TIMEOUT,
-                ),
+                stall_timeout: resolve_timeout_secs(req.stall_timeout_secs, DEFAULT_STALL_TIMEOUT),
                 max_run_duration: resolve_timeout_secs(
                     req.max_run_duration_secs,
                     DEFAULT_MAX_RUN_DURATION,
@@ -1038,6 +1030,7 @@ impl Supervisor {
     }
 
     /// Write a typed `Lifecycle::RecoveryOrigin` link into the replacement session.
+    #[allow(clippy::too_many_arguments)]
     pub async fn write_recovery_origin(
         &self,
         run_id: &str,
@@ -1422,6 +1415,7 @@ impl Supervisor {
             max_run_duration_secs: run_timeouts.1,
             idle_timeout_secs: None,
             babysitter: None,
+            planned_identity: None,
         };
         let resp = self.acquire_impl(driver, req).await?;
         // Emit a BabysitterSpawned envelope into the target run's session
@@ -2507,52 +2501,6 @@ fn process_probe_reports_exited(pid: libc::pid_t, result: Result<(), Option<i32>
     }
 }
 
-fn session_has_work_envelope(envelopes: &[SessionEnvelope]) -> bool {
-    envelopes.iter().any(|envelope| {
-        if envelope.kind != SessionEventKind::DriverEvent {
-            return false;
-        }
-        match envelope.event.get("type").and_then(|value| value.as_str()) {
-            Some("ready") => false,
-            // TASK-076 option 1: a driver_error means the harness failed before
-            // useful work, so it must not block early-exit auto-release.
-            Some("driver_error") => false,
-            Some(_) => true,
-            None => false,
-        }
-    })
-}
-
-fn session_has_terminal_event(envelopes: &[SessionEnvelope]) -> bool {
-    envelopes.iter().any(|envelope| {
-        if envelope.kind != SessionEventKind::DriverEvent {
-            return false;
-        }
-        matches!(
-            envelope.event.get("type").and_then(|value| value.as_str()),
-            Some("run_complete") | Some("run_fail") | Some("run_error")
-        )
-    })
-}
-
-fn session_is_early_exit_no_work(envelopes: &[SessionEnvelope]) -> bool {
-    if envelopes.is_empty()
-        || session_has_work_envelope(envelopes)
-        || session_has_terminal_event(envelopes)
-    {
-        return false;
-    }
-    envelopes.iter().any(|envelope| {
-        if envelope.kind != SessionEventKind::Lifecycle {
-            return false;
-        }
-        matches!(
-            serde_json::from_value::<Lifecycle>(envelope.event.clone()),
-            Ok(Lifecycle::Acquire { .. })
-        )
-    })
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorSnapshot {
     pub acquisition_paused: bool,
@@ -2743,12 +2691,10 @@ fn apply_driver_event_to_record(
 }
 
 fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
-    match evt {
-        DriverEvent::Ready { .. } | DriverEvent::DriverError { .. } | DriverEvent::Heartbeat { .. } => {
-            false
-        }
-        _ => true,
-    }
+    !matches!(
+        evt,
+        DriverEvent::Ready { .. } | DriverEvent::DriverError { .. } | DriverEvent::Heartbeat { .. }
+    )
 }
 
 fn session_is_early_exit_no_work_record(rec: &RunRecord) -> bool {
@@ -2918,23 +2864,6 @@ fn resolve_terminal_release(
     }
 }
 
-/// Decide the stream-end Lifecycle::Release when the driver event channel
-/// closes and the run was still live (no prior finalize / terminal
-/// release won the race). Thin wrapper kept for unit tests.
-fn stream_end_release_for_transport(
-    _transport: &str,
-    terminal_outcome: Option<ReleaseOutcome>,
-    requires_worker_finalize: bool,
-) -> (&'static str, ReleaseOutcome) {
-    if requires_worker_finalize {
-        return ("protocol_end_without_finalize", ReleaseOutcome::Failed);
-    }
-    match terminal_outcome {
-        Some(outcome) => ("driver stream closed", outcome),
-        None => ("driver stream closed", ReleaseOutcome::Interrupted),
-    }
-}
-
 fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<TerminalRelease> {
     let should_release = inner
         .runs
@@ -2944,14 +2873,10 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     if !should_release {
         return None;
     }
-    if inner
+    inner
         .runs
         .get(run_id)
-        .and_then(|rec| rec.terminal_outcome)
-        .is_none()
-    {
-        return None;
-    }
+        .and_then(|rec| rec.terminal_outcome)?;
     if inner
         .runs
         .get(run_id)
@@ -3194,12 +3119,71 @@ mod tests {
     use super::*;
     use crate::events::EventBus;
     use crate::writer::spawn as spawn_writer;
-    use orgasmic_core::WorkerKind;
+    use orgasmic_core::session::TextStream;
+    use orgasmic_core::{read_session_file, SessionEnvelope, WorkerKind};
     use orgasmic_drivers::{
         modes::tmux, BabysitterAck, BabysitterRequest, DriverError, DriverSession, TmuxTuiDriver,
         TransitionAck, UserInputAck,
     };
     use serde_json::json;
+
+    fn session_has_work_envelope(envelopes: &[SessionEnvelope]) -> bool {
+        envelopes.iter().any(|envelope| {
+            if envelope.kind != SessionEventKind::DriverEvent {
+                return false;
+            }
+            match envelope.event.get("type").and_then(|value| value.as_str()) {
+                Some("ready") => false,
+                Some("driver_error") => false,
+                Some(_) => true,
+                None => false,
+            }
+        })
+    }
+
+    fn session_has_terminal_event(envelopes: &[SessionEnvelope]) -> bool {
+        envelopes.iter().any(|envelope| {
+            if envelope.kind != SessionEventKind::DriverEvent {
+                return false;
+            }
+            matches!(
+                envelope.event.get("type").and_then(|value| value.as_str()),
+                Some("run_complete") | Some("run_fail") | Some("run_error")
+            )
+        })
+    }
+
+    fn session_is_early_exit_no_work(envelopes: &[SessionEnvelope]) -> bool {
+        if envelopes.is_empty()
+            || session_has_work_envelope(envelopes)
+            || session_has_terminal_event(envelopes)
+        {
+            return false;
+        }
+        envelopes.iter().any(|envelope| {
+            if envelope.kind != SessionEventKind::Lifecycle {
+                return false;
+            }
+            matches!(
+                serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                Ok(Lifecycle::Acquire { .. })
+            )
+        })
+    }
+
+    fn stream_end_release_for_transport(
+        _transport: &str,
+        terminal_outcome: Option<ReleaseOutcome>,
+        requires_worker_finalize: bool,
+    ) -> (&'static str, ReleaseOutcome) {
+        if requires_worker_finalize {
+            return ("protocol_end_without_finalize", ReleaseOutcome::Failed);
+        }
+        match terminal_outcome {
+            Some(outcome) => ("driver stream closed", outcome),
+            None => ("driver stream closed", ReleaseOutcome::Interrupted),
+        }
+    }
 
     /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
     /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
@@ -3440,6 +3424,80 @@ mod tests {
         }
     }
 
+    /// tmux-like driver with no PID: emits Ready then closes the stream with
+    /// no work envelopes — stream-end must release exactly once (TASK-QPKCD).
+    struct NoPidReadyOnlyDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for NoPidReadyOnlyDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-acp/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ProtocolEndAcpControl),
+                native_runtime: None,
+            })
+        }
+    }
+
+    /// No-PID driver whose only post-Ready event is stderr-mode TextChunk work.
+    struct NoPidStderrWorkDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for NoPidStderrWorkDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-acp/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::TextChunk {
+                        stream: TextStream::Stderr,
+                        chunk: "warning: shim output".into(),
+                        seq: 1,
+                    })
+                    .await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ProtocolEndAcpControl),
+                native_runtime: None,
+            })
+        }
+    }
+
     /// Holds the event channel open until `release`, then emits RunComplete
     /// and drops — models finalize-then-protocol-end for ACP modes.
     struct FinalizeThenProtocolEndDriver;
@@ -3616,6 +3674,7 @@ mod tests {
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: None,
+            planned_identity: None,
         }
     }
 
@@ -4720,6 +4779,7 @@ mod tests {
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: None,
+            planned_identity: None,
         };
         let r2 = sup.acquire(&driver, bs_req).await.unwrap();
         assert_ne!(r1.run_id, r2.run_id);
@@ -5173,6 +5233,74 @@ mod tests {
         assert!(!run_requires_worker_finalize(&None, "terminal"));
         // Fail closed for unknown historical agent roles (TASK-ARZGD).
         assert!(run_requires_worker_finalize(&None, "worker"));
+    }
+
+    #[tokio::test]
+    async fn no_pid_ready_only_stream_end_releases_failed_once() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = NoPidReadyOnlyDriver;
+        let resp = sup
+            .acquire(&driver, dispatch_impl_req("TASK-NO-PID-EARLY", dir.path()))
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-NO-PID-EARLY.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut release_count = 0usize;
+        while Instant::now() < deadline {
+            if let Ok(envelopes) = read_session_file(&path) {
+                release_count = envelopes
+                    .iter()
+                    .filter(|envelope| {
+                        envelope.kind == SessionEventKind::Lifecycle
+                            && envelope.event.get("phase").and_then(|phase| phase.as_str())
+                                == Some("release")
+                    })
+                    .count();
+                if release_count == 1 {
+                    break;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            release_count, 1,
+            "no-PID stream end must release exactly once"
+        );
+        assert_release_reason(&path, "protocol_end_without_finalize");
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+        let held = sup
+            .inner
+            .lock()
+            .await
+            .leases
+            .get(&("TASK-NO-PID-EARLY".to_string(), RunKind::Worker))
+            .cloned();
+        assert!(
+            held.is_none(),
+            "lease must be released after no-PID early exit"
+        );
+    }
+
+    #[tokio::test]
+    async fn no_pid_stderr_text_chunk_stream_end_releases_once() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = NoPidStderrWorkDriver;
+        let resp = sup
+            .acquire(&driver, dispatch_impl_req("TASK-NO-PID-STDERR", dir.path()))
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-NO-PID-STDERR.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+        let snapshot = sup.snapshot().await;
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
     }
 
     #[tokio::test]
@@ -6063,6 +6191,7 @@ mod tests {
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: None,
+            planned_identity: None,
         };
         let err = sup.acquire(&driver, req).await.unwrap_err();
         assert!(matches!(err, SupervisorError::BabysitterTargetInvalid(_)));
@@ -6152,6 +6281,7 @@ mod tests {
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
             }),
+            planned_identity: None,
         };
         let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
         let bs_path = dir
@@ -6196,6 +6326,7 @@ mod tests {
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
                 }),
+                planned_identity: None,
             };
             let resp = sup.acquire(&driver, req).await.unwrap();
             sup.release(&resp.run_id, "done", ReleaseOutcome::Completed)
@@ -6236,6 +6367,7 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -6338,6 +6470,7 @@ mod tests {
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
             }),
+            planned_identity: None,
         };
 
         let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
@@ -6413,6 +6546,7 @@ mod tests {
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
             }),
+            planned_identity: None,
         };
 
         let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
@@ -6507,6 +6641,7 @@ mod tests {
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
             }),
+            planned_identity: None,
         };
 
         let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();

@@ -70,7 +70,11 @@ pub fn validate_safe_component(value: &str) -> bool {
             .all(|c| matches!(c, Component::Normal(_)))
 }
 
-fn claim_path(home: &Home, project_id: &str, origin_run_id: &str) -> Result<PathBuf, RecoveryClaimError> {
+fn claim_path(
+    home: &Home,
+    project_id: &str,
+    origin_run_id: &str,
+) -> Result<PathBuf, RecoveryClaimError> {
     if !validate_safe_component(project_id) || !validate_safe_component(origin_run_id) {
         return Err(RecoveryClaimError::InvalidIdentifier);
     }
@@ -168,7 +172,7 @@ pub fn plan_pending_recovery_claim(
     project_id: &str,
     origin_run_id: &str,
     request_id: &str,
-    origin_session_path: &Path,
+    _origin_session_path: &Path,
     replacement_session_path: PathBuf,
     boot_id: &str,
 ) -> Result<PendingRecoveryPlan, RecoveryClaimError> {
@@ -200,11 +204,8 @@ pub fn plan_pending_recovery_claim(
         draft_prompt: None,
     };
     write_claim_atomic(home, &claim)?;
-    let planned_identity = RuntimeIdentity::planned(
-        replacement_run_id,
-        replacement_runtime_id,
-        boot_id,
-    );
+    let planned_identity =
+        RuntimeIdentity::planned(replacement_run_id, replacement_runtime_id, boot_id);
     Ok(PendingRecoveryPlan {
         claim,
         planned_identity,
@@ -263,19 +264,16 @@ pub fn verify_committed_claim_against_session(claim: &RecoveryClaim) -> bool {
     if !claim.replacement_session_path.exists() {
         return false;
     }
-    let Ok(envelopes) =
-        orgasmic_core::session::read_session_file(&claim.replacement_session_path)
+    let Ok(envelopes) = orgasmic_core::session::read_session_file(&claim.replacement_session_path)
     else {
         return false;
     };
-    let Some((replacement_run_id, replacement_session_path, action)) =
-        recovery_origin_in_session(
-            &envelopes,
-            &claim.project_id,
-            &claim.origin_run_id,
-            &claim.request_id,
-        )
-    else {
+    let Some((replacement_run_id, replacement_session_path, action)) = recovery_origin_in_session(
+        &envelopes,
+        &claim.project_id,
+        &claim.origin_run_id,
+        &claim.request_id,
+    ) else {
         return false;
     };
     claim.replacement_run_id == replacement_run_id
@@ -330,12 +328,8 @@ pub fn reconcile_pending_claim(
             target: claim.target.clone().unwrap_or_else(|| "worker".to_string()),
             draft_prompt: claim.draft_prompt.clone(),
         };
-        let committed = commit_recovery_claim(
-            home,
-            &claim.project_id,
-            &claim.origin_run_id,
-            details,
-        )?;
+        let committed =
+            commit_recovery_claim(home, &claim.project_id, &claim.origin_run_id, details)?;
         return Ok(Some(PendingRecoveryPlan {
             claim: committed,
             planned_identity: RuntimeIdentity::planned(
@@ -439,5 +433,91 @@ mod tests {
             claim_path(&home, "orgasmic", "../run"),
             Err(RecoveryClaimError::InvalidIdentifier)
         ));
+    }
+
+    #[test]
+    fn claims_live_under_daemon_home_not_project_tmp() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = recovery_claims_root(&home);
+        assert!(root.starts_with(home.state()));
+        assert!(!root.to_string_lossy().contains(".orgasmic/tmp"));
+    }
+
+    #[test]
+    fn verify_rejects_forged_committed_claim_without_session_link() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let replacement_path = project_sessions_dir(&project_root).join("recover-forged.jsonl");
+        std::fs::create_dir_all(replacement_path.parent().unwrap()).unwrap();
+        std::fs::write(&replacement_path, "{}\n").unwrap();
+        let claim = RecoveryClaim {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-origin".into(),
+            request_id: "req-forged".into(),
+            status: RecoveryClaimStatus::Committed,
+            replacement_run_id: "run-replacement".into(),
+            replacement_session_path: replacement_path,
+            replacement_runtime_id: "rt-replacement".into(),
+            runtime_id: Some("rt-replacement".into()),
+            boot_id: Some("boot-new".into()),
+            action: Some("start_recovery_run".into()),
+            target: Some("worker".into()),
+            draft_prompt: None,
+        };
+        assert!(!verify_committed_claim_against_session(&claim));
+    }
+
+    #[test]
+    fn reconcile_pending_commits_when_recovery_origin_exists() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let origin_path = project_sessions_dir(&project_root).join("run-origin.jsonl");
+        std::fs::create_dir_all(origin_path.parent().unwrap()).unwrap();
+        std::fs::write(&origin_path, "{}\n").unwrap();
+        let replacement_path = project_sessions_dir(&project_root).join("recover-pending.jsonl");
+        let plan = plan_pending_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-origin",
+            "req-pending",
+            &origin_path,
+            replacement_path.clone(),
+            "boot-plan",
+        )
+        .unwrap();
+        let identity = RuntimeIdentity {
+            run_id: plan.claim.replacement_run_id.clone(),
+            runtime_id: plan.claim.replacement_runtime_id.clone(),
+            boot_id: "boot-old".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&replacement_path, identity).unwrap();
+        writer
+            .append(
+                orgasmic_core::session::SessionEventKind::Lifecycle,
+                serde_json::to_value(orgasmic_core::session::Lifecycle::RecoveryOrigin {
+                    project_id: "orgasmic".into(),
+                    origin_run_id: "run-origin".into(),
+                    origin_session_path: origin_path,
+                    request_id: "req-pending".into(),
+                    replacement_run_id: plan.claim.replacement_run_id.clone(),
+                    replacement_session_path: replacement_path,
+                    action: "start_recovery_run".into(),
+                    target: Some("worker".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        let plan = reconcile_pending_claim(&home, &plan.claim, "boot-restart")
+            .unwrap()
+            .expect("pending with existing origin link reconciles");
+        assert_eq!(plan.claim.status, RecoveryClaimStatus::Committed);
     }
 }

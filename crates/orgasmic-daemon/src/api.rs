@@ -60,9 +60,8 @@ use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     commit_recovery_claim, load_committed_recovery_claim, load_recovery_claim,
     plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
-    remove_recovery_claim, verify_committed_claim_against_session, CommitRecoveryDetails,
-    PendingRecoveryPlan, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
-    RecoveryClaimStatus,
+    verify_committed_claim_against_session, CommitRecoveryDetails, PendingRecoveryPlan,
+    RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -2346,6 +2345,7 @@ async fn post_manager_launch(
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
                 babysitter: None,
+                planned_identity: None,
             },
         )
         .await
@@ -2891,6 +2891,7 @@ async fn post_stage(
                 max_run_duration_secs: worker.max_run_duration_secs,
                 idle_timeout_secs: None,
                 babysitter: None,
+                planned_identity: None,
             },
         )
         .await
@@ -3964,6 +3965,7 @@ async fn spawn_worker_run(
                     && worker.driver == "rmux")
                     .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
                 babysitter,
+                planned_identity: None,
             },
         )
         .await
@@ -6116,9 +6118,10 @@ async fn post_run_recover(
     Path(id): Path<String>,
     Json(req): Json<RunRecoverRequest>,
 ) -> Result<Json<RunRecoverResponse>, ApiError> {
-    let project_id = req.project.clone().ok_or_else(|| {
-        ApiError::bad_request("project is required for recovery")
-    })?;
+    let project_id = req
+        .project
+        .clone()
+        .ok_or_else(|| ApiError::bad_request("project is required for recovery"))?;
     let recovery = recovery_status(&state).await;
     let prior = recovery
         .interrupted_runs
@@ -6126,9 +6129,7 @@ async fn post_run_recover(
         .chain(recovery.reattached_runs.iter())
         .chain(recovery.failed_recoverable_runs.iter())
         .chain(recovery.ambiguous_runs.iter())
-        .find(|run| {
-            run.run_id == id && run.project_id.as_deref() == Some(project_id.as_str())
-        })
+        .find(|run| run.run_id == id && run.project_id.as_deref() == Some(project_id.as_str()))
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("recoverable run {id}")))?;
 
@@ -6191,14 +6192,13 @@ async fn post_run_recover(
             [single] => single.kind.clone(),
             [] => {
                 if failed_origin {
-                    if let Some(claim) = load_committed_recovery_claim(
-                        &state.home,
-                        &project_id,
-                        &id,
-                    )
-                    .map_err(|err| {
-                        ApiError::internal(format!("recovery claim load failed: {err:?}"))
-                    })? {
+                    if let Some(claim) =
+                        load_committed_recovery_claim(&state.home, &project_id, &id).map_err(
+                            |err| {
+                                ApiError::internal(format!("recovery claim load failed: {err:?}"))
+                            },
+                        )?
+                    {
                         if verify_committed_claim_against_session(&claim) {
                             if claim.request_id == request_id {
                                 return recovery_response_from_claim(&claim);
@@ -6251,9 +6251,7 @@ async fn post_run_recover(
                 &state.boot.boot_id,
             )
             .map_err(|err| match err {
-                RecoveryClaimError::AlreadyClaimed(claim) => {
-                    recovery_claim_conflict(&id, &claim)
-                }
+                RecoveryClaimError::AlreadyClaimed(claim) => recovery_claim_conflict(&id, &claim),
                 other => ApiError::internal(format!("recovery claim acquire failed: {other:?}")),
             })?,
         );
@@ -6393,19 +6391,21 @@ async fn execute_run_recover_action(
             let prompt = build_recovery_prompt(id, &prior.session_path, &envelopes, &diff_stat);
 
             let recover_name = pending_plan
-                .map(|plan| {
+                .and_then(|plan| {
                     plan.claim
                         .replacement_session_path
                         .file_name()
                         .and_then(|name| name.to_str())
                         .map(str::to_string)
                 })
-                .flatten()
                 .unwrap_or_else(|| format!("recover-{}.jsonl", uuid::Uuid::new_v4()));
             let session_path = pending_plan
                 .map(|plan| plan.claim.replacement_session_path.clone())
                 .or_else(|| {
-                    prior.session_path.parent().map(|dir| dir.join(&recover_name))
+                    prior
+                        .session_path
+                        .parent()
+                        .map(|dir| dir.join(&recover_name))
                 })
                 .unwrap_or_else(|| state.home.sessions().join(&recover_name));
             let planned_identity = pending_plan.map(|plan| plan.planned_identity.clone());
@@ -6416,8 +6416,8 @@ async fn execute_run_recover_action(
                 let native = native.ok_or_else(|| {
                     ApiError::bad_request("resume_native_fork requires recorded native metadata")
                 })?;
-                let session_id =
-                    validated_claude_native_session_id(&state.home, &native).ok_or_else(|| {
+                let session_id = validated_claude_native_session_id(&state.home, &native)
+                    .ok_or_else(|| {
                         ApiError::bad_request(
                             "recorded native metadata does not prove a trustworthy Claude session",
                         )
@@ -6471,7 +6471,7 @@ async fn execute_run_recover_action(
                     terminal_contract
                         .last_path
                         .clone()
-                        .unwrap_or_else(|| provision_recovery_last_path(&session_path, &id)),
+                        .unwrap_or_else(|| provision_recovery_last_path(&session_path, id)),
                 )
             } else {
                 None
@@ -6505,6 +6505,7 @@ async fn execute_run_recover_action(
                         max_run_duration_secs: None,
                         idle_timeout_secs: None,
                         babysitter: None,
+                        planned_identity,
                     },
                 )
                 .await
@@ -6564,7 +6565,7 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
         }
-        apply_recovery_claim_to_run(&mut run);
+        apply_recovery_claim_to_run(&state.home, &mut run);
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
             "reattached" => reattached_runs.push(run),
@@ -6925,6 +6926,7 @@ async fn classify_session_files(
             continue;
         }
         let project_id = read_existing_project_identity(&root.join(".orgasmic/project.org"))
+            .ok()
             .map(|identity| identity.project_id);
         classify_session_dir(home, &dir, project_id, &live_ids, &mut runs).await;
     }
@@ -7258,10 +7260,8 @@ fn resume_argv_proves_claude_fork(resume_argv: &[String], session_id: &str) -> b
     let mut saw_resume = false;
     let mut saw_fork = false;
     for (idx, arg) in resume_argv.iter().enumerate() {
-        if arg == "--resume" {
-            if resume_argv.get(idx + 1).is_some_and(|id| id == session_id) {
-                saw_resume = true;
-            }
+        if arg == "--resume" && resume_argv.get(idx + 1).is_some_and(|id| id == session_id) {
+            saw_resume = true;
         }
         if arg == "--fork-session" {
             saw_fork = true;
@@ -7322,9 +7322,7 @@ fn recovery_response_from_claim(
     claim: &RecoveryClaim,
 ) -> Result<Json<RunRecoverResponse>, ApiError> {
     Ok(Json(RunRecoverResponse {
-        run_id: claim.replacement_run_id.clone().ok_or_else(|| {
-            ApiError::internal("committed recovery claim missing replacement run")
-        })?,
+        run_id: claim.replacement_run_id.clone(),
         runtime_id: claim
             .runtime_id
             .clone()
@@ -7333,10 +7331,7 @@ fn recovery_response_from_claim(
             .boot_id
             .clone()
             .ok_or_else(|| ApiError::internal("committed recovery claim missing boot id"))?,
-        session_path: claim
-            .replacement_session_path
-            .clone()
-            .ok_or_else(|| ApiError::internal("committed recovery claim missing session path"))?,
+        session_path: claim.replacement_session_path.clone(),
         action: claim
             .action
             .clone()
@@ -7356,20 +7351,25 @@ fn recovery_claim_conflict(origin_run_id: &str, claim: &RecoveryClaim) -> ApiErr
     }))
 }
 
-fn apply_recovery_claim_to_run(run: &mut RecoveredRun) {
+fn apply_recovery_claim_to_run(home: &Home, run: &mut RecoveredRun) {
     if run.classification != "failed_recoverable" {
         return;
     }
-    let Some(claim) = load_committed_recovery_claim(&run.session_path, &run.run_id) else {
+    let Some(project_id) = run.project_id.as_deref() else {
         return;
     };
-    run.recovery_replacement_run_id = claim.replacement_run_id.clone();
-    run.recovery_replacement_session_path = claim.replacement_session_path.clone();
+    let Ok(Some(claim)) = load_committed_recovery_claim(home, project_id, &run.run_id) else {
+        return;
+    };
+    if !verify_committed_claim_against_session(&claim) {
+        return;
+    }
+    run.recovery_replacement_run_id = Some(claim.replacement_run_id.clone());
+    run.recovery_replacement_session_path = Some(claim.replacement_session_path.clone());
     run.recovery_actions.clear();
     run.reason = format!(
         "{}; recovery replacement {}",
-        run.reason,
-        claim.replacement_run_id.as_deref().unwrap_or("unknown")
+        run.reason, claim.replacement_run_id
     );
 }
 
@@ -7377,7 +7377,7 @@ fn apply_recovery_claim_to_run(run: &mut RecoveredRun) {
 /// Priority: live tmux reattach, native session resume/fork, then a fresh
 /// recovery run. `classification` is the attach-proof result for this run.
 async fn resolve_recovery_actions(
-    _home: &Home,
+    home: &Home,
     envelopes: &[SessionEnvelope],
     classification: &str,
     failed_terminal: bool,
@@ -7401,7 +7401,7 @@ async fn resolve_recovery_actions(
 
     // 2. Native session resume/fork when structured Claude identity is provable.
     if let Some(native) = session_native_runtime(envelopes) {
-        if validated_claude_native_session_id(&native).is_some() {
+        if validated_claude_native_session_id(home, &native).is_some() {
             actions.push(RecoveryAction {
                 kind: "resume_native_fork".to_string(),
                 label: "Resume Claude (fork)".to_string(),
@@ -13390,6 +13390,7 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -13449,6 +13450,7 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -13528,6 +13530,7 @@ mod tests {
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
                         babysitter: None,
+                        planned_identity: None,
                     },
                 )
                 .await
@@ -13702,6 +13705,7 @@ mod tests {
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
                         babysitter: None,
+                        planned_identity: None,
                     },
                 )
                 .await
@@ -13761,6 +13765,7 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -13919,6 +13924,7 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -14085,6 +14091,7 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -14273,6 +14280,7 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -14312,6 +14320,7 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -18391,11 +18400,15 @@ mod tests {
             "consistent native metadata should expose resume_native_fork"
         );
         let (command, args) =
-            reconstruct_claude_native_resume_command("550e8400-e29b-41d4-a716-446655440000");
-        assert_eq!(command, "claude");
+            reconstruct_claude_native_resume_command(&home, "550e8400-e29b-41d4-a716-446655440000");
+        assert_eq!(
+            command,
+            resolve_trusted_claude_binary(&home).unwrap_or_else(|| PathBuf::from("claude"))
+        );
         assert_eq!(
             args,
             vec![
+                "--dangerously-skip-permissions".to_string(),
                 "--resume".to_string(),
                 "550e8400-e29b-41d4-a716-446655440000".to_string(),
                 "--fork-session".to_string(),
@@ -18717,6 +18730,210 @@ mod tests {
             let _ = running.shutdown.send(());
             let _ = running.join.await;
         }
+    }
+
+    #[tokio::test]
+    async fn forged_recovery_claim_does_not_suppress_actions_without_session_proof() {
+        use crate::recovery_claim::{
+            commit_recovery_claim, recovery_claims_root, CommitRecoveryDetails,
+        };
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let origin_path = write_failed_recoverable_session(
+            &project_root,
+            "run-forged-claim",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let forged_path = project_sessions_dir(&project_root).join("recover-forged.jsonl");
+        std::fs::create_dir_all(forged_path.parent().unwrap()).unwrap();
+        std::fs::write(&forged_path, "{}\n").unwrap();
+        let plan = plan_pending_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-forged-claim",
+            "req-forged",
+            &origin_path,
+            forged_path,
+            "boot-forged",
+        )
+        .unwrap();
+        commit_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-forged-claim",
+            CommitRecoveryDetails {
+                runtime_id: plan.claim.replacement_runtime_id.clone(),
+                boot_id: "boot-forged".into(),
+                action: "start_recovery_run".into(),
+                target: "worker".into(),
+                draft_prompt: None,
+            },
+        )
+        .unwrap();
+        assert!(recovery_claims_root(&home).starts_with(home.state()));
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let recovery: serde_json::Value = reqwest::Client::new()
+            .get(format!("http://{}/api/recovery/status", running.addr))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let failed = recovery["failed_recoverable_runs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["run_id"] == "run-forged-claim")
+            .expect("failed origin listed");
+        assert!(
+            !failed["recovery_actions"].as_array().unwrap().is_empty(),
+            "forged claim without session RecoveryOrigin must not suppress actions"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn equal_run_id_across_projects_requires_canonical_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_a = tmp.path().join("proj-a");
+        let project_b = tmp.path().join("proj-b");
+        seed_project(&home, &project_a, "project-a");
+        write(
+            home.board(),
+            &format!(
+                "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT project-a\n:PROPERTIES:\n:ID:               project-a\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n\n* PROJECT project-b\n:PROPERTIES:\n:ID:               project-b\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+                project_a.display(),
+                project_b.display()
+            ),
+        );
+        write(
+            project_b.join(".orgasmic/project.org"),
+            "#+title: project-b\n#+orgasmic_version: 1\n\n* PROJECT project-b\n:PROPERTIES:\n:ID:               project-b\n:END:\n",
+        );
+        write_failed_recoverable_session(
+            &project_a,
+            "run-shared-id",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let path_b = write_failed_recoverable_session(
+            &project_b,
+            "run-shared-id",
+            "protocol_end_without_finalize",
+            false,
+        );
+        // Give project-b a distinct task_id so recovery leases do not collide on
+        // run_id alone while still sharing the origin run id under test.
+        let mut lines = std::fs::read_to_string(&path_b).unwrap();
+        lines = lines.replace("TASK-FAILED-RECOVER", "TASK-FAILED-RECOVER-B");
+        std::fs::write(&path_b, lines).unwrap();
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!(
+                "http://{}/api/runs/run-shared-id/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "start_recovery_run",
+                "project": "project-a",
+                "force_inert": true,
+                "request_id": "req-project-a",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "project-a recover: {}",
+            resp.status()
+        );
+
+        let wrong_project = client
+            .post(format!(
+                "http://{}/api/runs/run-shared-id/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "start_recovery_run",
+                "project": "project-b",
+                "force_inert": true,
+                "request_id": "req-project-b",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            wrong_project.status().is_success(),
+            "project-b recover should succeed independently: {}",
+            wrong_project.status()
+        );
+        let a_body: serde_json::Value = resp.json().await.unwrap();
+        let b_body: serde_json::Value = wrong_project.json().await.unwrap();
+        assert_ne!(
+            a_body["run_id"], b_body["run_id"],
+            "equal run ids in different projects must not collide"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn production_native_metadata_with_permission_flags_advertises_resume() {
+        let home = Home::at(std::env::temp_dir().join("orgasmic-native-prod-test"));
+        let base = vec![SessionEnvelope {
+            seq: 0,
+            time: Utc::now(),
+            run_id: "run-native-test".into(),
+            runtime_id: "rt-native-test".into(),
+            boot_id: "boot-old".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::Acquire {
+                task_id: "TASK-NATIVE".into(),
+                kind: "implementer".into(),
+                worker_id: "implementer-claude-acp".into(),
+            })
+            .unwrap(),
+        }];
+        let mut envelopes = base;
+        envelopes.push(native_runtime_envelope(
+            "claude",
+            Some("550e8400-e29b-41d4-a716-446655440000"),
+            vec![
+                "claude",
+                "--resume",
+                "550e8400-e29b-41d4-a716-446655440000",
+                "--fork-session",
+                "--dangerously-skip-permissions",
+            ],
+        ));
+        let actions = resolve_recovery_actions(&home, &envelopes, "interrupted", false).await;
+        assert!(
+            actions.iter().any(|a| a.kind == "resume_native_fork"),
+            "production resume_argv shape must advertise resume_native_fork: {actions:?}"
+        );
     }
 
     #[test]
