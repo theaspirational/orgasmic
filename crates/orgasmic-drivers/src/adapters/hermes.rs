@@ -606,7 +606,6 @@ fn spawn_payload(ctx: &DriverContext, cfg: &HermesConfig) -> Value {
         "project_id": ctx.project_id,
         "worktree": ctx.worktree,
         "babysitter_target": ctx.babysitter_target,
-        "continuation": ctx.continuation,
     })
 }
 
@@ -1021,7 +1020,7 @@ pub fn simulated_config() -> DriverConfig {
 }
 
 fn simulated_start_events(ctx: &DriverContext, cfg: &HermesConfig) -> Vec<DriverEvent> {
-    let mut events = vec![DriverEvent::Ready {
+    vec![DriverEvent::Ready {
         protocol_version: "hermes/1".into(),
         capabilities: json!({
             "simulated": true,
@@ -1031,15 +1030,7 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &HermesConfig) -> Vec<Driver
             "reasoning_effort": cfg.reasoning_effort,
             "speed": cfg.speed,
         }),
-    }];
-    if let Some(cont) = ctx.continuation.as_ref() {
-        events.push(DriverEvent::TextChunk {
-            stream: TextStream::System,
-            chunk: format!("continuation: previous_run={}", cont.previous_run),
-            seq: 0,
-        });
-    }
-    events
+    }]
 }
 
 #[cfg(test)]
@@ -1074,19 +1065,7 @@ mod tests {
             project_id: None,
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
-    }
-
-    fn ctx_with_continuation(id: &str, kind: RunKind) -> DriverContext {
-        let mut ctx = ctx(id, kind);
-        ctx.continuation = Some(crate::r#trait::ContinuationContext {
-            previous_run: "run-prev".into(),
-            previous_session_path: "sessions/run-prev.jsonl".into(),
-            diff_summary: "fixture diff".into(),
-            acceptance_criteria: vec!["fixture ac".into()],
-        });
-        ctx
     }
 
     #[tokio::test]
@@ -1344,7 +1323,7 @@ mod tests {
             "session_token": "fixture-token",
         }));
         let mut s = d
-            .acquire(ctx_with_continuation("run-h-real", RunKind::Worker), cfg)
+            .acquire(ctx("run-h-real", RunKind::Worker), cfg)
             .await
             .unwrap();
 
@@ -1394,7 +1373,7 @@ mod tests {
         assert_eq!(spawn["transport"], "hermes");
         assert_eq!(spawn["kind"], "worker");
         assert_eq!(spawn["task_id"], "TASK-006");
-        assert_eq!(spawn["continuation"]["previous_run"], "run-prev");
+        assert!(spawn.get("continuation").is_none() || spawn["continuation"].is_null());
     }
 
     #[allow(clippy::result_large_err)]

@@ -70,6 +70,10 @@ Follow these manager conventions; read each by path under
 - `daemon-rebuild-restart-policy` — the correct daemon rebuild/restart flow
   when testing local orgasmic changes, including `--from-source`, temporary
   runtime overrides, recovery-aware restarts, and post-restart checks.
+- `rescue-policy` — manager judgment after a failed or interrupted agent run
+  (inspect tombstone / declaration / task / transcript / diff / liveness;
+  choose reattach, resume/fork, fresh recovery/re-dispatch, or abandon).
+  Read on demand; the daemon never auto-continues a failed run.
 
 Treat prior worker summaries as claims until the relevant verifier, reviewer, or
 lander has checked them against code, tests, and project state. Stage authority,

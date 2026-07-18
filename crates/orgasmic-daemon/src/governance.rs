@@ -318,10 +318,7 @@ mod tests {
     fn reviewer_defaults_include_verdict_states() {
         let d = kind_defaults(WorkerKind::Reviewer);
         assert_eq!(d.max_iterations, Some(10));
-        assert!(d
-            .applicable_states
-            .iter()
-            .any(|s| s == "requested_changes"));
+        assert!(d.applicable_states.iter().any(|s| s == "requested_changes"));
     }
 
     #[test]
@@ -346,12 +343,7 @@ mod tests {
         let from_code = resolve_governance(WorkerKind::Implementer, Some("codex"), &empty, None);
         assert_eq!(from_code.max_iterations, Some(20));
 
-        let kind_only = resolve_governance(
-            WorkerKind::Implementer,
-            Some("claude"),
-            &overlay,
-            None,
-        );
+        let kind_only = resolve_governance(WorkerKind::Implementer, Some("claude"), &overlay, None);
         assert_eq!(kind_only.max_iterations, Some(30));
 
         let kind_harness =

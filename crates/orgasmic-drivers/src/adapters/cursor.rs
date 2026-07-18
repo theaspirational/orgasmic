@@ -336,7 +336,6 @@ fn build_spawn_prompt(ctx: &DriverContext, cfg: &CursorAgentConfig) -> String {
             "project_id": ctx.project_id,
             "worktree": ctx.worktree.as_ref().map(|p| p.display().to_string()),
             "babysitter_target": ctx.babysitter_target,
-            "continuation": ctx.continuation,
         }
     });
     let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -377,17 +376,6 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &CursorAgentConfig) -> Vec<D
             seq: 0,
         },
     ];
-    if let Some(cont) = ctx.continuation.as_ref() {
-        events.push(DriverEvent::TextChunk {
-            stream: TextStream::System,
-            chunk: format!(
-                "continuation context: previous_run={}, ac_count={}",
-                cont.previous_run,
-                cont.acceptance_criteria.len()
-            ),
-            seq: 1,
-        });
-    }
     events.push(DriverEvent::TextChunk {
         stream: TextStream::Assistant,
         chunk: "cursor-agent simulated response".into(),
@@ -1201,7 +1189,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
     }
 

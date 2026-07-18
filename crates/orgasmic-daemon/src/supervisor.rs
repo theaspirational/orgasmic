@@ -20,16 +20,15 @@
 //!   implementer events into `BabysitterSummaryChunk` envelopes before the
 //!   babysitter sees them, and the babysitter driver enforces the closed
 //!   tool set (`BabysitterTool::ALL`).
-//! - **AC #6**: `acquire_continuation` attaches the prior session JSONL
-//!   path, the current worktree diff summary, and the original acceptance
-//!   criteria into the new run's [`Lifecycle::Continuation`] envelope, and
-//!   passes the same context to the driver.
+//! - Failed runs terminate after the Failed release tombstone; the supervisor
+//!   never auto-spawns a continuation. Manager rescue is out-of-band via
+//!   `orgasmic run recover` (TASK-QPKCD).
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,9 +39,9 @@ use orgasmic_core::{
     SessionEventKind, TaskConstraints, Worker, WorkerEligibility,
 };
 use orgasmic_drivers::{
-    driver_for_mode_harness, AttachOutcome, ContinuationContext, DriverConfig, DriverContext,
-    DriverControl, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest, TransitionRequest,
-    UserInputRequest, WorkerDriver,
+    driver_for_mode_harness, AttachOutcome, DriverConfig, DriverContext, DriverControl,
+    NativeRuntimeMeta, RunKind, RuntimeOptionsRequest, TransitionRequest, UserInputRequest,
+    WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -183,15 +182,6 @@ pub struct AcquireResponse {
     pub pid: Option<u32>,
 }
 
-/// Continuation seed: the prior run JSONL + diff + acceptance criteria.
-#[derive(Debug, Clone)]
-pub struct ContinuationSeed {
-    pub previous_run: String,
-    pub previous_session_path: PathBuf,
-    pub diff_summary: String,
-    pub acceptance_criteria: Vec<String>,
-}
-
 #[derive(Debug, Error)]
 pub enum SupervisorError {
     #[error("lease held: task={task_id} kind={kind:?} run={run_id}")]
@@ -241,9 +231,6 @@ pub struct Supervisor {
     inner: Arc<Mutex<Inner>>,
     writer: WriterHandle,
     boot: Arc<BootIdentity>,
-    /// Resolves the worktree diff summary for continuation runs. Injected
-    /// so tests can stub it without invoking real `git`.
-    diff_summarizer: Arc<dyn DiffSummarizer>,
 }
 
 struct Inner {
@@ -477,16 +464,12 @@ struct BabysitterSummaryBuffer {
     tool_calls: Vec<String>,
 }
 
-pub trait DiffSummarizer: Send + Sync {
-    fn summarize(&self, worktree: Option<&Path>) -> String;
-}
-
-/// Default summarizer: runs `git diff --stat HEAD` in the worktree. If git
-/// is missing or returns nonzero, emits an empty summary.
+/// Worktree diff summarizer used by manager-authorized recovery prompts
+/// (`POST /runs/:id/recover`). Not a continuation injector.
 pub struct GitDiffSummarizer;
 
-impl DiffSummarizer for GitDiffSummarizer {
-    fn summarize(&self, worktree: Option<&Path>) -> String {
+impl GitDiffSummarizer {
+    pub fn summarize(&self, worktree: Option<&Path>) -> String {
         let cwd = worktree.unwrap_or_else(|| Path::new("."));
         let out = Command::new("git")
             .arg("diff")
@@ -498,15 +481,6 @@ impl DiffSummarizer for GitDiffSummarizer {
             Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             _ => String::new(),
         }
-    }
-}
-
-/// Test-only summarizer that returns a fixed string.
-pub struct StaticDiffSummarizer(pub String);
-
-impl DiffSummarizer for StaticDiffSummarizer {
-    fn summarize(&self, _worktree: Option<&Path>) -> String {
-        self.0.clone()
     }
 }
 
@@ -541,14 +515,6 @@ pub fn auto_select_worker<'a>(
 
 impl Supervisor {
     pub fn new(writer: WriterHandle, boot: Arc<BootIdentity>) -> Self {
-        Self::with_summarizer(writer, boot, Arc::new(GitDiffSummarizer))
-    }
-
-    pub fn with_summarizer(
-        writer: WriterHandle,
-        boot: Arc<BootIdentity>,
-        diff_summarizer: Arc<dyn DiffSummarizer>,
-    ) -> Self {
         let supervisor = Self {
             inner: Arc::new(Mutex::new(Inner {
                 acquisition_paused: false,
@@ -558,7 +524,6 @@ impl Supervisor {
             })),
             writer,
             boot,
-            diff_summarizer,
         };
         spawn_run_timeout_monitor(supervisor.clone());
         supervisor
@@ -780,7 +745,6 @@ impl Supervisor {
             project_id: req.project_id.clone(),
             worktree: req.worktree.clone(),
             babysitter_target: req.babysitter_target.clone(),
-            continuation: None,
         };
         let transport = driver.transport().to_string();
         let harness = driver.harness().map(str::to_string);
@@ -1000,235 +964,6 @@ impl Supervisor {
         })
     }
 
-    /// Convenience wrapper for continuation runs (AC #6). Writes the
-    /// continuation lifecycle envelope after acquire and seeds the driver
-    /// context.
-    pub async fn acquire_continuation(
-        &self,
-        driver: &dyn WorkerDriver,
-        mut req: AcquireRequest,
-        seed: ContinuationSeed,
-    ) -> Result<AcquireResponse, SupervisorError> {
-        let diff = if seed.diff_summary.is_empty() {
-            self.diff_summarizer.summarize(req.worktree.as_deref())
-        } else {
-            seed.diff_summary.clone()
-        };
-        let cont = ContinuationContext {
-            previous_run: seed.previous_run.clone(),
-            previous_session_path: seed.previous_session_path.clone(),
-            diff_summary: diff.clone(),
-            acceptance_criteria: seed.acceptance_criteria.clone(),
-        };
-
-        // Inject continuation into driver config via DriverContext.continuation
-        // by going through a shimmed acquire path. We can't piggy-back on the
-        // public acquire because it builds its own DriverContext, so re-do
-        // the spawn here keeping all other invariants.
-        if req.kind == RunKind::Worker && req.babysitter_target.is_some() {
-            return Err(SupervisorError::BabysitterTargetInvalid(
-                "worker continuation cannot carry babysitter_target".into(),
-            ));
-        }
-        let run_id = make_run_id(&req.kind);
-        let lease_key = (req.task_id.clone(), req.kind);
-        {
-            let mut guard = self.inner.lock().await;
-            if guard.acquisition_paused {
-                return Err(SupervisorError::AcquisitionPaused);
-            }
-            if let Some(existing) = guard.leases.get(&lease_key) {
-                return Err(SupervisorError::LeaseHeld {
-                    task_id: req.task_id.clone(),
-                    kind: req.kind,
-                    run_id: existing.clone(),
-                });
-            }
-            guard.leases.insert(lease_key.clone(), run_id.clone());
-        }
-        let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
-        let identity = RuntimeIdentity::new(&run_id, &self.boot.boot_id);
-        let ctx = DriverContext {
-            identity: identity.clone(),
-            run_kind: req.kind,
-            task_id: req.task_id.clone(),
-            worker_id: req.worker_id.clone(),
-            project_id: req.project_id.clone(),
-            worktree: req.worktree.clone(),
-            babysitter_target: req.babysitter_target.clone(),
-            continuation: Some(cont),
-        };
-        let transport = driver.transport().to_string();
-        let harness = driver.harness().map(str::to_string);
-        let session = match driver.acquire(ctx, req.driver_config.clone()).await {
-            Ok(s) => s,
-            Err(e) => return Err(SupervisorError::Driver(e)),
-        };
-        let pid = session.pid;
-
-        // Acquire + Continuation envelopes.
-        let acquire_evt = Lifecycle::Acquire {
-            task_id: req.task_id.clone(),
-            kind: match req.kind {
-                RunKind::Worker => "worker".into(),
-                RunKind::Babysitter => "babysitter".into(),
-            },
-            worker_id: req.worker_id.clone(),
-        };
-        self.writer
-            .append_session(SessionAppend {
-                run_id: run_id.clone(),
-                session_path: req.session_path.clone(),
-                identity: identity.clone(),
-                kind: SessionEventKind::Lifecycle,
-                event: serde_json::to_value(&acquire_evt).map_err(into_anyhow)?,
-            })
-            .await
-            .map_err(SupervisorError::Session)?;
-        let cont_evt = Lifecycle::Continuation {
-            previous_run: seed.previous_run.clone(),
-            previous_session_path: seed.previous_session_path.clone(),
-            diff_summary: diff,
-            acceptance_criteria: seed.acceptance_criteria.clone(),
-        };
-        self.writer
-            .append_session(SessionAppend {
-                run_id: run_id.clone(),
-                session_path: req.session_path.clone(),
-                identity: identity.clone(),
-                kind: SessionEventKind::Lifecycle,
-                event: serde_json::to_value(&cont_evt).map_err(into_anyhow)?,
-            })
-            .await
-            .map_err(SupervisorError::Session)?;
-
-        // Persist reattach metadata (boot auto-reattach), as in `acquire_impl`.
-        self.write_run_meta(
-            &run_id,
-            &req.session_path,
-            &identity,
-            &transport,
-            harness.clone(),
-            req.project_id.clone(),
-            req.worktree.clone(),
-            req.last_path.clone(),
-            req.stdout_path.clone(),
-            req.role.clone(),
-            run_requires_worker_finalize(&req.last_path, &req.role),
-            req.driver_config.clone(),
-        )
-        .await?;
-
-        if let Some(native) = session.native_runtime.clone() {
-            self.write_native_runtime(&run_id, &req.session_path, &identity, native)
-                .await?;
-        }
-
-        let writer = self.writer.clone();
-        let session_path = req.session_path.clone();
-        let inner_for_drain = self.inner.clone();
-        let run_id_for_drain = run_id.clone();
-        let identity_for_drain = identity.clone();
-        let kind = req.kind;
-        let drain = tokio::spawn(async move {
-            let mut events = session.events;
-            while let Some(evt) = events.recv().await {
-                let payload = match serde_json::to_value(&evt) {
-                    Ok(v) => v,
-                    Err(e) => {
-                        warn!(error = %e, "driver event serialize failed");
-                        continue;
-                    }
-                };
-                let terminal_outcome = terminal_outcome_for_event(&evt);
-                let event_at = Instant::now();
-                {
-                    let mut g = inner_for_drain.lock().await;
-                    if let Some(rec) = g.runs.get_mut(&run_id_for_drain) {
-                        apply_driver_event_to_record(rec, &evt, event_at, terminal_outcome);
-                    }
-                }
-                if let Err(e) = writer
-                    .append_session(SessionAppend {
-                        run_id: run_id_for_drain.clone(),
-                        session_path: session_path.clone(),
-                        identity: identity_for_drain.clone(),
-                        kind: SessionEventKind::DriverEvent,
-                        event: payload,
-                    })
-                    .await
-                {
-                    warn!(error = %e, run_id = %run_id_for_drain, "session append failed");
-                }
-                let terminal_release = {
-                    let mut g = inner_for_drain.lock().await;
-                    if let Some(rec) = g.runs.get_mut(&run_id_for_drain) {
-                        rec.next_event_seq += 1;
-                    }
-                    if terminal_outcome.is_some() {
-                        take_driver_terminal_release(&mut g, &run_id_for_drain)
-                    } else {
-                        None
-                    }
-                };
-                if let Some(release) = terminal_release {
-                    finish_driver_terminal_release(&writer, release).await;
-                }
-            }
-            finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
-        });
-
-        let run_started_at = Instant::now();
-        let record = RunRecord {
-            task_id: req.task_id.clone(),
-            kind,
-            worker_id: req.worker_id.clone(),
-            role: req.role.clone(),
-            transport,
-            harness,
-            project_id: req.project_id.clone(),
-            worktree: req.worktree.clone(),
-            sub_state: initial_working_sub_state(&req.role),
-            identity: identity.clone(),
-            session_path: std::mem::take(&mut req.session_path),
-            babysitter_target: req.babysitter_target.clone(),
-            last_path: req.last_path.clone(),
-            stdout_path: req.stdout_path.clone(),
-            requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
-            terminal_round: 0,
-            terminal_declaration: None,
-            artifactor_lifecycle: ArtifactorLifecycle::Idle,
-            pending_terminal_drain: false,
-            pending_cancel: false,
-            babysitter_run_id: None,
-            last_driver_event_at: run_started_at,
-            run_started_at,
-            last_input_at: run_started_at,
-            stall_timeout: resolve_timeout_secs(req.stall_timeout_secs, DEFAULT_STALL_TIMEOUT),
-            max_run_duration: resolve_timeout_secs(
-                req.max_run_duration_secs,
-                DEFAULT_MAX_RUN_DURATION,
-            ),
-            idle_timeout: resolve_idle_timeout_secs(req.idle_timeout_secs),
-            next_event_seq: 0,
-            terminal_outcome: None,
-            control: session.control,
-            event_drain: drain,
-            babysitter_summary: None,
-        };
-        let mut g = self.inner.lock().await;
-        g.runs.insert(run_id.clone(), record);
-        lease.commit();
-        if let Some(pid) = pid {
-            spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
-        }
-        Ok(AcquireResponse {
-            run_id,
-            identity,
-            pid,
-        })
-    }
-
     /// Write a typed `Lifecycle::NativeRuntime` event into a run's session
     /// JSONL (dec_052).
     async fn write_native_runtime(
@@ -1417,7 +1152,6 @@ impl Supervisor {
             project_id: project_id.clone(),
             worktree: worktree.clone(),
             babysitter_target: None,
-            continuation: None,
         };
         let transport = driver.transport().to_string();
         let harness = driver.harness().map(str::to_string);
@@ -1986,8 +1720,7 @@ impl Supervisor {
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.last_path = Some(last_path);
             rec.stdout_path = Some(stdout_path);
-            rec.requires_worker_finalize =
-                run_requires_worker_finalize(&rec.last_path, &rec.role);
+            rec.requires_worker_finalize = run_requires_worker_finalize(&rec.last_path, &rec.role);
         }
     }
 
@@ -2071,13 +1804,7 @@ impl Supervisor {
             }
         };
         if let Err(e) = self
-            .release_with_finalization(
-                &revalidated.run_id,
-                reason,
-                outcome,
-                finalized,
-                None,
-            )
+            .release_with_finalization(&revalidated.run_id, reason, outcome, finalized, None)
             .await
         {
             if matches!(e, SupervisorError::DeferredWhileInFlight(_)) {
@@ -2929,9 +2656,7 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
 // orgasmic:TASK-S52X9,TASK-ARZGD,dec_WDR5K
 pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
     match role {
-        "implementer" | "reviewer" | "architector" | "griller" | "planner" => {
-            last_path.is_some()
-        }
+        "implementer" | "reviewer" | "architector" | "griller" | "planner" => last_path.is_some(),
         "artifactor" | "manager" => true,
         "terminal" | "babysitter" => false,
         // Fail closed: unknown non-terminal historical agent roles require
@@ -3314,8 +3039,8 @@ mod tests {
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::WorkerKind;
     use orgasmic_drivers::{
-        modes::tmux, BabysitterAck, BabysitterRequest, ClaudeAcpDriver, DriverError, DriverSession,
-        TmuxTuiDriver, TransitionAck, UserInputAck,
+        modes::tmux, BabysitterAck, BabysitterRequest, DriverError, DriverSession, TmuxTuiDriver,
+        TransitionAck, UserInputAck,
     };
     use serde_json::json;
 
@@ -3637,13 +3362,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::with_summarizer(
-            writer.clone(),
-            boot,
-            Arc::new(StaticDiffSummarizer(
-                "M crates/orgasmic-drivers/src/lib.rs".into(),
-            )),
-        );
+        let sup = Supervisor::new(writer.clone(), boot);
         (sup, dir, writer)
     }
 
@@ -5119,7 +4838,10 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
         let resp = sup
-            .acquire(&driver, dispatch_impl_req("TASK-FIN-THEN-PROTO", dir.path()))
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-FIN-THEN-PROTO", dir.path()),
+            )
             .await
             .unwrap();
         sup.release_with_finalization(
@@ -5168,7 +4890,10 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndAcpDriver;
         let resp = sup
-            .acquire(&driver, dispatch_impl_req("TASK-PROTO-THEN-FIN", dir.path()))
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-PROTO-THEN-FIN", dir.path()),
+            )
             .await
             .unwrap();
         let path = dir.path().join("TASK-PROTO-THEN-FIN.jsonl");
@@ -5244,11 +4969,8 @@ mod tests {
     #[test]
     fn stream_end_release_downgrades_dispatch_acp_protocol_complete_to_failed() {
         // orgasmic:TASK-P4MGK
-        let (reason, outcome) = stream_end_release_for_transport(
-            "acp-stdio",
-            Some(ReleaseOutcome::Completed),
-            true,
-        );
+        let (reason, outcome) =
+            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed), true);
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
 
@@ -5262,11 +4984,8 @@ mod tests {
 
         // TUI transports obey the same declaration gate as stream-end
         // (TASK-TZJFF / TASK-S52X9).
-        let (reason, outcome) = stream_end_release_for_transport(
-            "rmux",
-            Some(ReleaseOutcome::Completed),
-            true,
-        );
+        let (reason, outcome) =
+            stream_end_release_for_transport("rmux", Some(ReleaseOutcome::Completed), true);
         assert_eq!(reason, "protocol_end_without_finalize");
         assert_eq!(outcome, ReleaseOutcome::Failed);
     }
@@ -5276,11 +4995,8 @@ mod tests {
         // Runs that do not advertise the terminal-declaration contract
         // (babysitter, architect stage without last_path, etc.) still treat
         // protocol-end as success.
-        let (reason, outcome) = stream_end_release_for_transport(
-            "acp-stdio",
-            Some(ReleaseOutcome::Completed),
-            false,
-        );
+        let (reason, outcome) =
+            stream_end_release_for_transport("acp-stdio", Some(ReleaseOutcome::Completed), false);
         assert_eq!(reason, "driver stream closed");
         assert_eq!(outcome, ReleaseOutcome::Completed);
     }
@@ -5308,10 +5024,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndTuiDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                stage_grill_req("TASK-GRILL-TUI-PROTO", dir.path()),
-            )
+            .acquire(&driver, stage_grill_req("TASK-GRILL-TUI-PROTO", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("TASK-GRILL-TUI-PROTO.jsonl");
@@ -5402,8 +5115,7 @@ mod tests {
                     && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "in-flight submit must not write a false Completed tombstone"
         );
@@ -5463,8 +5175,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }) {
                 break;
             }
@@ -5475,8 +5186,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "commit after deferred protocol-end must write artifact_submitted Completed"
         );
@@ -5489,10 +5199,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndTuiDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                manager_req("manager.launch:proj", dir.path()),
-            )
+            .acquire(&driver, manager_req("manager.launch:proj", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("manager.launch:proj.jsonl");
@@ -5506,6 +5213,89 @@ mod tests {
         assert_release_reason(&path, "protocol_end_without_finalize");
         let snapshot = sup.snapshot().await;
         assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn failed_protocol_end_writes_failed_tombstone_without_continuation_spawn() {
+        // orgasmic:TASK-QPKCD — failure ends at tombstone; no auto-continuation.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = ProtocolEndAcpDriver;
+        let mut req = dispatch_impl_req("TASK-NO-AUTO-CONT", dir.path());
+        req.role = "implementer".into();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        let path = dir.path().join("TASK-NO-AUTO-CONT.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "protocol_end_without_finalize") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_release_reason(&path, "protocol_end_without_finalize");
+        let release = session_events(&path)
+            .into_iter()
+            .rev()
+            .find(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .expect("release tombstone");
+        assert_eq!(
+            release.event.get("outcome").and_then(|v| v.as_str()),
+            Some("failed")
+        );
+        assert!(
+            !session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("continuation")
+            }),
+            "failed runs must not emit Lifecycle::Continuation"
+        );
+        let snapshot = sup.snapshot().await;
+        assert!(
+            snapshot.runs.is_empty(),
+            "failed protocol-end must leave no live runs (got {:?})",
+            snapshot.runs.iter().map(|r| &r.run_id).collect::<Vec<_>>()
+        );
+        assert!(snapshot.runs.iter().all(|run| run.run_id != resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn timeout_failure_does_not_spawn_continuation_run() {
+        // orgasmic:TASK-QPKCD
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let mut req = dispatch_impl_req("TASK-TIMEOUT-NO-CONT", dir.path());
+        req.stall_timeout_secs = Some(1);
+        let path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert_release_reason(&path, "stall_timeout_exceeded");
+        let release = session_events(&path)
+            .into_iter()
+            .rev()
+            .find(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("release")
+            })
+            .expect("timeout release tombstone");
+        assert_eq!(
+            release.event.get("outcome").and_then(|v| v.as_str()),
+            Some("failed")
+        );
+        assert!(
+            !session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|p| p.as_str()) == Some("continuation")
+            }),
+            "timeout must not emit Lifecycle::Continuation"
+        );
+        let snapshot = sup.snapshot().await;
+        assert!(
+            snapshot.runs.is_empty(),
+            "timeout must leave no live/spawned runs"
+        );
     }
 
     #[tokio::test]
@@ -5530,34 +5320,6 @@ mod tests {
             !has_release_reason(&path, "protocol_end_without_finalize"),
             "custom terminal must be exempt from the finalize contract"
         );
-    }
-
-    #[tokio::test]
-    async fn continuation_protocol_end_without_finalize_is_failed() {
-        // orgasmic:TASK-99W9C — continuation drains use the same terminal gate.
-        let (sup, dir, _w) = make_supervisor();
-        let driver = ProtocolEndAcpDriver;
-        let mut req = dispatch_impl_req("TASK-CONT-PROTO", dir.path());
-        req.role = "implementer".into();
-        let seed = ContinuationSeed {
-            previous_run: "run-prev".into(),
-            previous_session_path: dir.path().join("prev.jsonl"),
-            diff_summary: "no diff".into(),
-            acceptance_criteria: vec!["ac1".into()],
-        };
-        let _resp = sup
-            .acquire_continuation(&driver, req, seed)
-            .await
-            .unwrap();
-        let path = dir.path().join("TASK-CONT-PROTO.jsonl");
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline {
-            if has_release_reason(&path, "protocol_end_without_finalize") {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        assert_release_reason(&path, "protocol_end_without_finalize");
     }
 
     #[tokio::test]
@@ -5672,8 +5434,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "deferred timeout after successful commit must resolve Completed, not Failed"
         );
@@ -5723,10 +5484,8 @@ mod tests {
         assert!(
             session_events(&path).iter().any(|envelope| {
                 envelope.kind == SessionEventKind::Lifecycle
-                    && envelope.event.get("reason").and_then(|v| v.as_str())
-                        == Some("cancelled")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("cancelled")
+                    && envelope.event.get("reason").and_then(|v| v.as_str()) == Some("cancelled")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("cancelled")
             }),
             "deferred operator cancel must record Cancelled after writer commit"
         );
@@ -5787,8 +5546,7 @@ mod tests {
                 envelope.kind == SessionEventKind::Lifecycle
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "rollback after deferred drain must restore prior Completed declaration"
         );
@@ -5800,10 +5558,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = ProtocolEndAcpDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                stage_grill_req("TASK-GRILL-PROTO", dir.path()),
-            )
+            .acquire(&driver, stage_grill_req("TASK-GRILL-PROTO", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("TASK-GRILL-PROTO.jsonl");
@@ -5824,10 +5579,7 @@ mod tests {
             .collect();
         assert_eq!(releases.len(), 1, "expected one release: {releases:?}");
         assert_eq!(
-            releases[0]
-                .event
-                .get("outcome")
-                .and_then(|v| v.as_str()),
+            releases[0].event.get("outcome").and_then(|v| v.as_str()),
             Some("failed")
         );
         let snapshot = sup.snapshot().await;
@@ -5840,10 +5592,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FinalizeThenProtocolEndDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                stage_grill_req("TASK-GRILL-FIN", dir.path()),
-            )
+            .acquire(&driver, stage_grill_req("TASK-GRILL-FIN", dir.path()))
             .await
             .unwrap();
         sup.release_with_finalization(
@@ -5872,10 +5621,7 @@ mod tests {
             Some(true)
         );
         assert_eq!(
-            releases[0]
-                .event
-                .get("outcome")
-                .and_then(|v| v.as_str()),
+            releases[0].event.get("outcome").and_then(|v| v.as_str()),
             Some("completed")
         );
     }
@@ -5938,8 +5684,7 @@ mod tests {
                         == Some(true)
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("artifact_submitted")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "artifact submit must write finalized_by_worker tombstone"
         );
@@ -5975,8 +5720,7 @@ mod tests {
                         == Some(true)
                     && envelope.event.get("reason").and_then(|v| v.as_str())
                         == Some("manager_released")
-                    && envelope.event.get("outcome").and_then(|v| v.as_str())
-                        == Some("completed")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str()) == Some("completed")
             }),
             "manager release must write finalized_by_worker tombstone"
         );
@@ -6140,59 +5884,6 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
-    }
-
-    #[tokio::test]
-    async fn continuation_run_emits_continuation_envelope() {
-        let (sup, dir, _w) = make_supervisor();
-        let driver = ClaudeAcpDriver;
-        let req = AcquireRequest {
-            task_id: "TASK-CONT".into(),
-            kind: RunKind::Worker,
-            worker_id: "implementer-claude-acp".into(),
-            role: "implementer".into(),
-            project_id: Some("orgasmic".into()),
-            worktree: None,
-            last_path: None,
-            stdout_path: None,
-            session_path: dir.path().join("TASK-CONT.jsonl"),
-            driver_config: orgasmic_drivers::adapters::claude::simulated_config(),
-            babysitter_target: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            idle_timeout_secs: None,
-            babysitter: None,
-        };
-        let seed = ContinuationSeed {
-            previous_run: "run-prev-abc".into(),
-            previous_session_path: dir.path().join("run-prev-abc.jsonl"),
-            diff_summary: String::new(), // force the static summarizer to fill it
-            acceptance_criteria: vec!["AC1".into(), "AC2".into()],
-        };
-        let resp = sup.acquire_continuation(&driver, req, seed).await.unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
-        sup.release(&resp.run_id, "done", ReleaseOutcome::Completed)
-            .await
-            .unwrap();
-        let env = orgasmic_core::read_session_file(dir.path().join("TASK-CONT.jsonl")).unwrap();
-        let cont = env.iter().find(|e| {
-            e.kind == SessionEventKind::Lifecycle
-                && e.event
-                    .get("phase")
-                    .and_then(|p| p.as_str())
-                    .is_some_and(|p| p == "continuation")
-        });
-        let cont = cont.expect("Continuation envelope present");
-        assert_eq!(cont.event["previous_run"].as_str().unwrap(), "run-prev-abc");
-        // The static summarizer's text propagates.
-        assert!(cont.event["diff_summary"]
-            .as_str()
-            .unwrap()
-            .contains("crates/orgasmic-drivers"));
-        assert_eq!(
-            cont.event["acceptance_criteria"].as_array().unwrap().len(),
-            2
-        );
     }
 
     #[tokio::test]

@@ -2645,117 +2645,28 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
         "protocol-end without finalize must flag manager.dispatch_orphaned"
     );
     assert!(
-        !last.exists() || std::fs::read_to_string(&last).unwrap_or_default().is_empty(),
+        !last.exists()
+            || std::fs::read_to_string(&last)
+                .unwrap_or_default()
+                .is_empty(),
         "protocol-end without finalize must not scrape a fake last.txt"
+    );
+    // orgasmic:TASK-QPKCD — orphan path must not auto-spawn a continuation run.
+    let runs = get_runs_json(&running, &token).await;
+    let live = runs["live"].as_array().cloned().unwrap_or_default();
+    assert!(
+        live.is_empty(),
+        "protocol-end without finalize must leave zero live runs (no auto-continuation): {live:?}"
+    );
+    let session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        !session_raw.contains("\"phase\":\"continuation\"")
+            && !session_raw.contains("\"phase\": \"continuation\""),
+        "failed dispatch must not write Lifecycle::Continuation"
     );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
-}
-
-/// TASK-074.1 F-1: continuation acquire + ready-only subprocess exit auto-releases.
-#[cfg(unix)]
-#[allow(clippy::await_holding_lock)]
-#[tokio::test]
-async fn continuation_early_exit_auto_releases_stuck_lease() {
-    let _lock = fake_cursor_agent_test_lock();
-    use std::sync::Arc;
-
-    use orgasmic_daemon::events::EventBus;
-    use orgasmic_daemon::runtime::BootIdentity;
-    use orgasmic_daemon::supervisor::{
-        AcquireRequest, ContinuationSeed, StaticDiffSummarizer, Supervisor,
-    };
-    use orgasmic_daemon::writer::spawn as spawn_writer;
-    use orgasmic_drivers::adapters::cursor::CursorAdapter;
-    use orgasmic_drivers::modes::subprocess_stream_json::SubprocessStreamJsonDriver;
-    use orgasmic_drivers::{DriverConfig, RunKind};
-    use serde_json::json;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = install_fake_cursor_agent(
-        tmp.path(),
-        "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"cont-early-exit\"}'\n",
-    );
-    let _path_guard = PrependPathGuard::new(&bin);
-    let worktree = tmp.path().join("worktree-cont-early");
-    std::fs::create_dir_all(&worktree).unwrap();
-    init_git_worktree(&worktree);
-
-    let writer = spawn_writer(EventBus::new());
-    let boot = Arc::new(BootIdentity::new());
-    let sup =
-        Supervisor::with_summarizer(writer, boot, Arc::new(StaticDiffSummarizer(String::new())));
-    let driver = SubprocessStreamJsonDriver::new(Box::new(CursorAdapter::new()));
-    let driver_config = DriverConfig::from_value(json!({
-        "endpoint": "stdio",
-        "model": "composer-2.5-fast",
-        "sandbox": "enabled",
-        "force": true,
-        "prompt_bundle_text": "continuation early-exit test",
-    }));
-    let task_id = "TASK-CONT-EARLY-EXIT";
-    let session_path = tmp.path().join(format!("{task_id}.jsonl"));
-    let previous_session = tmp.path().join("run-prev-cont.jsonl");
-    write(&previous_session, "");
-    let seed = ContinuationSeed {
-        previous_run: "run-prev-cont".into(),
-        previous_session_path: previous_session,
-        diff_summary: "no changes".into(),
-        acceptance_criteria: vec!["AC1".into()],
-    };
-    let make_req = || AcquireRequest {
-        task_id: task_id.into(),
-        kind: RunKind::Worker,
-        worker_id: "implementer-cursor".into(),
-        role: "implementer".into(),
-        project_id: Some("proj-dispatch".into()),
-        worktree: Some(worktree.clone()),
-        last_path: None,
-        stdout_path: None,
-        session_path: session_path.clone(),
-        driver_config: driver_config.clone(),
-        babysitter_target: None,
-        stall_timeout_secs: None,
-        max_run_duration_secs: None,
-        idle_timeout_secs: None,
-        babysitter: None,
-    };
-
-    let first = sup
-        .acquire_continuation(&driver, make_req(), seed.clone())
-        .await
-        .expect("first continuation acquire");
-    assert!(
-        first.pid.is_some(),
-        "continuation subprocess should have a pid"
-    );
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        let second = sup
-            .acquire_continuation(&driver, make_req(), seed.clone())
-            .await;
-        if let Ok(resp) = second {
-            let _ = sup
-                .release(
-                    &resp.run_id,
-                    "test cleanup",
-                    orgasmic_core::ReleaseOutcome::Cancelled,
-                )
-                .await;
-            return;
-        }
-        assert!(
-            matches!(
-                second,
-                Err(orgasmic_daemon::supervisor::SupervisorError::LeaseHeld { .. })
-            ),
-            "unexpected continuation acquire error: {second:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    panic!("timed out waiting for continuation early-exit lease auto-release");
 }
 
 async fn post_dispatch_cleanup(

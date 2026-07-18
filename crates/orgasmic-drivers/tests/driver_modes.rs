@@ -72,7 +72,6 @@ fn ctx() -> DriverContext {
         project_id: None,
         worktree: None,
         babysitter_target: None,
-        continuation: None,
     }
 }
 

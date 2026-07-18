@@ -1385,4 +1385,37 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn manager_spec_points_at_rescue_policy_without_injecting_body() {
+        // orgasmic:TASK-QPKCD — POINTER/on-demand inclusion, not unconditional prose.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = repo_root();
+        std::os::unix::fs::symlink(&root, home.source()).unwrap();
+
+        let compiled =
+            compile_prompt_spec(&home, "manager", PromptCompileRequest::default()).unwrap();
+        assert!(
+            !has_error(&compiled.diagnostics),
+            "manager diagnostics: {:?}",
+            compiled.diagnostics
+        );
+        assert!(
+            compiled.text.contains("`rescue-policy`"),
+            "manager prompt must name the rescue-policy convention pointer"
+        );
+        assert!(
+            !compiled.text.contains("What failed-run termination means"),
+            "rescue-policy body must not be auto-injected into every manager compile"
+        );
+        assert!(
+            !compiled
+                .included_parts
+                .iter()
+                .any(|part| part.contains("rescue")),
+            "rescue-policy must not appear as an included prompt part"
+        );
+    }
 }

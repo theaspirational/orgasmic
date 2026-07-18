@@ -11,8 +11,8 @@ pub mod adapters;
 pub mod modes;
 pub mod runtime_options;
 pub mod sandbox;
-pub mod transcript_finder;
 pub mod r#trait;
+pub mod transcript_finder;
 
 pub use adapters::{
     ClaudeAdapter, CodexAdapter, CursorAcpAdapter, CursorAdapter, HermesAdapter, ShellAdapter,
@@ -21,10 +21,10 @@ pub use modes::rmux::{probe_rmux_binary, RmuxBinaryProbe};
 pub use modes::{AcpStdioDriver, AcpWsDriver, RmuxDriver, SubprocessStreamJsonDriver, TmuxDriver};
 pub use r#trait::{
     build_babysitter_request, implementer_tool_is_allowed, AcpWsProtocol, AttachOutcome, Attached,
-    BabysitterAck, BabysitterRequest, ContinuationContext, DriverConfig, DriverContext,
-    DriverControl, DriverError, DriverSession, HarnessControlOutcome, HarnessEventAdapter,
-    HarnessRequest, NativeRuntimeMeta, RunKind, StdioSpawn, TransitionAck, TransitionRequest,
-    UserInputAck, UserInputRequest, WireMessage, WorkerDriver,
+    BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
+    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta,
+    RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
+    WireMessage, WorkerDriver,
 };
 pub use runtime_options::{
     RuntimeModelOption, RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,

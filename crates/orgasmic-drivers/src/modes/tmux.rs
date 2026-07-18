@@ -190,21 +190,6 @@ impl WorkerDriver for TmuxDriver {
                 }),
             })
             .await;
-        if let Some(cont) = ctx.continuation.as_ref() {
-            // Surface the continuation context as a system text chunk so the
-            // session JSONL shows what the worker was seeded with.
-            let _ = tx
-                .send(DriverEvent::TextChunk {
-                    stream: TextStream::System,
-                    chunk: format!(
-                        "continuation: previous_run={} acceptance_criteria_count={}",
-                        cont.previous_run,
-                        cont.acceptance_criteria.len()
-                    ),
-                    seq: 0,
-                })
-                .await;
-        }
 
         Ok(DriverSession {
             identity: ctx.identity.clone(),
@@ -1265,7 +1250,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
     }
 
@@ -2043,7 +2027,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         };
         let attached = d.attach(attach_ctx, DriverConfig::empty()).await.unwrap();
         let AttachOutcome::Attached(mut attached) = attached else {

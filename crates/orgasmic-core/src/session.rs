@@ -301,6 +301,8 @@ pub enum Lifecycle {
         #[serde(default)]
         finalized_by_worker: bool,
     },
+    /// Historical auto-continuation envelope. No production path emits this
+    /// after TASK-QPKCD; kept so older session JSONL still deserializes.
     Continuation {
         previous_run: String,
         previous_session_path: PathBuf,

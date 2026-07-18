@@ -1679,7 +1679,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
     }
 

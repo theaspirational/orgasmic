@@ -387,7 +387,6 @@ mod tests {
     use super::*;
     use crate::events::EventBus;
     use crate::runtime::BootIdentity;
-    use crate::supervisor::StaticDiffSummarizer;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::{read_session_file, Lifecycle, SessionEventKind};
     use std::process::{Command, Stdio};
@@ -396,11 +395,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::with_summarizer(
-            writer,
-            boot,
-            Arc::new(StaticDiffSummarizer(String::new())),
-        );
+        let sup = Supervisor::new(writer, boot);
         (sup, dir)
     }
 

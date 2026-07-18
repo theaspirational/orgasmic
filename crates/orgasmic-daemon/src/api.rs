@@ -60,7 +60,7 @@ use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, DiffSummarizer, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
+    BabysitterAutoSpawn, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
@@ -1507,8 +1507,9 @@ fn persisted_terminal_contract_from_session(
     )
 }
 
-/// Provision a last_path for a fresh recovery/continuation run that inherits
-/// a required terminal contract (OQ1 / TASK-ARZGD).
+/// Provision a last_path for a fresh manager-authorized recovery run that
+/// inherits a required terminal contract (OQ1 / TASK-ARZGD). Not an
+/// auto-continuation path (TASK-QPKCD).
 fn provision_recovery_last_path(session_path: &FsPath, prior_run_id: &str) -> PathBuf {
     session_path
         .parent()
@@ -6922,7 +6923,6 @@ async fn classify_current_boot_session(
         project_id: None,
         worktree: None,
         babysitter_target: None,
-        continuation: None,
     };
     match driver.attach(ctx, DriverConfig::empty()).await {
         Ok(AttachOutcome::Attached(_attached)) => AttachClassification {
@@ -12909,13 +12909,12 @@ mod tests {
             &mut self,
             _req: orgasmic_drivers::BabysitterRequest,
         ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
-            Err(orgasmic_drivers::DriverError::Unsupported("babysitter_action"))
+            Err(orgasmic_drivers::DriverError::Unsupported(
+                "babysitter_action",
+            ))
         }
 
-        async fn release(
-            &mut self,
-            _reason: &str,
-        ) -> Result<(), orgasmic_drivers::DriverError> {
+        async fn release(&mut self, _reason: &str) -> Result<(), orgasmic_drivers::DriverError> {
             Ok(())
         }
     }

@@ -200,10 +200,7 @@ fn dispatch_from_yaml(parsed: Option<DispatchYaml>) -> (bool, DispatchGovernance
             }
         }
     }
-    (
-        auto_commit_signal,
-        DispatchGovernanceOverlay::from_map(map),
-    )
+    (auto_commit_signal, DispatchGovernanceOverlay::from_map(map))
 }
 
 fn driver_defaults(parsed: Option<DriversYaml>) -> DriverDefaults {
@@ -269,8 +266,15 @@ pub fn collect_unrecognized_keys(value: &serde_yaml::Value) -> Vec<String> {
             continue;
         };
         match name {
-            "bind_host" | "bind_port" | "lan_enabled" | "bind" | "port" | "lan" | "mdns"
-            | "log_level" | "watcher_debounce_ms" => {}
+            "bind_host"
+            | "bind_port"
+            | "lan_enabled"
+            | "bind"
+            | "port"
+            | "lan"
+            | "mdns"
+            | "log_level"
+            | "watcher_debounce_ms" => {}
             "watcher" => collect_object_keys(child, "watcher", &["debounce_ms"], &mut out),
             "tx" => collect_object_keys(child, "tx", &["commit_to_project"], &mut out),
             "manager" => collect_object_keys(child, "manager", &["actor"], &mut out),
@@ -678,8 +682,7 @@ dispatch:
         .unwrap();
         let keys = collect_unrecognized_keys(&yaml);
         assert!(
-            keys.iter()
-                .any(|k| k == "dispatch.implementer,codex,typo"),
+            keys.iter().any(|k| k == "dispatch.implementer,codex,typo"),
             "{keys:?}"
         );
     }
@@ -716,7 +719,8 @@ drivers:
         assert!(keys.iter().any(|k| k == "watcher.mystery"), "{keys:?}");
         assert!(keys.iter().any(|k| k == "dispatch.not_a_kind"), "{keys:?}");
         assert!(
-            keys.iter().any(|k| k == "dispatch.implementer.invent_field"),
+            keys.iter()
+                .any(|k| k == "dispatch.implementer.invent_field"),
             "{keys:?}"
         );
         assert!(
