@@ -16,6 +16,7 @@ pub mod auth;
 pub mod authz;
 pub mod config;
 pub mod content;
+pub mod governance;
 pub mod events;
 pub mod index;
 pub mod manager_registration;
@@ -36,7 +37,7 @@ use axum::Router;
 use orgasmic_core::Home;
 use orgasmic_drivers::modes::tmux;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
 
 pub use crate::api::embedded_ui_asset_hash;
@@ -212,6 +213,13 @@ impl Daemon {
             cfg = cfg.with_port(port);
         }
         init_tracing(&cfg.log_level);
+        for key in &cfg.unrecognized_keys {
+            warn!(
+                key = %key,
+                path = %home.config().display(),
+                "unrecognized key in orgasmic config.yaml (ignored)"
+            );
+        }
         let boot = Arc::new(BootIdentity::new());
         let events = EventBus::new();
         events.publish(
