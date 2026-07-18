@@ -227,6 +227,11 @@ pub enum SupervisorError {
     Session(#[from] anyhow::Error),
     #[error("run acquisition is paused for controlled restart")]
     AcquisitionPaused,
+    /// Release deferred while an artifactor writer/regenerate acknowledgment
+    /// is in flight — the record stays live until commit/abort/rollback
+    /// resolves it (TASK-ARZGD / TASK-S52X9 round 3).
+    #[error("release deferred while artifactor in-flight: {0}")]
+    DeferredWhileInFlight(String),
 }
 
 #[derive(Clone)]
@@ -352,9 +357,17 @@ struct RunRecord {
     /// In-flight artifactor submit before the durable writer transaction
     /// commits. Never promoted to Completed on its own (TASK-99W9C).
     submit_in_flight: Option<SubmitInFlight>,
-    /// Stream-end or TUI terminal event deferred while `submit_in_flight` is
-    /// set — resolved only after the writer transaction commits or aborts.
+    /// Stream-end, TUI terminal event, or timeout deferred while
+    /// `submit_in_flight` / `regenerate_in_flight` is set — resolved only
+    /// after the writer/ack outcome.
     pending_terminal_drain: bool,
+    /// Operator cancel deferred while an artifactor writer/regenerate is
+    /// in flight — after commit/abort/rollback, release as Cancelled
+    /// (TASK-ARZGD OQ2).
+    pending_cancel: bool,
+    /// Regenerate round checkpoint held until send_input commits or rolls
+    /// back — defers terminal drains across the ack window (TASK-ARZGD).
+    regenerate_in_flight: Option<ArtifactorRegenerateCheckpoint>,
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
@@ -944,6 +957,8 @@ impl Supervisor {
             terminal_declaration: None,
             submit_in_flight: None,
             pending_terminal_drain: false,
+            pending_cancel: false,
+            regenerate_in_flight: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1177,6 +1192,8 @@ impl Supervisor {
             terminal_declaration: None,
             submit_in_flight: None,
             pending_terminal_drain: false,
+            pending_cancel: false,
+            regenerate_in_flight: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1506,6 +1523,8 @@ impl Supervisor {
             terminal_declaration: None,
             submit_in_flight: None,
             pending_terminal_drain: false,
+            pending_cancel: false,
+            regenerate_in_flight: None,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
             run_started_at,
@@ -1838,6 +1857,19 @@ impl Supervisor {
                     .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
                 self.check_ownership(rec, caller)?;
             }
+            // orgasmic:TASK-ARZGD — no path may remove the record while an
+            // artifactor writer/regenerate ack is in flight. Cancel waits for
+            // the writer outcome then records Cancelled; timeout/drain defer.
+            if let Some(rec) = g.runs.get_mut(run_id) {
+                if artifactor_lifecycle_in_flight(rec) {
+                    if !finalized_by_worker && matches!(outcome, ReleaseOutcome::Cancelled) {
+                        rec.pending_cancel = true;
+                    } else {
+                        rec.pending_terminal_drain = true;
+                    }
+                    return Err(SupervisorError::DeferredWhileInFlight(run_id.into()));
+                }
+            }
             let rec = g
                 .runs
                 .remove(run_id)
@@ -2043,6 +2075,11 @@ impl Supervisor {
             )
             .await
         {
+            if matches!(e, SupervisorError::DeferredWhileInFlight(_)) {
+                // In-flight artifactor writer/regenerate — defer; never a
+                // false Failed timeout tombstone (TASK-ARZGD).
+                return;
+            }
             if !matches!(e, SupervisorError::RunNotFound(_)) {
                 warn!(
                     error = %e,
@@ -2072,9 +2109,37 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Atomically find the live artifactor run for `task_id` and install the
+    /// submit-in-flight token under one supervisor lock (TASK-ARZGD P1).
+    /// Carry the returned run_id through commit/abort — never re-lookup.
+    // orgasmic:TASK-ARZGD
+    pub async fn begin_artifactor_submit_for_task(
+        &self,
+        task_id: &str,
+    ) -> Result<(String, u64), SupervisorError> {
+        let token = SUBMIT_IN_FLIGHT_TOKEN.fetch_add(1, Ordering::Relaxed);
+        let mut g = self.inner.lock().await;
+        let run_id = g
+            .runs
+            .iter()
+            .find(|(_, rec)| rec.task_id == task_id)
+            .map(|(id, _)| id.clone())
+            .ok_or_else(|| SupervisorError::RunNotFound(task_id.into()))?;
+        let rec = g
+            .runs
+            .get_mut(&run_id)
+            .ok_or_else(|| SupervisorError::RunNotFound(run_id.clone()))?;
+        rec.submit_in_flight = Some(SubmitInFlight {
+            round: rec.terminal_round,
+            token,
+        });
+        Ok((run_id, token))
+    }
+
     /// Mark an in-flight artifactor submit before the durable writer transaction.
     /// Does not install a terminal declaration — only defers terminal resolution
-    /// until commit or abort (TASK-99W9C).
+    /// until commit or abort (TASK-99W9C). Prefer
+    /// [`Self::begin_artifactor_submit_for_task`] for the production path.
     pub async fn prepare_artifactor_submit_in_flight(
         &self,
         run_id: &str,
@@ -2093,13 +2158,13 @@ impl Supervisor {
     }
 
     /// Promote an in-flight submit to a durable declaration after the writer
-    /// transaction commits. Resolves any deferred terminal drain as Completed.
+    /// transaction commits. Resolves deferred cancel/drain outcomes.
     pub async fn commit_artifactor_submit_in_flight(
         &self,
         run_id: &str,
         token: u64,
     ) -> Result<(), SupervisorError> {
-        let maybe_rec = {
+        let outcome = {
             let mut g = self.inner.lock().await;
             let rec = g
                 .runs
@@ -2116,36 +2181,20 @@ impl Supervisor {
                 reason: "artifact_submitted",
                 round: in_flight.round,
             });
-            if rec.pending_terminal_drain {
-                if let Some(rec) = g.runs.remove(run_id) {
-                    g.leases.remove(&(rec.task_id.clone(), rec.kind));
-                    Some(rec)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            take_deferred_artifactor_release(&mut g, run_id)
         };
-        if let Some(rec) = maybe_rec {
-            write_terminal_release_from_record(
-                &self.writer,
-                rec,
-                TerminalReleaseSource::StreamEnd,
-            )
-            .await;
-        }
+        finish_deferred_artifactor_release(&self.writer, outcome).await;
         Ok(())
     }
 
-    /// Clear an in-flight submit after writer failure. Resolves any deferred
-    /// terminal drain as Failed — never Completed.
+    /// Clear an in-flight submit after writer failure. Resolves deferred
+    /// cancel/drain — never a false Completed.
     pub async fn abort_artifactor_submit_in_flight(
         &self,
         run_id: &str,
         token: u64,
     ) -> Result<(), SupervisorError> {
-        let maybe_rec = {
+        let outcome = {
             let mut g = self.inner.lock().await;
             let Some(rec) = g.runs.get_mut(run_id) else {
                 return Ok(());
@@ -2158,32 +2207,43 @@ impl Supervisor {
             }
             rec.submit_in_flight = None;
             rec.terminal_declaration = None;
-            if rec.pending_terminal_drain {
-                if let Some(rec) = g.runs.remove(run_id) {
-                    g.leases.remove(&(rec.task_id.clone(), rec.kind));
-                    Some(rec)
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            take_deferred_artifactor_release(&mut g, run_id)
         };
-        if let Some(rec) = maybe_rec {
-            let resolved = ResolvedTerminalRelease {
-                reason: "artifact_submit_failed".into(),
-                outcome: ReleaseOutcome::Failed,
-                finalized_by_worker: false,
-            };
-            append_terminal_release(&self.writer, rec, resolved).await;
+        match outcome {
+            DeferredArtifactorRelease::Cancel(rec) => {
+                append_terminal_release(
+                    &self.writer,
+                    rec,
+                    ResolvedTerminalRelease {
+                        reason: "cancelled".into(),
+                        outcome: ReleaseOutcome::Cancelled,
+                        finalized_by_worker: false,
+                    },
+                )
+                .await;
+            }
+            DeferredArtifactorRelease::Drain(rec) => {
+                append_terminal_release(
+                    &self.writer,
+                    rec,
+                    ResolvedTerminalRelease {
+                        reason: "artifact_submit_failed".into(),
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
+                    },
+                )
+                .await;
+            }
+            DeferredArtifactorRelease::None => {}
         }
         Ok(())
     }
 
     /// Clear a prior terminal declaration and bump the artifactor round when a
-    /// new regenerate round starts — that round needs its own submit. Returns a
-    /// checkpoint so a rejected follow-up can restore the prior declaration.
-    // orgasmic:TASK-S52X9
+    /// new regenerate round starts — that round needs its own submit. Holds a
+    /// `regenerate_in_flight` checkpoint so terminal drains defer until
+    /// commit/rollback (TASK-ARZGD P3).
+    // orgasmic:TASK-S52X9,TASK-ARZGD
     pub async fn begin_artifactor_regenerate_round(
         &self,
         run_id: &str,
@@ -2199,23 +2259,50 @@ impl Supervisor {
         };
         rec.terminal_round = rec.terminal_round.saturating_add(1);
         rec.terminal_declaration = None;
+        rec.regenerate_in_flight = Some(checkpoint);
         Ok(checkpoint)
     }
 
+    /// Clear regenerate-in-flight after an accepted follow-up. Resolves any
+    /// deferred drain against the new (undeclared) round.
+    // orgasmic:TASK-ARZGD
+    pub async fn commit_artifactor_regenerate_round(
+        &self,
+        run_id: &str,
+    ) -> Result<(), SupervisorError> {
+        let outcome = {
+            let mut g = self.inner.lock().await;
+            let rec = g
+                .runs
+                .get_mut(run_id)
+                .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+            rec.regenerate_in_flight = None;
+            take_deferred_artifactor_release(&mut g, run_id)
+        };
+        finish_deferred_artifactor_release(&self.writer, outcome).await;
+        Ok(())
+    }
+
     /// Restore the artifactor round/declaration after a rejected regenerate
-    /// follow-up (TASK-99W9C).
+    /// follow-up (TASK-99W9C / TASK-ARZGD). Resolves deferred cancel/drain
+    /// against the restored declaration.
     pub async fn rollback_artifactor_regenerate_round(
         &self,
         run_id: &str,
         checkpoint: ArtifactorRegenerateCheckpoint,
     ) -> Result<(), SupervisorError> {
-        let mut g = self.inner.lock().await;
-        let rec = g
-            .runs
-            .get_mut(run_id)
-            .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-        rec.terminal_round = checkpoint.terminal_round;
-        rec.terminal_declaration = checkpoint.terminal_declaration;
+        let outcome = {
+            let mut g = self.inner.lock().await;
+            let rec = g
+                .runs
+                .get_mut(run_id)
+                .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+            rec.terminal_round = checkpoint.terminal_round;
+            rec.terminal_declaration = checkpoint.terminal_declaration;
+            rec.regenerate_in_flight = None;
+            take_deferred_artifactor_release(&mut g, run_id)
+        };
+        finish_deferred_artifactor_release(&self.writer, outcome).await;
         Ok(())
     }
 
@@ -2807,16 +2894,75 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
 /// (dec_WDR5K item 6 / TASK-S52X9). Dispatch and stage grill/plan/architect
 /// advertise the contract when they carry a `last_path`; artifactor and
 /// manager always do (their terminal verbs are submit / release, not
-/// `dispatch finalize`). Custom bare terminals are exempt (dec_WDR5K item 6
-/// seventh amendment / TASK-TZJFF).
-// orgasmic:TASK-S52X9,dec_WDR5K
+/// `dispatch finalize`). Custom bare terminals (`terminal`) and babysitters
+/// are exempt (dec_WDR5K item 6 seventh amendment / TASK-TZJFF). Unknown
+/// historical agent roles fail closed (TASK-ARZGD).
+// orgasmic:TASK-S52X9,TASK-ARZGD,dec_WDR5K
 pub(crate) fn run_requires_worker_finalize(last_path: &Option<PathBuf>, role: &str) -> bool {
     match role {
         "implementer" | "reviewer" | "architector" | "griller" | "planner" => {
             last_path.is_some()
         }
         "artifactor" | "manager" => true,
-        _ => false,
+        "terminal" | "babysitter" => false,
+        // Fail closed: unknown non-terminal historical agent roles require
+        // a declaration; protocol-end without one is Failed.
+        _ => true,
+    }
+}
+
+fn artifactor_lifecycle_in_flight(rec: &RunRecord) -> bool {
+    rec.submit_in_flight.is_some() || rec.regenerate_in_flight.is_some()
+}
+
+enum DeferredArtifactorRelease {
+    None,
+    Cancel(RunRecord),
+    Drain(RunRecord),
+}
+
+fn take_deferred_artifactor_release(inner: &mut Inner, run_id: &str) -> DeferredArtifactorRelease {
+    let Some(rec) = inner.runs.get_mut(run_id) else {
+        return DeferredArtifactorRelease::None;
+    };
+    if rec.pending_cancel {
+        let Some(rec) = inner.runs.remove(run_id) else {
+            return DeferredArtifactorRelease::None;
+        };
+        inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+        return DeferredArtifactorRelease::Cancel(rec);
+    }
+    if rec.pending_terminal_drain {
+        let Some(rec) = inner.runs.remove(run_id) else {
+            return DeferredArtifactorRelease::None;
+        };
+        inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+        return DeferredArtifactorRelease::Drain(rec);
+    }
+    DeferredArtifactorRelease::None
+}
+
+async fn finish_deferred_artifactor_release(
+    writer: &WriterHandle,
+    outcome: DeferredArtifactorRelease,
+) {
+    match outcome {
+        DeferredArtifactorRelease::None => {}
+        DeferredArtifactorRelease::Cancel(rec) => {
+            append_terminal_release(
+                writer,
+                rec,
+                ResolvedTerminalRelease {
+                    reason: "cancelled".into(),
+                    outcome: ReleaseOutcome::Cancelled,
+                    finalized_by_worker: false,
+                },
+            )
+            .await;
+        }
+        DeferredArtifactorRelease::Drain(rec) => {
+            write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
+        }
     }
 }
 
@@ -2826,7 +2972,7 @@ fn resolve_terminal_release(
     rec: &RunRecord,
     source: TerminalReleaseSource,
 ) -> ResolvedTerminalRelease {
-    if rec.submit_in_flight.is_some() {
+    if artifactor_lifecycle_in_flight(rec) {
         return ResolvedTerminalRelease {
             reason: "artifact_submit_in_flight".into(),
             outcome: ReleaseOutcome::Failed,
@@ -2904,8 +3050,7 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     if inner
         .runs
         .get(run_id)
-        .and_then(|rec| rec.submit_in_flight)
-        .is_some()
+        .is_some_and(artifactor_lifecycle_in_flight)
     {
         if let Some(rec) = inner.runs.get_mut(run_id) {
             rec.pending_terminal_drain = true;
@@ -2930,7 +3075,7 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
 fn claim_run_on_stream_end(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
     let mut rec = inner.runs.remove(run_id)?;
     inner.leases.remove(&(rec.task_id.clone(), rec.kind));
-    if rec.submit_in_flight.is_some() {
+    if artifactor_lifecycle_in_flight(&rec) {
         rec.pending_terminal_drain = true;
         inner.runs.insert(run_id.to_string(), rec);
         return None;
@@ -5119,6 +5264,8 @@ mod tests {
         assert!(!run_requires_worker_finalize(&None, "griller"));
         assert!(!run_requires_worker_finalize(&None, "babysitter"));
         assert!(!run_requires_worker_finalize(&None, "terminal"));
+        // Fail closed for unknown historical agent roles (TASK-ARZGD).
+        assert!(run_requires_worker_finalize(&None, "worker"));
     }
 
     #[tokio::test]
@@ -5161,7 +5308,13 @@ mod tests {
         sup.mark_terminal_declaration(&resp.run_id, "artifact_submitted")
             .await
             .unwrap();
-        sup.begin_artifactor_regenerate_round(&resp.run_id)
+        // Accepted followup clears regenerate_in_flight; the new round has no
+        // declaration, so protocol-end must Fail (TASK-ARZGD / TASK-TZJFF).
+        let _checkpoint = sup
+            .begin_artifactor_regenerate_round(&resp.run_id)
+            .await
+            .unwrap();
+        sup.commit_artifactor_regenerate_round(&resp.run_id)
             .await
             .unwrap();
         let path = dir.path().join("artifact.generate:ART-ROUND1.jsonl");
@@ -5407,6 +5560,185 @@ mod tests {
         assert!(
             checkpoint2.terminal_declaration.is_some(),
             "rollback must restore the prior declaration"
+        );
+    }
+
+    #[tokio::test]
+    async fn artifactor_submit_for_task_is_atomic_and_timeout_defers_while_in_flight() {
+        // orgasmic:TASK-ARZGD P1 — find+token under one lock; timeout never
+        // false-Fails an in-flight submit.
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let mut req = artifactor_req("artifact.generate:ART-ATOMIC", dir.path());
+        req.idle_timeout_secs = Some(1);
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        let (run_id, token) = sup
+            .begin_artifactor_submit_for_task("artifact.generate:ART-ATOMIC")
+            .await
+            .unwrap();
+        assert_eq!(run_id, resp.run_id);
+
+        // Force the idle clock past the threshold while submit is in flight.
+        {
+            let mut g = sup.inner.lock().await;
+            let rec = g.runs.get_mut(&run_id).unwrap();
+            rec.last_input_at = Instant::now() - Duration::from_secs(10);
+            rec.last_driver_event_at = Instant::now() - Duration::from_secs(10);
+            rec.run_started_at = Instant::now() - Duration::from_secs(10);
+        }
+        match sup
+            .release_with_finalization(
+                &run_id,
+                "idle_timeout_exceeded",
+                ReleaseOutcome::Failed,
+                false,
+                None,
+            )
+            .await
+        {
+            Err(SupervisorError::DeferredWhileInFlight(_)) => {}
+            other => panic!("timeout during submit_in_flight must defer: {other:?}"),
+        }
+        let path = dir.path().join("artifact.generate:ART-ATOMIC.jsonl");
+        assert!(
+            !has_release_reason(&path, "idle_timeout_exceeded"),
+            "timeout must not write a false Failed while submit is in flight"
+        );
+
+        sup.commit_artifactor_submit_in_flight(&run_id, token)
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "artifact_submitted") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("artifact_submitted")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
+            }),
+            "deferred timeout after successful commit must resolve Completed, not Failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn artifactor_operator_cancel_waits_for_submit_then_records_cancelled() {
+        // orgasmic:TASK-ARZGD OQ2
+        let (sup, dir, _w) = make_supervisor();
+        let driver = AcceptingInputDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-CANCEL", dir.path()),
+            )
+            .await
+            .unwrap();
+        let (run_id, token) = sup
+            .begin_artifactor_submit_for_task("artifact.generate:ART-CANCEL")
+            .await
+            .unwrap();
+        assert_eq!(run_id, resp.run_id);
+        match sup
+            .release_with_finalization(
+                &run_id,
+                "run released",
+                ReleaseOutcome::Cancelled,
+                false,
+                None,
+            )
+            .await
+        {
+            Err(SupervisorError::DeferredWhileInFlight(_)) => {}
+            other => panic!("cancel during submit_in_flight must defer: {other:?}"),
+        }
+        sup.commit_artifactor_submit_in_flight(&run_id, token)
+            .await
+            .unwrap();
+        let path = dir.path().join("artifact.generate:ART-CANCEL.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "cancelled") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("cancelled")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("cancelled")
+            }),
+            "deferred operator cancel must record Cancelled after writer commit"
+        );
+    }
+
+    #[tokio::test]
+    async fn artifactor_regenerate_in_flight_defers_protocol_end_until_rollback() {
+        // orgasmic:TASK-ARZGD P3
+        let (sup, dir, _w) = make_supervisor();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let driver = GatedProtocolEndDriver {
+            gate: Arc::clone(&gate),
+        };
+        let resp = sup
+            .acquire(
+                &driver,
+                artifactor_req("artifact.generate:ART-REGEN-RACE", dir.path()),
+            )
+            .await
+            .unwrap();
+        sup.mark_terminal_declaration(&resp.run_id, "artifact_submitted")
+            .await
+            .unwrap();
+        let checkpoint = sup
+            .begin_artifactor_regenerate_round(&resp.run_id)
+            .await
+            .unwrap();
+        gate.notify_one();
+        let path = dir.path().join("artifact.generate:ART-REGEN-RACE.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if session_events(&path)
+                .iter()
+                .filter(|envelope| envelope.kind == SessionEventKind::DriverEvent)
+                .count()
+                >= 2
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            !has_release_reason(&path, "protocol_end_without_finalize"),
+            "protocol-end during regenerate_in_flight must defer, not false-Fail"
+        );
+        sup.rollback_artifactor_regenerate_round(&resp.run_id, checkpoint)
+            .await
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            if has_release_reason(&path, "artifact_submitted") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            session_events(&path).iter().any(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("reason").and_then(|v| v.as_str())
+                        == Some("artifact_submitted")
+                    && envelope.event.get("outcome").and_then(|v| v.as_str())
+                        == Some("completed")
+            }),
+            "rollback after deferred drain must restore prior Completed declaration"
         );
     }
 

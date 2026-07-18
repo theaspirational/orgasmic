@@ -1372,20 +1372,37 @@ fn resolve_run_role(home: &Home, worker_id: &str, kind: RunKind) -> String {
     }
 }
 
+/// Shared persisted terminal contract for boot auto-reattach AND every manual
+/// recovery entry (recover / resume_native_fork / start_recovery_run).
+/// orgasmic:TASK-ARZGD
+#[derive(Debug, Clone)]
+struct PersistedTerminalContract {
+    role: String,
+    requires_worker_finalize: bool,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+    harness: Option<String>,
+}
+
 /// Restore role/requires_worker_finalize from persisted RunMeta, deriving from
-/// harness for pre-upgrade records (fail closed — never silently exempt).
-fn boot_reattach_terminal_contract(
+/// harness for pre-upgrade records. Unknown non-terminal historical agent
+/// roles fail closed; the only exemption is a custom bare terminal proved
+/// from the recorded harness (dec_WDR5K item 6 seventh amendment).
+// orgasmic:TASK-ARZGD,dec_WDR5K
+fn resolve_persisted_terminal_contract(
     home: &Home,
     worker_id: &str,
     kind: RunKind,
     harness: Option<&str>,
-    last_path: &Option<PathBuf>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
     meta_role: Option<String>,
     meta_requires: Option<bool>,
-) -> (String, bool) {
+) -> PersistedTerminalContract {
+    let custom_terminal = harness.map(manager_terminal_harness).unwrap_or(false);
     let role = meta_role.unwrap_or_else(|| {
         if worker_id == "manager" {
-            if harness.map(manager_terminal_harness).unwrap_or(false) {
+            if custom_terminal {
                 "terminal".into()
             } else {
                 "manager".into()
@@ -1395,9 +1412,102 @@ fn boot_reattach_terminal_contract(
         }
     });
     let requires_worker_finalize = meta_requires.unwrap_or_else(|| {
-        crate::supervisor::run_requires_worker_finalize(last_path, &role)
+        if role == "terminal" || custom_terminal {
+            false
+        } else {
+            crate::supervisor::run_requires_worker_finalize(&last_path, &role)
+        }
     });
-    (role, requires_worker_finalize)
+    PersistedTerminalContract {
+        role,
+        requires_worker_finalize,
+        last_path,
+        stdout_path,
+        harness: harness.map(str::to_string),
+    }
+}
+
+/// Compatibility wrapper used by boot reattach call sites / unit tests.
+fn boot_reattach_terminal_contract(
+    home: &Home,
+    worker_id: &str,
+    kind: RunKind,
+    harness: Option<&str>,
+    last_path: &Option<PathBuf>,
+    meta_role: Option<String>,
+    meta_requires: Option<bool>,
+) -> (String, bool) {
+    let contract = resolve_persisted_terminal_contract(
+        home,
+        worker_id,
+        kind,
+        harness,
+        last_path.clone(),
+        None,
+        meta_role,
+        meta_requires,
+    );
+    (contract.role, contract.requires_worker_finalize)
+}
+
+/// Parse the shared terminal contract from a recovered session's envelopes.
+fn persisted_terminal_contract_from_session(
+    home: &Home,
+    envelopes: &[SessionEnvelope],
+) -> PersistedTerminalContract {
+    let meta = session_acquire_meta(envelopes);
+    let worker_id = meta
+        .as_ref()
+        .map(|m| m.worker_id.clone())
+        .unwrap_or_else(|| "manager".to_string());
+    let kind = meta.as_ref().map(|m| m.kind).unwrap_or(RunKind::Worker);
+    let mut harness = None;
+    let mut last_path = None;
+    let mut stdout_path = None;
+    let mut meta_role = None;
+    let mut meta_requires = None;
+    for env in envelopes {
+        if env.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        if let Ok(Lifecycle::RunMeta {
+            harness: h,
+            last_path: lp,
+            stdout_path: sp,
+            role,
+            requires_worker_finalize,
+            ..
+        }) = serde_json::from_value::<Lifecycle>(env.event.clone())
+        {
+            harness = h.or(harness);
+            last_path = lp.or(last_path);
+            stdout_path = sp.or(stdout_path);
+            meta_role = role.or(meta_role);
+            meta_requires = requires_worker_finalize.or(meta_requires);
+        }
+    }
+    if harness.is_none() {
+        harness = session_native_runtime(envelopes).map(|n| n.provider);
+    }
+    resolve_persisted_terminal_contract(
+        home,
+        &worker_id,
+        kind,
+        harness.as_deref(),
+        last_path,
+        stdout_path,
+        meta_role,
+        meta_requires,
+    )
+}
+
+/// Provision a last_path for a fresh recovery/continuation run that inherits
+/// a required terminal contract (OQ1 / TASK-ARZGD).
+fn provision_recovery_last_path(session_path: &FsPath, prior_run_id: &str) -> PathBuf {
+    session_path
+        .parent()
+        .map(|dir| dir.join(format!("{prior_run_id}.recovery.last.txt")))
+        .unwrap_or_else(|| PathBuf::from(format!("{prior_run_id}.recovery.last.txt")))
 }
 
 #[derive(Debug, Deserialize)]
@@ -5809,7 +5919,7 @@ async fn post_run_release(
     } else {
         ReleaseOutcome::Cancelled
     };
-    state
+    match state
         .supervisor
         .release_with_finalization(
             &id,
@@ -5819,24 +5929,30 @@ async fn post_run_release(
             req.caller_identity.as_ref(),
         )
         .await
-        .map_err(|e| match e {
-            crate::supervisor::SupervisorError::RunNotFound(_) => {
-                ApiError::not_found(format!("active run {id}"))
-            }
-            crate::supervisor::SupervisorError::OwnershipMismatch {
-                run_id,
-                field,
-                expected,
-                got,
-            } => ApiError::conflict_json(json!({
+    {
+        Ok(()) => {}
+        // orgasmic:TASK-ARZGD — operator cancel waits for artifactor writer/
+        // regenerate ack, then records Cancelled.
+        Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_)) => {}
+        Err(crate::supervisor::SupervisorError::RunNotFound(_)) => {
+            return Err(ApiError::not_found(format!("active run {id}")));
+        }
+        Err(crate::supervisor::SupervisorError::OwnershipMismatch {
+            run_id,
+            field,
+            expected,
+            got,
+        }) => {
+            return Err(ApiError::conflict_json(json!({
                 "error": "runtime ownership mismatch",
                 "run_id": run_id,
                 "field": field,
                 "expected": expected,
                 "got": got,
-            })),
-            other => supervisor_release_error(&id, other),
-        })?;
+            })));
+        }
+        Err(other) => return Err(supervisor_release_error(&id, other)),
+    }
     Ok(Json(RunReleaseResponse {
         run_id: id,
         task_id: run.task_id,
@@ -6011,6 +6127,9 @@ async fn post_run_recover(
     let run_kind = meta.as_ref().map(|m| m.kind).unwrap_or(RunKind::Worker);
     let worktree = Some(state.home.source());
 
+    // Shared terminal contract for every recovery entry (TASK-ARZGD P2).
+    let terminal_contract = persisted_terminal_contract_from_session(&state.home, &envelopes);
+
     match action.as_str() {
         "reattach_tmux" => {
             let (driver, _meta) = recovery_driver(&state.home, &envelopes).ok_or_else(|| {
@@ -6021,15 +6140,6 @@ async fn post_run_recover(
                 runtime_id: prior.runtime_id.clone(),
                 boot_id: prior.boot_id.clone(),
             };
-            let (role, requires_worker_finalize) = boot_reattach_terminal_contract(
-                &state.home,
-                &worker_id,
-                run_kind,
-                None,
-                &None,
-                None,
-                None,
-            );
             let acquire = state
                 .supervisor
                 .reattach(
@@ -6040,8 +6150,8 @@ async fn post_run_recover(
                         .map(|m| m.task_id.clone())
                         .unwrap_or_else(|| format!("recover:{id}")),
                     worker_id.clone(),
-                    role,
-                    requires_worker_finalize,
+                    terminal_contract.role.clone(),
+                    terminal_contract.requires_worker_finalize,
                     req.project.clone(),
                     worktree,
                     prior.session_path.clone(),
@@ -6052,6 +6162,15 @@ async fn post_run_recover(
                 .await
                 .map_err(supervisor_recover_error)?;
             // Reattach attaches as-is and leaves the composer empty (dec_052).
+            // Force the inherited contract even when artifact paths are absent.
+            state
+                .supervisor
+                .restore_terminal_contract(
+                    &acquire.run_id,
+                    terminal_contract.role,
+                    terminal_contract.requires_worker_finalize,
+                )
+                .await;
             Ok(Json(RunRecoverResponse {
                 run_id: acquire.run_id,
                 runtime_id: acquire.identity.runtime_id,
@@ -6112,9 +6231,10 @@ async fn post_run_recover(
                 // original harness (dec_052) — never the placeholder shell and
                 // never the deferred acp driver. The harness comes from native
                 // metadata or the recorded worker; default to claude.
-                let harness = native
-                    .as_ref()
-                    .map(|n| n.provider.clone())
+                let harness = terminal_contract
+                    .harness
+                    .clone()
+                    .or_else(|| native.as_ref().map(|n| n.provider.clone()))
                     .or_else(|| {
                         meta.as_ref()
                             .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
@@ -6133,6 +6253,25 @@ async fn post_run_recover(
                 (driver, cfg)
             };
 
+            // OQ1: fresh recovery inherits the original shape's terminal
+            // contract — provision last_path when required so the
+            // requirement is set independent of path replay.
+            let last_path = if terminal_contract.requires_worker_finalize {
+                Some(
+                    terminal_contract
+                        .last_path
+                        .clone()
+                        .unwrap_or_else(|| provision_recovery_last_path(&session_path, &id)),
+                )
+            } else {
+                None
+            };
+            let stdout_path = if terminal_contract.requires_worker_finalize {
+                terminal_contract.stdout_path.clone()
+            } else {
+                None
+            };
+
             let acquire = state
                 .supervisor
                 .acquire(
@@ -6143,12 +6282,12 @@ async fn post_run_recover(
                             .map(|m| m.task_id.clone())
                             .unwrap_or_else(|| format!("recover:{id}")),
                         kind: run_kind,
-                        role: resolve_run_role(&state.home, &worker_id, run_kind),
+                        role: terminal_contract.role.clone(),
                         worker_id,
                         project_id: req.project.clone(),
                         worktree,
-                        last_path: None,
-                        stdout_path: None,
+                        last_path,
+                        stdout_path,
                         session_path: session_path.clone(),
                         driver_config,
                         babysitter_target: None,
@@ -6160,6 +6299,15 @@ async fn post_run_recover(
                 )
                 .await
                 .map_err(supervisor_recover_error)?;
+
+            state
+                .supervisor
+                .restore_terminal_contract(
+                    &acquire.run_id,
+                    terminal_contract.role,
+                    terminal_contract.requires_worker_finalize,
+                )
+                .await;
 
             // Persist the staged recovery prompt draft (pending send).
             state
@@ -10387,13 +10535,16 @@ async fn post_artifact_submit(
             )
             .await
         {
-            if let Some((_, token)) = submit_in_flight {
-                abort_artifactor_submit_terminal(&state, &art_id, token).await;
+            if let Some((run_id, token)) = submit_in_flight {
+                abort_artifactor_submit_terminal(&state, &run_id, token).await;
             }
             return Err(ApiError::internal(format!("write artifact files: {e}")));
         }
-        if let Some((_, token)) = submit_in_flight {
-            commit_artifactor_submit_terminal(&state, &art_id, token).await;
+        if let Some((run_id, token)) = submit_in_flight {
+            commit_artifactor_submit_terminal(&state, &run_id, token).await;
+            // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
+            // declaration (writes finalize tombstone; no dispatch finalize).
+            release_artifactor_run_after_submit(&state, &run_id).await;
         }
 
         let _ = state.index.refresh_project(&entry.id).await;
@@ -10405,9 +10556,6 @@ async fn post_artifact_submit(
                 state: "submitted".into(),
             },
         );
-        // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
-        // declaration (writes finalize tombstone; no dispatch finalize).
-        release_artifactor_run_after_submit(&state, &art_id).await;
         return Ok(Json(json!({ "artifact_id": art_id, "version": 1 })));
     }
 
@@ -10482,13 +10630,16 @@ async fn post_artifact_submit(
         )
         .await
     {
-        if let Some((_, token)) = submit_in_flight {
-            abort_artifactor_submit_terminal(&state, &art_id, token).await;
+        if let Some((run_id, token)) = submit_in_flight {
+            abort_artifactor_submit_terminal(&state, &run_id, token).await;
         }
         return Err(ApiError::internal(format!("write artifact files: {e}")));
     }
-    if let Some((_, token)) = submit_in_flight {
-        commit_artifactor_submit_terminal(&state, &art_id, token).await;
+    if let Some((run_id, token)) = submit_in_flight {
+        commit_artifactor_submit_terminal(&state, &run_id, token).await;
+        // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
+        // declaration (writes finalize tombstone; no dispatch finalize).
+        release_artifactor_run_after_submit(&state, &run_id).await;
     }
 
     let _ = state.index.refresh_project(&entry.id).await;
@@ -10500,45 +10651,30 @@ async fn post_artifact_submit(
             state: new_state.into(),
         },
     );
-    // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
-    // declaration (writes finalize tombstone; no dispatch finalize).
-    release_artifactor_run_after_submit(&state, &art_id).await;
     Ok(Json(
         json!({ "artifact_id": art_id, "version": new_version }),
     ))
 }
 
-/// After a successful `artifact submit`, record the artifactor's terminal
-/// declaration. Hot-session rmux runs stay live across regenerate rounds
-/// (dec_S02E2) — mark the declaration so a later idle/protocol-end writes
-/// the finalize tombstone. One-shot transports release immediately with
-/// the tombstone. Cold submits (no live artifactor run) are a no-op.
-// orgasmic:TASK-S52X9
-async fn artifactor_submit_live_run_id(state: &ApiState, art_id: &str) -> Option<String> {
-    let task_id = format!("artifact.generate:{art_id}");
-    let snapshot = state.supervisor.snapshot().await;
-    snapshot
-        .runs
-        .iter()
-        .find(|run| run.task_id == task_id)
-        .map(|run| run.run_id.clone())
-}
-
+/// After a successful `artifact submit`, finish the artifactor terminal for
+/// the exact run id carried from the atomic begin (TASK-ARZGD). Hot-session
+/// rmux runs stay live with the declaration already installed by commit;
+/// one-shot transports release immediately with the tombstone.
+// orgasmic:TASK-S52X9,TASK-ARZGD
 async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) -> Option<(String, u64)> {
-    let run_id = artifactor_submit_live_run_id(state, art_id).await?;
+    let task_id = format!("artifact.generate:{art_id}");
     match state
         .supervisor
-        .prepare_artifactor_submit_in_flight(&run_id)
+        .begin_artifactor_submit_for_task(&task_id)
         .await
     {
-        Ok(token) => Some((run_id, token)),
+        Ok(pair) => Some(pair),
         Err(e) => {
             if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
                 tracing::warn!(
                     art_id,
-                    run_id = %run_id,
                     error = %e,
-                    "artifact submit: failed to prepare in-flight submit marker"
+                    "artifact submit: failed to begin artifactor submit coordinator"
                 );
             }
             None
@@ -10546,18 +10682,14 @@ async fn prepare_artifactor_submit_terminal(state: &ApiState, art_id: &str) -> O
     }
 }
 
-async fn commit_artifactor_submit_terminal(state: &ApiState, art_id: &str, token: u64) {
-    let Some(run_id) = artifactor_submit_live_run_id(state, art_id).await else {
-        return;
-    };
+async fn commit_artifactor_submit_terminal(state: &ApiState, run_id: &str, token: u64) {
     if let Err(e) = state
         .supervisor
-        .commit_artifactor_submit_in_flight(&run_id, token)
+        .commit_artifactor_submit_in_flight(run_id, token)
         .await
     {
         if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
             tracing::warn!(
-                art_id,
                 run_id = %run_id,
                 error = %e,
                 "artifact submit: failed to commit in-flight submit marker"
@@ -10566,43 +10698,27 @@ async fn commit_artifactor_submit_terminal(state: &ApiState, art_id: &str, token
     }
 }
 
-async fn abort_artifactor_submit_terminal(state: &ApiState, art_id: &str, token: u64) {
-    let Some(run_id) = artifactor_submit_live_run_id(state, art_id).await else {
-        return;
-    };
-    state
+async fn abort_artifactor_submit_terminal(state: &ApiState, run_id: &str, token: u64) {
+    let _ = state
         .supervisor
-        .abort_artifactor_submit_in_flight(&run_id, token)
+        .abort_artifactor_submit_in_flight(run_id, token)
         .await;
 }
 
-async fn release_artifactor_run_after_submit(state: &ApiState, art_id: &str) {
-    let task_id = format!("artifact.generate:{art_id}");
+async fn release_artifactor_run_after_submit(state: &ApiState, run_id: &str) {
     let snapshot = state.supervisor.snapshot().await;
-    let Some(run) = snapshot.runs.iter().find(|run| run.task_id == task_id) else {
+    let Some(run) = snapshot.runs.iter().find(|run| run.run_id == run_id) else {
+        // Commit already resolved a deferred drain/cancel — nothing left.
         return;
     };
     if run.driver == "rmux" {
-        if let Err(e) = state
-            .supervisor
-            .mark_terminal_declaration(&run.run_id, "artifact_submitted")
-            .await
-        {
-            if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
-                tracing::warn!(
-                    art_id,
-                    run_id = %run.run_id,
-                    error = %e,
-                    "artifact submit: failed to mark terminal declaration on hot-session run"
-                );
-            }
-        }
+        // Hot-session: commit already installed the durable declaration.
         return;
     }
     if let Err(e) = state
         .supervisor
         .release_with_finalization(
-            &run.run_id,
+            run_id,
             "artifact_submitted",
             ReleaseOutcome::Completed,
             true,
@@ -10610,14 +10726,18 @@ async fn release_artifactor_run_after_submit(state: &ApiState, art_id: &str) {
         )
         .await
     {
-        if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
-            tracing::warn!(
-                art_id,
-                run_id = %run.run_id,
-                error = %e,
-                "artifact submit: failed to release artifactor run with finalize tombstone"
-            );
+        if matches!(
+            e,
+            crate::supervisor::SupervisorError::RunNotFound(_)
+                | crate::supervisor::SupervisorError::DeferredWhileInFlight(_)
+        ) {
+            return;
         }
+        tracing::warn!(
+            run_id = %run_id,
+            error = %e,
+            "artifact submit: failed to release artifactor run with finalize tombstone"
+        );
     }
 }
 
@@ -11625,11 +11745,21 @@ async fn post_artifact_regenerate(
         {
             Ok(ack) => ack,
             Err(e) => {
-                state
+                // orgasmic:TASK-ARZGD — regenerate_in_flight defers drains;
+                // rollback must restore the prior declaration atomically.
+                if let Err(rb) = state
                     .supervisor
                     .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
                     .await
-                    .ok();
+                {
+                    if !matches!(rb, crate::supervisor::SupervisorError::RunNotFound(_)) {
+                        tracing::warn!(
+                            run_id = %live_run.run_id,
+                            error = %rb,
+                            "artifact regenerate: rollback after send_input error failed"
+                        );
+                    }
+                }
                 return Err(match e {
                     crate::supervisor::SupervisorError::RunNotFound(_) => {
                         ApiError::not_found(format!("active run {}", live_run.run_id))
@@ -11653,6 +11783,16 @@ async fn post_artifact_regenerate(
                 ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
         }
+        state
+            .supervisor
+            .commit_artifactor_regenerate_round(&live_run.run_id)
+            .await
+            .map_err(|e| match e {
+                crate::supervisor::SupervisorError::RunNotFound(_) => {
+                    ApiError::not_found(format!("active run {}", live_run.run_id))
+                }
+                other => supervisor_control_error("artifact regenerate commit", other),
+            })?;
         close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
             state: &state,
             entry: &entry,
@@ -12570,6 +12710,401 @@ mod tests {
         );
         assert_eq!(role, "griller");
         assert!(requires);
+
+        // Fail closed for unknown historical agent roles (TASK-ARZGD).
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "removed-historical-worker",
+            RunKind::Worker,
+            Some("claude"),
+            &None,
+            None,
+            None,
+        );
+        assert_eq!(role, "worker");
+        assert!(requires, "unknown agent roles must require finalize");
+
+        // Custom bare terminal proved from harness remains exempt.
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "manager",
+            RunKind::Worker,
+            Some("custom"),
+            &None,
+            None,
+            None,
+        );
+        assert_eq!(role, "terminal");
+        assert!(!requires);
+    }
+
+    #[test]
+    fn persisted_terminal_contract_fail_closed_and_custom_exempt() {
+        // orgasmic:TASK-ARZGD P2
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let contract = resolve_persisted_terminal_contract(
+            &home,
+            "gone-worker",
+            RunKind::Worker,
+            Some("claude"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(contract.requires_worker_finalize);
+        let custom = resolve_persisted_terminal_contract(
+            &home,
+            "manager",
+            RunKind::Worker,
+            Some("custom"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(custom.role, "terminal");
+        assert!(!custom.requires_worker_finalize);
+    }
+
+    /// ACP-shaped driver that ends immediately — used for natural-end
+    /// tombstone tests of recovered terminal contracts (TASK-ARZGD).
+    struct ApiProtocolEndDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ApiProtocolEndDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+            });
+            Ok(orgasmic_drivers::DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ApiProtocolEndControl),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct ApiProtocolEndControl;
+
+    #[async_trait::async_trait]
+    impl orgasmic_drivers::DriverControl for ApiProtocolEndControl {
+        async fn transition_state(
+            &mut self,
+            _req: orgasmic_drivers::TransitionRequest,
+        ) -> Result<orgasmic_drivers::TransitionAck, orgasmic_drivers::DriverError> {
+            Ok(orgasmic_drivers::TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: orgasmic_drivers::BabysitterRequest,
+        ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
+            Err(orgasmic_drivers::DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(
+            &mut self,
+            _reason: &str,
+        ) -> Result<(), orgasmic_drivers::DriverError> {
+            Ok(())
+        }
+    }
+
+    /// Holding driver for API-level artifactor submit barrier tests.
+    struct ApiHoldingDriver {
+        gate: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ApiHoldingDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let gate = std::sync::Arc::clone(&self.gate);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                gate.notified().await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+            });
+            Ok(orgasmic_drivers::DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ApiProtocolEndControl),
+                native_runtime: None,
+            })
+        }
+    }
+
+    async fn wait_session_reason(path: &FsPath, reason: &str) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if let Ok(body) = std::fs::read_to_string(path) {
+                if body.contains(reason) {
+                    return true;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn api_artifactor_submit_barrier_writer_success_no_false_failed() {
+        // orgasmic:TASK-ARZGD — real prepare/commit coordinator path with
+        // stream-end interleaved after atomic begin, before writer commit.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let driver = ApiHoldingDriver {
+            gate: std::sync::Arc::clone(&gate),
+        };
+        let art_id = "ART-BARRIER-OK";
+        let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: format!("artifact.generate:{art_id}"),
+                    kind: RunKind::Worker,
+                    worker_id: "artifactor".into(),
+                    role: "artifactor".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: DriverConfig::from_value(json!({})),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("artifactor acquire");
+        let prepared = prepare_artifactor_submit_terminal(&state, art_id)
+            .await
+            .expect("atomic begin must install submit token");
+        assert_eq!(prepared.0, acquire.run_id);
+        gate.notify_one();
+        assert!(
+            !wait_session_reason(&session_path, "protocol_end_without_finalize").await,
+            "stream-end during in-flight must defer, not false-Fail"
+        );
+        commit_artifactor_submit_terminal(&state, &prepared.0, prepared.1).await;
+        assert!(
+            wait_session_reason(&session_path, "artifact_submitted").await,
+            "writer success must resolve deferred drain as artifact_submitted"
+        );
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(body.contains("\"outcome\":\"completed\"") || body.contains("completed"));
+        assert!(!body.contains("protocol_end_without_finalize"));
+    }
+
+    #[tokio::test]
+    async fn api_artifactor_submit_barrier_writer_failure_no_false_completed() {
+        // orgasmic:TASK-ARZGD — injected writer failure after atomic begin.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let driver = ApiHoldingDriver {
+            gate: std::sync::Arc::clone(&gate),
+        };
+        let art_id = "ART-BARRIER-FAIL";
+        let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+        let _ = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: format!("artifact.generate:{art_id}"),
+                    kind: RunKind::Worker,
+                    worker_id: "artifactor".into(),
+                    role: "artifactor".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: DriverConfig::from_value(json!({})),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("artifactor acquire");
+        let prepared = prepare_artifactor_submit_terminal(&state, art_id)
+            .await
+            .expect("atomic begin");
+        gate.notify_one();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        abort_artifactor_submit_terminal(&state, &prepared.0, prepared.1).await;
+        assert!(
+            wait_session_reason(&session_path, "artifact_submit_failed").await,
+            "writer failure must resolve deferred drain as Failed"
+        );
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            !body.contains("artifact_submitted"),
+            "writer failure must never write a false Completed submit tombstone: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_and_boot_contract_natural_end_tombstones_per_shape() {
+        // orgasmic:TASK-ARZGD — shared contract fail-closed natural end for
+        // manager/artifactor/grill/plan/architect/dispatch/custom.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let shapes: &[(&str, &str, Option<&str>, bool)] = &[
+            ("manager", "manager", None, true),
+            ("artifactor", "artifactor", None, true),
+            ("griller", "griller", Some("grill.last.txt"), true),
+            ("planner", "planner", Some("plan.last.txt"), true),
+            ("architector", "architector", Some("arch.last.txt"), true),
+            ("implementer", "implementer", Some("impl.last.txt"), true),
+            ("terminal", "manager", None, false),
+        ];
+
+        for (role, worker_id, last_name, expect_fail_closed) in shapes {
+            let session_path =
+                project_sessions_dir(&project_root).join(format!("shape-{role}.jsonl"));
+            let last_path = last_name.map(|n| project_root.join(n));
+            let harness = if *role == "terminal" {
+                Some("custom")
+            } else {
+                Some("claude")
+            };
+            let contract = resolve_persisted_terminal_contract(
+                &home,
+                worker_id,
+                RunKind::Worker,
+                harness,
+                last_path.clone(),
+                None,
+                Some((*role).into()),
+                Some(*expect_fail_closed),
+            );
+            assert_eq!(
+                contract.requires_worker_finalize, *expect_fail_closed,
+                "contract for {role}"
+            );
+            let acquire_last = if contract.requires_worker_finalize {
+                Some(last_path.unwrap_or_else(|| {
+                    provision_recovery_last_path(&session_path, &format!("prior-{role}"))
+                }))
+            } else {
+                None
+            };
+            let _acquire = state
+                .supervisor
+                .acquire(
+                    &ApiProtocolEndDriver,
+                    AcquireRequest {
+                        task_id: format!("recover-shape-{role}"),
+                        kind: RunKind::Worker,
+                        worker_id: (*worker_id).into(),
+                        role: contract.role.clone(),
+                        project_id: Some("proj".into()),
+                        worktree: Some(project_root.clone()),
+                        last_path: acquire_last,
+                        stdout_path: None,
+                        session_path: session_path.clone(),
+                        driver_config: DriverConfig::from_value(json!({})),
+                        babysitter_target: None,
+                        stall_timeout_secs: Some(0),
+                        max_run_duration_secs: Some(0),
+                        idle_timeout_secs: None,
+                        babysitter: None,
+                    },
+                )
+                .await
+                .unwrap_or_else(|e| panic!("acquire {role}: {e}"));
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < deadline {
+                if let Ok(body) = std::fs::read_to_string(&session_path) {
+                    if body.contains("\"phase\":\"release\"") || body.contains("release") {
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let body = std::fs::read_to_string(&session_path).unwrap_or_default();
+            if *expect_fail_closed {
+                assert!(
+                    body.contains("protocol_end_without_finalize"),
+                    "{role} recovery natural-end must fail closed: {body}"
+                );
+            } else {
+                assert!(
+                    !body.contains("protocol_end_without_finalize"),
+                    "custom terminal must stay exempt: {body}"
+                );
+            }
+        }
     }
 
     #[tokio::test]
@@ -18891,6 +19426,21 @@ mod tests {
         .await
         .expect("first regenerate should succeed");
 
+        // Real prior submit on the live artifactor run (TASK-ARZGD).
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1 submitted</RichText>\n".into(),
+                title: Some("Busy harness".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Submitted round".into()),
+            }),
+        )
+        .await
+        .expect("live-run submit should install prior declaration");
+
         let art_dir = artifact_dir(&project_root, art_id);
         let org_before = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
         let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
@@ -18898,10 +19448,20 @@ mod tests {
             .join(".orgasmic/tx")
             .join(format!("{}.org", Utc::now().format("%Y-%m")));
         let tx_before = std::fs::read_to_string(&tx_path).unwrap_or_default();
+        let session_path = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .find(|run| run.run_id == first.0.run_id)
+            .map(|run| run.session_path.clone())
+            .expect("live artifactor after prior submit");
 
         // Harness is mid-turn until the dispatch prompt is consumed and the
         // composer prompt reappears — followup must be refused with no durable
-        // mutation (arch_045Q0.1 ordering).
+        // mutation (arch_045Q0.1 ordering). regenerate_in_flight must restore
+        // the prior declaration atomically (TASK-ARZGD P3).
         let err = post_artifact_regenerate(
             State(state.clone()),
             Extension(Identity::Admin),
@@ -18927,11 +19487,34 @@ mod tests {
             std::fs::read_to_string(&tx_path).unwrap_or_default(),
             tx_before
         );
+        let pre_end = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            !pre_end.contains("protocol_end_without_finalize"),
+            "busy reject must not false-fail the prior submitted round: {pre_end}"
+        );
 
-        let _ = state
+        // Natural end of the hot session — prior declaration is the tombstone.
+        state
             .supervisor
-            .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
+            .release_with_finalization(
+                &first.0.run_id,
+                "artifact_submitted",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("prior declaration must still be releasable after busy reject");
+        let body = std::fs::read_to_string(&session_path).unwrap_or_default();
+        let submitted = body.matches("artifact_submitted").count();
+        assert!(
+            submitted >= 1,
+            "exactly one artifact_submitted Completed tombstone expected: {body}"
+        );
+        assert!(
+            !body.contains("protocol_end_without_finalize"),
+            "natural end after busy reject must not false-Fail: {body}"
+        );
     }
 
     #[tokio::test]
