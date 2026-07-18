@@ -813,6 +813,11 @@ enum RunCmd {
     List,
     /// Show one worker run.
     Show { id: String },
+    /// Locate the harness-native session transcript for a run (TASK-0SADP).
+    ///
+    /// Resolves claude/codex/cursor-agent/hermes on-disk JSONL via per-harness
+    /// adapters. Custom harnesses return unsupported.
+    NativeTranscript { id: String },
     /// Recover an interrupted worker run with an explicit recovery action.
     ///
     /// `--action` is one of `reattach_tmux`, `resume_native_fork`, or
@@ -2343,6 +2348,9 @@ fn cmd_run(home: &Home, cmd: RunCmd) -> Result<()> {
         let value: serde_json::Value = match cmd {
             RunCmd::List => client.get("/runs").await?,
             RunCmd::Show { id } => client.get(&format!("/runs/{id}")).await?,
+            RunCmd::NativeTranscript { id } => {
+                client.get(&format!("/runs/{id}/native-transcript")).await?
+            }
             RunCmd::Recover {
                 id,
                 action,
