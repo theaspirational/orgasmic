@@ -21,6 +21,7 @@ pub mod governance;
 pub mod index;
 pub mod manager_registration;
 pub mod prompt_compiler;
+pub mod recovery_claim;
 pub mod runtime;
 pub mod supervisor;
 pub mod watcher;
@@ -316,6 +317,7 @@ impl Daemon {
             tmux_input_ready_timeout_secs: opts.tmux_input_ready_timeout_secs,
             dispatch_response_delay: opts.dispatch_response_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         };
 
         // Boot auto-reattach: rehydrate still-live runs (notably the operator's

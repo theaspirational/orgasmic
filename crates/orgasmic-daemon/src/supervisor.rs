@@ -2358,7 +2358,7 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
                     .release(
                         &run_id,
                         "early-exit subprocess with no work envelopes",
-                        ReleaseOutcome::Interrupted,
+                        ReleaseOutcome::Failed,
                     )
                     .await;
                 return;
@@ -2883,6 +2883,17 @@ async fn finish_stream_end_terminal_drain(
         claim_run_on_stream_end(&mut g, run_id)
     };
     if let Some(rec) = rec {
+        if let Ok(envelopes) = read_session_file(&rec.session_path) {
+            if session_is_early_exit_no_work(&envelopes) {
+                // Ready-only/no-work subprocess exits are released by
+                // spawn_early_exit_watcher with the canonical Failed tombstone.
+                let mut g = inner.lock().await;
+                let lease_key = (rec.task_id.clone(), rec.kind);
+                g.leases.insert(lease_key, run_id.to_string());
+                g.runs.insert(run_id.to_string(), rec);
+                return;
+            }
+        }
         write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
     }
 }

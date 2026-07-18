@@ -2467,7 +2467,7 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = install_fake_cursor_agent(
         tmp.path(),
-        "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"early-exit\"}'\n",
+        "#!/bin/sh\nexec 0<&-\nexec 2>/dev/null\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"early-exit\"}'\n",
     );
     let _path_guard = PrependPathGuard::new(&bin);
     let home = Home::at(tmp.path().join("home"));
@@ -2560,11 +2560,35 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert_eq!(release_count, 1, "early-exit must release exactly once");
+    tokio::time::sleep(Duration::from_millis(500)).await;
     let session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
     assert!(
-        session_raw.contains("early-exit subprocess with no work envelopes")
-            || session_raw.contains("protocol_end_without_finalize"),
-        "early-exit tombstone must preserve an orphan-worthy release reason: {session_raw}"
+        session_raw.contains("early-exit subprocess with no work envelopes"),
+        "early-exit tombstone must use the literal watcher release reason: {session_raw}"
+    );
+    assert!(
+        session_raw.contains("\"outcome\":\"failed\"")
+            || session_raw.contains("\"outcome\": \"failed\""),
+        "early-exit tombstone must record Failed outcome: {session_raw}"
+    );
+    let orphan_tx_count = read_project_tx(&project_root)
+        .matches(":TYPE:         manager.dispatch_orphaned")
+        .count();
+    assert_eq!(
+        orphan_tx_count, 1,
+        "early-exit orphan must emit exactly one manager.dispatch_orphaned tx"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let session_raw_late = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        session_raw_late.contains("early-exit subprocess with no work envelopes"),
+        "late re-read must preserve literal early-exit reason: {session_raw_late}"
+    );
+    assert!(
+        session_raw_late.matches("\"phase\":\"release\"").count()
+            + session_raw_late.matches("\"phase\": \"release\"").count()
+            == 1,
+        "late re-read must still have exactly one release: {session_raw_late}"
     );
     assert!(
         !last.exists()
