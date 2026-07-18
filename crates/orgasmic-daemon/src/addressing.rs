@@ -5,7 +5,7 @@
 //! Compatibility labels (`worker_id` strings on runs/tx) are not routing authority.
 
 use orgasmic_core::WorkerKind;
-use orgasmic_drivers::SUPPORTED;
+use orgasmic_drivers::validate_supported_pair as drivers_validate_supported_pair;
 
 use crate::governance::{
     resolve_governance, DispatchGovernanceOverlay, GovernanceDefaults, GovernancePatch,
@@ -13,22 +13,7 @@ use crate::governance::{
 
 /// Validate that `(mode, harness)` is in the sole transport registry.
 pub fn validate_supported_pair(mode: &str, harness: &str) -> Result<(), String> {
-    let mode = mode.trim();
-    let harness = harness.trim();
-    if mode.is_empty() || harness.is_empty() {
-        return Err("mode and harness are required".into());
-    }
-    if SUPPORTED.contains(&(mode, harness)) {
-        return Ok(());
-    }
-    let supported = SUPPORTED
-        .iter()
-        .map(|(m, h)| format!("{m}/{h}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    Err(format!(
-        "unsupported mode/harness pair {mode}/{harness}; supported: {supported}"
-    ))
+    drivers_validate_supported_pair(mode, harness)
 }
 
 /// Historical/compat run label — never used as routing authority.

@@ -5,7 +5,6 @@
 :VERSION:            1
 :DEFAULT_RENDERER:   markdown
 :OUTPUT_CONTRACT:    structured-markdown
-:EXTENDS:            general_worker
 :USES_PARTS:         verification_policy
 :END:
 
@@ -33,6 +32,22 @@ Watch the implementer run for {{task.id}} and intervene only when warranted.
   with a one-paragraph reason.
 - Record durable observations via `record_finding` so the implementer's
   Evidence section captures what you saw.
+
+** Inputs
+- Task: {{task.id}}
+- Worker: {{worker.id}} (kind {{worker.kind}})
+
+** Dispatch Brief
+Manager handoff content supplied at dispatch time:
+
+(not applicable — observer-only run)
+
+** Completion
+Your assignment ends when the implementer run completes or you escalate. Do not
+call `orgasmic dispatch finalize` or any worker finalize command.
+
+** Policies
+Observer-only; verification policy applies to intervention evidence only.
 
 ** Output Contract
 Return Markdown with:

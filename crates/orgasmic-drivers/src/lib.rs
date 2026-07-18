@@ -91,6 +91,26 @@ pub const SUPPORTED: &[(&str, &str)] = &[
     ("rmux", "custom"),
 ];
 
+/// Validate that `(mode, harness)` is in the sole transport registry.
+pub fn validate_supported_pair(mode: &str, harness: &str) -> Result<(), String> {
+    let mode = mode.trim();
+    let harness = harness.trim();
+    if mode.is_empty() || harness.is_empty() {
+        return Err("mode and harness are required".into());
+    }
+    if SUPPORTED.contains(&(mode, harness)) {
+        return Ok(());
+    }
+    let supported = SUPPORTED
+        .iter()
+        .map(|(m, h)| format!("{m}/{h}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "unsupported mode/harness pair {mode}/{harness}; supported: {supported}"
+    ))
+}
+
 pub struct ClaudeAcpDriver;
 pub struct CodexAppserverDriver;
 pub struct CursorAcpDriver;

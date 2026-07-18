@@ -183,6 +183,7 @@ pub(crate) struct DispatchRequest {
     branch: String,
     liveness: String,
     goal_id: Option<String>,
+    governance: Option<orgasmic_daemon::governance::GovernancePatch>,
 }
 
 pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
@@ -204,6 +205,7 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         branch: plan.branch.clone(),
         liveness: plan.from_sha.clone(),
         goal_id: plan.goal_id.clone(),
+        governance: plan.governance.clone(),
     }
 }
 
@@ -398,6 +400,7 @@ mod tests {
             reason: None,
             dry_run: false,
             worker_override,
+            governance: None,
         }
     }
 

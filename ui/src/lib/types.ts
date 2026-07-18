@@ -632,6 +632,26 @@ export type Me = {
   projects: MeProject[];
 };
 
+export type GovernancePatch = {
+  sandbox_permissions?: {
+    allow_exec?: boolean | null;
+    allow_patch?: boolean | null;
+    allow_network?: boolean | null;
+    allow_writes_outside_cwd?: boolean | null;
+  } | null;
+  babysitter?: {
+    worker_id?: string;
+    mode?: string;
+    harness?: string;
+  } | null;
+  max_iterations?: number | null;
+  context_budget?: number | null;
+  linked_skills?: string[] | null;
+  applicable_states?: string[] | null;
+  stall_timeout_secs?: number | null;
+  max_run_duration_secs?: number | null;
+};
+
 export type ArtifactGenerateRequest = {
   nodes: string[];
   prompt: string;
@@ -640,6 +660,7 @@ export type ArtifactGenerateRequest = {
   harness_args?: string[];
   model?: string | null;
   effort?: string | null;
+  governance?: GovernancePatch | null;
 };
 
 export type ArtifactGenerateResponse = {
@@ -654,6 +675,7 @@ export type ArtifactRegenerateRequest = {
   harness_args?: string[];
   model?: string | null;
   effort?: string | null;
+  governance?: GovernancePatch | null;
 };
 
 export type DaemonEvent = {

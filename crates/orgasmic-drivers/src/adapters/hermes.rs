@@ -854,7 +854,7 @@ fn hermes_model_option(
             })
             .unwrap_or_default()
     } else {
-        vec!["none".into()]
+        Vec::new()
     };
     RuntimeModelOption {
         id: model.into(),
@@ -1257,7 +1257,7 @@ mod tests {
             vec![RuntimeSpeed::Normal, RuntimeSpeed::Fast]
         );
         assert_eq!(catalog.models[1].speeds, vec![RuntimeSpeed::Normal]);
-        assert_eq!(catalog.models[1].reasoning_efforts, vec!["none"]);
+        assert!(catalog.models[1].reasoning_efforts.is_empty());
     }
 
     #[tokio::test]

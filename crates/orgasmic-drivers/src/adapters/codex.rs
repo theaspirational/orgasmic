@@ -437,7 +437,9 @@ impl HarnessEventAdapter for CodexAdapter {
     }
 
     async fn runtime_options_catalog(&mut self) -> Result<RuntimeOptionsCatalog, DriverError> {
-        Ok(codex_fallback_catalog(self.cfg.as_ref()))
+        Err(DriverError::Unsupported(
+            "codex runtime catalog unavailable without model/list RPC",
+        ))
     }
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
@@ -891,44 +893,6 @@ fn codex_catalog_from_model_list(
         models,
         efforts,
         speeds,
-    }
-}
-
-fn codex_fallback_catalog(cfg: Option<&CodexAppserverConfig>) -> RuntimeOptionsCatalog {
-    let current = codex_current_state(cfg);
-    let models = current
-        .model
-        .as_ref()
-        .map(|model| {
-            let mut speeds = vec![RuntimeSpeed::Normal];
-            if current.speed == Some(RuntimeSpeed::Fast) {
-                speeds.push(RuntimeSpeed::Fast);
-            }
-            RuntimeModelOption {
-                id: model.clone(),
-                label: model.clone(),
-                provider: None,
-                current: true,
-                reasoning_efforts: current
-                    .reasoning_effort
-                    .clone()
-                    .map(|effort| vec![effort])
-                    .unwrap_or_default(),
-                speeds,
-                default_reasoning_effort: current.reasoning_effort.clone(),
-            }
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
-    RuntimeOptionsCatalog {
-        source: "codex:fallback".into(),
-        provider_switching: false,
-        live_switching: false,
-        current,
-        providers: Vec::new(),
-        efforts: aggregate_model_efforts(&models),
-        speeds: aggregate_model_speeds(&models),
-        models,
     }
 }
 

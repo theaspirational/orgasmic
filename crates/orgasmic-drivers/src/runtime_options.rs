@@ -18,12 +18,7 @@ pub struct RuntimeOptionsRequest {
 impl RuntimeOptionsRequest {
     /// Trim whitespace only; preserve explicit model/effort strings verbatim.
     pub fn normalized(self) -> Result<Self, String> {
-        Ok(Self {
-            provider: trim_non_empty(self.provider),
-            model: trim_non_empty(self.model),
-            reasoning_effort: trim_non_empty(self.reasoning_effort),
-            speed: self.speed,
-        })
+        Ok(self)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -157,18 +152,12 @@ pub fn dedupe_non_empty(values: impl IntoIterator<Item = String>) -> Vec<String>
     out
 }
 
-fn trim_non_empty(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_empty_strings_and_effort_alias() {
+    fn preserves_verbatim_strings_and_effort_alias() {
         let req: RuntimeOptionsRequest = serde_json::from_value(serde_json::json!({
             "provider": "  ",
             "model": " gpt-fixture ",
@@ -178,9 +167,9 @@ mod tests {
         .unwrap();
 
         let req = req.normalized().unwrap();
-        assert_eq!(req.provider, None);
-        assert_eq!(req.model.as_deref(), Some("gpt-fixture"));
-        assert_eq!(req.reasoning_effort.as_deref(), Some("HIGH"));
+        assert_eq!(req.provider.as_deref(), Some("  "));
+        assert_eq!(req.model.as_deref(), Some(" gpt-fixture "));
+        assert_eq!(req.reasoning_effort.as_deref(), Some(" HIGH "));
         assert_eq!(req.speed, Some(RuntimeSpeed::Fast));
     }
 

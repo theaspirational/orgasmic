@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use orgasmic_core::{SandboxAllowlist, WorkerKind};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Supervisor-floor timeouts mirrored as kind defaults when templates omit them.
 pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 600;
@@ -31,7 +31,7 @@ const REVIEWER_STATES: &[&str] = &[
 ];
 
 /// Addressed babysitter launch configuration (kind is always babysitter).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BabysitterAddress {
     pub mode: String,
@@ -58,7 +58,7 @@ pub struct GovernanceDefaults {
 }
 
 /// Sparse patch applied over defaults (config overlay or per-dispatch override).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GovernancePatch {
     pub max_iterations: Option<u32>,
@@ -67,11 +67,14 @@ pub struct GovernancePatch {
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Option<Vec<String>>,
     pub linked_skills: Option<Vec<String>>,
-    pub babysitter: Option<BabysitterAddress>,
+    /// Tri-state babysitter attachment: absent = inherit, `Some(None)` = disable,
+    /// `Some(Some(addr))` = explicit address.
+    pub babysitter: Option<Option<BabysitterAddress>>,
     pub sandbox_permissions: Option<SandboxPermissionsPatch>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SandboxPermissionsPatch {
     #[serde(default)]
     pub allow_exec: Option<bool>,
@@ -84,18 +87,20 @@ pub struct SandboxPermissionsPatch {
 }
 
 impl SandboxPermissionsPatch {
+    /// Least-privilege merge: explicit `false` restricts; explicit `true` cannot
+    /// widen a prior `false` (monotonic across overlay layers).
     fn merge_into(&self, list: &mut SandboxAllowlist) {
         if let Some(v) = self.allow_exec {
-            list.allow_exec = v;
+            list.allow_exec = list.allow_exec && v;
         }
         if let Some(v) = self.allow_patch {
-            list.allow_patch = v;
+            list.allow_patch = list.allow_patch && v;
         }
         if let Some(v) = self.allow_network {
-            list.allow_network = v;
+            list.allow_network = list.allow_network && v;
         }
         if let Some(v) = self.allow_writes_outside_cwd {
-            list.allow_writes_outside_cwd = v;
+            list.allow_writes_outside_cwd = list.allow_writes_outside_cwd && v;
         }
     }
 }
@@ -189,8 +194,8 @@ impl GovernanceDefaults {
         if let Some(ref skills) = patch.linked_skills {
             self.linked_skills = skills.clone();
         }
-        if let Some(ref babysitter) = patch.babysitter {
-            self.babysitter = Some(babysitter.clone());
+        if let Some(babysitter) = &patch.babysitter {
+            self.babysitter = babysitter.clone();
         }
         if let Some(ref sandbox_patch) = patch.sandbox_permissions {
             let mut list = self.sandbox_permissions.clone().unwrap_or_default();
@@ -466,5 +471,43 @@ mod tests {
         assert!(!sandbox.allow_patch, "dispatch layer");
         assert!(!sandbox.allow_network, "kind layer must survive");
         assert!(sandbox.allow_writes_outside_cwd, "untouched default field");
+    }
+
+    #[test]
+    fn sandbox_overlay_cannot_widen_lower_layer_restriction() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: None,
+                    allow_patch: None,
+                    allow_network: Some(false),
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+        let dispatch_widen = GovernancePatch {
+            sandbox_permissions: Some(SandboxPermissionsPatch {
+                allow_exec: None,
+                allow_patch: None,
+                allow_network: Some(true),
+                allow_writes_outside_cwd: None,
+            }),
+            ..GovernancePatch::default()
+        };
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &overlay,
+            Some(&dispatch_widen),
+        );
+        let sandbox = resolved.sandbox_permissions.expect("sandbox permissions");
+        assert!(
+            !sandbox.allow_network,
+            "dispatch true must not widen kind false"
+        );
     }
 }

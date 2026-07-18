@@ -5,11 +5,7 @@
 :DRIVER:                      rmux
 :HARNESS:                     claude
 :PROVIDERS:                   anthropic
-:MODELS:                      claude-haiku-4-5
-:REASONING_EFFORTS:           low medium high xhigh
 :DEFAULT_PROVIDER:            anthropic
-:DEFAULT_MODEL:               claude-haiku-4-5
-:DEFAULT_EFFORT:              medium
 :LINKED_SKILLS:
 :APPLICABLE_STATES:           working, done, blocked, cancelled
 :CONTEXT_BUDGET:              80000

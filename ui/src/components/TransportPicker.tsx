@@ -1,6 +1,7 @@
-// orgasmic:TASK-SZEWA, dec_WDR5K
+// orgasmic:TASK-SZEWA, dec_WDR5K, TASK-MYVJA
 import { useEffect, useMemo, useState } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -72,7 +73,12 @@ export function TransportPicker({
           onValueChange={(key) => {
             const [mode, harness] = key.split('/');
             if (!mode || !harness) return;
-            onChange({ ...value, mode, harness });
+            onChange({
+              ...value,
+              mode,
+              harness,
+              harness_args: harness === 'custom' ? value.harness_args : [],
+            });
           }}
           disabled={profiles.length === 0}
         >
@@ -100,23 +106,47 @@ export function TransportPicker({
         </Select>
       </div>
       {value.harness === 'custom' ? (
-        <label className="flex flex-col gap-1.5 text-sm">
+        <div className="flex flex-col gap-2 text-sm">
           <span className="font-medium">Custom argv</span>
-          <Input
-            value={value.harness_args.join(' ')}
-            onChange={(event) =>
-              onChange({
-                ...value,
-                harness_args: tokenizeHarnessArgs(event.target.value),
-              })
+          {value.harness_args.map((token, index) => (
+            <div key={`${index}-${token}`} className="flex gap-2">
+              <Input
+                value={token}
+                onChange={(event) => {
+                  const next = [...value.harness_args];
+                  next[index] = event.target.value;
+                  onChange({ ...value, harness_args: next });
+                }}
+                className="font-mono text-xs"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const next = value.harness_args.filter((_, i) => i !== index);
+                  onChange({ ...value, harness_args: next });
+                }}
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="self-start"
+            onClick={() =>
+              onChange({ ...value, harness_args: [...value.harness_args, ''] })
             }
-            placeholder="opencode --print-logs"
-            className="font-mono text-xs"
-          />
+          >
+            Add token
+          </Button>
           <span className="text-[11px] text-muted-foreground">
-            Space-separated tokens; preserved verbatim for the next launch.
+            One row per argv token; empty tokens and spacing are preserved exactly.
           </span>
-        </label>
+        </div>
       ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5 text-sm">
@@ -151,12 +181,6 @@ function driverLabel(driver: ManagerDriverProfile): string {
 
 export function emptyTransportSelection(): TransportSelection {
   return { mode: '', harness: '', model: '', effort: '', harness_args: [] };
-}
-
-function tokenizeHarnessArgs(input: string): string[] {
-  const trimmed = input.trim();
-  if (!trimmed) return [];
-  return trimmed.split(/\s+/);
 }
 
 /** Local state helper for dialogs that need a transport selection. */

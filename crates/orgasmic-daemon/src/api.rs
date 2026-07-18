@@ -53,16 +53,16 @@ use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
     new_cid, persist_artifact_launch_address, reviews_org_header, update_artifact_org,
     validate_art_id, validate_art_id_readable, validate_mdx, versions_dir, ArtifactDetail,
-    ArtifactLoadError, ArtifactSummary, NewComment,
+    ArtifactLaunchAddress, ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
-use crate::governance::{
-    BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch, SandboxPermissionsPatch,
-};
+#[cfg(test)]
+use crate::governance::SandboxPermissionsPatch;
+use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     commit_recovery_claim, index_recovery_origins_in_session, load_committed_recovery_claim,
@@ -1043,6 +1043,79 @@ fn non_empty_field(value: Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Pass explicit model/effort strings through without trim or case mutation.
+fn verbatim_optional(value: Option<String>) -> Option<String> {
+    value
+}
+
+fn enforce_context_budget(
+    compiled_chars: usize,
+    budget: Option<u32>,
+    context: &str,
+) -> Result<(), ApiError> {
+    let Some(budget) = budget else {
+        return Ok(());
+    };
+    let approx_tokens = compiled_chars.div_ceil(4);
+    if approx_tokens > budget as usize {
+        return Err(ApiError::bad_request(format!(
+            "{context} compiled prompt exceeds context_budget ({approx_tokens} approx tokens > {budget} token limit)"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_custom_harness_args(harness: &str, harness_args: &[String]) -> Result<(), ApiError> {
+    if harness == "custom" || harness_args.is_empty() {
+        return Ok(());
+    }
+    Err(ApiError::bad_request(format!(
+        "harness_args are only valid for custom harness; got {} args for {harness}",
+        harness_args.len()
+    )))
+}
+
+fn resolve_artifact_launch_address(
+    override_address: Option<ArtifactLaunchAddress>,
+    saved: Option<ArtifactLaunchAddress>,
+) -> Result<ArtifactLaunchAddress, ApiError> {
+    override_address.or(saved).ok_or_else(|| {
+        ApiError::bad_request(
+            "artifact launch address unavailable; supply mode+harness or persist a launch first",
+        )
+    })
+}
+
+fn artifact_address_from_generate_body(body: &ArtifactGenerateRequest) -> ArtifactLaunchAddress {
+    ArtifactLaunchAddress {
+        mode: body.mode.clone(),
+        harness: body.harness.clone(),
+        harness_args: body.harness_args.clone(),
+        model: verbatim_optional(body.model.clone()),
+        effort: verbatim_optional(body.effort.clone()),
+    }
+}
+
+fn artifact_address_override_from_regenerate(
+    body: &ArtifactRegenerateRequest,
+) -> Option<ArtifactLaunchAddress> {
+    let has_override = body.mode.is_some()
+        || body.harness.is_some()
+        || !body.harness_args.is_empty()
+        || body.model.is_some()
+        || body.effort.is_some();
+    if !has_override {
+        return None;
+    }
+    Some(ArtifactLaunchAddress {
+        mode: body.mode.clone().unwrap_or_default(),
+        harness: body.harness.clone().unwrap_or_default(),
+        harness_args: body.harness_args.clone(),
+        model: verbatim_optional(body.model.clone()),
+        effort: verbatim_optional(body.effort.clone()),
+    })
+}
+
 fn read_artifact(path: &FsPath, artifact: &'static str) -> Result<String, ApiError> {
     std::fs::read_to_string(path).map_err(|e| file_read_error(path, artifact, e))
 }
@@ -1142,9 +1215,22 @@ fn supervisor_release_error(run_id: &str, error: impl std::fmt::Display) -> ApiE
     ApiError::internal("failed to release run")
 }
 
-fn supervisor_control_error(context: &str, error: impl std::fmt::Display) -> ApiError {
-    tracing::error!(context = context, error = %error, "supervisor control failed");
-    ApiError::internal("failed to control run")
+fn supervisor_control_error(context: &str, error: crate::supervisor::SupervisorError) -> ApiError {
+    use crate::supervisor::SupervisorError;
+    match error {
+        SupervisorError::Driver(orgasmic_drivers::DriverError::Unsupported(reason)) => {
+            tracing::warn!(context = context, reason = %reason, "supervisor control unsupported");
+            ApiError::conflict_json(json!({
+                "error": "capability_unsupported",
+                "message": reason,
+                "accepted": false,
+            }))
+        }
+        other => {
+            tracing::error!(context = context, error = %other, "supervisor control failed");
+            ApiError::internal("failed to control run")
+        }
+    }
 }
 
 fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiError {
@@ -3349,6 +3435,12 @@ fn fill_stage_slot_values(
     insert_slot(values, "run.id", "pending".to_string());
     insert_slot(values, "run.iteration_count", "0".to_string());
     insert_slot(values, "run.previous_state", "none".to_string());
+    if let Some(max_iterations) = worker.max_iterations {
+        insert_slot(values, "run.max_iterations", max_iterations.to_string());
+    }
+    if let Some(context_budget) = worker.context_budget {
+        insert_slot(values, "run.context_budget", context_budget.to_string());
+    }
     insert_slot(values, "evidence.so_far", graph_evidence(project));
     insert_slot(values, "worklog.tail", String::new());
     hydrate_skill_slots(&state.home, worker, values)?;
@@ -3790,6 +3882,7 @@ fn apply_driver_defaults(
 fn build_babysitter_auto_spawn(
     home: &Home,
     overlay: &DispatchGovernanceOverlay,
+    dispatch_override: Option<&GovernancePatch>,
     task_id: &str,
     implementer: &StageWorker,
     worktree: &FsPath,
@@ -3799,7 +3892,12 @@ fn build_babysitter_auto_spawn(
         return Ok(None);
     };
     validate_supported_pair(&address.mode, &address.harness).map_err(ApiError::bad_request)?;
-    let gov = resolve_address_governance(WorkerKind::Babysitter, &address.harness, overlay, None);
+    let gov = resolve_address_governance(
+        WorkerKind::Babysitter,
+        &address.harness,
+        overlay,
+        dispatch_override,
+    );
     let missing_skills = gov
         .linked_skills
         .iter()
@@ -4034,6 +4132,8 @@ struct SpawnWorkerRequest<'a> {
     preloaded_worker: Option<StageWorker>,
     /// Task-heading sandbox override, when known for this spawn.
     task_sandbox_permissions: Option<SandboxAllowlist>,
+    /// Per-dispatch governance override (babysitter resolution + limits).
+    dispatch_governance: Option<GovernancePatch>,
 }
 
 struct SpawnWorkerResult {
@@ -4105,6 +4205,7 @@ async fn spawn_worker_run(
         match build_babysitter_auto_spawn(
             &state.home,
             &state.dispatch_governance,
+            req.dispatch_governance.as_ref(),
             req.task_id,
             &worker,
             req.worktree_path,
@@ -4272,9 +4373,9 @@ async fn post_task_dispatch(
         &brief,
     )?;
     let overrides = DriverOverrides {
-        provider: non_empty_field(req.provider_override.clone()),
-        model: non_empty_field(req.model_override.clone()),
-        effort: non_empty_field(req.effort_override.clone()),
+        provider: verbatim_optional(req.provider_override.clone()),
+        model: verbatim_optional(req.model_override.clone()),
+        effort: verbatim_optional(req.effort_override.clone()),
     };
     let spawn = spawn_worker_run(
         &state,
@@ -4294,6 +4395,7 @@ async fn post_task_dispatch(
             dispatch_kind: Some(kind.as_str()),
             preloaded_worker: Some(worker_for_bundle),
             task_sandbox_permissions,
+            dispatch_governance: req.governance.clone(),
         },
     )
     .await
@@ -4754,6 +4856,11 @@ fn compile_dispatch_prompt_bundle(
             "dispatch prompt compile failed: {messages}"
         )));
     }
+    enforce_context_budget(
+        compiled.char_count,
+        worker.context_budget,
+        "dispatch prompt",
+    )?;
     Ok(format!(
         "orgasmic compiled prompt\ndispatch_kind: {}\ntask: {}\nworker: {}\nprompt_spec: {}\n\n{}\n",
         kind.as_str(),
@@ -6291,6 +6398,10 @@ pub struct RunRecoverRequest {
     pub request_id: Option<String>,
     #[serde(default)]
     pub force_inert: Option<bool>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -6318,12 +6429,30 @@ fn recovery_driver(
     Some((driver, meta))
 }
 
+/// Resolve persisted `(mode, harness)` from session RunMeta events.
+fn persisted_run_address_from_session(envelopes: &[SessionEnvelope]) -> Option<(String, String)> {
+    for env in envelopes {
+        if env.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        if let Ok(Lifecycle::RunMeta {
+            transport, harness, ..
+        }) = serde_json::from_value::<Lifecycle>(env.event.clone())
+        {
+            let harness = harness.filter(|h| !h.trim().is_empty())?;
+            if transport.trim().is_empty() {
+                continue;
+            }
+            return Some((transport, harness));
+        }
+    }
+    None
+}
+
 /// Best-effort harness name for a recorded worker id (e.g. `claude` for
-/// `implementer-claude-tmux`). Returns `None` when the worker cannot be loaded.
-fn recovery_harness_for_worker(home: &Home, worker_id: &str) -> Option<String> {
-    load_stage_worker(home, worker_id)
-        .ok()
-        .map(|worker| worker.harness)
+/// `implementer-claude-tmux`). Returns `None` when address truth is absent.
+fn recovery_harness_for_worker(_home: &Home, envelopes: &[SessionEnvelope]) -> Option<String> {
+    persisted_run_address_from_session(envelopes).map(|(_, harness)| harness)
 }
 
 fn pinned_claude_execution_config(
@@ -7365,18 +7494,35 @@ async fn execute_run_recover_action(
                 let harness = terminal_contract
                     .harness
                     .clone()
+                    .or_else(|| terminal_contract.harness.clone())
                     .or_else(|| native.as_ref().map(|n| n.provider.clone()))
                     .or_else(|| {
                         meta.as_ref()
-                            .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
+                            .and_then(|_| recovery_harness_for_worker(&state.home, &envelopes))
                     })
-                    .unwrap_or_else(|| "claude".to_string());
-                let driver = driver_for_mode_harness("tmux", &harness)
-                    .or_else(|| driver_for_mode_harness("tmux", "claude"))
                     .ok_or_else(|| {
-                        ApiError::internal("tmux driver unavailable for recovery run")
+                        ApiError::bad_request(
+                            "recovery address unavailable; supply mode+harness/start fresh",
+                        )
                     })?;
+                let mode = req
+                    .mode
+                    .clone()
+                    .or_else(|| {
+                        persisted_run_address_from_session(&envelopes).map(|(mode, _)| mode)
+                    })
+                    .ok_or_else(|| {
+                        ApiError::bad_request(
+                            "recovery address unavailable; supply mode+harness/start fresh",
+                        )
+                    })?;
+                let driver = driver_for_mode_harness(&mode, &harness).ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "unsupported recovery mode/harness pair {mode}/{harness}"
+                    ))
+                })?;
                 let cfg = DriverConfig::from_value(json!({
+                    "transport": mode,
                     "harness": harness,
                     "cwd": &worktree,
                     "force_inert": force_inert,
@@ -8755,13 +8901,13 @@ fn run_kind_from_lifecycle(kind: &str) -> Option<RunKind> {
 }
 
 fn session_driver(
-    home: &Home,
+    _home: &Home,
     envelopes: &[SessionEnvelope],
-    meta: &SessionAcquireMeta,
+    _meta: &SessionAcquireMeta,
 ) -> Option<(Box<dyn WorkerDriver>, String)> {
-    if let Ok(worker) = load_stage_worker(home, &meta.worker_id) {
-        let driver = driver_for_mode_harness(&worker.driver, &worker.harness)?;
-        let driver_id = format!("{}/{}", worker.driver, worker.harness);
+    if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
+        let driver = driver_for_mode_harness(&mode, &harness)?;
+        let driver_id = format!("{mode}/{harness}");
         return Some((driver, driver_id));
     }
     let driver_id = session_driver_id_from_ready(envelopes)?;
@@ -12979,27 +13125,29 @@ async fn launch_artifact_generation(
     restore_state: &'static str,
     restore_version: u32,
     bundle: String,
-    mode: &str,
-    harness: &str,
-    harness_args: Vec<String>,
-    model: Option<String>,
-    effort: Option<String>,
+    address: &ArtifactLaunchAddress,
     governance: Option<&GovernancePatch>,
 ) -> Result<String, ApiError> {
+    validate_custom_harness_args(&address.harness, &address.harness_args)?;
     let worker = resolve_addressed_stage_worker(
         &state.home,
         WorkerKind::Artifactor,
-        mode,
-        harness,
-        harness_args.clone(),
+        &address.mode,
+        &address.harness,
+        address.harness_args.clone(),
         &state.dispatch_governance,
         governance,
+    )?;
+    enforce_context_budget(
+        bundle.chars().count(),
+        worker.context_budget,
+        "artifact prompt",
     )?;
     let worker_id = worker.id.clone();
 
     let task_id = format!("artifact.generate:{art_id}");
-    let launch_model = model.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let launch_effort = effort.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let launch_model = verbatim_optional(address.model.clone());
+    let launch_effort = verbatim_optional(address.effort.clone());
     let spawn = spawn_worker_run(
         state,
         SpawnWorkerRequest {
@@ -13010,8 +13158,8 @@ async fn launch_artifact_generation(
             bundle: &bundle,
             overrides: DriverOverrides {
                 provider: None,
-                model: launch_model.map(str::to_string),
-                effort: launch_effort.map(str::to_string),
+                model: launch_model.clone(),
+                effort: launch_effort.clone(),
             },
             project_root_path: &entry.path,
             worktree_path: &entry.path,
@@ -13022,23 +13170,37 @@ async fn launch_artifact_generation(
             dispatch_kind: Some("artifactor"),
             preloaded_worker: Some(worker),
             task_sandbox_permissions: None,
+            dispatch_governance: governance.cloned(),
         },
     )
     .await
     .map_err(|failure| failure.error)?;
 
+    spawn_artifact_release_watcher(
+        state.clone(),
+        ArtifactReleaseWatch {
+            entry: entry.clone(),
+            task_id: task_id.clone(),
+            art_dir: art_dir.to_path_buf(),
+            art_id: art_id.to_string(),
+            run_id: spawn.acquire.run_id.clone(),
+            restore_state,
+            restore_version,
+        },
+    );
+
     let org_path = art_dir.join("artifact.org");
     let current_org = std::fs::read_to_string(&org_path)
         .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
-    let new_org = persist_artifact_launch_address(
-        &current_org,
-        mode,
-        harness,
-        &harness_args,
-        launch_model,
-        launch_effort,
-    )
-    .map_err(|e| ApiError::internal(format!("persist artifact launch address: {e}")))?;
+    let persisted_address = ArtifactLaunchAddress {
+        mode: address.mode.clone(),
+        harness: address.harness.clone(),
+        harness_args: address.harness_args.clone(),
+        model: launch_model,
+        effort: launch_effort,
+    };
+    let new_org = persist_artifact_launch_address(&current_org, &persisted_address)
+        .map_err(|e| ApiError::internal(format!("persist artifact launch address: {e}")))?;
     let now = Utc::now();
     let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let project_date = now.format("%Y%m%d").to_string();
@@ -13059,10 +13221,10 @@ async fn launch_artifact_generation(
     tx_entry.extra = vec![
         ("ARTIFACT_ID".into(), art_id.to_string()),
         ("RUN_ID".into(), spawn.acquire.run_id.clone()),
-        ("MODE".into(), mode.to_string()),
-        ("HARNESS".into(), harness.to_string()),
+        ("MODE".into(), persisted_address.mode.clone()),
+        ("HARNESS".into(), persisted_address.harness.clone()),
     ];
-    state
+    if let Err(e) = state
         .writer
         .transaction(
             vec![FileRewrite {
@@ -13081,21 +13243,23 @@ async fn launch_artifact_generation(
             },
         )
         .await
-        .map_err(|e| ApiError::internal(format!("persist artifact launch address: {e}")))?;
+    {
+        let _ = state
+            .supervisor
+            .release_with_finalization(
+                &spawn.acquire.run_id,
+                "launch_address_persist_failed",
+                ReleaseOutcome::Failed,
+                false,
+                None,
+            )
+            .await;
+        return Err(ApiError::internal(format!(
+            "persist artifact launch address: {e}"
+        )));
+    }
     let _ = state.index.refresh_project(&entry.id).await;
 
-    spawn_artifact_release_watcher(
-        state.clone(),
-        ArtifactReleaseWatch {
-            entry: entry.clone(),
-            task_id,
-            art_dir: art_dir.to_path_buf(),
-            art_id: art_id.to_string(),
-            run_id: spawn.acquire.run_id.clone(),
-            restore_state,
-            restore_version,
-        },
-    );
     Ok(spawn.acquire.run_id)
 }
 
@@ -13376,11 +13540,8 @@ async fn post_artifact_generate(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactGenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
-    let mode = body.mode.clone();
-    let harness = body.harness.clone();
-    let harness_args = body.harness_args.clone();
-    let model = body.model.clone();
-    let effort = body.effort.clone();
+    let address = artifact_address_from_generate_body(&body);
+    validate_custom_harness_args(&address.harness, &address.harness_args)?;
     let nodes: Vec<String> = body
         .nodes
         .into_iter()
@@ -13391,7 +13552,7 @@ async fn post_artifact_generate(
     if prompt.is_empty() {
         return Err(ApiError::bad_request("prompt is required"));
     }
-    if mode.trim().is_empty() || harness.trim().is_empty() {
+    if address.mode.trim().is_empty() || address.harness.trim().is_empty() {
         return Err(ApiError::bad_request("mode and harness are required"));
     }
 
@@ -13493,11 +13654,7 @@ async fn post_artifact_generate(
         "failed",
         0,
         bundle,
-        &mode,
-        &harness,
-        harness_args,
-        model,
-        effort,
+        &address,
         body.governance.as_ref(),
     )
     .await
@@ -13545,34 +13702,17 @@ async fn post_artifact_regenerate(
         return Err(ApiError::not_found("artifact not found"));
     }
 
-    let extra_prompt = body.extra_prompt.unwrap_or_default();
-
-    // Read-only: feeds the launch/followup prompt. This is NOT yet the final
-    // "what gets closed out" comment set — that is re-read and applied only
-    // after the round is committed (lease acquire or accepted send_input).
     let detail = load_artifact_detail(&art_dir, None, false).map_err(|e| match e {
         ArtifactLoadError::NotFound => ApiError::not_found("artifact not found"),
         ArtifactLoadError::VersionNotFound(v) => {
             ApiError::not_found(format!("artifact {art_id} has no version {v}"))
         }
     })?;
-    let mode = non_empty_field(body.mode.clone())
-        .or_else(|| detail.summary.launch_mode.clone())
-        .unwrap_or_default();
-    let harness = non_empty_field(body.harness.clone())
-        .or_else(|| detail.summary.launch_harness.clone())
-        .unwrap_or_default();
-    let harness_args = if body.harness_args.is_empty() {
-        detail
-            .summary
-            .launch_harness_args
-            .clone()
-            .unwrap_or_default()
-    } else {
-        body.harness_args.clone()
-    };
-    let model = non_empty_field(body.model.clone()).or(detail.summary.launch_model.clone());
-    let effort = non_empty_field(body.effort.clone()).or(detail.summary.launch_effort.clone());
+    let address = resolve_artifact_launch_address(
+        artifact_address_override_from_regenerate(&body),
+        detail.summary.launch_address.clone(),
+    )?;
+    let extra_prompt = body.extra_prompt.unwrap_or_default();
     let version = detail.summary.version;
     let nodes = detail.summary.subject_nodes.clone();
 
@@ -13672,11 +13812,6 @@ async fn post_artifact_regenerate(
     }
 
     // COLD PATH: no live holder — spawn a fresh run (also post-restart).
-    if mode.trim().is_empty() || harness.trim().is_empty() {
-        return Err(ApiError::bad_request(
-            "artifact has no saved launch address; mode and harness are required to launch a cold artifactor run",
-        ));
-    }
     let subject_context = assemble_artifact_context(&state, &entry.id, &nodes).await;
     let regen_context = assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
     let bundle = compile_artifact_generate_prompt_bundle(
@@ -13696,11 +13831,7 @@ async fn post_artifact_regenerate(
         "submitted",
         version,
         bundle,
-        &mode,
-        &harness,
-        harness_args,
-        model,
-        effort,
+        &address,
         body.governance.as_ref(),
     )
     .await?;

@@ -6,8 +6,9 @@ use std::time::Duration;
 mod common;
 
 use common::{assert_path_free_error, assert_path_free_error_response};
-use orgasmic_core::{read_session_file, Home, SessionEventKind};
+use orgasmic_core::{read_session_file, Home, Lifecycle, SandboxAllowlist, SessionEventKind};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
+use orgasmic_drivers::{allowlist_from_driver_config, DriverConfig};
 
 fn test_options() -> DaemonOptions {
     DaemonOptions {
@@ -211,6 +212,21 @@ fn live_runs_for_task(runs: &serde_json::Value, task_id: &str) -> usize {
         .iter()
         .filter(|run| run["task_id"].as_str() == Some(task_id))
         .count()
+}
+
+fn sandbox_from_session_run_meta(session_path: &Path) -> SandboxAllowlist {
+    let envelopes = read_session_file(session_path).expect("read session");
+    for envelope in envelopes {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        if let Ok(Lifecycle::RunMeta { driver_config, .. }) = serde_json::from_value(envelope.event)
+        {
+            let cfg = DriverConfig::from_value(driver_config);
+            return allowlist_from_driver_config(&cfg).expect("sandbox_permissions in RunMeta");
+        }
+    }
+    panic!("RunMeta missing from {}", session_path.display());
 }
 
 async fn post_dispatch(
@@ -651,6 +667,85 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
         response.status().is_success(),
         "dispatch with task sandbox override: {}",
         response.status()
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test]
+async fn dispatch_endpoint_sandbox_matrix_blocks_higher_layer_widening() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    write(
+        &home.config(),
+        r#"
+dispatch:
+  implementer:
+    sandbox_permissions:
+      allow_network: false
+  "implementer,codex":
+    sandbox_permissions:
+      allow_exec: false
+      allow_patch: false
+"#,
+    );
+    symlink_repo_source(&home);
+    let project_root = tmp.path().join("proj");
+    let task_id = "TASK-SANDBOX-MATRIX";
+    write(
+        &project_root.join(".orgasmic/tasks/backlog.org"),
+        format!(
+            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Sandbox matrix\n:PROPERTIES:\n:ID:               {task_id}\n:SANDBOX_PERMISSIONS: allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n"
+        ),
+    );
+    write(
+        &home.board(),
+        format!(
+            "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj-dispatch\n:PROPERTIES:\n:ID:               proj-dispatch\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+            project_root.display()
+        ),
+    );
+    let brief = tmp.path().join("brief.md");
+    let worktree = tmp.path().join("worktree");
+    let last = tmp.path().join("last.txt");
+    let stdout = tmp.path().join("stdout.log");
+    write(&brief, "sandbox matrix dispatch brief\n");
+    std::fs::create_dir_all(&worktree).unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
+    body["mode"] = serde_json::json!("acp-ws");
+    body["harness"] = serde_json::json!("codex");
+    body["governance"] = serde_json::json!({
+        "sandbox_permissions": {
+            "allow_network": true,
+            "allow_exec": true,
+            "allow_patch": true,
+            "allow_writes_outside_cwd": false
+        }
+    });
+    let response = post_dispatch(&running, &token, "proj-dispatch", task_id, body).await;
+    assert!(
+        response.status().is_success(),
+        "dispatch with sandbox matrix: {}",
+        response.status()
+    );
+    let resp: serde_json::Value = response.json().await.unwrap();
+    let session_path = PathBuf::from(resp["session_path"].as_str().unwrap());
+    wait_for_session_nonempty(&session_path).await;
+    let sandbox = sandbox_from_session_run_meta(&session_path);
+    assert!(!sandbox.allow_exec, "kind,harness layer must stay false");
+    assert!(!sandbox.allow_network, "kind layer must stay false");
+    assert!(
+        !sandbox.allow_patch,
+        "dispatch true must not widen kind,harness false"
+    );
+    assert!(
+        !sandbox.allow_writes_outside_cwd,
+        "dispatch false must restrict even when task is true"
     );
 
     let _ = running.shutdown.send(());

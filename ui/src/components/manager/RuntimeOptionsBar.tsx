@@ -48,8 +48,8 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
     setBusy(true);
     try {
       const response = await postRunRuntimeOptions(runId, {
-        model: model.trim() || null,
-        reasoning_effort: effort.trim() || null,
+        model: model.length > 0 ? model : null,
+        reasoning_effort: effort.length > 0 ? effort : null,
       });
       if (!response.accepted) {
         throw new Error(response.message ?? 'Harness rejected runtime options');

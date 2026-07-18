@@ -393,11 +393,11 @@ fn worker_view_from_worker(
         driver: worker.driver.to_string(),
         harness: worker.harness.to_string(),
         providers: worker.providers,
-        models: worker.models,
-        reasoning_efforts: worker.reasoning_efforts,
+        models: Vec::new(),
+        reasoning_efforts: Vec::new(),
         default_provider: worker.default_provider,
-        default_model: worker.default_model,
-        default_effort: worker.default_effort,
+        default_model: None,
+        default_effort: None,
         linked_skills: worker
             .linked_skills
             .iter()

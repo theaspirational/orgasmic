@@ -388,11 +388,13 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             .ok_or_else(|| DriverError::Transport("cursor ACP session missing".into()))?;
         let model = req
             .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|m| !m.is_empty())
-            .ok_or_else(|| DriverError::Unsupported("cursor ACP runtime options require model"))?
-            .to_string();
+            .clone()
+            .ok_or_else(|| DriverError::Unsupported("cursor ACP runtime options require model"))?;
+        if model.is_empty() {
+            return Err(DriverError::Unsupported(
+                "cursor ACP runtime options require model",
+            ));
+        }
         if let Some(cfg) = self.cfg.as_mut() {
             cfg.model = Some(model.clone());
         }
@@ -892,7 +894,7 @@ fn catalog_from_session_new(
     Some(RuntimeOptionsCatalog {
         source: "cursor-acp:session/new".into(),
         provider_switching: false,
-        live_switching: false,
+        live_switching: true,
         current: RuntimeOptionsState {
             provider: None,
             model: current_model,

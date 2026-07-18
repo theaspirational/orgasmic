@@ -67,9 +67,10 @@ export function GenerateArtifactDialog({
           prompt: prompt.trim(),
           mode: transport.mode,
           harness: transport.harness,
-          harness_args: transport.harness_args.length > 0 ? transport.harness_args : undefined,
-          model: transport.model.trim() || null,
-          effort: transport.effort.trim() || null,
+          harness_args:
+            transport.harness === 'custom' ? transport.harness_args : undefined,
+          model: transport.model.length > 0 ? transport.model : null,
+          effort: transport.effort.length > 0 ? transport.effort : null,
         },
         projectId,
       );

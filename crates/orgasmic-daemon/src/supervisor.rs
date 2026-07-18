@@ -463,6 +463,9 @@ struct RunRecord {
     idle_timeout: Option<Duration>,
     /// Resolved :APPLICABLE_STATES: verbs for this run; empty disables checks.
     applicable_states: Vec<String>,
+    /// Count of non-heartbeat driver events for max_iterations enforcement.
+    driver_turn_count: u64,
+    max_iterations: Option<u32>,
     next_event_seq: u64,
     terminal_outcome: Option<ReleaseOutcome>,
     control: Box<dyn DriverControl>,
@@ -1128,9 +1131,19 @@ impl Supervisor {
                 let (pending_babysitter_summary, terminal_release) = {
                     let mut g = inner_for_drain.lock().await;
                     let mut flush_to_babysitter: Option<String> = None;
+                    let mut iteration_limit_hit = false;
                     if let Some(rec) = g.runs.get_mut(&run_id_for_drain) {
                         let seq = rec.next_event_seq;
                         rec.next_event_seq += 1;
+                        if !matches!(evt, DriverEvent::Heartbeat { .. }) {
+                            rec.driver_turn_count += 1;
+                            if let Some(max) = rec.max_iterations {
+                                if rec.driver_turn_count > u64::from(max) {
+                                    rec.terminal_outcome = Some(ReleaseOutcome::Failed);
+                                    iteration_limit_hit = true;
+                                }
+                            }
+                        }
                         if rec.kind == RunKind::Worker {
                             if let Some(buf) = rec.babysitter_summary.as_mut() {
                                 update_babysitter_buffer(buf, &evt, seq, event_at);
@@ -1159,7 +1172,7 @@ impl Supervisor {
                                 }
                             }
                         });
-                    let terminal_release = if terminal_outcome.is_some() {
+                    let terminal_release = if terminal_outcome.is_some() || iteration_limit_hit {
                         take_driver_terminal_release(&mut g, &run_id_for_drain)
                     } else {
                         None

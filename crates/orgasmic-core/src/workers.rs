@@ -142,12 +142,15 @@ impl<'a> Worker<'a> {
         }
 
         let default_provider = normalize_optional(heading.property("DEFAULT_PROVIDER"));
-        let default_model = normalize_optional(heading.property("DEFAULT_MODEL"));
-        let default_effort = normalize_optional(heading.property("DEFAULT_EFFORT"));
+        let _ = heading.property("DEFAULT_MODEL");
+        let _ = heading.property("DEFAULT_EFFORT");
+        let _ = heading.property("MODELS");
+        let _ = heading.property("REASONING_EFFORTS");
         let providers = parse_or_default_list(heading.property("PROVIDERS"), &default_provider);
-        let models = parse_or_default_list(heading.property("MODELS"), &default_model);
-        let reasoning_efforts =
-            parse_or_default_list(heading.property("REASONING_EFFORTS"), &default_effort);
+        let models = Vec::new();
+        let reasoning_efforts = Vec::new();
+        let default_model = None;
+        let default_effort = None;
         let applicable_states = heading
             .property("APPLICABLE_STATES")
             .map(|v| {
@@ -364,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_default_driver_uses_default_provider_and_model_lists() {
+    fn legacy_default_driver_ignores_model_catalog_properties() {
         let file = parse(
             "* AGENT-TEMPLATE old\n:PROPERTIES:\n:ID: old\n:KIND:             implementer\n:DEFAULT_DRIVER: cursor-agent\n:DEFAULT_PROVIDER: cursor\n:DEFAULT_MODEL: composer-2.5-fast\n:END:\n",
         );
@@ -372,7 +375,8 @@ mod tests {
         assert_eq!(worker.driver, "subprocess-stream-json");
         assert_eq!(worker.harness, "cursor-agent");
         assert_eq!(worker.providers, vec!["cursor"]);
-        assert_eq!(worker.models, vec!["composer-2.5-fast"]);
+        assert!(worker.models.is_empty());
+        assert!(worker.default_model.is_none());
     }
 
     #[test]

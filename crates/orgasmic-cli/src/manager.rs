@@ -91,6 +91,9 @@ pub struct DispatchArgs {
     /// Compatibility label only — not routing authority.
     #[arg(long)]
     pub worker: Option<String>,
+    /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
+    #[arg(long = "governance-json")]
+    pub governance_json: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -253,6 +256,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) dry_run: bool,
     /// Compatibility label only.
     pub(crate) worker_override: Option<String>,
+    pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
 }
 
 impl DispatchPlan {
@@ -1609,6 +1613,13 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         .branch
         .unwrap_or_else(|| default_branch(first_task(&tasks), args.kind));
     let goal_id = read_active_goal_id(&project_root)?;
+    let governance = match args.governance_json.as_deref() {
+        None => None,
+        Some(json) => Some(
+            serde_json::from_str(json)
+                .with_context(|| format!("parse --governance-json: {json}"))?,
+        ),
+    };
     let _ = home;
     Ok(DispatchPlan {
         project_root,
@@ -1641,6 +1652,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .filter(|s| !s.is_empty()),
         dry_run: args.dry_run,
         worker_override,
+        governance,
     })
 }
 
