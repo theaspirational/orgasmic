@@ -6,17 +6,23 @@
 //! - **claude**: recorded `NativeRuntime.session_path`, else deterministic
 //!   `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` from spawn-pinned
 //!   session id + worktree cwd → **high** when the file exists.
-//! - **codex**: recorded path, else `thread_id`/`session_id` →
-//!   `~/.codex/sessions/**/rollout-*-<id>.jsonl` (and archived) → **high**;
-//!   unique cwd(+originator) match in session_meta near run start → **medium**.
-//! - **cursor-agent**: recorded path, else Ready `session_id` + worktree →
-//!   `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` → **high**.
-//! - **hermes**: recorded path, else Ready `session_id` → exact
-//!   `~/.hermes/sessions/session_<id>.json` / `<id>.jsonl` name match → **high**.
+//! - **codex**: recorded path (confined to `~/.codex`), else
+//!   `thread_id`/`session_id` → rollout filename → **high**; unique
+//!   cwd+originator with rollout `session_meta.timestamp` at/just after run
+//!   start (one-sided, tight window) → **medium**; far or pre-run rollouts →
+//!   **not found** (never attribute a later attempt's rollout to an earlier run).
+//! - **cursor-agent**: recorded path (confined to `~/.cursor/projects`), else
+//!   Ready `session_id` + worktree → **high**; tmux/rmux TUI without Ready id
+//!   uses unique cwd+launch-time correlation under the encoded project slug →
+//!   **medium**.
+//! - **hermes**: recorded path (confined to `~/.hermes/sessions`), else Ready
+//!   `session_id` → native `<id>.jsonl` (paired `session_<id>.json` is metadata
+//!   only) → **high**; tmux/rmux TUI without Ready id uses unique launch-time
+//!   correlation among `.jsonl` files → **medium**.
 //! - **custom** (and unknown): honest **unsupported**, never a guess.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
 use orgasmic_core::{DriverEvent, Lifecycle, SessionEnvelope, SessionEventKind};
@@ -206,6 +212,67 @@ fn capability_session_id(capabilities: &Value) -> Option<String> {
     None
 }
 
+/// Max time after orgasmic run start for a codex rollout `session_meta.timestamp`.
+const CODEX_CWD_LAUNCH_MAX_AFTER: Duration = Duration::minutes(5);
+
+/// Max time after run start for tmux/rmux TUI transcript mtime correlation.
+const TUI_TRANSCRIPT_LAUNCH_MAX_AFTER: Duration = Duration::minutes(10);
+
+/// Recorded `NativeRuntime.session_path` values are not trusted blindly: they
+/// must resolve to a regular file under the harness root (symlink escapes rejected).
+fn validate_session_id_component(id: &str) -> bool {
+    !id.is_empty()
+        && !id.contains('/')
+        && !id.contains('\\')
+        && id != "."
+        && id != ".."
+        && Path::new(id)
+            .components()
+            .all(|c| matches!(c, Component::Normal(_)))
+}
+
+fn canonical_root(root: &Path) -> PathBuf {
+    root.canonicalize().unwrap_or_else(|_| root.to_path_buf())
+}
+
+fn path_is_under_root(candidate: &Path, root: &Path) -> bool {
+    let Ok(canonical) = candidate.canonicalize() else {
+        return false;
+    };
+    let root = canonical_root(root);
+    canonical == root || canonical.starts_with(&root)
+}
+
+fn confined_file_under_root(candidate: &Path, root: &Path) -> Option<PathBuf> {
+    if !candidate.is_file() {
+        return None;
+    }
+    let canonical = candidate.canonicalize().ok()?;
+    if path_is_under_root(&canonical, root) {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
+fn file_mtime_at_or_after_run(
+    path: &Path,
+    run_started_at: DateTime<Utc>,
+    max_after: Duration,
+) -> bool {
+    let Ok(meta) = fs::metadata(path) else {
+        return false;
+    };
+    let Ok(modified) = meta.modified() else {
+        return false;
+    };
+    let modified: DateTime<Utc> = modified.into();
+    if modified < run_started_at {
+        return false;
+    }
+    modified - run_started_at <= max_after
+}
+
 fn latest_run_segment(envelopes: &[SessionEnvelope]) -> &[SessionEnvelope] {
     let Some(latest_run_id) = envelopes.last().map(|e| e.run_id.as_str()) else {
         return envelopes;
@@ -217,17 +284,18 @@ fn latest_run_segment(envelopes: &[SessionEnvelope]) -> &[SessionEnvelope] {
     &envelopes[start..]
 }
 
-fn found_recorded(path: &Path, session_id: Option<&str>) -> Option<TranscriptFindResult> {
-    if path.is_file() {
-        Some(TranscriptFindResult::Found(NativeTranscriptHit {
-            path: path.to_path_buf(),
-            session_id: session_id.map(str::to_string),
-            confidence: TranscriptConfidence::High,
-            correlation: "recorded_native_runtime_session_path".into(),
-        }))
-    } else {
-        None
-    }
+fn found_recorded(
+    path: &Path,
+    harness_root: &Path,
+    session_id: Option<&str>,
+) -> Option<TranscriptFindResult> {
+    let confined = confined_file_under_root(path, harness_root)?;
+    Some(TranscriptFindResult::Found(NativeTranscriptHit {
+        path: confined,
+        session_id: session_id.map(str::to_string),
+        confidence: TranscriptConfidence::High,
+        correlation: "recorded_native_runtime_session_path".into(),
+    }))
 }
 
 // --- claude -----------------------------------------------------------------
@@ -241,16 +309,22 @@ pub fn encode_claude_project_slug(cwd: &Path) -> String {
         .collect()
 }
 
-pub fn claude_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &str) -> PathBuf {
-    roots
-        .claude_projects
-        .join(encode_claude_project_slug(cwd))
-        .join(format!("{session_id}.jsonl"))
+pub fn claude_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &str) -> Option<PathBuf> {
+    if !validate_session_id_component(session_id) {
+        return None;
+    }
+    Some(
+        roots
+            .claude_projects
+            .join(encode_claude_project_slug(cwd))
+            .join(format!("{session_id}.jsonl")),
+    )
 }
 
 fn find_claude(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, lookup.session_id.as_deref()) {
+        if let Some(hit) = found_recorded(path, &roots.claude_projects, lookup.session_id.as_deref())
+        {
             return hit;
         }
     }
@@ -259,15 +333,24 @@ fn find_claude(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
             reason: "claude lookup needs session_id (NativeRuntime or --session-id)".into(),
         };
     };
+    if !validate_session_id_component(session_id) {
+        return TranscriptFindResult::NotFound {
+            reason: "claude session_id must be a single filename component".into(),
+        };
+    }
     let Some(cwd) = lookup.cwd.as_deref() else {
         return TranscriptFindResult::NotFound {
             reason: "claude lookup needs worktree/cwd to encode ~/.claude/projects slug".into(),
         };
     };
-    let path = claude_transcript_path(roots, cwd, session_id);
-    if path.is_file() {
+    let Some(path) = claude_transcript_path(roots, cwd, session_id) else {
+        return TranscriptFindResult::NotFound {
+            reason: "claude session_id must be a single filename component".into(),
+        };
+    };
+    if let Some(confined) = confined_file_under_root(&path, &roots.claude_projects) {
         TranscriptFindResult::Found(NativeTranscriptHit {
-            path,
+            path: confined,
             session_id: Some(session_id.to_string()),
             confidence: TranscriptConfidence::High,
             correlation: "claude_session_id_plus_encoded_cwd".into(),
@@ -291,35 +374,105 @@ pub fn encode_cursor_project_slug(cwd: &Path) -> String {
         .collect()
 }
 
-pub fn cursor_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &str) -> PathBuf {
-    roots
+pub fn cursor_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &str) -> Option<PathBuf> {
+    if !validate_session_id_component(session_id) {
+        return None;
+    }
+    Some(
+        roots
+            .cursor_projects
+            .join(encode_cursor_project_slug(cwd))
+            .join("agent-transcripts")
+            .join(session_id)
+            .join(format!("{session_id}.jsonl")),
+    )
+}
+
+fn find_cursor_tui_by_cwd_time(
+    lookup: &TranscriptLookup,
+    roots: &TranscriptRoots,
+) -> Option<TranscriptFindResult> {
+    let cwd = lookup.cwd.as_deref()?;
+    let started = lookup.run_started_at?;
+    let transcripts_dir = roots
         .cursor_projects
         .join(encode_cursor_project_slug(cwd))
-        .join("agent-transcripts")
-        .join(session_id)
-        .join(format!("{session_id}.jsonl"))
+        .join("agent-transcripts");
+    if !transcripts_dir.is_dir() {
+        return None;
+    }
+    let Ok(entries) = fs::read_dir(&transcripts_dir) else {
+        return None;
+    };
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_dir() {
+            continue;
+        }
+        let sid = entry.file_name().to_string_lossy().to_string();
+        if !validate_session_id_component(&sid) {
+            continue;
+        }
+        let path = entry.path().join(format!("{sid}.jsonl"));
+        let Some(confined) = confined_file_under_root(&path, &roots.cursor_projects) else {
+            continue;
+        };
+        if file_mtime_at_or_after_run(&confined, started, TUI_TRANSCRIPT_LAUNCH_MAX_AFTER) {
+            matches.push((confined, sid));
+        }
+    }
+    match matches.len() {
+        0 => None,
+        1 => {
+            let (path, sid) = matches.into_iter().next().unwrap();
+            Some(TranscriptFindResult::Found(NativeTranscriptHit {
+                path,
+                session_id: Some(sid),
+                confidence: TranscriptConfidence::Medium,
+                correlation: "cursor_tui_cwd_launch_time_unique".into(),
+            }))
+        }
+        _ => Some(TranscriptFindResult::Ambiguous {
+            candidates: matches.into_iter().map(|(p, _)| p).collect(),
+            reason: "multiple cursor-agent TUI transcripts match cwd+launch-time window"
+                .into(),
+        }),
+    }
 }
 
 fn find_cursor(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, lookup.session_id.as_deref()) {
+        if let Some(hit) = found_recorded(path, &roots.cursor_projects, lookup.session_id.as_deref())
+        {
             return hit;
         }
     }
     let Some(session_id) = lookup.session_id.as_deref() else {
+        if let Some(result) = find_cursor_tui_by_cwd_time(lookup, roots) {
+            return result;
+        }
         return TranscriptFindResult::NotFound {
-            reason: "cursor-agent lookup needs session_id from Ready capabilities".into(),
+            reason: "cursor-agent lookup needs session_id from Ready capabilities or a unique cwd+launch-time TUI correlation".into(),
         };
     };
+    if !validate_session_id_component(session_id) {
+        return TranscriptFindResult::NotFound {
+            reason: "cursor-agent session_id must be a single filename component".into(),
+        };
+    }
     if let Some(cwd) = lookup.cwd.as_deref() {
-        let path = cursor_transcript_path(roots, cwd, session_id);
-        if path.is_file() {
-            return TranscriptFindResult::Found(NativeTranscriptHit {
-                path,
-                session_id: Some(session_id.to_string()),
-                confidence: TranscriptConfidence::High,
-                correlation: "cursor_session_id_plus_encoded_cwd".into(),
-            });
+        if let Some(path) = cursor_transcript_path(roots, cwd, session_id) {
+            if let Some(confined) = confined_file_under_root(&path, &roots.cursor_projects) {
+                return TranscriptFindResult::Found(NativeTranscriptHit {
+                    path: confined,
+                    session_id: Some(session_id.to_string()),
+                    confidence: TranscriptConfidence::High,
+                    correlation: "cursor_session_id_plus_encoded_cwd".into(),
+                });
+            }
         }
     }
     // Fallback: unique agent-transcripts/<id>/<id>.jsonl under projects.
@@ -327,13 +480,17 @@ fn find_cursor(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
     if roots.cursor_projects.is_dir() {
         if let Ok(projects) = fs::read_dir(&roots.cursor_projects) {
             for project in projects.flatten() {
+                if !validate_session_id_component(session_id) {
+                    continue;
+                }
                 let candidate = project
                     .path()
                     .join("agent-transcripts")
                     .join(session_id)
                     .join(format!("{session_id}.jsonl"));
-                if candidate.is_file() {
-                    matches.push(candidate);
+                if let Some(confined) = confined_file_under_root(&candidate, &roots.cursor_projects)
+                {
+                    matches.push(confined);
                 }
             }
         }
@@ -364,11 +521,16 @@ fn find_cursor(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
 
 fn find_codex(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, lookup.session_id.as_deref()) {
+        if let Some(hit) = found_recorded(path, &roots.codex_home, lookup.session_id.as_deref()) {
             return hit;
         }
     }
     if let Some(session_id) = lookup.session_id.as_deref() {
+        if !validate_session_id_component(session_id) {
+            return TranscriptFindResult::NotFound {
+                reason: "codex session_id must be a single filename component".into(),
+            };
+        }
         let matches = find_codex_rollouts_by_session_id(roots, session_id);
         match matches.len() {
             0 => {}
@@ -390,18 +552,25 @@ fn find_codex(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptF
             }
         }
     }
-    // Medium-confidence: unique session_meta cwd match near run start.
+    // Medium-confidence: unique session_meta cwd+originator with rollout starting
+    // at/just after this run (never a later attempt's rollout for an earlier run).
     let Some(cwd) = lookup.cwd.as_deref() else {
         return TranscriptFindResult::NotFound {
             reason: "codex lookup needs thread_id/session_id or cwd for session_meta scan".into(),
         };
     };
-    let matches = find_codex_rollouts_by_cwd(roots, cwd, lookup.run_started_at);
+    let Some(run_started_at) = lookup.run_started_at else {
+        return TranscriptFindResult::NotFound {
+            reason: "codex cwd correlation needs run start time from session JSONL".into(),
+        };
+    };
+    let matches = find_codex_rollouts_by_cwd(roots, cwd, run_started_at);
     match matches.len() {
         0 => TranscriptFindResult::NotFound {
             reason: format!(
-                "no codex rollout with session_meta.cwd == {} under {}",
+                "no codex rollout with session_meta.cwd == {} starting within {} after run start under {}",
                 cwd.display(),
+                CODEX_CWD_LAUNCH_MAX_AFTER,
                 roots.codex_home.display()
             ),
         },
@@ -411,13 +580,13 @@ fn find_codex(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptF
                 path,
                 session_id,
                 confidence: TranscriptConfidence::Medium,
-                correlation: "codex_session_meta_cwd_unique".into(),
+                correlation: "codex_session_meta_cwd_originator_launch_time".into(),
             })
         }
         _ => TranscriptFindResult::Ambiguous {
             candidates: matches.into_iter().map(|(p, _)| p).collect(),
             reason: format!(
-                "multiple codex rollouts share cwd {} (need thread_id for high confidence)",
+                "multiple codex rollouts share cwd {} within launch window (need thread_id for high confidence)",
                 cwd.display()
             ),
         },
@@ -459,16 +628,15 @@ fn collect_files_with_suffix(dir: &Path, suffix: &str, out: &mut Vec<PathBuf>) {
 fn find_codex_rollouts_by_cwd(
     roots: &TranscriptRoots,
     cwd: &Path,
-    run_started_at: Option<DateTime<Utc>>,
+    run_started_at: DateTime<Utc>,
 ) -> Vec<(PathBuf, Option<String>)> {
     let cwd_str = cwd.to_string_lossy();
-    let window = Duration::hours(6);
     let mut out = Vec::new();
     for dir in [
         roots.codex_home.join("sessions"),
         roots.codex_home.join("archived_sessions"),
     ] {
-        collect_codex_cwd_matches(&dir, &cwd_str, run_started_at, window, &mut out);
+        collect_codex_cwd_matches(&dir, &cwd_str, run_started_at, &mut out);
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out.dedup_by(|a, b| a.0 == b.0);
@@ -478,8 +646,7 @@ fn find_codex_rollouts_by_cwd(
 fn collect_codex_cwd_matches(
     dir: &Path,
     cwd_str: &str,
-    run_started_at: Option<DateTime<Utc>>,
-    window: Duration,
+    run_started_at: DateTime<Utc>,
     out: &mut Vec<(PathBuf, Option<String>)>,
 ) {
     let Ok(entries) = fs::read_dir(dir) else {
@@ -488,7 +655,7 @@ fn collect_codex_cwd_matches(
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_codex_cwd_matches(&path, cwd_str, run_started_at, window, out);
+            collect_codex_cwd_matches(&path, cwd_str, run_started_at, out);
             continue;
         }
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
@@ -503,10 +670,18 @@ fn collect_codex_cwd_matches(
         if meta.cwd.as_deref() != Some(cwd_str) {
             continue;
         }
-        if let (Some(started), Some(ts)) = (run_started_at, meta.timestamp) {
-            if (ts - started).abs() > window {
-                continue;
-            }
+        if meta.originator.as_deref() != Some("orgasmic") {
+            continue;
+        }
+        let Some(ts) = meta.timestamp else {
+            continue;
+        };
+        // One-sided: rollout must start at/just after this orgasmic run, never before.
+        if ts < run_started_at {
+            continue;
+        }
+        if ts - run_started_at > CODEX_CWD_LAUNCH_MAX_AFTER {
+            continue;
         }
         out.push((path, meta.session_id));
     }
@@ -516,6 +691,7 @@ fn collect_codex_cwd_matches(
 struct CodexSessionMeta {
     cwd: Option<String>,
     session_id: Option<String>,
+    originator: Option<String>,
     timestamp: Option<DateTime<Utc>>,
 }
 
@@ -549,49 +725,137 @@ fn read_codex_session_meta(path: &Path) -> Result<CodexSessionMeta, ()> {
             .or_else(|| payload.get("id"))
             .and_then(Value::as_str)
             .map(str::to_string),
+        originator: payload
+            .get("originator")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         timestamp,
     })
 }
 
 // --- hermes -----------------------------------------------------------------
 
+fn hermes_transcript_candidates(roots: &TranscriptRoots, session_id: &str) -> Vec<PathBuf> {
+    if !validate_session_id_component(session_id) {
+        return Vec::new();
+    }
+    vec![
+        roots.hermes_sessions.join(format!("{session_id}.jsonl")),
+        roots.hermes_sessions.join(format!("session_{session_id}.jsonl")),
+        roots.hermes_sessions.join(format!("session_{session_id}.json")),
+        roots.hermes_sessions.join(format!("{session_id}.json")),
+    ]
+}
+
+fn find_hermes_tui_by_launch_time(
+    lookup: &TranscriptLookup,
+    roots: &TranscriptRoots,
+) -> Option<TranscriptFindResult> {
+    let started = lookup.run_started_at?;
+    let Ok(entries) = fs::read_dir(&roots.hermes_sessions) else {
+        return None;
+    };
+    let mut matches = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(sid) = name.strip_suffix(".jsonl") else {
+            continue;
+        };
+        let sid = sid.strip_prefix("session_").unwrap_or(sid);
+        if !validate_session_id_component(sid) {
+            continue;
+        }
+        let Some(confined) = confined_file_under_root(&path, &roots.hermes_sessions) else {
+            continue;
+        };
+        if file_mtime_at_or_after_run(&confined, started, TUI_TRANSCRIPT_LAUNCH_MAX_AFTER) {
+            matches.push((confined, sid.to_string()));
+        }
+    }
+    match matches.len() {
+        0 => None,
+        1 => {
+            let (path, sid) = matches.into_iter().next().unwrap();
+            Some(TranscriptFindResult::Found(NativeTranscriptHit {
+                path,
+                session_id: Some(sid),
+                confidence: TranscriptConfidence::Medium,
+                correlation: "hermes_tui_launch_time_unique".into(),
+            }))
+        }
+        _ => Some(TranscriptFindResult::Ambiguous {
+            candidates: matches.into_iter().map(|(p, _)| p).collect(),
+            reason: "multiple hermes TUI transcripts match launch-time window".into(),
+        }),
+    }
+}
+
 fn find_hermes(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, lookup.session_id.as_deref()) {
+        if let Some(hit) = found_recorded(path, &roots.hermes_sessions, lookup.session_id.as_deref())
+        {
             return hit;
         }
     }
     let Some(session_id) = lookup.session_id.as_deref() else {
+        if let Some(result) = find_hermes_tui_by_launch_time(lookup, roots) {
+            return result;
+        }
         return TranscriptFindResult::NotFound {
-            reason: "hermes lookup needs session_id from Ready capabilities; refusing cwd/time guess".into(),
+            reason: "hermes lookup needs session_id from Ready capabilities or a unique launch-time TUI correlation".into(),
         };
     };
-    let candidates = [
-        roots
-            .hermes_sessions
-            .join(format!("session_{session_id}.json")),
-        roots.hermes_sessions.join(format!("{session_id}.jsonl")),
-        roots.hermes_sessions.join(format!("session_{session_id}.jsonl")),
-        roots.hermes_sessions.join(format!("{session_id}.json")),
-    ];
-    let existing: Vec<PathBuf> = candidates.into_iter().filter(|p| p.is_file()).collect();
-    match existing.len() {
-        0 => TranscriptFindResult::NotFound {
-            reason: format!(
-                "hermes session file for id '{session_id}' not found under {}",
-                roots.hermes_sessions.display()
-            ),
-        },
-        1 => TranscriptFindResult::Found(NativeTranscriptHit {
-            path: existing.into_iter().next().unwrap(),
-            session_id: Some(session_id.to_string()),
-            confidence: TranscriptConfidence::High,
-            correlation: "hermes_session_id_exact_filename".into(),
-        }),
-        _ => TranscriptFindResult::Ambiguous {
-            candidates: existing,
-            reason: format!("hermes session_id '{session_id}' matched multiple session files"),
-        },
+    if !validate_session_id_component(session_id) {
+        return TranscriptFindResult::NotFound {
+            reason: "hermes session_id must be a single filename component".into(),
+        };
+    }
+    // Prefer native JSONL; paired session_<id>.json is metadata, not a competing transcript.
+    for candidate in hermes_transcript_candidates(roots, session_id) {
+        if !candidate
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e == "jsonl")
+        {
+            continue;
+        }
+        if let Some(confined) = confined_file_under_root(&candidate, &roots.hermes_sessions) {
+            return TranscriptFindResult::Found(NativeTranscriptHit {
+                path: confined,
+                session_id: Some(session_id.to_string()),
+                confidence: TranscriptConfidence::High,
+                correlation: "hermes_session_id_jsonl".into(),
+            });
+        }
+    }
+    for candidate in hermes_transcript_candidates(roots, session_id) {
+        if !candidate
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e == "json")
+        {
+            continue;
+        }
+        if let Some(confined) = confined_file_under_root(&candidate, &roots.hermes_sessions) {
+            return TranscriptFindResult::Found(NativeTranscriptHit {
+                path: confined,
+                session_id: Some(session_id.to_string()),
+                confidence: TranscriptConfidence::High,
+                correlation: "hermes_session_id_json_metadata".into(),
+            });
+        }
+    }
+    TranscriptFindResult::NotFound {
+        reason: format!(
+            "hermes session file for id '{session_id}' not found under {}",
+            roots.hermes_sessions.display()
+        ),
     }
 }
 
@@ -658,7 +922,7 @@ mod tests {
         let roots = roots_under(tmp.path());
         let cwd = PathBuf::from("/tmp/proj");
         let sid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
-        let path = claude_transcript_path(&roots, &cwd, sid);
+        let path = claude_transcript_path(&roots, &cwd, sid).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{\"ok\":1}\n").unwrap();
 
@@ -675,7 +939,10 @@ mod tests {
         );
         match result {
             TranscriptFindResult::Found(hit) => {
-                assert_eq!(hit.path, path);
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    path.canonicalize().unwrap()
+                );
                 assert_eq!(hit.confidence, TranscriptConfidence::High);
                 assert_eq!(hit.correlation, "claude_session_id_plus_encoded_cwd");
             }
@@ -687,7 +954,7 @@ mod tests {
     fn claude_prefers_recorded_path() {
         let tmp = tempfile::tempdir().unwrap();
         let roots = roots_under(tmp.path());
-        let recorded = tmp.path().join("recorded-claude.jsonl");
+        let recorded = roots.claude_projects.join("recorded-claude.jsonl");
         fs::write(&recorded, "{}\n").unwrap();
         let result = find_native_transcript(
             &TranscriptLookup {
@@ -702,7 +969,10 @@ mod tests {
         );
         match result {
             TranscriptFindResult::Found(hit) => {
-                assert_eq!(hit.path, recorded);
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    recorded.canonicalize().unwrap()
+                );
                 assert_eq!(hit.correlation, "recorded_native_runtime_session_path");
             }
             other => panic!("expected Found, got {other:?}"),
@@ -715,7 +985,7 @@ mod tests {
         let roots = roots_under(tmp.path());
         let cwd = PathBuf::from("/tmp/work/.hidden/tree");
         let sid = "11111111-2222-3333-4444-555555555555";
-        let path = cursor_transcript_path(&roots, &cwd, sid);
+        let path = cursor_transcript_path(&roots, &cwd, sid).unwrap();
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{\"role\":\"user\"}\n").unwrap();
 
@@ -732,7 +1002,10 @@ mod tests {
         );
         match result {
             TranscriptFindResult::Found(hit) => {
-                assert_eq!(hit.path, path);
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    path.canonicalize().unwrap()
+                );
                 assert_eq!(hit.confidence, TranscriptConfidence::High);
             }
             other => panic!("expected Found, got {other:?}"),
@@ -801,12 +1074,13 @@ mod tests {
             f,
             "{}",
             json!({
-                "timestamp": "2026-07-16T10:00:01Z",
+                "timestamp": "2026-07-16T10:00:06Z",
                 "type": "session_meta",
                 "payload": {
                     "session_id": sid,
                     "cwd": cwd,
-                    "timestamp": "2026-07-16T10:00:01Z"
+                    "originator": "orgasmic",
+                    "timestamp": "2026-07-16T10:00:06Z"
                 }
             })
         )
@@ -833,6 +1107,107 @@ mod tests {
     }
 
     #[test]
+    fn codex_earlier_run_does_not_take_later_rollout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let cwd = "/tmp/repeated-codex-cwd";
+        let dir = roots.codex_home.join("sessions/2026/07/09");
+        fs::create_dir_all(&dir).unwrap();
+        let sid = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff";
+        let path = dir.join(format!("rollout-2026-07-09T13-04-24-{sid}.jsonl"));
+        let mut f = fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "timestamp": "2026-07-09T13:04:24Z",
+                "type": "session_meta",
+                "payload": {
+                    "session_id": sid,
+                    "cwd": cwd,
+                    "originator": "orgasmic",
+                    "timestamp": "2026-07-09T13:04:24Z"
+                }
+            })
+        )
+        .unwrap();
+
+        let earlier_start = DateTime::parse_from_rfc3339("2026-07-09T12:11:50Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let earlier = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-earlier".into(),
+                harness: "codex".into(),
+                cwd: Some(PathBuf::from(cwd)),
+                session_id: None,
+                recorded_session_path: None,
+                run_started_at: Some(earlier_start),
+            },
+            &roots,
+        );
+        assert!(matches!(earlier, TranscriptFindResult::NotFound { .. }));
+
+        let later_start = DateTime::parse_from_rfc3339("2026-07-09T13:04:23Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let later = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-later".into(),
+                harness: "codex".into(),
+                cwd: Some(PathBuf::from(cwd)),
+                session_id: None,
+                recorded_session_path: None,
+                run_started_at: Some(later_start),
+            },
+            &roots,
+        );
+        match later {
+            TranscriptFindResult::Found(hit) => {
+                assert_eq!(hit.path, path);
+                assert_eq!(hit.confidence, TranscriptConfidence::Medium);
+                assert_eq!(hit.correlation, "codex_session_meta_cwd_originator_launch_time");
+            }
+            other => panic!("expected Found for later run, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hermes_prefers_jsonl_over_paired_metadata_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let sid = "20260328_115902_00cfe3cd";
+        let jsonl = roots.hermes_sessions.join(format!("{sid}.jsonl"));
+        let json = roots
+            .hermes_sessions
+            .join(format!("session_{sid}.json"));
+        fs::write(&jsonl, "{\"role\":\"user\"}\n").unwrap();
+        fs::write(&json, r#"{"session_id":"20260328_115902_00cfe3cd"}"#).unwrap();
+
+        let result = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-hermes".into(),
+                harness: "hermes".into(),
+                cwd: None,
+                session_id: Some(sid.into()),
+                recorded_session_path: None,
+                run_started_at: None,
+            },
+            &roots,
+        );
+        match result {
+            TranscriptFindResult::Found(hit) => {
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    jsonl.canonicalize().unwrap()
+                );
+                assert_eq!(hit.correlation, "hermes_session_id_jsonl");
+            }
+            other => panic!("expected Found jsonl, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn hermes_finds_exact_session_file() {
         let tmp = tempfile::tempdir().unwrap();
         let roots = roots_under(tmp.path());
@@ -853,11 +1228,151 @@ mod tests {
         );
         match result {
             TranscriptFindResult::Found(hit) => {
-                assert_eq!(hit.path, path);
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    path.canonicalize().unwrap()
+                );
                 assert_eq!(hit.confidence, TranscriptConfidence::High);
+                assert_eq!(hit.correlation, "hermes_session_id_json_metadata");
             }
             other => panic!("expected Found, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn cursor_tui_resolves_unique_cwd_launch_time() {
+        use filetime::{FileTime, set_file_mtime};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let cwd = PathBuf::from("/tmp/tui-cursor-wt");
+        let sid = "22222222-3333-4444-5555-666666666666";
+        let path = cursor_transcript_path(&roots, &cwd, sid).unwrap();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "{\"role\":\"user\"}\n").unwrap();
+        let started = DateTime::parse_from_rfc3339("2026-07-18T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mtime = started + chrono::Duration::seconds(30);
+        set_file_mtime(
+            &path,
+            FileTime::from_system_time(std::time::SystemTime::from(mtime)),
+        )
+        .unwrap();
+
+        let result = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-cursor-tui".into(),
+                harness: "cursor-agent".into(),
+                cwd: Some(cwd),
+                session_id: None,
+                recorded_session_path: None,
+                run_started_at: Some(started),
+            },
+            &roots,
+        );
+        match result {
+            TranscriptFindResult::Found(hit) => {
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    path.canonicalize().unwrap()
+                );
+                assert_eq!(hit.confidence, TranscriptConfidence::Medium);
+                assert_eq!(hit.correlation, "cursor_tui_cwd_launch_time_unique");
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn hermes_tui_resolves_unique_launch_time() {
+        use filetime::{FileTime, set_file_mtime};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let sid = "20260718_100030_abc12345";
+        let path = roots.hermes_sessions.join(format!("{sid}.jsonl"));
+        fs::write(&path, "{\"role\":\"user\"}\n").unwrap();
+        let started = DateTime::parse_from_rfc3339("2026-07-18T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mtime = started + chrono::Duration::seconds(30);
+        set_file_mtime(
+            &path,
+            FileTime::from_system_time(std::time::SystemTime::from(mtime)),
+        )
+        .unwrap();
+
+        let result = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-hermes-tui".into(),
+                harness: "hermes".into(),
+                cwd: Some(PathBuf::from("/tmp/wt")),
+                session_id: None,
+                recorded_session_path: None,
+                run_started_at: Some(started),
+            },
+            &roots,
+        );
+        match result {
+            TranscriptFindResult::Found(hit) => {
+                assert_eq!(
+                    hit.path.canonicalize().unwrap(),
+                    path.canonicalize().unwrap()
+                );
+                assert_eq!(hit.confidence, TranscriptConfidence::Medium);
+                assert_eq!(hit.correlation, "hermes_tui_launch_time_unique");
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_id_path_traversal_is_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let outside = tmp.path().join("outside.jsonl");
+        fs::write(&outside, "{}\n").unwrap();
+
+        let result = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-claude".into(),
+                harness: "claude".into(),
+                cwd: Some(PathBuf::from("/tmp/proj")),
+                session_id: Some("../outside.jsonl".into()),
+                recorded_session_path: None,
+                run_started_at: None,
+            },
+            &roots,
+        );
+        assert!(matches!(result, TranscriptFindResult::NotFound { .. }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn recorded_path_symlink_escape_is_rejected() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let outside = tmp.path().join("outside.jsonl");
+        fs::write(&outside, "{}\n").unwrap();
+        let link = roots.claude_projects.join("escape.jsonl");
+        fs::create_dir_all(&roots.claude_projects).unwrap();
+        symlink(&outside, &link).unwrap();
+
+        let result = find_native_transcript(
+            &TranscriptLookup {
+                run_id: "run-claude".into(),
+                harness: "claude".into(),
+                cwd: None,
+                session_id: None,
+                recorded_session_path: Some(link),
+                run_started_at: None,
+            },
+            &roots,
+        );
+        assert!(matches!(result, TranscriptFindResult::NotFound { .. }));
     }
 
     #[test]
@@ -883,28 +1398,35 @@ mod tests {
         assert!(matches!(result, TranscriptFindResult::NotFound { .. }));
     }
 
-    /// Soft production-path probe: when real orgasmic + harness homes are
-    /// present, prove claude/codex/cursor adapters resolve known historical runs.
+    /// Optional machine-local probe. Deterministic unit tests are the CI gate;
+    /// set `ORGASMIC_PROBE_TRANSCRIPTS=1` to exercise real homes + session JSONL.
     #[test]
     fn production_path_probe_when_local_homes_present() {
-        let Some(roots) = TranscriptRoots::from_env_home() else {
+        if std::env::var("ORGASMIC_PROBE_TRANSCRIPTS").as_deref() != Ok("1") {
+            eprintln!(
+                "SKIP production_path_probe_when_local_homes_present: set ORGASMIC_PROBE_TRANSCRIPTS=1 to enable"
+            );
             return;
+        }
+        let Some(roots) = TranscriptRoots::from_env_home() else {
+            panic!("ORGASMIC_PROBE_TRANSCRIPTS=1 but HOME is unset");
         };
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        // Prefer an explicit override; otherwise try worktree-local and the
-        // dispatch worktree's parent checkout sessions dir.
         let candidates = [
             std::env::var_os("ORGASMIC_PROBE_SESSIONS").map(PathBuf::from),
             Some(manifest.join("../../.orgasmic/tmp/sessions")),
             Some(manifest.join("../../../../../tmp/sessions")),
         ];
         let Some(orgasmic_sessions) = candidates.into_iter().flatten().find(|p| p.is_dir()) else {
-            return;
+            panic!(
+                "ORGASMIC_PROBE_TRANSCRIPTS=1 but no orgasmic sessions dir found (set ORGASMIC_PROBE_SESSIONS?)"
+            );
         };
-        // Claude rmux run with recorded NativeRuntime.session_path.
+        let mut probed = 0usize;
         let claude_session =
             orgasmic_sessions.join("dispatch-TASK-TJF7G-implementer-20260713T135602.jsonl");
         if claude_session.is_file() {
+            probed += 1;
             let envelopes = orgasmic_core::read_session_file(&claude_session).unwrap();
             let lookup = lookup_from_envelopes(&envelopes).expect("claude lookup");
             let result = find_native_transcript(&lookup, &roots);
@@ -913,10 +1435,10 @@ mod tests {
                 "claude TJF7G expected Found, got {result:?}"
             );
         }
-        // Codex ACP run: Ready.capabilities.thread_id -> rollout filename.
         let codex_session =
             orgasmic_sessions.join("dispatch-TASK-P0FAQ-implementer-20260716T190738.jsonl");
         if codex_session.is_file() {
+            probed += 1;
             let envelopes = orgasmic_core::read_session_file(&codex_session).unwrap();
             let lookup = lookup_from_envelopes(&envelopes).expect("codex lookup");
             assert_eq!(
@@ -929,16 +1451,34 @@ mod tests {
                 "codex P0FAQ expected Found, got {result:?}"
             );
         }
-        // Cursor-agent: Ready.session_id + worktree slug.
         let cursor_session =
             orgasmic_sessions.join("dispatch-TASK-RCWFF-implementer-20260704T105943.jsonl");
         if cursor_session.is_file() {
+            probed += 1;
             let envelopes = orgasmic_core::read_session_file(&cursor_session).unwrap();
             let lookup = lookup_from_envelopes(&envelopes).expect("cursor lookup");
             let result = find_native_transcript(&lookup, &roots);
             assert!(
                 matches!(result, TranscriptFindResult::Found(_)),
                 "cursor RCWFF expected Found, got {result:?}"
+            );
+        }
+        let hermes_session =
+            orgasmic_sessions.join("dispatch-TASK-HERMES-probe-implementer-20260701T120000.jsonl");
+        if hermes_session.is_file() {
+            probed += 1;
+            let envelopes = orgasmic_core::read_session_file(&hermes_session).unwrap();
+            let lookup = lookup_from_envelopes(&envelopes).expect("hermes lookup");
+            let result = find_native_transcript(&lookup, &roots);
+            assert!(
+                matches!(result, TranscriptFindResult::Found(_)),
+                "hermes probe expected Found, got {result:?}"
+            );
+        }
+        if probed == 0 {
+            panic!(
+                "ORGASMIC_PROBE_TRANSCRIPTS=1 but none of the hard-coded probe sessions exist under {}",
+                orgasmic_sessions.display()
             );
         }
     }

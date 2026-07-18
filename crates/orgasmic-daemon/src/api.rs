@@ -12449,12 +12449,34 @@ mod tests {
     #[tokio::test]
     async fn get_run_native_transcript_uses_recorded_session_path() {
         // orgasmic:TASK-0SADP
+        struct RestoreEnv {
+            key: &'static str,
+            value: Option<std::ffi::OsString>,
+        }
+        impl Drop for RestoreEnv {
+            fn drop(&mut self) {
+                match &self.value {
+                    Some(v) => std::env::set_var(self.key, v),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+
         let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("user-home");
+        std::fs::create_dir_all(&user_home).unwrap();
+        let _restore_home = RestoreEnv {
+            key: "HOME",
+            value: std::env::var_os("HOME"),
+        };
+        std::env::set_var("HOME", &user_home);
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "proj");
-        let native = tmp.path().join("native-claude.jsonl");
+        let claude_projects = user_home.join(".claude").join("projects");
+        std::fs::create_dir_all(&claude_projects).unwrap();
+        let native = claude_projects.join("recorded-native-claude.jsonl");
         std::fs::write(&native, "{\"msg\":\"hi\"}\n").unwrap();
 
         let run_id = "run-20260718T120000-native-transcript-probe";
@@ -12513,7 +12535,7 @@ mod tests {
         assert_eq!(body["result"]["status"], "found");
         assert_eq!(
             body["result"]["path"].as_str().unwrap(),
-            native.to_str().unwrap()
+            native.canonicalize().unwrap().to_str().unwrap()
         );
         assert_eq!(body["result"]["confidence"], "high");
         assert_eq!(
