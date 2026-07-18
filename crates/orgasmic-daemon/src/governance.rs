@@ -70,8 +70,7 @@ pub struct SandboxPermissionsPatch {
 }
 
 impl SandboxPermissionsPatch {
-    fn to_allowlist(&self) -> SandboxAllowlist {
-        let mut list = SandboxAllowlist::default();
+    fn merge_into(&self, list: &mut SandboxAllowlist) {
         if let Some(v) = self.allow_exec {
             list.allow_exec = v;
         }
@@ -84,7 +83,6 @@ impl SandboxPermissionsPatch {
         if let Some(v) = self.allow_writes_outside_cwd {
             list.allow_writes_outside_cwd = v;
         }
-        list
     }
 }
 
@@ -180,8 +178,10 @@ impl GovernanceDefaults {
         if let Some(ref babysitter) = patch.babysitter_worker {
             self.babysitter_worker = Some(babysitter.clone());
         }
-        if let Some(ref sandbox) = patch.sandbox_permissions {
-            self.sandbox_permissions = Some(sandbox.to_allowlist());
+        if let Some(ref sandbox_patch) = patch.sandbox_permissions {
+            let mut list = self.sandbox_permissions.clone().unwrap_or_default();
+            sandbox_patch.merge_into(&mut list);
+            self.sandbox_permissions = Some(list);
         }
     }
 }
@@ -208,23 +208,61 @@ pub fn resolve_governance(
     resolved
 }
 
-/// Parse a `dispatch:` map key as kind or `(kind,harness)`.
-pub fn parse_governance_key(key: &str) -> Option<(WorkerKind, Option<&str>)> {
-    if let Some((kind_s, harness)) = key.split_once(',') {
-        let kind = WorkerKind::from_str(kind_s.trim()).ok()?;
-        let harness = harness.trim();
-        if harness.is_empty() {
-            return None;
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GovernanceKeyParseError {
+    InvalidKind,
+    EmptyHarness,
+    ExtraComma,
+}
+
+impl std::fmt::Display for GovernanceKeyParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidKind => write!(f, "unknown worker kind"),
+            Self::EmptyHarness => write!(f, "empty harness after comma"),
+            Self::ExtraComma => write!(f, "extra comma in kind,harness key"),
         }
-        Some((kind, Some(harness)))
+    }
+}
+
+/// Normalize a `dispatch:` map key to its canonical spelling (trimmed kind or
+/// `kind,harness`). Malformed keys return an error instead of being stored under
+/// an unreachable raw spelling.
+pub fn normalize_governance_key(key: &str) -> Result<String, GovernanceKeyParseError> {
+    let trimmed = key.trim();
+    if let Some(comma_pos) = trimmed.find(',') {
+        let kind_s = trimmed[..comma_pos].trim();
+        let rest = trimmed[comma_pos + 1..].trim();
+        if rest.contains(',') {
+            return Err(GovernanceKeyParseError::ExtraComma);
+        }
+        if rest.is_empty() {
+            return Err(GovernanceKeyParseError::EmptyHarness);
+        }
+        let kind =
+            WorkerKind::from_str(kind_s).map_err(|_| GovernanceKeyParseError::InvalidKind)?;
+        Ok(kind_harness_key(kind, rest))
     } else {
-        let kind = WorkerKind::from_str(key.trim()).ok()?;
+        let kind =
+            WorkerKind::from_str(trimmed).map_err(|_| GovernanceKeyParseError::InvalidKind)?;
+        Ok(kind.as_str().to_string())
+    }
+}
+
+/// Parse a `dispatch:` map key as kind or `(kind,harness)`.
+pub fn parse_governance_key(key: &str) -> Option<(WorkerKind, Option<String>)> {
+    let canonical = normalize_governance_key(key).ok()?;
+    if let Some((kind_s, harness)) = canonical.split_once(',') {
+        let kind = WorkerKind::from_str(kind_s).ok()?;
+        Some((kind, Some(harness.to_string())))
+    } else {
+        let kind = WorkerKind::from_str(&canonical).ok()?;
         Some((kind, None))
     }
 }
 
 pub fn is_governance_overlay_key(key: &str) -> bool {
-    parse_governance_key(key).is_some()
+    normalize_governance_key(key).is_ok()
 }
 
 pub fn known_governance_patch_keys() -> &'static [&'static str] {
@@ -347,5 +385,80 @@ mod tests {
         assert!(is_governance_overlay_key("implementer,codex"));
         assert!(!is_governance_overlay_key("not-a-kind"));
         assert!(!is_governance_overlay_key("implementer,"));
+        assert!(!is_governance_overlay_key("implementer,codex,typo"));
+    }
+
+    #[test]
+    fn normalize_governance_key_trims_and_canonicalizes() {
+        assert_eq!(
+            normalize_governance_key(" implementer ").unwrap(),
+            "implementer"
+        );
+        assert_eq!(
+            normalize_governance_key("implementer, codex").unwrap(),
+            "implementer,codex"
+        );
+        assert_eq!(
+            normalize_governance_key(" implementer , codex ").unwrap(),
+            "implementer,codex"
+        );
+        assert_eq!(
+            normalize_governance_key("implementer,codex,typo"),
+            Err(GovernanceKeyParseError::ExtraComma)
+        );
+    }
+
+    #[test]
+    fn sandbox_patch_merges_per_field_across_layers() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: None,
+                    allow_patch: None,
+                    allow_network: Some(false),
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        map.insert(
+            "implementer,codex".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: Some(false),
+                    allow_patch: None,
+                    allow_network: None,
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+
+        let dispatch_patch = GovernancePatch {
+            sandbox_permissions: Some(SandboxPermissionsPatch {
+                allow_exec: None,
+                allow_patch: Some(false),
+                allow_network: None,
+                allow_writes_outside_cwd: None,
+            }),
+            ..GovernancePatch::default()
+        };
+
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &overlay,
+            Some(&dispatch_patch),
+        );
+        let sandbox = resolved
+            .sandbox_permissions
+            .expect("merged sandbox permissions");
+        assert!(!sandbox.allow_exec, "kind,harness layer");
+        assert!(!sandbox.allow_patch, "dispatch layer");
+        assert!(!sandbox.allow_network, "kind layer must survive");
+        assert!(sandbox.allow_writes_outside_cwd, "untouched default field");
     }
 }

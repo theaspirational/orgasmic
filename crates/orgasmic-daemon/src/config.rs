@@ -18,7 +18,7 @@ use orgasmic_core::Home;
 use serde::{Deserialize, Serialize};
 
 use crate::governance::{
-    is_governance_overlay_key, known_governance_patch_keys, known_sandbox_permission_keys,
+    known_governance_patch_keys, known_sandbox_permission_keys, normalize_governance_key,
     DispatchGovernanceOverlay, GovernancePatch,
 };
 
@@ -176,12 +176,20 @@ fn dispatch_from_yaml(parsed: Option<DispatchYaml>) -> (bool, DispatchGovernance
         .unwrap_or_else(default_auto_commit_signal);
     let mut map = BTreeMap::new();
     for (key, value) in parsed.governance {
-        if !is_governance_overlay_key(&key) {
-            continue;
-        }
+        let canonical = match normalize_governance_key(&key) {
+            Ok(canonical) => canonical,
+            Err(err) => {
+                tracing::warn!(
+                    key = %key,
+                    error = %err,
+                    "ignoring malformed dispatch governance overlay key"
+                );
+                continue;
+            }
+        };
         match serde_yaml::from_value::<GovernancePatch>(value) {
             Ok(patch) => {
-                map.insert(key, patch);
+                map.insert(canonical, patch);
             }
             Err(err) => {
                 tracing::warn!(
@@ -309,7 +317,7 @@ fn collect_dispatch_keys(value: &serde_yaml::Value, out: &mut Vec<String>) {
         if name == "auto_commit_signal" {
             continue;
         }
-        if is_governance_overlay_key(name) {
+        if normalize_governance_key(name).is_ok() {
             collect_governance_patch_keys(child, &format!("dispatch.{name}"), out);
             continue;
         }
@@ -593,6 +601,87 @@ dispatch:
         let sandbox = kind_harness.sandbox_permissions.expect("sandbox overlay");
         assert!(!sandbox.allow_exec);
         assert!(sandbox.allow_network);
+    }
+
+    #[test]
+    fn dispatch_overlay_keys_normalize_to_canonical_spelling() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(
+            home.config(),
+            r#"
+dispatch:
+  " implementer ":
+    max_iterations: 31
+  implementer, codex:
+    max_iterations: 41
+    stall_timeout_secs: 90
+"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        assert!(cfg.unrecognized_keys.is_empty());
+
+        let kind_only = resolve_governance(
+            WorkerKind::Implementer,
+            Some("claude"),
+            &cfg.dispatch_governance,
+            None,
+        );
+        assert_eq!(kind_only.max_iterations, Some(31));
+
+        let kind_harness = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &cfg.dispatch_governance,
+            None,
+        );
+        assert_eq!(kind_harness.max_iterations, Some(41));
+        assert_eq!(kind_harness.stall_timeout_secs, Some(90));
+    }
+
+    #[test]
+    fn dispatch_overlay_unquoted_comma_key_resolves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(
+            home.config(),
+            r#"
+dispatch:
+  implementer,codex:
+    max_iterations: 42
+"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        assert!(cfg.unrecognized_keys.is_empty());
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &cfg.dispatch_governance,
+            None,
+        );
+        assert_eq!(resolved.max_iterations, Some(42));
+    }
+
+    #[test]
+    fn dispatch_overlay_malformed_keys_surface_as_unrecognized() {
+        let yaml = serde_yaml::from_str::<serde_yaml::Value>(
+            r#"
+dispatch:
+  implementer,codex,typo:
+    max_iterations: 1
+"#,
+        )
+        .unwrap();
+        let keys = collect_unrecognized_keys(&yaml);
+        assert!(
+            keys.iter()
+                .any(|k| k == "dispatch.implementer,codex,typo"),
+            "{keys:?}"
+        );
     }
 
     #[test]
