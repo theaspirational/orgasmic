@@ -238,6 +238,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) effort_override: Option<String>,
     pub(crate) last_path: PathBuf,
     pub(crate) stdout_path: PathBuf,
+    pub(crate) dispatch_attempt_token: String,
     pub(crate) goal_id: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
@@ -317,6 +318,7 @@ struct DispatchRecord {
     brief_path: Option<PathBuf>,
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    dispatch_attempt_token: Option<String>,
     run_id: Option<String>,
     worker_id: Option<String>,
     driver: Option<String>,
@@ -1551,7 +1553,8 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let branch = args
         .branch
         .unwrap_or_else(|| default_branch(first_task(&tasks), args.kind));
-    let (brief_path, last_path, stdout_path) = dispatch_artifact_paths(&project_root, &brief_path);
+    let (brief_path, last_path, stdout_path, dispatch_attempt_token) =
+        reserve_dispatch_artifact_paths(&project_root, &brief_path)?;
     let goal_id = read_active_goal_id(&project_root)?;
     Ok(DispatchPlan {
         project_root,
@@ -1573,6 +1576,7 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .filter(|s| !s.is_empty()),
         last_path,
         stdout_path,
+        dispatch_attempt_token,
         goal_id,
         reason: args
             .reason
@@ -1958,6 +1962,13 @@ fn remove_worktree_required(
     if !path.exists() {
         bail!("worktree path missing: {}", path.display());
     }
+    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
+        project_root,
+        path,
+        last_path,
+        stdout_path,
+    )
+    .ok();
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -1971,7 +1982,11 @@ fn remove_worktree_required(
             String::from_utf8_lossy(&output.stdout)
         );
     }
-    orgasmic_core::prune_dispatch_stem_after_worktree(path, last_path, stdout_path);
+    if let Some(artifacts) = artifacts {
+        orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
+            .map_err(|err| anyhow::anyhow!(err))
+            .with_context(|| format!("prune dispatch artifacts for {}", path.display()))?;
+    }
     Ok(())
 }
 
@@ -2586,6 +2601,46 @@ fn mint_dispatch_attempt_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
 }
 
+const DISPATCH_ARTIFACT_RESERVE_RETRIES: usize = 8;
+
+/// Atomically reserve the (brief, last, stdout) artifact paths for a dispatch.
+/// Creates zero-length files with `create_new`; rolls back partial reservation
+/// and retries with a fresh full UUID on collision (TASK-ZGT1X).
+fn reserve_dispatch_artifact_paths(
+    project_root: &Path,
+    brief_path: &Path,
+) -> Result<(PathBuf, PathBuf, PathBuf, String)> {
+    for _ in 0..DISPATCH_ARTIFACT_RESERVE_RETRIES {
+        let attempt_id = mint_dispatch_attempt_id();
+        let (brief, last, stdout) =
+            dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
+        if let Some(parent) = brief.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create dispatch artifact dir {}", parent.display()))?;
+        }
+        match (
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&last),
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&stdout),
+        ) {
+            (Ok(_), Ok(_)) => return Ok((brief, last, stdout, attempt_id)),
+            (Ok(_), Err(_)) | (Err(_), Ok(_)) => {
+                let _ = std::fs::remove_file(&last);
+                let _ = std::fs::remove_file(&stdout);
+            }
+            (Err(left), Err(_)) if left.kind() == std::io::ErrorKind::AlreadyExists => {}
+            (Err(err), _) => return Err(err.into()),
+            (_, Err(err)) => return Err(err.into()),
+        }
+    }
+    bail!("failed to reserve dispatch artifact pair after {DISPATCH_ARTIFACT_RESERVE_RETRIES} attempts");
+}
+
 /// Resolve the (brief, last, stdout) artifact paths for a dispatch. All three
 /// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`.
 /// Completion artifacts include a per-attempt id so consecutive dispatches cannot
@@ -2757,6 +2812,7 @@ fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
         brief_path: extra_compat(entry, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
         last_path: None,
         stdout_path: None,
+        dispatch_attempt_token: None,
         run_id: None,
         worker_id: None,
         driver: None,
@@ -2786,6 +2842,7 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
     let pid = extra(entry, "PID").and_then(|pid| pid.parse::<u32>().ok());
     let last_path = extra(entry, "LAST_PATH").map(PathBuf::from);
     let stdout_path = extra(entry, "STDOUT_PATH").map(PathBuf::from);
+    let dispatch_attempt_token = extra(entry, "DISPATCH_ATTEMPT").map(str::to_string);
     let kind = extra(entry, "KIND");
     let tasks = entry
         .task
@@ -2810,6 +2867,9 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
             }
             if stdout_path.is_some() {
                 record.stdout_path = stdout_path;
+            }
+            if dispatch_attempt_token.is_some() {
+                record.dispatch_attempt_token = dispatch_attempt_token;
             }
             return;
         }
@@ -3099,6 +3159,7 @@ mod tests {
             brief_path: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             run_id: None,
             worker_id: None,
             driver: None,
@@ -3330,6 +3391,19 @@ mod tests {
                 .unwrap(),
             vec![("TASK-086".to_string(), LifecycleStage::Done)]
         );
+    }
+
+    #[test]
+    fn reserve_dispatch_artifact_pair_creates_zero_length_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root.join("task-reserve-brief.md");
+        let (_, last, stdout, attempt) =
+            reserve_dispatch_artifact_paths(&project_root, &brief).unwrap();
+        assert_eq!(std::fs::metadata(&last).unwrap().len(), 0);
+        assert_eq!(std::fs::metadata(&stdout).unwrap().len(), 0);
+        assert_eq!(attempt.len(), 32);
+        assert!(attempt.chars().all(|c| c.is_ascii_hexdigit()));
     }
 
     #[test]

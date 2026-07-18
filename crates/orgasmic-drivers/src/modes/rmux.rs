@@ -54,7 +54,7 @@ use crate::modes::tmux::{
     cancel_and_join_driver_task, claude_native_runtime, claude_session_id,
     cursor_argv_needs_startup_trust, default_input_ready_timeout, deserialize_duration_secs,
     is_dispatch_placeholder, pane_has_input_prompt, pane_requests_folder_trust,
-    push_initial_prompt_argv,
+    push_initial_prompt_argv, wait_for_owned_send_child, SendChildOwner,
 };
 
 use crate::r#trait::{
@@ -480,6 +480,7 @@ impl WorkerDriver for RmuxDriver {
         let session_name = rmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
         let startup_cancel = Arc::new(AtomicBool::new(false));
+        let send_child = SendChildOwner::new();
 
         let live = if inert {
             None
@@ -500,6 +501,8 @@ impl WorkerDriver for RmuxDriver {
                 tx.clone(),
                 terminal_emitted.clone(),
                 startup_cancel.clone(),
+                send_child.clone(),
+                ctx.worktree.as_deref(),
             )
             .await
             {
@@ -577,6 +580,7 @@ impl WorkerDriver for RmuxDriver {
                     lifecycle_task,
                     startup_task,
                     startup_cancel,
+                    send_child,
                     terminal_emitted,
                     released: false,
                     session,
@@ -685,6 +689,7 @@ impl WorkerDriver for RmuxDriver {
                     lifecycle_task: Some(lifecycle_task),
                     startup_task: None,
                     startup_cancel: Arc::new(AtomicBool::new(false)),
+                    send_child: SendChildOwner::new(),
                     terminal_emitted,
                     released: false,
                     session: Some(session),
@@ -754,6 +759,8 @@ async fn run_live_session(
     events: mpsc::Sender<DriverEvent>,
     terminal_emitted: Arc<AtomicBool>,
     startup_cancel: Arc<AtomicBool>,
+    send_child: SendChildOwner,
+    workspace: Option<&Path>,
 ) -> Result<LiveSession, DriverError> {
     use rmux_sdk::{EnsureSession, EnsureSessionPolicy, ProcessSpec, Rmux, TerminalSizeSpec};
 
@@ -834,11 +841,22 @@ async fn run_live_session(
     } else if cursor_argv_needs_startup_trust(harness, &plan.paste_prompt) {
         let bin = rmux_bin.to_string();
         let session = session_target.clone();
+        let workspace = workspace
+            .map(|path| path.display().to_string())
+            .unwrap_or_default();
         let timeout = cfg.input_ready_timeout;
         let cancel = startup_cancel.clone();
+        let send_child = send_child.clone();
         Some(tokio::spawn(async move {
-            if let Err(e) =
-                accept_cursor_workspace_trust_rmux(&bin, &session, timeout, Some(cancel)).await
+            if let Err(e) = accept_cursor_workspace_trust_rmux(
+                &bin,
+                &session,
+                &workspace,
+                timeout,
+                Some(cancel),
+                Some(send_child),
+            )
+            .await
             {
                 tracing::warn!(?e, "cursor workspace trust gate not cleared within timeout");
             }
@@ -878,23 +896,57 @@ async fn spawn_pane_exit_watch(
 /// for the buffer/send-keys verb set (the daemon's ws bridge relies on the
 /// same contract).
 async fn run_rmux_cli(bin: &str, args: &[&str]) -> Result<(), DriverError> {
-    let output = tokio::process::Command::new(bin)
+    run_rmux_cli_with_owner(bin, args, None, None).await
+}
+
+async fn run_rmux_cli_with_owner(
+    bin: &str,
+    args: &[&str],
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
+    let child = tokio::process::Command::new(bin)
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .output()
-        .await
+        .spawn()
         .map_err(|e| {
             DriverError::Transport(format!("rmux {}: {e}", args.first().unwrap_or(&"")))
         })?;
-    if output.status.success() {
-        Ok(())
+    if let Some(owner) = send_child {
+        *owner.active.lock().await = Some(child);
+        wait_for_owned_send_child(owner, cancel).await
     } else {
-        Err(DriverError::Transport(format!(
-            "rmux {} failed: {}",
-            args.first().unwrap_or(&""),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )))
+        wait_for_rmux_child(child, cancel).await
+    }
+}
+
+async fn wait_for_rmux_child(
+    mut child: tokio::process::Child,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
+    loop {
+        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Ok(());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(DriverError::Transport(format!(
+                    "rmux send child exited with {status}"
+                )));
+            }
+            Ok(None) => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => {
+                return Err(DriverError::Transport(format!("rmux send child wait: {e}")));
+            }
+        }
     }
 }
 
@@ -967,12 +1019,16 @@ fn abort_rmux_task(task: Option<JoinHandle<()>>) {
 async fn accept_cursor_workspace_trust_rmux(
     bin: &str,
     session: &str,
+    workspace_path: &str,
     timeout: Duration,
     cancel: Option<Arc<AtomicBool>>,
+    send_child: Option<SendChildOwner>,
 ) -> Result<(), DriverError> {
     let bin = bin.to_string();
     let session = session.to_string();
+    let workspace_path = workspace_path.to_string();
     accept_cursor_workspace_trust_with_capture(
+        &workspace_path,
         timeout,
         Duration::from_millis(250),
         {
@@ -993,11 +1049,27 @@ async fn accept_cursor_workspace_trust_rmux(
                 async move { rmux_session_alive(&bin, &session).await }
             }
         },
-        move |key| {
+        {
             let bin = bin.clone();
             let session = session.clone();
-            let key = key.to_string();
-            async move { run_rmux_cli(&bin, &["send-keys", "-t", &session, &key]).await }
+            let send_child = send_child.clone();
+            let cancel_for_send = cancel.clone();
+            move |key| {
+                let bin = bin.clone();
+                let session = session.clone();
+                let key = key.to_string();
+                let send_child = send_child.clone();
+                let cancel_for_send = cancel_for_send.clone();
+                async move {
+                    run_rmux_cli_with_owner(
+                        &bin,
+                        &["send-keys", "-t", &session, &key],
+                        send_child.as_ref(),
+                        cancel_for_send.as_ref().map(|flag| flag.as_ref()),
+                    )
+                    .await
+                }
+            }
         },
         cancel,
     )
@@ -1175,6 +1247,7 @@ struct RmuxControl {
     /// and joined on release; aborted on drop (TASK-ZHRRH).
     startup_task: Option<JoinHandle<()>>,
     startup_cancel: Arc<AtomicBool>,
+    send_child: SendChildOwner,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
     /// Typed session handle for a live run, so `release`/`Drop` can tear it
@@ -1210,6 +1283,7 @@ impl RmuxControl {
             lifecycle_task: None,
             startup_task: None,
             startup_cancel: Arc::new(AtomicBool::new(false)),
+            send_child: SendChildOwner::new(),
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             released: false,
             session: None,
@@ -1315,7 +1389,12 @@ impl DriverControl for RmuxControl {
         }
         self.released = true;
         abort_rmux_task(self.lifecycle_task.take());
-        cancel_and_join_driver_task(&self.startup_cancel, self.startup_task.take()).await;
+        cancel_and_join_driver_task(
+            &self.startup_cancel,
+            self.startup_task.take(),
+            Some(&self.send_child),
+        )
+        .await;
         // Reap the detached rmux session through the typed SDK (inert runs own
         // no session). Awaited so the session is gone when `release` returns;
         // teardown failures are non-fatal and only logged.
@@ -1614,6 +1693,7 @@ mod tests {
         let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
             Duration::from_millis(50),
             Duration::from_millis(1),
             || {
@@ -1639,6 +1719,7 @@ mod tests {
         let mut panes = VecDeque::from([Ok(loading.to_string()), Ok(trust.clone())]);
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
             Duration::from_millis(50),
             Duration::from_millis(1),
             || {
@@ -1662,6 +1743,7 @@ mod tests {
         let prose = "TASK-756WX\nWorkspace Trust Required\n[a] Trust this workspace\n\n❯ ";
         let mut sent = Vec::new();
         let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
             Duration::from_millis(50),
             Duration::from_millis(1),
             || async { Ok(prose.to_string()) },
@@ -1712,7 +1794,8 @@ mod tests {
             .await
             .expect("capture rmux probe pane");
         let _ = session_handle.kill().await;
-        let frame = classify_cursor_startup_frame(&pane);
+        let workspace = tmp.path().display().to_string();
+        let frame = classify_cursor_startup_frame(&pane, &workspace);
         assert!(
             matches!(
                 frame,

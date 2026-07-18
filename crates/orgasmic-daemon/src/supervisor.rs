@@ -135,6 +135,9 @@ pub struct AcquireRequest {
     /// acquires (manager launch, recovery, stage launch, babysitter).
     pub last_path: Option<PathBuf>,
     pub stdout_path: Option<PathBuf>,
+    /// Full UUID attempt token minted by the CLI for this dispatch. Fences
+    /// delayed cleanup against a newer live attempt (TASK-ZGT1X).
+    pub dispatch_attempt_token: Option<String>,
     /// Where the per-run JSONL lives. The supervisor opens this through
     /// the daemon writer so concurrent runs don't race on the file
     /// descriptor.
@@ -341,6 +344,7 @@ struct RunRecord {
     /// them for boot reattach when the persisted `RunMeta` event has them).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    dispatch_attempt_token: Option<String>,
     /// When true, this run must end with an explicit worker-declared terminal
     /// call writing the finalize tombstone (`finalized_by_worker` + reason).
     /// Protocol-end alone must not count as success (dec_WDR5K item 6 /
@@ -823,6 +827,7 @@ impl Supervisor {
             req.worktree.clone(),
             req.last_path.clone(),
             req.stdout_path.clone(),
+            req.dispatch_attempt_token.clone(),
             req.role.clone(),
             run_requires_worker_finalize(&req.last_path, &req.role),
             req.driver_config.clone(),
@@ -960,6 +965,7 @@ impl Supervisor {
             babysitter_target: req.babysitter_target.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
+            dispatch_attempt_token: req.dispatch_attempt_token.clone(),
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             terminal_round: 0,
             terminal_declaration: None,
@@ -1113,6 +1119,7 @@ impl Supervisor {
             req.worktree.clone(),
             req.last_path.clone(),
             req.stdout_path.clone(),
+            req.dispatch_attempt_token.clone(),
             req.role.clone(),
             run_requires_worker_finalize(&req.last_path, &req.role),
             req.driver_config.clone(),
@@ -1194,6 +1201,7 @@ impl Supervisor {
             babysitter_target: req.babysitter_target.clone(),
             last_path: req.last_path.clone(),
             stdout_path: req.stdout_path.clone(),
+            dispatch_attempt_token: req.dispatch_attempt_token.clone(),
             requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
             terminal_round: 0,
             terminal_declaration: None,
@@ -1272,6 +1280,7 @@ impl Supervisor {
         worktree: Option<PathBuf>,
         last_path: Option<PathBuf>,
         stdout_path: Option<PathBuf>,
+        dispatch_attempt_token: Option<String>,
         role: String,
         requires_worker_finalize: bool,
         driver_config: DriverConfig,
@@ -1283,6 +1292,7 @@ impl Supervisor {
             worktree,
             last_path,
             stdout_path,
+            dispatch_attempt_token,
             role: Some(role),
             requires_worker_finalize: Some(requires_worker_finalize),
             driver_config: driver_config.0,
@@ -1524,6 +1534,7 @@ impl Supervisor {
             // has dispatch artifact paths.
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             requires_worker_finalize,
             terminal_round: 0,
             terminal_declaration: None,
@@ -1596,6 +1607,7 @@ impl Supervisor {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: bs_path,
             driver_config,
             babysitter_target: Some(target_run.into()),
@@ -1962,6 +1974,7 @@ impl Supervisor {
                 event_count: rec.next_event_seq,
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
+                dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
             })
             .collect();
         SupervisorSnapshot {
@@ -2360,13 +2373,17 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Stop any live dispatch worker (or clear an orphaned lease) before
-    /// daemon-side worktree/branch cleanup. Returns the released run id when
-    /// a worker or lease was cleared.
+    /// Stop any live dispatch worker before daemon-side worktree/branch cleanup.
+    /// Releases the worker only when task, kind, attempt token, worktree, and
+    /// artifact pair all match exactly (TASK-ZGT1X).
     pub async fn release_dispatch_worker_for_cleanup(
         &self,
         task_id: &str,
         kind: RunKind,
+        dispatch_attempt_token: Option<&str>,
+        worktree_path: &Path,
+        last_path: Option<&Path>,
+        stdout_path: Option<&Path>,
     ) -> Result<Option<String>, SupervisorError> {
         let run_id = {
             let g = self.inner.lock().await;
@@ -2379,28 +2396,35 @@ impl Supervisor {
             let g = self.inner.lock().await;
             g.runs.contains_key(&run_id)
         };
-        if live {
-            self.release(
-                &run_id,
-                "dispatch failure cleanup",
-                ReleaseOutcome::Interrupted,
-            )
-            .await?;
-            return Ok(Some(run_id));
-        }
-        match self.release_orphaned_lease(task_id, kind).await {
-            OrphanedLeaseOutcome::Released { run_id } => Ok(Some(run_id)),
-            OrphanedLeaseOutcome::NoLease => Ok(None),
-            OrphanedLeaseOutcome::HeldByLiveRun { run_id } => {
-                self.release(
-                    &run_id,
-                    "dispatch failure cleanup",
-                    ReleaseOutcome::Interrupted,
-                )
-                .await?;
-                Ok(Some(run_id))
+        if !live {
+            match self.release_orphaned_lease(task_id, kind).await {
+                OrphanedLeaseOutcome::Released { run_id } => return Ok(Some(run_id)),
+                OrphanedLeaseOutcome::NoLease => return Ok(None),
+                OrphanedLeaseOutcome::HeldByLiveRun { .. } => return Ok(None),
             }
         }
+        let matches = {
+            let g = self.inner.lock().await;
+            g.runs.get(&run_id).is_some_and(|rec| {
+                dispatch_cleanup_identity_matches(
+                    rec,
+                    dispatch_attempt_token,
+                    worktree_path,
+                    last_path,
+                    stdout_path,
+                )
+            })
+        };
+        if !matches {
+            return Ok(None);
+        }
+        self.release(
+            &run_id,
+            "dispatch failure cleanup",
+            ReleaseOutcome::Interrupted,
+        )
+        .await?;
+        Ok(Some(run_id))
     }
 
     /// Clear an *orphaned* lease: one held for `(task_id, kind)` whose run
@@ -2770,6 +2794,8 @@ pub struct RunSummary {
     pub last_path: Option<PathBuf>,
     #[serde(default)]
     pub stdout_path: Option<PathBuf>,
+    #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
 }
 
 fn make_run_id(kind: &RunKind) -> String {
@@ -2911,6 +2937,27 @@ fn apply_driver_event_to_record(
 // orgasmic:TASK-AFE5Q
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
+}
+
+/// Whether a live run record matches the cleanup request's attempt identity.
+fn dispatch_cleanup_identity_matches(
+    rec: &RunRecord,
+    dispatch_attempt_token: Option<&str>,
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> bool {
+    fn path_eq(left: Option<&PathBuf>, right: Option<&Path>) -> bool {
+        match (left, right) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    rec.worktree.as_deref() == Some(worktree_path)
+        && path_eq(rec.last_path.as_ref(), last_path)
+        && path_eq(rec.stdout_path.as_ref(), stdout_path)
+        && rec.dispatch_attempt_token.as_deref() == dispatch_attempt_token
 }
 
 /// Whether this run requires an explicit worker-declared terminal call

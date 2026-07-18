@@ -2322,6 +2322,7 @@ async fn post_manager_launch(
                 worktree: Some(project.root),
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 session_path,
                 driver_config,
                 babysitter_target: None,
@@ -2870,6 +2871,7 @@ async fn post_stage(
                 worktree: Some(project.root.clone()),
                 last_path,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
@@ -3736,6 +3738,8 @@ struct DispatchRequest {
     pub last_path: PathBuf,
     pub stdout_path: PathBuf,
     #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
+    #[serde(default)]
     pub worker_id: Option<String>,
     #[serde(default)]
     pub model_override: Option<String>,
@@ -3827,6 +3831,7 @@ struct SpawnWorkerRequest<'a> {
     /// a boot reattach can respawn the dispatch completion watcher.
     last_path: Option<&'a FsPath>,
     stdout_path: Option<&'a FsPath>,
+    dispatch_attempt_token: Option<&'a str>,
     origin: &'static str,
     /// Session-path fragment for CLI dispatch (`implementer` / `reviewer`).
     dispatch_kind: Option<&'a str>,
@@ -3930,6 +3935,7 @@ async fn spawn_worker_run(
                 worktree: Some(req.worktree_path.to_path_buf()),
                 last_path: req.last_path.map(|p| p.to_path_buf()),
                 stdout_path: req.stdout_path.map(|p| p.to_path_buf()),
+                dispatch_attempt_token: req.dispatch_attempt_token.map(str::to_string),
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
@@ -4066,6 +4072,7 @@ async fn post_task_dispatch(
             worktree_path: &req.worktree_path,
             last_path: Some(&req.last_path),
             stdout_path: Some(&req.stdout_path),
+            dispatch_attempt_token: req.dispatch_attempt_token.as_deref(),
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
             preloaded_worker: Some(worker_for_bundle),
@@ -4158,6 +4165,8 @@ pub struct DispatchCleanupRequest {
     pub worktree_path: PathBuf,
     pub branch: String,
     #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
+    #[serde(default)]
     pub last_path: Option<PathBuf>,
     #[serde(default)]
     pub stdout_path: Option<PathBuf>,
@@ -4198,7 +4207,14 @@ async fn post_task_dispatch_cleanup(
 
     let released_run_id = state
         .supervisor
-        .release_dispatch_worker_for_cleanup(&task_id, kind.run_kind())
+        .release_dispatch_worker_for_cleanup(
+            &task_id,
+            kind.run_kind(),
+            req.dispatch_attempt_token.as_deref(),
+            &req.worktree_path,
+            req.last_path.as_deref(),
+            req.stdout_path.as_deref(),
+        )
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
 
@@ -4252,6 +4268,13 @@ fn remove_dispatch_worktree(
     if !path.exists() {
         return Ok(false);
     }
+    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
+        project_root,
+        path,
+        last_path,
+        stdout_path,
+    )
+    .ok();
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -4259,7 +4282,9 @@ fn remove_dispatch_worktree(
         .output()
         .map_err(|err| err.to_string())?;
     if output.status.success() {
-        orgasmic_core::prune_dispatch_stem_after_worktree(path, last_path, stdout_path);
+        if let Some(artifacts) = artifacts {
+            orgasmic_core::prune_validated_dispatch_attempt(&artifacts)?;
+        }
         Ok(true)
     } else {
         Err(format!(
@@ -4620,6 +4645,9 @@ async fn record_dispatch_created(
             ),
         ),
     ];
+    if let Some(token) = record.req.dispatch_attempt_token.as_deref() {
+        extra.push(("DISPATCH_ATTEMPT".to_string(), token.to_string()));
+    }
     if let Some(pid) = record.acquire.pid {
         extra.push(("PID".to_string(), pid.to_string()));
     }
@@ -6259,6 +6287,7 @@ async fn post_run_recover(
                         worktree,
                         last_path,
                         stdout_path,
+                        dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config,
                         babysitter_target: None,
@@ -6433,6 +6462,7 @@ fn boot_reattach_candidate(
                 role,
                 requires_worker_finalize,
                 driver_config,
+                ..
             }) => {
                 meta = Some((
                     transport,
@@ -11230,6 +11260,7 @@ async fn launch_artifact_generation(
             worktree_path: &entry.path,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
             preloaded_worker: Some(worker),
@@ -12968,6 +12999,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     babysitter_target: None,
@@ -13027,6 +13059,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     babysitter_target: None,
@@ -13106,6 +13139,7 @@ mod tests {
                         worktree: Some(project_root.clone()),
                         last_path: None,
                         stdout_path: None,
+                        dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
                         babysitter_target: None,
@@ -13280,6 +13314,7 @@ mod tests {
                         worktree: Some(project_root.clone()),
                         last_path: acquire_last,
                         stdout_path: None,
+                        dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
                         babysitter_target: None,
@@ -13339,6 +13374,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -13497,6 +13533,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -13663,6 +13700,7 @@ mod tests {
                     worktree: Some(home.source()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("manager-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -13851,6 +13889,7 @@ mod tests {
                     worktree: Some(home.source()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("reviewer-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -13890,6 +13929,7 @@ mod tests {
                     worktree: Some(home.source()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("manager-restart-guard.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,

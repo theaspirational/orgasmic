@@ -255,6 +255,7 @@ impl ManagerRegistry {
                     worktree: Some(project_root),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path,
                     driver_config: DriverConfig::empty(),
                     babysitter_target: None,

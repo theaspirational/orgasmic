@@ -36,6 +36,12 @@ impl Drop for LiveSessionGuard {
     }
 }
 
+fn dispatch_artifact_has_content(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|meta| meta.len() > 0)
+        .unwrap_or(false)
+}
+
 fn test_options() -> DaemonOptions {
     DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -2944,7 +2950,7 @@ async fn dispatch_finalize_survives_stall_sweep_race_and_still_records_done() {
     let racer_last_path = last_path.clone();
     let racer = tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        while !racer_last_path.exists() {
+        while !dispatch_artifact_has_content(&racer_last_path) {
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "timed out waiting for {} before racing the release",
@@ -3548,7 +3554,7 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     let racer_last_path = last_path.clone();
     let racer = tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        while !racer_last_path.exists() {
+        while !dispatch_artifact_has_content(&racer_last_path) {
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "timed out waiting for {} before racing protocol-end",
