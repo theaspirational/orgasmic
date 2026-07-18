@@ -15,7 +15,7 @@ use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
     dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
     projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
-    SessionEventKind, TaskHeading, TxEntry, WorkerKind,
+    SessionEventKind, TaskHeading, TxEntry,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -36,14 +36,6 @@ impl DispatchKind {
             Self::Implementer => "implementer",
             Self::Reviewer => "reviewer",
             Self::Architector => "architector",
-        }
-    }
-
-    fn worker_kind(self) -> WorkerKind {
-        match self {
-            Self::Implementer => WorkerKind::Implementer,
-            Self::Reviewer => WorkerKind::Reviewer,
-            Self::Architector => WorkerKind::Architector,
         }
     }
 }
@@ -77,7 +69,7 @@ pub struct DispatchArgs {
     #[arg(long)]
     pub harness: String,
     /// Raw argv token for custom harnesses (repeatable; preserved losslessly).
-    #[arg(long = "harness-arg", action = ArgAction::Append)]
+    #[arg(long = "harness-arg", action = ArgAction::Append, allow_hyphen_values = true)]
     pub harness_args: Vec<String>,
     /// Optional JSON array of argv tokens (alternative to repeated --harness-arg).
     #[arg(long = "harness-args-json")]
@@ -1594,8 +1586,8 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     if mode.is_empty() || harness.is_empty() {
         bail!("--mode and --harness are required");
     }
-    // SUPPORTED-pair rejection is daemon-authoritative so worktree/lifecycle
-    // cleanup still runs when the daemon refuses an unsupported address.
+    orgasmic_daemon::addressing::validate_supported_pair(&mode, &harness)
+        .map_err(|e| anyhow::anyhow!(e))?;
     let mut harness_args = args.harness_args;
     if let Some(json) = args.harness_args_json.as_deref() {
         let parsed: Vec<String> = serde_json::from_str(json)

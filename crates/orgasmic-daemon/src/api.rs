@@ -51,15 +51,18 @@ use crate::addressing::{
 };
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
-    new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_art_id_readable,
-    validate_mdx, versions_dir, ArtifactDetail, ArtifactLoadError, ArtifactSummary, NewComment,
+    new_cid, persist_artifact_launch_address, reviews_org_header, update_artifact_org,
+    validate_art_id, validate_art_id_readable, validate_mdx, versions_dir, ArtifactDetail,
+    ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
-use crate::governance::{DispatchGovernanceOverlay, GovernancePatch};
+use crate::governance::{
+    BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch, SandboxPermissionsPatch,
+};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     commit_recovery_claim, index_recovery_origins_in_session, load_committed_recovery_claim,
@@ -2756,6 +2759,8 @@ pub struct StageRequest {
     pub request_id: Option<String>,
     #[serde(default)]
     pub values: BTreeMap<String, String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2846,7 +2851,7 @@ async fn post_stage(
         &req.harness,
         req.harness_args.clone(),
         &state.dispatch_governance,
-        None,
+        req.governance.as_ref(),
     )?;
     if let Some(skill) = worker.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
@@ -3034,7 +3039,10 @@ struct StageWorker {
     persona: Option<String>,
     operating_rules: Option<String>,
     missing_skills: Vec<String>,
-    babysitter_worker: Option<String>,
+    babysitter: Option<BabysitterAddress>,
+    max_iterations: Option<u32>,
+    context_budget: Option<u32>,
+    applicable_states: Vec<String>,
     stall_timeout_secs: Option<u32>,
     max_run_duration_secs: Option<u32>,
     sandbox_permissions: Option<SandboxAllowlist>,
@@ -3092,7 +3100,10 @@ fn resolve_addressed_stage_worker(
         persona: None,
         operating_rules: None,
         missing_skills,
-        babysitter_worker: gov.babysitter_worker,
+        babysitter: gov.babysitter,
+        max_iterations: gov.max_iterations,
+        context_budget: gov.context_budget,
+        applicable_states: gov.applicable_states,
         stall_timeout_secs: gov.stall_timeout_secs,
         max_run_duration_secs: gov.max_run_duration_secs,
         sandbox_permissions: gov.sandbox_permissions,
@@ -3130,7 +3141,10 @@ fn stage_worker_from_view(worker: crate::content::WorkerView) -> StageWorker {
         persona: worker.persona,
         operating_rules: worker.operating_rules,
         missing_skills: worker.missing_skills,
-        babysitter_worker: worker.babysitter_worker,
+        babysitter: None,
+        max_iterations: worker.max_iterations,
+        context_budget: worker.context_budget,
+        applicable_states: worker.applicable_states,
         stall_timeout_secs: worker.stall_timeout_secs,
         max_run_duration_secs: worker.max_run_duration_secs,
         sandbox_permissions: worker.sandbox_permissions,
@@ -3226,7 +3240,10 @@ fn load_stage_worker_path(home: &Home, path: &FsPath, id: &str) -> Result<StageW
         persona: worker.persona,
         operating_rules: worker.operating_rules,
         missing_skills,
-        babysitter_worker: worker.babysitter_worker.map(str::to_string),
+        babysitter: None,
+        max_iterations: worker.max_iterations,
+        context_budget: worker.context_budget,
+        applicable_states: worker.applicable_states,
         harness_args: worker.harness_args.clone(),
         stall_timeout_secs: worker.stall_timeout_secs,
         max_run_duration_secs: worker.max_run_duration_secs,
@@ -3334,7 +3351,7 @@ fn fill_stage_slot_values(
     insert_slot(values, "run.previous_state", "none".to_string());
     insert_slot(values, "evidence.so_far", graph_evidence(project));
     insert_slot(values, "worklog.tail", String::new());
-    hydrate_skill_slots(state, worker, values)?;
+    hydrate_skill_slots(&state.home, worker, values)?;
     Ok(())
 }
 
@@ -3574,13 +3591,13 @@ fn graph_evidence(project: &crate::index::ProjectIndex) -> String {
 }
 
 fn hydrate_skill_slots(
-    state: &ApiState,
+    home: &Home,
     worker: &StageWorker,
     values: &mut SlotValues,
 ) -> Result<(), ApiError> {
     for skill in &worker.linked_skills {
-        fill_skill_slot(&state.home, &format!("skills.{skill}"), values)?;
-        fill_skill_slot(&state.home, &format!("skill_path.{skill}"), values)?;
+        fill_skill_slot(home, &format!("skills.{skill}"), values)?;
+        fill_skill_slot(home, &format!("skill_path.{skill}"), values)?;
     }
     Ok(())
 }
@@ -3770,65 +3787,126 @@ fn apply_driver_defaults(
 /// Compose a self-contained prompt from a worker's persona and operating rules,
 /// for workers (like the babysitter) that are spawned without compiling a
 /// prompt-spec.
-fn compose_worker_prompt(worker: &StageWorker) -> String {
-    let mut out = String::new();
-    if let Some(persona) = worker
-        .persona
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        out.push_str(persona);
-    }
-    if let Some(rules) = worker
-        .operating_rules
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if !out.is_empty() {
-            out.push_str("\n\n");
-        }
-        out.push_str("Operating rules:\n");
-        out.push_str(rules);
-    }
-    out
-}
-
 fn build_babysitter_auto_spawn(
     home: &Home,
+    overlay: &DispatchGovernanceOverlay,
+    task_id: &str,
     implementer: &StageWorker,
     worktree: &FsPath,
     driver_defaults: &DriverDefaults,
 ) -> Result<Option<BabysitterAutoSpawn>, ApiError> {
-    let Some(babysitter_id) = implementer.babysitter_worker.as_deref() else {
+    let Some(address) = implementer.babysitter.as_ref() else {
         return Ok(None);
     };
-    let babysitter = load_stage_worker(home, babysitter_id)?;
-    if let Some(skill) = babysitter.missing_skills.first() {
+    validate_supported_pair(&address.mode, &address.harness).map_err(ApiError::bad_request)?;
+    let gov = resolve_address_governance(WorkerKind::Babysitter, &address.harness, overlay, None);
+    let missing_skills = gov
+        .linked_skills
+        .iter()
+        .filter(|skill| {
+            resolve_stage_content_path(home, &PathBuf::from("skills").join(format!("{skill}.org")))
+                .is_none()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(skill) = missing_skills.first() {
         return Err(ApiError::bad_request(format!(
-            "unresolved slot skills.{skill} on babysitter worker {babysitter_id}"
+            "unresolved slot skills.{skill} on babysitter address"
         )));
     }
+    let worker_id =
+        compatibility_worker_id(WorkerKind::Babysitter, &address.mode, &address.harness);
+    let babysitter = StageWorker {
+        id: worker_id.clone(),
+        kind: WorkerKind::Babysitter,
+        driver: address.mode.trim().to_string(),
+        harness: address.harness.trim().to_string(),
+        models: Vec::new(),
+        reasoning_efforts: Vec::new(),
+        default_provider: None,
+        default_model: address.model.clone(),
+        default_effort: address.effort.clone(),
+        linked_skills: gov.linked_skills,
+        persona: None,
+        operating_rules: None,
+        missing_skills,
+        babysitter: None,
+        max_iterations: gov.max_iterations,
+        context_budget: gov.context_budget,
+        applicable_states: gov.applicable_states,
+        stall_timeout_secs: gov.stall_timeout_secs,
+        max_run_duration_secs: gov.max_run_duration_secs,
+        sandbox_permissions: gov.sandbox_permissions,
+        harness_args: address.harness_args.clone(),
+    };
     let Some(_driver) = driver_for_mode_harness(&babysitter.driver, &babysitter.harness) else {
         return Err(ApiError::bad_request(format!(
             "unsupported babysitter driver/harness pair {}/{}",
             babysitter.driver, babysitter.harness
         )));
     };
-    let bundle = compose_worker_prompt(&babysitter);
+    let mut values = SlotValues::new();
+    values.insert("task.id".to_string(), task_id.to_string());
+    values.insert("worker.id".to_string(), worker_id.clone());
+    values.insert("worker.kind".to_string(), "babysitter".to_string());
+    values.insert("run.id".to_string(), "pending".to_string());
+    values.insert("run.iteration_count".to_string(), "0".to_string());
+    values.insert("run.previous_state".to_string(), "none".to_string());
+    if let Some(max_iterations) = babysitter.max_iterations {
+        values.insert("run.max_iterations".to_string(), max_iterations.to_string());
+    }
+    if let Some(context_budget) = babysitter.context_budget {
+        values.insert("run.context_budget".to_string(), context_budget.to_string());
+    }
+    values.insert("skills.all".to_string(), skills_manifest(home)?);
+    hydrate_skill_slots(home, &babysitter, &mut values)?;
+    let req = crate::prompt_compiler::PromptCompileRequest {
+        project: None,
+        mode: Some("babysitter".to_string()),
+        worker: Some(worker_id.clone()),
+        harness: Some(babysitter.harness.clone()),
+        renderer: None,
+        reason: Some(format!("babysitter for {task_id}")),
+        context_overrides: BTreeMap::new(),
+        values,
+    };
+    let compiled = crate::prompt_compiler::compile_prompt_spec(home, "babysitter", req)
+        .map_err(|e| content_list_error(e, "babysitter prompt spec"))?;
+    if crate::prompt_compiler::has_error(&compiled.diagnostics) {
+        let messages = compiled
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.level == "error")
+            .map(|diag| diag.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(ApiError::bad_request(format!(
+            "babysitter prompt compile failed: {messages}"
+        )));
+    }
+    let bundle = format!(
+        "orgasmic compiled prompt\nbabysitter: {}\ntask: {}\nprompt_spec: {}\n\n{}\n",
+        worker_id,
+        task_id,
+        compiled.spec.id,
+        compiled.text.trim()
+    );
     let driver_config = stage_driver_config_with_overrides(
         &babysitter,
         worktree,
         worktree,
         &bundle,
-        DriverOverrides::default(),
+        DriverOverrides {
+            provider: None,
+            model: address.model.clone(),
+            effort: address.effort.clone(),
+        },
         None,
         driver_defaults,
         None,
     );
     Ok(Some(BabysitterAutoSpawn {
-        worker_id: babysitter.id,
+        worker_id,
         mode: babysitter.driver,
         harness: babysitter.harness,
         driver_config,
@@ -3870,6 +3948,8 @@ struct DispatchRequest {
     pub liveness: Option<String>,
     #[serde(default)]
     pub goal_id: Option<String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4024,6 +4104,8 @@ async fn spawn_worker_run(
     let babysitter = if req.run_kind == RunKind::Worker {
         match build_babysitter_auto_spawn(
             &state.home,
+            &state.dispatch_governance,
+            req.task_id,
             &worker,
             req.worktree_path,
             &state.driver_defaults,
@@ -4160,7 +4242,7 @@ async fn post_task_dispatch(
         &req.harness,
         req.harness_args.clone(),
         &state.dispatch_governance,
-        None,
+        req.governance.as_ref(),
     )?;
     // Optional compatibility label from the client; never used for routing.
     let worker_id = req
@@ -4176,6 +4258,9 @@ async fn post_task_dispatch(
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
         )));
+    }
+    if let Some(task_summary) = task_summary {
+        validate_dispatch_applicable_states(&worker_for_bundle, task_summary)?;
     }
     let brief = read_artifact(&req.brief_path, "dispatch brief")?;
     let bundle = compile_dispatch_prompt_bundle(
@@ -4598,32 +4683,29 @@ fn validate_dispatch_worktree_dir(path: &FsPath) -> Result<(), ApiError> {
     }
 }
 
-#[allow(dead_code)] // retained for unit coverage of pass-through overrides
-fn warn_dispatch_overrides(worker: &StageWorker, overrides: &DriverOverrides) {
-    if let Some(model) = overrides.model.as_deref() {
-        if !worker.models.iter().any(|allowed| allowed == model) {
-            tracing::warn!(
-                worker_id = %worker.id,
-                model = %model,
-                allowed_models = ?worker.models,
-                "dispatch model override is not listed in worker :MODELS:"
-            );
-        }
+fn validate_dispatch_applicable_states(
+    worker: &StageWorker,
+    task: &crate::index::TaskSummary,
+) -> Result<(), ApiError> {
+    if worker.applicable_states.is_empty() {
+        return Ok(());
     }
-    if let Some(effort) = overrides.effort.as_deref() {
-        if !worker
-            .reasoning_efforts
-            .iter()
-            .any(|allowed| allowed == effort)
-        {
-            tracing::warn!(
-                worker_id = %worker.id,
-                effort = %effort,
-                allowed_efforts = ?worker.reasoning_efforts,
-                "dispatch effort override is not listed in worker :REASONING_EFFORTS:"
-            );
-        }
+    let state = match task.lifecycle_stage {
+        LifecycleStage::Done => "done",
+        LifecycleStage::Cancelled => "cancelled",
+        _ => "working",
+    };
+    if !worker
+        .applicable_states
+        .iter()
+        .any(|allowed| allowed == state)
+    {
+        return Err(ApiError::bad_request(format!(
+            "task lifecycle state {} (run state {state}) is not in worker applicable_states",
+            task.lifecycle_stage
+        )));
     }
+    Ok(())
 }
 
 fn compile_dispatch_prompt_bundle(
@@ -4640,6 +4722,14 @@ fn compile_dispatch_prompt_bundle(
     hydrate_dispatch_task_slots(&mut values, project, task_id)?;
     hydrate_dispatch_project_slots(&mut values, project);
     hydrate_dispatch_worker_slots(&mut values, worker, kind);
+    values.insert("skills.all".to_string(), skills_manifest(home)?);
+    if let Some(max_iterations) = worker.max_iterations {
+        values.insert("run.max_iterations".to_string(), max_iterations.to_string());
+    }
+    if let Some(context_budget) = worker.context_budget {
+        values.insert("run.context_budget".to_string(), context_budget.to_string());
+    }
+    hydrate_skill_slots(home, worker, &mut values)?;
     let req = crate::prompt_compiler::PromptCompileRequest {
         project: Some(project.project_id.clone()),
         mode: Some("dispatch".to_string()),
@@ -12656,6 +12746,8 @@ struct ArtifactGenerateRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -12673,6 +12765,8 @@ struct ArtifactRegenerateRequest {
     pub model: Option<String>,
     #[serde(default)]
     pub effort: Option<String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -12890,19 +12984,22 @@ async fn launch_artifact_generation(
     harness_args: Vec<String>,
     model: Option<String>,
     effort: Option<String>,
+    governance: Option<&GovernancePatch>,
 ) -> Result<String, ApiError> {
     let worker = resolve_addressed_stage_worker(
         &state.home,
         WorkerKind::Artifactor,
         mode,
         harness,
-        harness_args,
+        harness_args.clone(),
         &state.dispatch_governance,
-        None,
+        governance,
     )?;
     let worker_id = worker.id.clone();
 
     let task_id = format!("artifact.generate:{art_id}");
+    let launch_model = model.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let launch_effort = effort.as_deref().map(str::trim).filter(|s| !s.is_empty());
     let spawn = spawn_worker_run(
         state,
         SpawnWorkerRequest {
@@ -12913,8 +13010,8 @@ async fn launch_artifact_generation(
             bundle: &bundle,
             overrides: DriverOverrides {
                 provider: None,
-                model: non_empty_field(model),
-                effort: non_empty_field(effort),
+                model: launch_model.map(str::to_string),
+                effort: launch_effort.map(str::to_string),
             },
             project_root_path: &entry.path,
             worktree_path: &entry.path,
@@ -12929,6 +13026,63 @@ async fn launch_artifact_generation(
     )
     .await
     .map_err(|failure| failure.error)?;
+
+    let org_path = art_dir.join("artifact.org");
+    let current_org = std::fs::read_to_string(&org_path)
+        .map_err(|e| ApiError::internal(format!("read artifact.org: {e}")))?;
+    let new_org = persist_artifact_launch_address(
+        &current_org,
+        mode,
+        harness,
+        &harness_args,
+        launch_model,
+        launch_effort,
+    )
+    .map_err(|e| ApiError::internal(format!("persist artifact launch address: {e}")))?;
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+    let mut tx_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.launch_address",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    tx_entry.project = Some(entry.id.clone());
+    tx_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.to_string()),
+        ("RUN_ID".into(), spawn.acquire.run_id.clone()),
+        ("MODE".into(), mode.to_string()),
+        ("HARNESS".into(), harness.to_string()),
+    ];
+    state
+        .writer
+        .transaction(
+            vec![FileRewrite {
+                path: org_path,
+                new_contents: new_org,
+            }],
+            TxAppend {
+                tx_path,
+                entry: tx_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: Some(format!("artifact-launch-{}-{art_id}", entry.id)),
+            },
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("persist artifact launch address: {e}")))?;
+    let _ = state.index.refresh_project(&entry.id).await;
 
     spawn_artifact_release_watcher(
         state.clone(),
@@ -13344,6 +13498,7 @@ async fn post_artifact_generate(
         harness_args,
         model,
         effort,
+        body.governance.as_ref(),
     )
     .await
     {
@@ -13390,11 +13545,6 @@ async fn post_artifact_regenerate(
         return Err(ApiError::not_found("artifact not found"));
     }
 
-    let mode = body.mode.clone().unwrap_or_default();
-    let harness = body.harness.clone().unwrap_or_default();
-    let harness_args = body.harness_args.clone();
-    let model = body.model.clone();
-    let effort = body.effort.clone();
     let extra_prompt = body.extra_prompt.unwrap_or_default();
 
     // Read-only: feeds the launch/followup prompt. This is NOT yet the final
@@ -13406,6 +13556,23 @@ async fn post_artifact_regenerate(
             ApiError::not_found(format!("artifact {art_id} has no version {v}"))
         }
     })?;
+    let mode = non_empty_field(body.mode.clone())
+        .or_else(|| detail.summary.launch_mode.clone())
+        .unwrap_or_default();
+    let harness = non_empty_field(body.harness.clone())
+        .or_else(|| detail.summary.launch_harness.clone())
+        .unwrap_or_default();
+    let harness_args = if body.harness_args.is_empty() {
+        detail
+            .summary
+            .launch_harness_args
+            .clone()
+            .unwrap_or_default()
+    } else {
+        body.harness_args.clone()
+    };
+    let model = non_empty_field(body.model.clone()).or(detail.summary.launch_model.clone());
+    let effort = non_empty_field(body.effort.clone()).or(detail.summary.launch_effort.clone());
     let version = detail.summary.version;
     let nodes = detail.summary.subject_nodes.clone();
 
@@ -13507,7 +13674,7 @@ async fn post_artifact_regenerate(
     // COLD PATH: no live holder — spawn a fresh run (also post-restart).
     if mode.trim().is_empty() || harness.trim().is_empty() {
         return Err(ApiError::bad_request(
-            "mode and harness are required to launch a cold artifactor run",
+            "artifact has no saved launch address; mode and harness are required to launch a cold artifactor run",
         ));
     }
     let subject_context = assemble_artifact_context(&state, &entry.id, &nodes).await;
@@ -13534,6 +13701,7 @@ async fn post_artifact_regenerate(
         harness_args,
         model,
         effort,
+        body.governance.as_ref(),
     )
     .await?;
 
@@ -13800,7 +13968,10 @@ mod tests {
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
@@ -17283,6 +17454,116 @@ mod tests {
     }
 
     #[test]
+    fn addressed_kinds_resolve_without_worker_templates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let overlay = DispatchGovernanceOverlay::default();
+        for kind in [
+            WorkerKind::Implementer,
+            WorkerKind::Reviewer,
+            WorkerKind::Architector,
+            WorkerKind::Griller,
+            WorkerKind::Planner,
+            WorkerKind::Artifactor,
+            WorkerKind::Babysitter,
+        ] {
+            resolve_addressed_stage_worker(
+                &home,
+                kind,
+                "acp-stdio",
+                "codex",
+                Vec::new(),
+                &overlay,
+                None,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{kind:?} should resolve without worker templates: {}",
+                    err.message
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn sandbox_governance_and_task_intersection_blocks_widening() {
+        use orgasmic_drivers::allowlist_from_driver_config;
+
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: None,
+                    allow_patch: None,
+                    allow_network: Some(false),
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        map.insert(
+            "implementer,codex".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: Some(false),
+                    allow_patch: None,
+                    allow_network: None,
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+        let dispatch_patch = GovernancePatch {
+            sandbox_permissions: Some(SandboxPermissionsPatch {
+                allow_exec: None,
+                allow_patch: Some(false),
+                allow_network: None,
+                allow_writes_outside_cwd: None,
+            }),
+            ..GovernancePatch::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "acp-stdio",
+            "codex",
+            Vec::new(),
+            &overlay,
+            Some(&dispatch_patch),
+        )
+        .unwrap();
+        let task_override = SandboxAllowlist {
+            allow_exec: true,
+            allow_patch: true,
+            allow_network: true,
+            allow_writes_outside_cwd: true,
+        };
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            FsPath::new("/tmp/project"),
+            FsPath::new("/tmp/worktree"),
+            "brief",
+            DriverOverrides::default(),
+            Some(&task_override),
+            &DriverDefaults::default(),
+            None,
+        );
+        let allowlist = allowlist_from_driver_config(&cfg).expect("resolved sandbox csv");
+        assert!(!allowlist.allow_exec);
+        assert!(!allowlist.allow_patch);
+        assert!(
+            !allowlist.allow_network,
+            "task must not widen governance network=false"
+        );
+    }
+
+    #[test]
     fn dispatch_task_slots_use_empty_defaults_and_task_overrides_win() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
@@ -17362,7 +17643,7 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_override_warns_off_list_model_without_blocking() {
+    fn dispatch_override_passes_unlisted_model_through() {
         let worker = StageWorker {
             id: "worker-a".to_string(),
             kind: WorkerKind::Implementer,
@@ -17377,20 +17658,15 @@ mod tests {
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
             harness_args: Vec::new(),
         };
-        warn_dispatch_overrides(
-            &worker,
-            &DriverOverrides {
-                provider: None,
-                model: Some("gpt-99".to_string()),
-                effort: Some("xhigh".to_string()),
-            },
-        );
         let cfg = stage_driver_config_with_overrides(
             &worker,
             FsPath::new("/tmp/project"),
@@ -17424,7 +17700,10 @@ mod tests {
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
@@ -17471,7 +17750,10 @@ mod tests {
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
@@ -17560,7 +17842,10 @@ mod tests {
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: Some(SandboxAllowlist {

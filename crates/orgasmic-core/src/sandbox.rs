@@ -7,7 +7,8 @@
 //! Its `Default` is intentionally trust-all so existing workers keep running
 //! unless a task or worker narrows permissions.
 //! `from_csv` accepts comma-separated `key=true|false` entries for those four
-//! keys, and `resolve(task, worker)` applies task > worker > default precedence.
+//! keys, and `resolve(task, worker)` intersects task restrictions with worker/
+//! governance allowlists (least privilege: task may only further restrict).
 
 use std::str::FromStr;
 
@@ -44,10 +45,20 @@ pub enum SandboxAllowlistParseError {
 }
 
 impl SandboxAllowlist {
+    /// Effective permissions are the field-wise AND of worker/governance and
+    /// task layers. Any `false` at a restriction layer stays false.
     pub fn resolve(task: Option<&Self>, worker: Option<&Self>) -> Self {
-        task.cloned()
-            .or_else(|| worker.cloned())
-            .unwrap_or_default()
+        let base = worker.cloned().unwrap_or_default();
+        let Some(task) = task else {
+            return base;
+        };
+        Self {
+            allow_exec: base.allow_exec && task.allow_exec,
+            allow_patch: base.allow_patch && task.allow_patch,
+            allow_network: base.allow_network && task.allow_network,
+            allow_writes_outside_cwd: base.allow_writes_outside_cwd
+                && task.allow_writes_outside_cwd,
+        }
     }
 
     pub fn from_csv(input: &str) -> Result<Self, SandboxAllowlistParseError> {
@@ -97,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_prefers_task_over_worker() {
+    fn resolve_intersects_task_with_worker_without_widening() {
         let worker = SandboxAllowlist {
             allow_exec: true,
             allow_patch: true,
@@ -111,7 +122,16 @@ mod tests {
             allow_writes_outside_cwd: false,
         };
         let resolved = SandboxAllowlist::resolve(Some(&task), Some(&worker));
-        assert_eq!(resolved, task);
+        assert!(!resolved.allow_exec, "task may restrict exec");
+        assert!(resolved.allow_patch);
+        assert!(
+            !resolved.allow_network,
+            "worker network=false must not widen"
+        );
+        assert!(
+            !resolved.allow_writes_outside_cwd,
+            "task may restrict writes"
+        );
     }
 
     #[test]

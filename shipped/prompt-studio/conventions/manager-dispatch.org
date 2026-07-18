@@ -54,10 +54,10 @@ If you die before the dispatch finishes, the next manager:
    diverged.
 
 ** Codex implementer via the =orgasmic manager dispatch= CLI
-When code work needs implementing, dispatch a headless codex worker
-(=implementer-codex-acp= by default; gpt-5.5, high effort) per task in
-an isolated git worktree, through the daemon's ACP dispatch endpoint.
-The contract:
+When code work needs implementing, dispatch a headless worker per task in an
+isolated git worktree, through the daemon's dispatch endpoint. Choose transport
+with `--mode` and `--harness` from `orgasmic manager drivers`; optional
+`--model` and `--effort` pass through verbatim when needed.
 
 1. *Minimal self-contained brief.* Write the prompt to =<project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md=. The worker has no access to this chat, but the compiled bundle already injects the task heading (description, acceptance criteria, read/write scope, activity) and the worker persona — do not restate them. The brief carries only the delta: read-first anchors, target behaviour, non-negotiable invariants, verification gates, and the exact commit message. Shorter is better; never paste project conventions or file contents the worker can read from disk.
 2. *Dispatch.* From the project root:
@@ -65,7 +65,8 @@ The contract:
    orgasmic manager dispatch \
      --task TASK-NNN \
      --kind implementer \
-     --worker implementer-codex-acp \
+     --mode acp-stdio \
+     --harness codex \
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
@@ -94,7 +95,9 @@ The contract:
 6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").
 7. *Lockfile pitfall.* Pre-stage workspace deps before parallel rounds. If multiple codex runs need new =Cargo.toml= deps they will revert =Cargo.lock= to honour their stated write scope, leaving a stale lockfile on main. Add likely deps to the workspace =Cargo.toml= and commit =Cargo.lock= before the dispatch.
 
-*Worker name note.* Use the =-acp= names (=implementer-codex-acp=, =reviewer-codex-acp=); the legacy =-stdio= names resolve through a back-compat alias in =crates/orgasmic-daemon/src/content.rs::load_worker=.
+*Custom harness argv.* For `--harness custom`, pass the wrapped CLI as repeated
+`--harness-arg` tokens (or `--harness-args-json`). Built-in harnesses ignore
+arbitrary argv unless the adapter documents otherwise.
 
 ** Filing new nodes: mint IDs, never max+1
 New task/decision/architecture/glossary nodes get SHORT-RANDOM ids — 5-char

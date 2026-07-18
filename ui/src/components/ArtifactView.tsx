@@ -115,7 +115,17 @@ export function ArtifactView({ projectId }: { projectId: string }) {
   async function regenerate(extraPrompt: string): Promise<boolean> {
     setRegenerating(true);
     try {
-      await regenerateArtifact(artifactId, extraPrompt ? { extraPrompt } : {}, projectId);
+      const summary = artifact.data;
+      const payload: Parameters<typeof regenerateArtifact>[1] = {};
+      if (extraPrompt) payload.extraPrompt = extraPrompt;
+      if (summary?.launch_mode && summary.launch_harness) {
+        payload.mode = summary.launch_mode;
+        payload.harness = summary.launch_harness;
+        if (summary.launch_harness_args?.length) payload.harness_args = summary.launch_harness_args;
+        if (summary.launch_model) payload.model = summary.launch_model;
+        if (summary.launch_effort) payload.effort = summary.launch_effort;
+      }
+      await regenerateArtifact(artifactId, payload, projectId);
       toast.success('Regenerate started');
       setRegenerateDialogOpen(false);
       artifact.refresh();

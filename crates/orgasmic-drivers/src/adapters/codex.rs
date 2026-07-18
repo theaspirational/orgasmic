@@ -22,8 +22,8 @@ use crate::r#trait::{
     UserInputRequest, WireMessage,
 };
 use crate::runtime_options::{
-    all_reasoning_efforts, dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog,
-    RuntimeOptionsCatalogRpc, RuntimeOptionsRequest, RuntimeOptionsState, RuntimeSpeed,
+    dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
+    RuntimeOptionsRequest, RuntimeOptionsState, RuntimeSpeed,
 };
 use crate::sandbox::ApprovalResponse;
 
@@ -885,6 +885,7 @@ fn codex_catalog_from_model_list(
     RuntimeOptionsCatalog {
         source: source.into(),
         provider_switching: false,
+        live_switching: true,
         current: codex_current_state(cfg),
         providers: Vec::new(),
         models,
@@ -912,7 +913,7 @@ fn codex_fallback_catalog(cfg: Option<&CodexAppserverConfig>) -> RuntimeOptionsC
                     .reasoning_effort
                     .clone()
                     .map(|effort| vec![effort])
-                    .unwrap_or_else(all_reasoning_efforts),
+                    .unwrap_or_default(),
                 speeds,
                 default_reasoning_effort: current.reasoning_effort.clone(),
             }
@@ -922,6 +923,7 @@ fn codex_fallback_catalog(cfg: Option<&CodexAppserverConfig>) -> RuntimeOptionsC
     RuntimeOptionsCatalog {
         source: "codex:fallback".into(),
         provider_switching: false,
+        live_switching: false,
         current,
         providers: Vec::new(),
         efforts: aggregate_model_efforts(&models),
@@ -957,9 +959,6 @@ fn codex_model_option(
         if let Some(default_effort) = default_reasoning_effort.clone() {
             efforts.push(default_effort);
         }
-    }
-    if efforts.is_empty() {
-        efforts = all_reasoning_efforts();
     }
     efforts = dedupe_non_empty(efforts);
     let mut speeds = vec![RuntimeSpeed::Normal];
@@ -1004,16 +1003,11 @@ fn codex_model_supports_fast(value: &Value) -> bool {
 }
 
 fn aggregate_model_efforts(models: &[RuntimeModelOption]) -> Vec<String> {
-    let efforts = dedupe_non_empty(
+    dedupe_non_empty(
         models
             .iter()
             .flat_map(|model| model.reasoning_efforts.iter().cloned()),
-    );
-    if efforts.is_empty() {
-        all_reasoning_efforts()
-    } else {
-        efforts
-    }
+    )
 }
 
 fn aggregate_model_speeds(models: &[RuntimeModelOption]) -> Vec<RuntimeSpeed> {

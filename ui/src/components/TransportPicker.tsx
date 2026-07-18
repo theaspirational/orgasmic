@@ -18,6 +18,7 @@ export type TransportSelection = {
   harness: string;
   model: string;
   effort: string;
+  harness_args: string[];
 };
 
 /** Kind + installed (mode, harness) selectors backed by `/managers/drivers`. */
@@ -98,6 +99,25 @@ export function TransportPicker({
           </SelectContent>
         </Select>
       </div>
+      {value.harness === 'custom' ? (
+        <label className="flex flex-col gap-1.5 text-sm">
+          <span className="font-medium">Custom argv</span>
+          <Input
+            value={value.harness_args.join(' ')}
+            onChange={(event) =>
+              onChange({
+                ...value,
+                harness_args: tokenizeHarnessArgs(event.target.value),
+              })
+            }
+            placeholder="opencode --print-logs"
+            className="font-mono text-xs"
+          />
+          <span className="text-[11px] text-muted-foreground">
+            Space-separated tokens; preserved verbatim for the next launch.
+          </span>
+        </label>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="flex flex-col gap-1.5 text-sm">
           <span className="font-medium">Model</span>
@@ -130,7 +150,13 @@ function driverLabel(driver: ManagerDriverProfile): string {
 }
 
 export function emptyTransportSelection(): TransportSelection {
-  return { mode: '', harness: '', model: '', effort: '' };
+  return { mode: '', harness: '', model: '', effort: '', harness_args: [] };
+}
+
+function tokenizeHarnessArgs(input: string): string[] {
+  const trimmed = input.trim();
+  if (!trimmed) return [];
+  return trimmed.split(/\s+/);
 }
 
 /** Local state helper for dialogs that need a transport selection. */

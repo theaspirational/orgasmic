@@ -386,14 +386,12 @@ async fn dispatch_endpoint_auto_spawns_babysitter_jsonl() {
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
     let worker_id = "implementer-codex-appserver";
-    let babysitter_id = "babysitter-stall-detector";
     let task_id = "TASK-BABYSITTER-SPAWN";
     write(
         &home.config(),
-        format!("dispatch:\n  implementer:\n    babysitter_worker: {babysitter_id}\n"),
+        "dispatch:\n  implementer:\n    babysitter:\n      mode: acp-ws\n      harness: codex\n",
     );
     seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
-    seed_babysitter_worker(&home, babysitter_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");

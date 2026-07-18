@@ -461,6 +461,8 @@ struct RunRecord {
     /// `None` = idle-release disabled (default for everything except
     /// persistent artifactor runs).
     idle_timeout: Option<Duration>,
+    /// Resolved :APPLICABLE_STATES: verbs for this run; empty disables checks.
+    applicable_states: Vec<String>,
     next_event_seq: u64,
     terminal_outcome: Option<ReleaseOutcome>,
     control: Box<dyn DriverControl>,
@@ -1929,6 +1931,9 @@ impl Supervisor {
             .get_mut(run_id)
             .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
         self.check_ownership(rec, caller_identity)?;
+        if !applicable_state_allowed(&rec.applicable_states, &req.to) {
+            return Err(SupervisorError::DisallowedSubState(req.to.clone()));
+        }
         Ok(rec.control.transition_state(req).await?)
     }
 
@@ -3413,6 +3418,16 @@ fn terminal_outcome_for_event(evt: &DriverEvent) -> Option<ReleaseOutcome> {
     }
 }
 
+fn applicable_state_allowed(allowed: &[String], target: &str) -> bool {
+    if allowed.is_empty() {
+        return true;
+    }
+    target
+        .rsplit_once('.')
+        .map(|(_, verb)| allowed.iter().any(|allowed| allowed == verb))
+        .unwrap_or(false)
+}
+
 fn apply_driver_event_to_record(
     rec: &mut RunRecord,
     evt: &DriverEvent,
@@ -3436,8 +3451,16 @@ fn apply_driver_event_to_record(
         rec.driver_has_terminal = true;
     }
     if let DriverEvent::TransitionState { to, .. } = evt {
-        if let Ok(sub_state) = RunSubState::new(to.clone()) {
-            rec.sub_state = Some(sub_state);
+        if applicable_state_allowed(&rec.applicable_states, to) {
+            if let Ok(sub_state) = RunSubState::new(to.clone()) {
+                rec.sub_state = Some(sub_state);
+            }
+        } else {
+            tracing::warn!(
+                target = %to,
+                allowed = ?rec.applicable_states,
+                "driver transition ignored: sub-state not in applicable_states"
+            );
         }
     }
 }

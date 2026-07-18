@@ -68,8 +68,8 @@ instead of dispatching a worker (single-worker setups), follow the resolved
   backend and write authority for `tx/` and sessions.
 - `/orgasmic recall` means brief and stop.
 - `/orgasmic resume` means brief, then continue the next clear action.
-- Use `orgasmic --help` and the live worker list instead of stale local copies
-  when choosing commands or worker ids.
+- Use `orgasmic --help` and `orgasmic manager drivers` to discover installed
+  transport pairs (`mode` + `harness`).
 
 ** Dispatch rule
 - Implement and review work through orgasmic workers, never by shelling out to a
@@ -77,8 +77,8 @@ instead of dispatching a worker (single-worker setups), follow the resolved
   work. Raw provider CLIs bypass daemon write authority, tx recording, worktree
   isolation, dispatch leases, and reattach/recovery.
 - A request naming provider, model, or effort maps to
-  `orgasmic manager dispatch --kind <kind> --worker <worker-id> --model <model>
-  --effort <effort> --brief <path>`, resolving `<worker-id>` from
-  `orgasmic worker list`.
+  `orgasmic manager dispatch --kind <kind> --mode <mode> --harness <harness>
+  [--model <model>] [--effort <effort>] --brief <path>`. Omit model and effort
+  to use harness defaults; explicit values pass through unvalidated.
 
 ** Default workflow

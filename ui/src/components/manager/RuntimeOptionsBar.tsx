@@ -64,30 +64,13 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
     }
   }
 
+  const liveSwitching = catalog?.live_switching ?? false;
+  const canApplyLive = liveSwitching && !unsupported;
+
   if (unsupported && !catalog) {
     return (
-      <div className="flex flex-wrap items-end gap-2 border-b px-3 py-2">
-        <label className="flex min-w-40 flex-1 flex-col gap-1 text-xs">
-          <span className="text-muted-foreground">Model</span>
-          <Input
-            value={model}
-            onChange={(event) => setModel(event.target.value)}
-            placeholder="harness default"
-            className="h-8 font-mono text-xs"
-          />
-        </label>
-        <label className="flex min-w-28 flex-col gap-1 text-xs">
-          <span className="text-muted-foreground">Effort</span>
-          <Input
-            value={effort}
-            onChange={(event) => setEffort(event.target.value)}
-            placeholder="harness default"
-            className="h-8 font-mono text-xs"
-          />
-        </label>
-        <Button type="button" size="sm" disabled={busy} onClick={() => void apply()}>
-          Apply
-        </Button>
+      <div className="flex flex-wrap items-end gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
+        Live runtime switching is not available for this harness.
       </div>
     );
   }
@@ -100,7 +83,7 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
       <label className="flex min-w-48 flex-1 flex-col gap-1 text-xs">
         <span className="text-muted-foreground">Model ({catalog.source})</span>
         {hasModels ? (
-          <Select value={model} onValueChange={setModel}>
+          <Select value={model} onValueChange={setModel} disabled={!canApplyLive}>
             <SelectTrigger className="h-8 font-mono text-xs">
               <SelectValue placeholder="harness default" />
             </SelectTrigger>
@@ -118,13 +101,14 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
             onChange={(event) => setModel(event.target.value)}
             placeholder="harness default"
             className="h-8 font-mono text-xs"
+            disabled={!canApplyLive}
           />
         )}
       </label>
       <label className="flex min-w-28 flex-col gap-1 text-xs">
         <span className="text-muted-foreground">Effort</span>
         {catalog.efforts.length > 0 ? (
-          <Select value={effort} onValueChange={setEffort}>
+          <Select value={effort} onValueChange={setEffort} disabled={!canApplyLive}>
             <SelectTrigger className="h-8 font-mono text-xs">
               <SelectValue placeholder="harness default" />
             </SelectTrigger>
@@ -142,12 +126,17 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
             onChange={(event) => setEffort(event.target.value)}
             placeholder="harness default"
             className="h-8 font-mono text-xs"
+            disabled={!canApplyLive}
           />
         )}
       </label>
-      <Button type="button" size="sm" disabled={busy} onClick={() => void apply()}>
-        Apply
-      </Button>
+      {canApplyLive ? (
+        <Button type="button" size="sm" disabled={busy} onClick={() => void apply()}>
+          Apply
+        </Button>
+      ) : (
+        <span className="pb-1 text-[11px] text-muted-foreground">Live switch unsupported</span>
+      )}
     </div>
   );
 }

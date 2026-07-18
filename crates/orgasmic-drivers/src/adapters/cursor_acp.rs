@@ -892,6 +892,7 @@ fn catalog_from_session_new(
     Some(RuntimeOptionsCatalog {
         source: "cursor-acp:session/new".into(),
         provider_switching: false,
+        live_switching: false,
         current: RuntimeOptionsState {
             provider: None,
             model: current_model,

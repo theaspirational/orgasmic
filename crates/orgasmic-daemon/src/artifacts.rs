@@ -59,6 +59,16 @@ pub struct ArtifactSummary {
     pub version: u32,
     pub state: String,
     pub open_comment_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_harness_args: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_effort: Option<String>,
 }
 
 /// Full artifact detail including MDX content, returned by GET /artifacts/:id.
@@ -347,6 +357,48 @@ pub fn update_artifact_org(current: &str, new_version: u32, new_state: &str) -> 
     Ok(rw.finish().into_bytes())
 }
 
+/// Persist the artifactor launch address on an existing artifact.org heading.
+pub fn persist_artifact_launch_address(
+    current: &str,
+    mode: &str,
+    harness: &str,
+    harness_args: &[String],
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> Result<Vec<u8>> {
+    let file = OrgFile::parse(current, "artifact.org").context("parse artifact.org")?;
+    let Some(id) = file.headings.first().and_then(|h| h.property("ID")) else {
+        bail!("artifact.org has no heading with an :ID:");
+    };
+    let id = id.to_string();
+    let mut rw = OrgRewriter::new(&file, "artifact.org");
+    rw.upsert_property(&id, "LAUNCH_MODE", mode)
+        .context("update :LAUNCH_MODE:")?;
+    rw.upsert_property(&id, "LAUNCH_HARNESS", harness)
+        .context("update :LAUNCH_HARNESS:")?;
+    let args = if harness_args.is_empty() {
+        String::new()
+    } else {
+        serde_json::to_string(harness_args).unwrap_or_else(|_| "[]".into())
+    };
+    rw.upsert_property(&id, "LAUNCH_HARNESS_ARGS", &args)
+        .context("update :LAUNCH_HARNESS_ARGS:")?;
+    if let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        rw.upsert_property(&id, "LAUNCH_MODEL", model)
+            .context("update :LAUNCH_MODEL:")?;
+    }
+    if let Some(effort) = effort.map(str::trim).filter(|e| !e.is_empty()) {
+        rw.upsert_property(&id, "LAUNCH_EFFORT", effort)
+            .context("update :LAUNCH_EFFORT:")?;
+    }
+    Ok(rw.finish().into_bytes())
+}
+
+fn parse_launch_harness_args(raw: Option<&str>) -> Option<Vec<String>> {
+    let raw = raw.map(str::trim).filter(|s| !s.is_empty())?;
+    serde_json::from_str(raw).ok()
+}
+
 // ── reviews.org read/write ───────────────────────────────────────────────────
 
 /// Initial content for a new reviews.org file (created before first comment).
@@ -573,6 +625,11 @@ pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
         version,
         state,
         open_comment_count,
+        launch_mode: heading.property("LAUNCH_MODE").map(str::to_string),
+        launch_harness: heading.property("LAUNCH_HARNESS").map(str::to_string),
+        launch_harness_args: parse_launch_harness_args(heading.property("LAUNCH_HARNESS_ARGS")),
+        launch_model: heading.property("LAUNCH_MODEL").map(str::to_string),
+        launch_effort: heading.property("LAUNCH_EFFORT").map(str::to_string),
     })
 }
 

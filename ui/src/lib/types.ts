@@ -491,6 +491,7 @@ export type RuntimeProviderOption = {
 export type RuntimeOptionsCatalog = {
   source: string;
   provider_switching: boolean;
+  live_switching?: boolean;
   current: RuntimeOptionsState;
   providers: RuntimeProviderOption[];
   models: RuntimeModelOption[];
@@ -563,6 +564,11 @@ export type ArtifactSummary = {
   version: number;
   state: string;
   open_comment_count: number;
+  launch_mode?: string | null;
+  launch_harness?: string | null;
+  launch_harness_args?: string[] | null;
+  launch_model?: string | null;
+  launch_effort?: string | null;
 };
 
 export type CommentRecord = {

@@ -22,8 +22,8 @@ use crate::r#trait::{
     TransitionRequest, UserInputRequest, WireMessage,
 };
 use crate::runtime_options::{
-    all_reasoning_efforts, dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog,
-    RuntimeOptionsRequest, RuntimeOptionsState, RuntimeProviderOption, RuntimeSpeed,
+    dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsRequest,
+    RuntimeOptionsState, RuntimeProviderOption, RuntimeSpeed,
 };
 
 const TRANSPORT: &str = "hermes";
@@ -755,6 +755,7 @@ fn hermes_catalog_from_payload(
     RuntimeOptionsCatalog {
         source: source.into(),
         provider_switching: true,
+        live_switching: true,
         current,
         efforts: aggregate_model_efforts(&models),
         speeds: aggregate_model_speeds(&models),
@@ -767,10 +768,11 @@ fn hermes_unavailable_catalog(current: RuntimeOptionsState) -> RuntimeOptionsCat
     RuntimeOptionsCatalog {
         source: "hermes:unavailable".into(),
         provider_switching: true,
+        live_switching: false,
         current,
         providers: Vec::new(),
         models: Vec::new(),
-        efforts: all_reasoning_efforts(),
+        efforts: Vec::new(),
         speeds: vec![RuntimeSpeed::Normal],
     }
 }
@@ -841,7 +843,16 @@ fn hermes_model_option(
         speeds.push(RuntimeSpeed::Fast);
     }
     let reasoning_efforts = if reasoning {
-        all_reasoning_efforts()
+        caps.and_then(|caps| caps.get("reasoning_efforts"))
+            .and_then(Value::as_array)
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
     } else {
         vec!["none".into()]
     };
@@ -852,25 +863,16 @@ fn hermes_model_option(
         current: provider_current && current.model.as_deref() == Some(model),
         reasoning_efforts,
         speeds,
-        default_reasoning_effort: if reasoning {
-            Some("medium".into())
-        } else {
-            Some("none".into())
-        },
+        default_reasoning_effort: None,
     }
 }
 
 fn aggregate_model_efforts(models: &[RuntimeModelOption]) -> Vec<String> {
-    let efforts = dedupe_non_empty(
+    dedupe_non_empty(
         models
             .iter()
             .flat_map(|model| model.reasoning_efforts.iter().cloned()),
-    );
-    if efforts.is_empty() {
-        all_reasoning_efforts()
-    } else {
-        efforts
-    }
+    )
 }
 
 fn aggregate_model_speeds(models: &[RuntimeModelOption]) -> Vec<RuntimeSpeed> {

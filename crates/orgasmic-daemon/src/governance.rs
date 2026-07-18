@@ -30,6 +30,20 @@ const REVIEWER_STATES: &[&str] = &[
     "requested_changes",
 ];
 
+/// Addressed babysitter launch configuration (kind is always babysitter).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(default)]
+pub struct BabysitterAddress {
+    pub mode: String,
+    pub harness: String,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
 /// Fully resolved governance values for a (kind[, harness]) lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GovernanceDefaults {
@@ -39,7 +53,7 @@ pub struct GovernanceDefaults {
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Vec<String>,
     pub linked_skills: Vec<String>,
-    pub babysitter_worker: Option<String>,
+    pub babysitter: Option<BabysitterAddress>,
     pub sandbox_permissions: Option<SandboxAllowlist>,
 }
 
@@ -53,7 +67,7 @@ pub struct GovernancePatch {
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Option<Vec<String>>,
     pub linked_skills: Option<Vec<String>>,
-    pub babysitter_worker: Option<String>,
+    pub babysitter: Option<BabysitterAddress>,
     pub sandbox_permissions: Option<SandboxPermissionsPatch>,
 }
 
@@ -150,7 +164,7 @@ fn defaults(
         max_run_duration_secs: Some(DEFAULT_MAX_RUN_DURATION_SECS),
         applicable_states: states.iter().map(|s| (*s).to_string()).collect(),
         linked_skills: Vec::new(),
-        babysitter_worker: None,
+        babysitter: None,
         sandbox_permissions: None,
     }
 }
@@ -175,8 +189,8 @@ impl GovernanceDefaults {
         if let Some(ref skills) = patch.linked_skills {
             self.linked_skills = skills.clone();
         }
-        if let Some(ref babysitter) = patch.babysitter_worker {
-            self.babysitter_worker = Some(babysitter.clone());
+        if let Some(ref babysitter) = patch.babysitter {
+            self.babysitter = Some(babysitter.clone());
         }
         if let Some(ref sandbox_patch) = patch.sandbox_permissions {
             let mut list = self.sandbox_permissions.clone().unwrap_or_default();
@@ -273,7 +287,7 @@ pub fn known_governance_patch_keys() -> &'static [&'static str] {
         "max_run_duration_secs",
         "applicable_states",
         "linked_skills",
-        "babysitter_worker",
+        "babysitter",
         "sandbox_permissions",
     ]
 }
@@ -310,7 +324,7 @@ mod tests {
             vec!["working", "done", "blocked", "cancelled"]
         );
         assert!(d.linked_skills.is_empty());
-        assert!(d.babysitter_worker.is_none());
+        assert!(d.babysitter.is_none());
         assert!(d.sandbox_permissions.is_none());
     }
 
