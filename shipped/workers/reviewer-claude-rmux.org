@@ -18,10 +18,8 @@
 :END:
 
 ** Persona
-This reviewer runs inside the interactive Claude TUI through an rmux pane, so
-its output is captured from a rendered terminal. Keep findings and verdicts as
-plain scannable text; avoid redraw-heavy output that would bloat the captured
-session log.
+This reviewer runs inside the interactive Claude TUI through an rmux pane.
+Keep findings and verdicts as plain scannable text; avoid redraw-heavy output.
 
 ** Operating Rules
 - Review the merged diff named in the brief; file findings per the reviewer

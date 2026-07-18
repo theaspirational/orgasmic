@@ -4651,7 +4651,9 @@ struct DispatchCompletion {
     task_id: String,
     run_id: String,
     session_path: PathBuf,
+    #[allow(dead_code)] // artifact paths; worker finalize writes directly
     last_path: PathBuf,
+    #[allow(dead_code)]
     stdout_path: PathBuf,
     worktree_path: PathBuf,
 }
@@ -4706,27 +4708,10 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 );
                 return;
             }
-            // The worker never finalized and the run was killed by a timeout:
-            // do NOT synthesize a last.txt that would make this look like a
-            // normal completion. Flag it orphan instead so the manager can
-            // rescue it (acceptance #5, dec_3M7M0). This check must run BEFORE
-            // `dispatch_terminal_reached`: a timeout release carries
-            // `ReleaseOutcome::Failed`, which `dispatch_terminal_reached`
-            // treats as terminal, so nesting this inside the
-            // `!dispatch_terminal_reached` branch (as originally written)
-            // made it unreachable — the timeout release always short-circuited
-            // straight to `write_dispatch_completion_artifacts` below.
-            //
-            // Key on ANY timeout reason, not just the stall string:
-            // `timed_out_run` also emits `max_run_duration_exceeded` and
-            // `idle_timeout_exceeded` (both `ReleaseOutcome::Failed`), and the
-            // persistent artifactor-rmux path disables stall entirely and uses
-            // idle — so matching only `stall_timeout_exceeded` would silently
-            // scrape those into a fabricated "done" report.
-            if dispatch_release_reason(&envelopes)
-                .as_deref()
-                .is_some_and(is_orphan_without_finalize_release_reason)
-            {
+            // dec_3M7M0 / TASK-ZB90M: only worker finalize may author
+            // completion artifacts. Any tombstone with finalized_by_worker=false
+            // is orphan — never synthesize last.txt/stdout.log from driver events.
+            if dispatch_release_without_worker_finalize(&envelopes) {
                 tracing::warn!(
                     run_id = %completion.run_id,
                     reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
@@ -4735,20 +4720,22 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 record_dispatch_orphaned(&state, &completion).await;
                 return;
             }
-            if !dispatch_terminal_reached(&envelopes) {
-                if grace_elapsed {
+            if grace_elapsed {
+                if dispatch_terminal_reached(&envelopes) {
+                    tracing::warn!(
+                        run_id = %completion.run_id,
+                        "dispatch completion watcher: terminal without worker finalize, flagging orphan"
+                    );
+                    record_dispatch_orphaned(&state, &completion).await;
+                } else {
                     tracing::info!(
                         run_id = %completion.run_id,
-                        "dispatch completion watcher writing artifacts after post-release grace without terminal session marker"
+                        "dispatch completion watcher: post-release grace elapsed without worker finalize; no artifacts"
                     );
-                    write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
-                    return;
                 }
-                tokio::time::sleep(poll).await;
-                continue;
+                return;
             }
-            write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
-            return;
+            tokio::time::sleep(poll).await;
         }
     });
 }
@@ -4805,6 +4792,22 @@ fn dispatch_release_finalized_by_worker(envelopes: &[SessionEnvelope]) -> bool {
     })
 }
 
+/// Whether the run was released without the worker calling
+/// `orgasmic dispatch finalize` (any reason/outcome).
+// orgasmic:TASK-ZB90M,dec_3M7M0
+fn dispatch_release_without_worker_finalize(envelopes: &[SessionEnvelope]) -> bool {
+    envelopes.iter().rev().any(|envelope| {
+        envelope.kind == SessionEventKind::Lifecycle
+            && matches!(
+                serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                Ok(Lifecycle::Release {
+                    finalized_by_worker: false,
+                    ..
+                })
+            )
+    })
+}
+
 /// Flag a dispatch run that ended without the worker ever calling
 /// `orgasmic dispatch finalize` (dec_3M7M0 / TASK-P4MGK): distinct from a
 /// normal completion tx so the manager can rescue it rather than mistake
@@ -4846,69 +4849,28 @@ async fn write_dispatch_completion_artifacts(
     completion: &DispatchCompletion,
     envelopes: &[SessionEnvelope],
 ) {
-    // Belt-and-suspenders: the watcher loop already returns before calling
-    // this function when the worker finalized, but callers that reach here
-    // directly (e.g. the post-release grace path) must not overwrite an
-    // authoritative worker-written report either (regression, dec_3M7M0).
-    if dispatch_release_finalized_by_worker(envelopes) {
+    // dec_3M7M0 / TASK-ZB90M: completion report artifacts may be authored
+    // only by worker finalize. Never synthesize last.txt/stdout.log from
+    // driver events when the worker did not finalize.
+    if !dispatch_release_finalized_by_worker(envelopes) {
         tracing::info!(
             run_id = %completion.run_id,
-            "dispatch completion artifact write skipped: worker finalized via `orgasmic dispatch finalize`"
+            "dispatch completion artifact write skipped: worker did not finalize"
         );
-    } else {
-        if let Err(e) = write_dispatch_last_path(&completion.last_path, envelopes) {
-            tracing::warn!(
-                run_id = %completion.run_id,
-                path = %completion.last_path.display(),
-                error = %e,
-                "dispatch last_path write failed"
-            );
-        }
-        if let Err(e) = write_dispatch_stdout_path(&completion.stdout_path, envelopes) {
-            tracing::warn!(
-                run_id = %completion.run_id,
-                path = %completion.stdout_path.display(),
-                error = %e,
-                "dispatch stdout_path write failed"
-            );
-        }
+        return;
     }
-    if state.auto_commit_signal {
-        let dirty = worktree_has_uncommitted_changes(&completion.worktree_path);
-        if dirty {
-            let extra = vec![
-                ("RUN_ID".to_string(), completion.run_id.clone()),
-                (
-                    "WORKTREE".to_string(),
-                    completion.worktree_path.display().to_string(),
-                ),
-                ("HAS_UNCOMMITTED".to_string(), "yes".to_string()),
-            ];
-            if let Err(e) = record_api_tx(
-                state,
-                ApiTxRequest {
-                    ty: "implementer.commit_pending".to_string(),
-                    actor: None,
-                    project: Some(completion.project_id.clone()),
-                    task: Some(completion.task_id.clone()),
-                    target: Some(tx_safe_path(&completion.session_path, None, &state.home)),
-                    reason: "implementer dispatch completed with uncommitted worktree".to_string(),
-                    request_id: None,
-                    extra,
-                },
-            )
-            .await
-            {
-                tracing::warn!(
-                    run_id = %completion.run_id,
-                    error = ?e,
-                    "implementer.commit_pending tx failed"
-                );
-            }
-        }
-    }
+    // Belt-and-suspenders: the worker already wrote last.txt/stdout.log
+    // verbatim on finalize — never overwrite that report.
+    tracing::info!(
+        run_id = %completion.run_id,
+        "dispatch completion artifact write skipped: worker finalized via `orgasmic dispatch finalize`"
+    );
+    let _ = state;
+    let _ = completion;
+    let _ = envelopes;
 }
 
+#[allow(dead_code)] // retained for unit tests of dispatch_last_summary_from_session
 fn write_dispatch_last_path(
     last_path: &FsPath,
     envelopes: &[SessionEnvelope],
@@ -4923,6 +4885,7 @@ fn write_dispatch_last_path(
     std::fs::write(last_path, summary)
 }
 
+#[allow(dead_code)] // retained for unit tests of dispatch_stdout_from_session
 fn write_dispatch_stdout_path(
     stdout_path: &FsPath,
     envelopes: &[SessionEnvelope],
@@ -5102,19 +5065,6 @@ fn tail_summary(text: &str) -> Option<String> {
         DISPATCH_SUMMARY_TAIL_BYTES / 1024,
         &trimmed[start..]
     ))
-}
-
-fn worktree_has_uncommitted_changes(worktree: &FsPath) -> bool {
-    Command::new("git")
-        .args([
-            "-C",
-            &worktree.display().to_string(),
-            "status",
-            "--porcelain",
-        ])
-        .output()
-        .map(|output| output.status.success() && !output.stdout.is_empty())
-        .unwrap_or(false)
 }
 
 #[derive(Clone)]
@@ -14163,21 +14113,19 @@ mod tests {
         assert_eq!(recovered.transport, "tmux");
     }
 
-    /// TASK-567JG: a daemon restart mid-run must still write `last.txt` on
-    /// release. `spawn_dispatch_completion_watcher` is a tokio task spawned
-    /// only at dispatch time, so it dies with the old daemon process; without
-    /// respawning it on boot reattach, `write_dispatch_completion_artifacts`
-    /// never runs. This drives the real `reattach_live_runs_on_boot` path
-    /// (not just `boot_reattach_candidate`) against a genuinely live tmux
-    /// session — simulating the restart with a second, independent
+    /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher
+    /// on boot reattach. Without worker finalize, the watcher must not
+    /// synthesize completion artifacts from session scrollback. Drives the real
+    /// `reattach_live_runs_on_boot` path against a genuinely live tmux session
+    /// — simulating the restart with a second, independent
     /// `ApiState`/`Supervisor` that never acquired the run itself — then
-    /// releases the run and asserts the artifact lands.
+    /// releases the run and asserts no artifact is synthesized.
     #[tokio::test]
-    async fn boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt() {
+    async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
         let _live_guard = live_session_guard();
         if !tmux_on_path() {
             eprintln!(
-                "skipping boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt: tmux not on PATH"
+                "skipping boot_reattach_respawns_dispatch_completion_watcher_without_artifacts: tmux not on PATH"
             );
             return;
         }
@@ -14275,16 +14223,11 @@ mod tests {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
-            if last_path.exists() {
-                break;
-            }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        let last_body = std::fs::read_to_string(&last_path)
-            .unwrap_or_else(|e| panic!("last.txt was never written by the respawned watcher: {e}"));
         assert!(
-            last_body.contains("boot reattach watcher smoke"),
-            "last.txt should carry the worker report: {last_body}"
+            !last_path.exists(),
+            "release without worker finalize must not synthesize last.txt via the respawned watcher"
         );
     }
 
@@ -14679,7 +14622,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_completion_artifacts_write_system_only_session_fixture() {
+    async fn dispatch_completion_artifacts_never_synthesized_without_finalize() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -14738,15 +14681,13 @@ mod tests {
             worktree_path: worktree.clone(),
         };
         write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
-        let last_body = std::fs::read_to_string(&last_path).expect("last_path");
         assert!(
-            last_body.contains("meaningful work summary"),
-            "grace-path artifact write should carry accumulated system text: {last_body}"
+            !last_path.exists(),
+            "non-finalized release must not synthesize last.txt"
         );
-        let stdout_body = std::fs::read_to_string(&stdout_path).expect("stdout_path");
         assert!(
-            stdout_body.contains("[system]"),
-            "stdout_path should include system chunks: {stdout_body}"
+            !stdout_path.exists(),
+            "non-finalized release must not synthesize stdout.log"
         );
     }
 
@@ -14833,6 +14774,11 @@ mod tests {
     /// `Supervisor::release_first_timed_out_run_after_candidate` would
     /// write one (`reason: "stall_timeout_exceeded"`,
     /// `finalized_by_worker: false`).
+    #[tokio::test]
+    async fn manual_release_without_worker_finalize_flags_orphan_not_done() {
+        assert_timeout_without_finalize_flags_orphan("run released").await;
+    }
+
     #[tokio::test]
     async fn stall_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("stall_timeout_exceeded").await;

@@ -18,10 +18,9 @@
 :END:
 
 ** Persona
-This implementer runs inside the interactive Claude TUI through a tmux pane, so
-its output is captured from a terminal. Keep status updates plain text and
-concise: avoid decorative terminal control sequences, long progress animations,
-and redraw-heavy output that would bloat the captured session log.
+This implementer runs inside the interactive Claude TUI through a tmux pane.
+Keep status updates plain text and concise: avoid decorative terminal control
+sequences, long progress animations, and redraw-heavy output.
 
 ** Operating Rules
 - Use the real worktree and shell tools normally; this worker is launched with

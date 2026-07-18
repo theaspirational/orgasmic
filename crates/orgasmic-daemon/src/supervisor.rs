@@ -4409,17 +4409,6 @@ mod tests {
             .unwrap_or(false)
     }
 
-    async fn send_tmux_line_for_test(session: &str, line: &str) {
-        let status = tokio::process::Command::new("tmux")
-            .args(["send-keys", "-t", session, line, "Enter"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .expect("tmux send-keys");
-        assert!(status.success(), "tmux send-keys failed");
-    }
-
     async fn wait_for_run_release(sup: &Supervisor, run_id: &str, timeout: Duration) {
         let start = Instant::now();
         loop {

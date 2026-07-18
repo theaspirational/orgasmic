@@ -166,6 +166,19 @@ impl WorkerDriver for TmuxDriver {
                     )
                     .await;
                 });
+            } else if cursor_argv_needs_startup_trust(harness, &spawn_plan.paste_prompt) {
+                // Cursor preserves argv across the workspace-trust gate, but
+                // fresh worktrees block until `[a] Trust this workspace` is sent.
+                let session = session_name.clone();
+                let timeout = cfg.input_ready_timeout;
+                tokio::spawn(async move {
+                    if let Err(e) = accept_cursor_workspace_trust(&session, timeout).await {
+                        tracing::warn!(
+                            ?e,
+                            "cursor workspace trust gate not cleared within timeout"
+                        );
+                    }
+                });
             }
             Some(task)
         } else {
@@ -421,12 +434,11 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         .clone()
         .or_else(|| ctx.worktree.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+    // Trim only to detect emptiness; argv/paste delivery must preserve bytes.
     let prompt_text = cfg
         .prompt_bundle_text
-        .as_deref()
-        .map(str::trim)
-        .filter(|bundle| !bundle.is_empty())
-        .map(str::to_string);
+        .clone()
+        .filter(|bundle| !bundle.trim().is_empty());
 
     let (command, mut args) = if should_use_default_command(cfg, harness) {
         default_command_for_harness(harness, cfg)
@@ -891,6 +903,81 @@ async fn deliver_prompt(
     }
 }
 
+/// True when cursor-agent argv delivery still needs a startup-only trust
+/// transition (prompt already on argv — never paste again).
+pub(crate) fn cursor_argv_needs_startup_trust(
+    harness: &str,
+    paste_prompt: &Option<String>,
+) -> bool {
+    harness == "cursor-agent" && paste_prompt.is_none()
+}
+
+/// Whether the pane is showing Cursor's workspace-trust gate. The argv prompt
+/// is preserved across acceptance — send `[a]` only, never paste again.
+// orgasmic:TASK-ZB90M,TASK-AFE5Q
+pub(crate) fn pane_requests_cursor_workspace_trust(pane: &str) -> bool {
+    let lower = pane.to_ascii_lowercase();
+    lower.contains("workspace trust required")
+        || (lower.contains("trust this workspace") && lower.contains("[a]"))
+}
+
+/// Poll until Cursor's workspace-trust gate clears. Startup-only: the compiled
+/// prompt was already supplied as a trailing argv element.
+async fn accept_cursor_workspace_trust(
+    session: &str,
+    timeout: Duration,
+) -> Result<(), DriverError> {
+    let session = session.to_string();
+    accept_cursor_workspace_trust_with_capture(
+        timeout,
+        Duration::from_millis(250),
+        || {
+            let session = session.clone();
+            async move { capture_pane(&session).await }
+        },
+        |key| {
+            let session = session.clone();
+            let key = key.to_string();
+            async move { send_keys(&session, &[key]).await }
+        },
+    )
+    .await
+}
+
+pub(crate) async fn accept_cursor_workspace_trust_with_capture<C, Fut, S, SFut>(
+    timeout: Duration,
+    poll_interval: Duration,
+    mut capture: C,
+    mut send_key: S,
+) -> Result<(), DriverError>
+where
+    C: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, DriverError>>,
+    S: FnMut(&str) -> SFut,
+    SFut: std::future::Future<Output = Result<(), DriverError>>,
+{
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut poll = tokio::time::interval(poll_interval);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    poll.tick().await;
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(DriverError::InputNotReady(timeout));
+            }
+            _ = poll.tick() => {
+                if let Ok(pane) = capture().await {
+                    if pane_requests_cursor_workspace_trust(&pane) {
+                        send_key("a").await?;
+                    } else {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn wait_for_input_ready(session: &str, timeout: Duration) -> Result<(), DriverError> {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut poll = tokio::time::interval(Duration::from_millis(250));
@@ -985,47 +1072,6 @@ fn line_is_numbered_menu_item(line: &str) -> bool {
     }
     // `❯ 1. …` or `❯ 1) …` — a digit run terminated by `.`/`)`.
     saw_digit && matches!(chars.next(), Some('.') | Some(')'))
-}
-
-pub(crate) fn pane_delta(previous: &str, current: &str) -> String {
-    if previous.is_empty() {
-        return current.to_string();
-    }
-
-    if previous == current {
-        String::new()
-    } else if let Some(delta) = current.strip_prefix(previous) {
-        delta.to_string()
-    } else {
-        let previous_lines = split_lines_keepends(previous);
-        let current_lines = split_lines_keepends(current);
-        let max_overlap = previous_lines.len().min(current_lines.len());
-        for overlap in (1..=max_overlap).rev() {
-            if previous_lines[previous_lines.len() - overlap..] == current_lines[..overlap] {
-                return current_lines[overlap..].concat();
-            }
-        }
-        redraw_delta(current)
-    }
-}
-
-fn split_lines_keepends(s: &str) -> Vec<&str> {
-    s.split_inclusive('\n').collect()
-}
-
-fn redraw_delta(current: &str) -> String {
-    const REDRAW_MARKER: &str = "[orgasmic-tui-redraw]\n";
-    const MAX_REDRAW_BYTES: usize = 10 * 1024;
-    let content = if current.len() <= MAX_REDRAW_BYTES {
-        current
-    } else {
-        let mut start = current.len() - MAX_REDRAW_BYTES;
-        while !current.is_char_boundary(start) {
-            start += 1;
-        }
-        &current[start..]
-    };
-    format!("{REDRAW_MARKER}{content}")
 }
 
 /// Whether the pane is showing Claude's folder-trust dialog ("Do you trust the
@@ -1440,10 +1486,29 @@ mod tests {
     }
 
     #[test]
-    fn pane_delta_is_stable() {
-        let before = "hello\n";
-        let after = "hello\nworld\n";
-        assert_eq!(pane_delta(before, after), "world\n");
+    fn prompt_bytes_preserved_with_leading_trailing_whitespace() {
+        let bundle = "\n  do the task  \n";
+        for harness in ["claude", "codex", "cursor-agent"] {
+            let cfg = TmuxTuiConfig {
+                harness: Some(harness.into()),
+                prompt_bundle_text: Some(bundle.to_string()),
+                ..TmuxTuiConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-bytes", RunKind::Worker), harness);
+            assert_eq!(plan.args.last().map(String::as_str), Some(bundle));
+            assert_eq!(plan.paste_prompt.as_deref(), None);
+        }
+        let hermes_cfg = TmuxTuiConfig {
+            harness: Some("hermes".into()),
+            prompt_bundle_text: Some(bundle.to_string()),
+            ..TmuxTuiConfig::default()
+        };
+        let hermes = build_spawn_plan(
+            &hermes_cfg,
+            &ctx("run-hermes-bytes", RunKind::Worker),
+            "hermes",
+        );
+        assert_eq!(hermes.paste_prompt.as_deref(), Some(bundle));
     }
 
     #[test]
@@ -1483,6 +1548,57 @@ mod tests {
         assert!(!pane_requests_folder_trust("Claude Code\n❯ "));
     }
 
+    #[test]
+    fn pane_requests_cursor_workspace_trust_matches_cursor_dialog() {
+        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        assert!(pane_requests_cursor_workspace_trust(trust));
+        assert!(!pane_requests_cursor_workspace_trust(
+            "cursor-agent ready\n❯ "
+        ));
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
+        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let ready = "cursor-agent\n❯ \n";
+        let mut panes = VecDeque::from([Ok(trust.to_string()), Ok(ready.to_string())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(ready.to_string()));
+                async move { pane }
+            },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"], "trust gate must accept with [a] only");
+    }
+
+    #[test]
+    fn cursor_argv_delivery_skips_paste_prompt() {
+        let cfg = TmuxTuiConfig {
+            harness: Some("cursor-agent".into()),
+            prompt_bundle_text: Some("do the task".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-cursor", RunKind::Worker), "cursor-agent");
+        assert!(plan.paste_prompt.is_none());
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
+        assert!(cursor_argv_needs_startup_trust(
+            "cursor-agent",
+            &plan.paste_prompt
+        ));
+    }
+
     #[tokio::test]
     async fn wait_for_input_ready_returns_ok_when_mock_pane_has_prompt() {
         let mut panes = VecDeque::from([
@@ -1518,31 +1634,6 @@ mod tests {
             matches!(result, Err(DriverError::InputNotReady(observed)) if observed == timeout),
             "expected InputNotReady timeout, got {result:?}"
         );
-    }
-
-    #[test]
-    fn pane_delta_handles_line_window_edges() {
-        assert_eq!(pane_delta("", ""), "");
-        assert_eq!(pane_delta("", "one line"), "one line");
-        assert_eq!(pane_delta("one", "one plus"), " plus");
-        assert_eq!(pane_delta("one\n", "one\ntwo\nthree\n"), "two\nthree\n");
-        assert_eq!(
-            pane_delta("one\ntwo\nthree\n", "two\nthree\nfour\n"),
-            "four\n"
-        );
-        assert_eq!(pane_delta("one\ntwo\n", ""), "[orgasmic-tui-redraw]\n");
-        assert_eq!(
-            pane_delta("one\ntwo\n", "replacement\n"),
-            "[orgasmic-tui-redraw]\nreplacement\n"
-        );
-    }
-
-    #[test]
-    fn pane_delta_caps_redraw_payload() {
-        let current = "x".repeat(12 * 1024);
-        let delta = pane_delta("old\n", &current);
-        assert!(delta.starts_with("[orgasmic-tui-redraw]\n"));
-        assert!(delta.len() <= "[orgasmic-tui-redraw]\n".len() + 10 * 1024);
     }
 
     #[tokio::test]

@@ -50,9 +50,10 @@ use tokio::task::JoinHandle;
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
 use crate::modes::tmux::{
-    argv_prompt_delivery_applies, claude_native_runtime, claude_session_id,
+    accept_cursor_workspace_trust_with_capture, argv_prompt_delivery_applies,
+    claude_native_runtime, claude_session_id, cursor_argv_needs_startup_trust,
     default_input_ready_timeout, deserialize_duration_secs, is_dispatch_placeholder,
-    pane_has_input_prompt, pane_requests_folder_trust, push_initial_prompt_argv, strip_ansi_codes,
+    pane_has_input_prompt, pane_requests_folder_trust, push_initial_prompt_argv,
 };
 
 use crate::r#trait::{
@@ -136,7 +137,9 @@ struct RmuxConfig {
     system_wide: bool,
     /// Hot-session / persistent manager panes: the run ends on pane/process
     /// exit only (never a marker). Stall babysitters are separate runs.
+    /// Read by the daemon supervisor from staged driver_config, not this driver.
     #[serde(default)]
+    #[allow(dead_code)]
     persistent: bool,
 }
 
@@ -237,7 +240,6 @@ struct RmuxSpawnPlan {
     /// Prompt to paste after spawn. `None` when delivered via argv or absent.
     paste_prompt: Option<String>,
     native_runtime: Option<NativeRuntimeMeta>,
-    persistent: bool,
     /// This run's id, exported as `ORGASMIC_RUN_ID` into the spawned pane's
     /// environment so a manager session recognises "I am already supervised"
     /// (`orgasmic manager register`, dec_3Y2E1).
@@ -250,12 +252,11 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         .clone()
         .or_else(|| ctx.worktree.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
+    // Trim only to detect emptiness; argv/paste delivery must preserve bytes.
     let prompt_text = cfg
         .prompt_bundle_text
-        .as_deref()
-        .map(str::trim)
-        .filter(|bundle| !bundle.is_empty())
-        .map(str::to_string);
+        .clone()
+        .filter(|bundle| !bundle.trim().is_empty());
 
     // The daemon's dispatch path stages a placeholder command for every
     // worker; like the tmux driver, swap it for the real harness invocation
@@ -346,7 +347,6 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         cwd,
         paste_prompt,
         native_runtime,
-        persistent: cfg.persistent,
         run_id: ctx.identity.run_id.clone(),
     }
 }
@@ -498,6 +498,7 @@ impl WorkerDriver for RmuxDriver {
             match run_live_session(
                 &session_name,
                 &rmux_bin,
+                harness,
                 &plan,
                 &cfg,
                 tx.clone(),
@@ -743,6 +744,7 @@ struct LiveSession {
 async fn run_live_session(
     session_name: &str,
     rmux_bin: &str,
+    harness: &str,
     plan: &RmuxSpawnPlan,
     cfg: &RmuxConfig,
     events: mpsc::Sender<DriverEvent>,
@@ -822,6 +824,15 @@ async fn run_live_session(
                     format!("dispatch prompt delivery failed: {e}"),
                 )
                 .await;
+            }
+        });
+    } else if cursor_argv_needs_startup_trust(harness, &plan.paste_prompt) {
+        let bin = rmux_bin.to_string();
+        let session = session_target.clone();
+        let timeout = cfg.input_ready_timeout;
+        tokio::spawn(async move {
+            if let Err(e) = accept_cursor_workspace_trust_rmux(&bin, &session, timeout).await {
+                tracing::warn!(?e, "cursor workspace trust gate not cleared within timeout");
             }
         });
     }
@@ -923,6 +934,31 @@ async fn paste_text_and_submit(bin: &str, session: &str, text: &str) -> Result<(
     let _ = run_rmux_cli(bin, &["delete-buffer", "-b", &buffer]).await;
     paste?;
     run_rmux_cli(bin, &["send-keys", "-t", session, "Enter"]).await
+}
+
+async fn accept_cursor_workspace_trust_rmux(
+    bin: &str,
+    session: &str,
+    timeout: Duration,
+) -> Result<(), DriverError> {
+    let bin = bin.to_string();
+    let session = session.to_string();
+    accept_cursor_workspace_trust_with_capture(
+        timeout,
+        Duration::from_millis(250),
+        || {
+            let bin = bin.clone();
+            let session = session.clone();
+            async move { rmux_capture_pane(&bin, &session).await }
+        },
+        |key| {
+            let bin = bin.clone();
+            let session = session.clone();
+            let key = key.to_string();
+            async move { run_rmux_cli(&bin, &["send-keys", "-t", &session, &key]).await }
+        },
+    )
+    .await
 }
 
 /// Poll the rendered pane until the wrapped TUI shows its input prompt.
@@ -1352,6 +1388,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::VecDeque;
 
     /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
     /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
@@ -1491,6 +1528,74 @@ mod tests {
         assert_eq!(hermes.0, "hermes");
         assert_eq!(hermes.1, vec!["chat".to_string(), "--tui".to_string()]);
         assert_eq!(default_command_for_harness("unknown").0, "sh");
+    }
+
+    #[test]
+    fn prompt_bytes_preserved_with_leading_trailing_whitespace() {
+        let bundle = "\n  do the task  \n";
+        for harness in ["claude", "codex", "cursor-agent"] {
+            let cfg = RmuxConfig {
+                harness: Some(harness.into()),
+                prompt_bundle_text: Some(bundle.to_string()),
+                ..RmuxConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-bytes", RunKind::Worker), harness);
+            assert_eq!(plan.args.last().map(String::as_str), Some(bundle));
+            assert_eq!(plan.paste_prompt.as_deref(), None);
+        }
+        let hermes_cfg = RmuxConfig {
+            harness: Some("hermes".into()),
+            prompt_bundle_text: Some(bundle.to_string()),
+            ..RmuxConfig::default()
+        };
+        let hermes = build_spawn_plan(
+            &hermes_cfg,
+            &ctx("run-hermes-bytes", RunKind::Worker),
+            "hermes",
+        );
+        assert_eq!(hermes.paste_prompt.as_deref(), Some(bundle));
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
+        let trust = "Workspace Trust Required\n\n[a] Trust this workspace\n";
+        let ready = "cursor-agent\n❯ \n";
+        let mut panes = VecDeque::from([Ok(trust.to_string()), Ok(ready.to_string())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(ready.to_string()));
+                async move { pane }
+            },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"]);
+    }
+
+    #[test]
+    fn cursor_argv_delivery_skips_paste_prompt() {
+        let cfg = RmuxConfig {
+            harness: Some("cursor-agent".into()),
+            prompt_bundle_text: Some("do the task".into()),
+            ..RmuxConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-cursor", RunKind::Worker), "cursor-agent");
+        assert!(plan.paste_prompt.is_none());
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
+        assert!(cursor_argv_needs_startup_trust(
+            "cursor-agent",
+            &plan.paste_prompt
+        ));
     }
 
     /// Dispatch placeholder + claude harness must spawn the real claude TUI
@@ -2140,6 +2245,7 @@ mod tests {
         s.control.release("cleanup").await.unwrap();
     }
 
+    #[tokio::test]
     async fn inert_send_input_returns_unsupported() {
         let d = driver();
         let mut s = d
