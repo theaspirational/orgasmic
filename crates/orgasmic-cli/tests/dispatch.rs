@@ -3653,3 +3653,358 @@ async fn dispatch_finalize_concurrent_double_finalize_emits_single_done_tx() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+fn seed_stage_workers(home: &Home) {
+    for (id, kind) in [
+        ("griller", "griller"),
+        ("planner", "planner"),
+        ("architector", "architector"),
+    ] {
+        write(
+            &home.user().join(format!("workers/{id}.org")),
+            format!(
+                "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:             {kind}\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest {kind}.\n"
+            ),
+        );
+    }
+}
+
+async fn live_run_for_id(
+    http: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+    run_id: &str,
+) -> serde_json::Value {
+    let runs: serde_json::Value = http
+        .get(format!("http://{addr}/api/runs"))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .send()
+        .await
+        .expect("fetch live runs")
+        .json()
+        .await
+        .expect("decode live runs");
+    runs["live"]
+        .as_array()
+        .expect("live runs array")
+        .iter()
+        .find(|run| run["run_id"].as_str() == Some(run_id))
+        .cloned()
+        .unwrap_or_else(|| panic!("live run {run_id} not found"))
+}
+
+async fn start_stage_on_main(
+    http: &reqwest::Client,
+    addr: std::net::SocketAddr,
+    token: &str,
+    stage: &str,
+    task_id: &str,
+) -> (String, PathBuf) {
+    let resp: serde_json::Value = http
+        .post(format!("http://{addr}/api/{stage}"))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .json(&serde_json::json!({
+            "project": "orgasmic",
+            "task_id": task_id,
+            "reason": "stage finalize smoke",
+        }))
+        .send()
+        .await
+        .expect("start stage")
+        .json()
+        .await
+        .expect("decode stage response");
+    assert_eq!(resp["status"], "acquired");
+    let run_id = resp["run_id"].as_str().expect("run_id").to_string();
+    let live = live_run_for_id(http, addr, token, &run_id).await;
+    let last_path = PathBuf::from(live["last_path"].as_str().expect("last_path"));
+    (run_id, last_path)
+}
+
+/// TASK-TZJFF: stage workers on `main` finalize via exported `ORGASMIC_RUN_ID`,
+/// not branch-derived task identity.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stage_grill_finalize_from_orgasmic_run_id_on_main() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    seed_stage_workers(&home);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+
+    let running = boot(home.clone()).await;
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let http = reqwest::Client::new();
+    let (run_id, last_path) =
+        start_stage_on_main(&http, running.addr, &token, "grill", "TASK-STAGE-GRILL").await;
+
+    let summary_path = tmp.path().join("grill-summary.md");
+    write(&summary_path, "grill finalize from main via ORGASMIC_RUN_ID");
+
+    let stdout = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+        &[("ORGASMIC_RUN_ID", run_id.as_str())],
+    );
+    assert!(
+        stdout.status.success(),
+        "grill finalize from main failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&stdout.stdout),
+        String::from_utf8_lossy(&stdout.stderr)
+    );
+    let out = String::from_utf8_lossy(&stdout.stdout);
+    assert!(
+        out.contains("griller.done"),
+        "expected griller.done in finalize output: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&last_path).unwrap(),
+        "grill finalize from main via ORGASMIC_RUN_ID"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stage_plan_finalize_from_orgasmic_run_id_on_main() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    seed_stage_workers(&home);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+
+    let running = boot(home.clone()).await;
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let http = reqwest::Client::new();
+    let (run_id, last_path) =
+        start_stage_on_main(&http, running.addr, &token, "plan", "TASK-STAGE-PLAN").await;
+
+    let summary_path = tmp.path().join("plan-summary.md");
+    write(&summary_path, "plan finalize from main via ORGASMIC_RUN_ID");
+
+    let stdout = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+        &[("ORGASMIC_RUN_ID", run_id.as_str())],
+    );
+    assert!(
+        stdout.status.success(),
+        "plan finalize from main failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&stdout.stdout),
+        String::from_utf8_lossy(&stdout.stderr)
+    );
+    let out = String::from_utf8_lossy(&stdout.stdout);
+    assert!(
+        out.contains("planner.done"),
+        "expected planner.done in finalize output: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&last_path).unwrap(),
+        "plan finalize from main via ORGASMIC_RUN_ID"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-99W9C: architect stage on `main` finalizes via exported `ORGASMIC_RUN_ID`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    seed_stage_workers(&home);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+
+    let running = boot(home.clone()).await;
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let http = reqwest::Client::new();
+    let (run_id, last_path) =
+        start_stage_on_main(&http, running.addr, &token, "architect", "TASK-STAGE-ARCH").await;
+
+    let summary_path = tmp.path().join("architect-summary.md");
+    write(&summary_path, "architect finalize from main via ORGASMIC_RUN_ID");
+
+    let stdout = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+        &[("ORGASMIC_RUN_ID", run_id.as_str())],
+    );
+    assert!(
+        stdout.status.success(),
+        "architect finalize from main failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&stdout.stdout),
+        String::from_utf8_lossy(&stdout.stderr)
+    );
+    let out = String::from_utf8_lossy(&stdout.stdout);
+    assert!(
+        out.contains("architector.done"),
+        "expected architector.done in finalize output: {out}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&last_path).unwrap(),
+        "architect finalize from main via ORGASMIC_RUN_ID"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-99W9C: app manager release via real CLI + HTTP with `ORGASMIC_RUN_ID`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn app_manager_release_via_cli_orgasmic_run_id() {
+    let _live_guard = live_session_guard();
+    if !Command::new("tmux")
+        .arg("-V")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
+        eprintln!("skipping app_manager_release_via_cli_orgasmic_run_id: tmux not on PATH");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+
+    let running = boot(home.clone()).await;
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let http = reqwest::Client::new();
+    let resp: serde_json::Value = http
+        .post(format!("http://{}/api/manager/launch", running.addr))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .json(&serde_json::json!({
+            "project_id": "orgasmic",
+            "mode": "tmux",
+            "harness": "codex",
+        }))
+        .send()
+        .await
+        .expect("manager launch")
+        .json()
+        .await
+        .expect("decode manager launch");
+    let run_id = resp["run_id"].as_str().expect("run_id").to_string();
+    let live = live_run_for_id(&http, running.addr, &token, &run_id).await;
+    let session_path = PathBuf::from(live["session_path"].as_str().expect("session_path"));
+
+    let stdout = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "release", "--project", "orgasmic"],
+        &[("ORGASMIC_RUN_ID", run_id.as_str())],
+    );
+    assert!(
+        stdout.status.success(),
+        "manager release via CLI failed\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&stdout.stdout),
+        String::from_utf8_lossy(&stdout.stderr)
+    );
+    let out = String::from_utf8_lossy(&stdout.stdout);
+    assert!(
+        out.contains("released manager registration"),
+        "expected release confirmation: {out}"
+    );
+
+    let runs: serde_json::Value = http
+        .get(format!("http://{}/api/runs", running.addr))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .send()
+        .await
+        .expect("fetch live runs")
+        .json()
+        .await
+        .expect("decode live runs");
+    assert!(
+        !state_has_live_run(&runs, &run_id),
+        "released manager run must leave the live set"
+    );
+    let body = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        body.contains("manager_released"),
+        "CLI release must write manager_released tombstone: {body}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+fn state_has_live_run(runs: &serde_json::Value, run_id: &str) -> bool {
+    runs["live"]
+        .as_array()
+        .map(|live| {
+            live.iter()
+                .any(|run| run["run_id"].as_str() == Some(run_id))
+        })
+        .unwrap_or(false)
+}

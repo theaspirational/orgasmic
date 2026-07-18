@@ -306,11 +306,17 @@ impl ManagerRegistry {
         };
         map.remove(project_id);
         drop(map);
+        // orgasmic:TASK-S52X9 — `orgasmic manager release` is the manager's
+        // terminal declaration: write the finalize tombstone and Completed
+        // (not Cancelled). Unexpected protocol death without release stays
+        // the anomaly path elsewhere.
         let _ = supervisor
-            .release(
+            .release_with_finalization(
                 &entry.run_id,
-                "external manager deregistered",
-                ReleaseOutcome::Cancelled,
+                "manager_released",
+                ReleaseOutcome::Completed,
+                true,
+                None,
             )
             .await;
         ManagerReleaseOutcome::Released {
@@ -383,6 +389,7 @@ mod tests {
     use crate::runtime::BootIdentity;
     use crate::supervisor::StaticDiffSummarizer;
     use crate::writer::spawn as spawn_writer;
+    use orgasmic_core::{read_session_file, Lifecycle, SessionEventKind};
     use std::process::{Command, Stdio};
 
     fn make_supervisor() -> (Supervisor, tempfile::TempDir) {
@@ -888,9 +895,10 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_release_deregisters_and_frees_lease() {
+        // orgasmic:TASK-S52X9
         let (sup, dir) = make_supervisor();
         let registry = ManagerRegistry::new();
-        registry
+        let registered = registry
             .register(
                 &sup,
                 "proj",
@@ -901,9 +909,36 @@ mod tests {
             )
             .await
             .unwrap();
+        let run_id = match registered {
+            RegisterOutcome::Registered { run_id, .. } => run_id,
+            other => panic!("expected Registered, got {other:?}"),
+        };
 
         let outcome = registry.release(&sup, "proj").await;
         assert!(matches!(outcome, ManagerReleaseOutcome::Released { .. }));
+
+        // Operator-driven release writes the finalize tombstone as Completed.
+        let path = session_path(&dir, "manager-proj");
+        let envelopes = read_session_file(&path).unwrap();
+        let release = envelopes.iter().rev().find_map(|envelope| {
+            if envelope.kind != SessionEventKind::Lifecycle {
+                return None;
+            }
+            serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()
+        });
+        match release {
+            Some(Lifecycle::Release {
+                reason,
+                outcome,
+                finalized_by_worker,
+            }) => {
+                assert_eq!(reason, "manager_released");
+                assert_eq!(outcome, ReleaseOutcome::Completed);
+                assert!(finalized_by_worker);
+            }
+            other => panic!("expected manager_released finalize tombstone, got {other:?}"),
+        }
+        assert!(!sup.snapshot().await.runs.iter().any(|r| r.run_id == run_id));
 
         // A no-op the second time.
         let second = registry.release(&sup, "proj").await;

@@ -1372,6 +1372,150 @@ fn resolve_run_role(home: &Home, worker_id: &str, kind: RunKind) -> String {
     }
 }
 
+/// Shared persisted terminal contract for boot auto-reattach AND every manual
+/// recovery entry (recover / resume_native_fork / start_recovery_run).
+/// orgasmic:TASK-ARZGD
+#[derive(Debug, Clone)]
+struct PersistedTerminalContract {
+    role: String,
+    requires_worker_finalize: bool,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+    harness: Option<String>,
+}
+
+/// Restore role/requires_worker_finalize from persisted RunMeta, deriving from
+/// harness for pre-upgrade records. Unknown non-terminal historical agent
+/// roles fail closed; the only exemption is a custom bare terminal proved
+/// from the recorded harness (dec_WDR5K item 6 seventh amendment).
+// orgasmic:TASK-ARZGD,dec_WDR5K
+fn resolve_persisted_terminal_contract(
+    home: &Home,
+    worker_id: &str,
+    kind: RunKind,
+    harness: Option<&str>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+    meta_role: Option<String>,
+    meta_requires: Option<bool>,
+) -> PersistedTerminalContract {
+    let custom_terminal = harness.map(manager_terminal_harness).unwrap_or(false);
+    let role = meta_role.unwrap_or_else(|| {
+        if worker_id == "manager" {
+            if custom_terminal {
+                "terminal".into()
+            } else {
+                "manager".into()
+            }
+        } else {
+            resolve_run_role(home, worker_id, kind)
+        }
+    });
+    let persisted_bare_terminal = custom_terminal && role == "terminal";
+    let persisted_babysitter = kind == RunKind::Babysitter && role == "babysitter";
+    let requires_worker_finalize = match meta_requires {
+        Some(false) if persisted_bare_terminal || persisted_babysitter => false,
+        // Round-2 recovery runs could persist `false` for agent roles solely
+        // because they had no last_path. That is not a terminal-shape proof:
+        // fail closed under the universal contract and let fresh recovery
+        // provision the missing path below (TASK-Y5K2C).
+        Some(false) => true,
+        Some(true) => true,
+        None if persisted_bare_terminal || persisted_babysitter => false,
+        None => crate::supervisor::run_requires_worker_finalize(&last_path, &role),
+    };
+    PersistedTerminalContract {
+        role,
+        requires_worker_finalize,
+        last_path,
+        stdout_path,
+        harness: harness.map(str::to_string),
+    }
+}
+
+/// Compatibility wrapper used by boot reattach call sites / unit tests.
+fn boot_reattach_terminal_contract(
+    home: &Home,
+    worker_id: &str,
+    kind: RunKind,
+    harness: Option<&str>,
+    last_path: &Option<PathBuf>,
+    meta_role: Option<String>,
+    meta_requires: Option<bool>,
+) -> (String, bool) {
+    let contract = resolve_persisted_terminal_contract(
+        home,
+        worker_id,
+        kind,
+        harness,
+        last_path.clone(),
+        None,
+        meta_role,
+        meta_requires,
+    );
+    (contract.role, contract.requires_worker_finalize)
+}
+
+/// Parse the shared terminal contract from a recovered session's envelopes.
+fn persisted_terminal_contract_from_session(
+    home: &Home,
+    envelopes: &[SessionEnvelope],
+) -> PersistedTerminalContract {
+    let meta = session_acquire_meta(envelopes);
+    let worker_id = meta
+        .as_ref()
+        .map(|m| m.worker_id.clone())
+        .unwrap_or_else(|| "manager".to_string());
+    let kind = meta.as_ref().map(|m| m.kind).unwrap_or(RunKind::Worker);
+    let mut harness = None;
+    let mut last_path = None;
+    let mut stdout_path = None;
+    let mut meta_role = None;
+    let mut meta_requires = None;
+    for env in envelopes {
+        if env.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        if let Ok(Lifecycle::RunMeta {
+            harness: h,
+            last_path: lp,
+            stdout_path: sp,
+            role,
+            requires_worker_finalize,
+            ..
+        }) = serde_json::from_value::<Lifecycle>(env.event.clone())
+        {
+            harness = h.or(harness);
+            last_path = lp.or(last_path);
+            stdout_path = sp.or(stdout_path);
+            meta_role = role.or(meta_role);
+            meta_requires = requires_worker_finalize.or(meta_requires);
+        }
+    }
+    if harness.is_none() {
+        harness = session_native_runtime(envelopes).map(|n| n.provider);
+    }
+    resolve_persisted_terminal_contract(
+        home,
+        &worker_id,
+        kind,
+        harness.as_deref(),
+        last_path,
+        stdout_path,
+        meta_role,
+        meta_requires,
+    )
+}
+
+/// Provision a last_path for a fresh recovery/continuation run that inherits
+/// a required terminal contract (OQ1 / TASK-ARZGD).
+fn provision_recovery_last_path(session_path: &FsPath, prior_run_id: &str) -> PathBuf {
+    session_path
+        .parent()
+        .map(|dir| dir.join(format!("{prior_run_id}.recovery.last.txt")))
+        .unwrap_or_else(|| PathBuf::from(format!("{prior_run_id}.recovery.last.txt")))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TaskCommentRequest {
     pub actor: String,
@@ -2158,6 +2302,13 @@ async fn post_manager_launch(
     let ids = manager_launch_ids(&req.project_id, &req.harness, Utc::now());
     let session_path = project_sessions_dir(&project.root).join(ids.session_file);
     let task_id = ids.task_id;
+    let manager_role = if manager_terminal_harness(&req.harness) {
+        // Custom bare terminals are not agent runs (dec_WDR5K item 6 seventh
+        // amendment / TASK-TZJFF): exempt from manager terminal-declaration.
+        "terminal".into()
+    } else {
+        "manager".into()
+    };
     let acquire = state
         .supervisor
         .acquire(
@@ -2166,7 +2317,7 @@ async fn post_manager_launch(
                 task_id,
                 kind: RunKind::Worker,
                 worker_id: "manager".into(),
-                role: "manager".into(),
+                role: manager_role,
                 project_id: Some(req.project_id.clone()),
                 worktree: Some(project.root),
                 last_path: None,
@@ -2296,6 +2447,11 @@ async fn post_manager_register(
 #[derive(Debug, Deserialize)]
 pub struct ManagerReleaseRegistrationRequest {
     pub project_id: String,
+    /// App-launched manager run id exported as `ORGASMIC_RUN_ID` into the
+    /// pane. Used when the external-registration map does not own the run
+    /// (TASK-TZJFF / TASK-S52X9).
+    #[serde(default)]
+    pub run_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -2313,20 +2469,53 @@ async fn post_manager_release(
         .manager_registry
         .release(&state.supervisor, &req.project_id)
         .await;
-    Ok(Json(match outcome {
-        crate::manager_registration::ManagerReleaseOutcome::Released { run_id } => {
-            ManagerReleaseRegistrationResponse {
-                status: "released".to_string(),
-                run_id: Some(run_id),
-            }
+    if let crate::manager_registration::ManagerReleaseOutcome::Released { run_id } = outcome {
+        return Ok(Json(ManagerReleaseRegistrationResponse {
+            status: "released".to_string(),
+            run_id: Some(run_id),
+        }));
+    }
+    if let Some(run_id) = req.run_id.as_deref().filter(|id| !id.trim().is_empty()) {
+        if let Some(response) =
+            release_app_manager_run(&state, &req.project_id, run_id.trim()).await
+        {
+            return Ok(Json(response));
         }
-        crate::manager_registration::ManagerReleaseOutcome::NotRegistered => {
-            ManagerReleaseRegistrationResponse {
-                status: "not_registered".to_string(),
-                run_id: None,
-            }
-        }
+    }
+    Ok(Json(ManagerReleaseRegistrationResponse {
+        status: "not_registered".to_string(),
+        run_id: None,
     }))
+}
+
+async fn release_app_manager_run(
+    state: &ApiState,
+    project_id: &str,
+    run_id: &str,
+) -> Option<ManagerReleaseRegistrationResponse> {
+    let snapshot = state.supervisor.snapshot().await;
+    let run = snapshot.runs.iter().find(|run| run.run_id == run_id)?;
+    if run.project_id.as_deref() != Some(project_id) {
+        return None;
+    }
+    if !run.task_id.starts_with("manager.launch:") {
+        return None;
+    }
+    state
+        .supervisor
+        .release_with_finalization(
+            run_id,
+            "manager_released",
+            ReleaseOutcome::Completed,
+            true,
+            None,
+        )
+        .await
+        .ok()?;
+    Some(ManagerReleaseRegistrationResponse {
+        status: "released".to_string(),
+        run_id: Some(run_id.to_string()),
+    })
 }
 
 async fn post_manager_action(
@@ -2653,6 +2842,21 @@ async fn post_stage(
         spec.stage,
         now.format("%Y%m%dT%H%M%S")
     ));
+    // orgasmic:TASK-S52X9 — grill/plan/architect carry a last_path so they
+    // advertise the universal finalize contract; `orgasmic dispatch finalize`
+    // can resolve the report path via ORGASMIC_RUN_ID (TASK-TZJFF).
+    let last_path = matches!(spec.stage, "grill" | "plan" | "architect").then(|| {
+        project
+            .root
+            .join(".orgasmic")
+            .join("tmp")
+            .join("stage")
+            .join(format!(
+                "{}-{}-last.txt",
+                spec.stage,
+                now.format("%Y%m%dT%H%M%S")
+            ))
+    });
     let acquire = state
         .supervisor
         .acquire(
@@ -2664,7 +2868,7 @@ async fn post_stage(
                 role: worker_kind_name(worker.kind).to_string(),
                 project_id: Some(project_id.clone()),
                 worktree: Some(project.root.clone()),
-                last_path: None,
+                last_path,
                 stdout_path: None,
                 session_path: session_path.clone(),
                 driver_config,
@@ -5058,17 +5262,42 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
                             };
                         }
                     }
-                    Some("run_complete") => completed = true,
+                    // Protocol RunComplete alone is not stage success for
+                    // grill/plan (TASK-S52X9): only a worker-declared
+                    // finalize tombstone or an explicit Completed release
+                    // counts. Ignore run_complete here so protocol-end
+                    // without finalize (Failed release) cannot be rescued
+                    // by an earlier RunComplete event.
+                    Some("run_complete") => {}
                     _ => {}
                 }
             }
             SessionEventKind::Lifecycle => {
                 if envelope.event.get("phase").and_then(Value::as_str) == Some("release") {
+                    // orgasmic:TASK-S52X9 — worker finalize tombstone is
+                    // Completed even when the HTTP release path historically
+                    // stamped Cancelled; prefer the declaration flag.
+                    let finalized = envelope
+                        .event
+                        .get("finalized_by_worker")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    if finalized {
+                        completed = true;
+                        continue;
+                    }
                     match envelope.event.get("outcome").and_then(Value::as_str) {
                         Some("completed") => completed = true,
                         Some("failed") | Some("interrupted") | Some("cancelled") => {
                             return StageOutcome::Failed {
-                                reason: driver_error_reason,
+                                reason: driver_error_reason.or_else(|| {
+                                    envelope
+                                        .event
+                                        .get("reason")
+                                        .and_then(Value::as_str)
+                                        .filter(|r| *r == "protocol_end_without_finalize")
+                                        .map(|r| r.to_string())
+                                }),
                             };
                         }
                         _ => {}
@@ -5689,34 +5918,47 @@ async fn post_run_release(
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("active run {id}")))?;
     let reason = req.reason.unwrap_or_else(|| "run released".to_string());
-    state
+    // orgasmic:TASK-S52X9 — a worker-declared terminal call is Completed;
+    // every other release path stays Cancelled (manager cancel, etc.).
+    let outcome = if req.finalized_by_worker {
+        ReleaseOutcome::Completed
+    } else {
+        ReleaseOutcome::Cancelled
+    };
+    match state
         .supervisor
         .release_with_finalization(
             &id,
             &reason,
-            ReleaseOutcome::Cancelled,
+            outcome,
             req.finalized_by_worker,
             req.caller_identity.as_ref(),
         )
         .await
-        .map_err(|e| match e {
-            crate::supervisor::SupervisorError::RunNotFound(_) => {
-                ApiError::not_found(format!("active run {id}"))
-            }
-            crate::supervisor::SupervisorError::OwnershipMismatch {
-                run_id,
-                field,
-                expected,
-                got,
-            } => ApiError::conflict_json(json!({
+    {
+        Ok(()) => {}
+        // orgasmic:TASK-ARZGD — operator cancel waits for artifactor writer/
+        // regenerate ack, then records Cancelled.
+        Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_)) => {}
+        Err(crate::supervisor::SupervisorError::RunNotFound(_)) => {
+            return Err(ApiError::not_found(format!("active run {id}")));
+        }
+        Err(crate::supervisor::SupervisorError::OwnershipMismatch {
+            run_id,
+            field,
+            expected,
+            got,
+        }) => {
+            return Err(ApiError::conflict_json(json!({
                 "error": "runtime ownership mismatch",
                 "run_id": run_id,
                 "field": field,
                 "expected": expected,
                 "got": got,
-            })),
-            other => supervisor_release_error(&id, other),
-        })?;
+            })));
+        }
+        Err(other) => return Err(supervisor_release_error(&id, other)),
+    }
     Ok(Json(RunReleaseResponse {
         run_id: id,
         task_id: run.task_id,
@@ -5891,6 +6133,9 @@ async fn post_run_recover(
     let run_kind = meta.as_ref().map(|m| m.kind).unwrap_or(RunKind::Worker);
     let worktree = Some(state.home.source());
 
+    // Shared terminal contract for every recovery entry (TASK-ARZGD P2).
+    let terminal_contract = persisted_terminal_contract_from_session(&state.home, &envelopes);
+
     match action.as_str() {
         "reattach_tmux" => {
             let (driver, _meta) = recovery_driver(&state.home, &envelopes).ok_or_else(|| {
@@ -5911,7 +6156,8 @@ async fn post_run_recover(
                         .map(|m| m.task_id.clone())
                         .unwrap_or_else(|| format!("recover:{id}")),
                     worker_id.clone(),
-                    resolve_run_role(&state.home, &worker_id, run_kind),
+                    terminal_contract.role.clone(),
+                    terminal_contract.requires_worker_finalize,
                     req.project.clone(),
                     worktree,
                     prior.session_path.clone(),
@@ -5922,6 +6168,15 @@ async fn post_run_recover(
                 .await
                 .map_err(supervisor_recover_error)?;
             // Reattach attaches as-is and leaves the composer empty (dec_052).
+            // Force the inherited contract even when artifact paths are absent.
+            state
+                .supervisor
+                .restore_terminal_contract(
+                    &acquire.run_id,
+                    terminal_contract.role,
+                    terminal_contract.requires_worker_finalize,
+                )
+                .await;
             Ok(Json(RunRecoverResponse {
                 run_id: acquire.run_id,
                 runtime_id: acquire.identity.runtime_id,
@@ -5982,9 +6237,10 @@ async fn post_run_recover(
                 // original harness (dec_052) — never the placeholder shell and
                 // never the deferred acp driver. The harness comes from native
                 // metadata or the recorded worker; default to claude.
-                let harness = native
-                    .as_ref()
-                    .map(|n| n.provider.clone())
+                let harness = terminal_contract
+                    .harness
+                    .clone()
+                    .or_else(|| native.as_ref().map(|n| n.provider.clone()))
                     .or_else(|| {
                         meta.as_ref()
                             .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
@@ -6003,6 +6259,25 @@ async fn post_run_recover(
                 (driver, cfg)
             };
 
+            // OQ1: fresh recovery inherits the original shape's terminal
+            // contract — provision last_path when required so the
+            // requirement is set independent of path replay.
+            let last_path = if terminal_contract.requires_worker_finalize {
+                Some(
+                    terminal_contract
+                        .last_path
+                        .clone()
+                        .unwrap_or_else(|| provision_recovery_last_path(&session_path, &id)),
+                )
+            } else {
+                None
+            };
+            let stdout_path = if terminal_contract.requires_worker_finalize {
+                terminal_contract.stdout_path.clone()
+            } else {
+                None
+            };
+
             let acquire = state
                 .supervisor
                 .acquire(
@@ -6013,12 +6288,12 @@ async fn post_run_recover(
                             .map(|m| m.task_id.clone())
                             .unwrap_or_else(|| format!("recover:{id}")),
                         kind: run_kind,
-                        role: resolve_run_role(&state.home, &worker_id, run_kind),
+                        role: terminal_contract.role.clone(),
                         worker_id,
                         project_id: req.project.clone(),
                         worktree,
-                        last_path: None,
-                        stdout_path: None,
+                        last_path,
+                        stdout_path,
                         session_path: session_path.clone(),
                         driver_config,
                         babysitter_target: None,
@@ -6030,6 +6305,15 @@ async fn post_run_recover(
                 )
                 .await
                 .map_err(supervisor_recover_error)?;
+
+            state
+                .supervisor
+                .restore_terminal_contract(
+                    &acquire.run_id,
+                    terminal_contract.role,
+                    terminal_contract.requires_worker_finalize,
+                )
+                .await;
 
             // Persist the staged recovery prompt draft (pending send).
             state
@@ -6110,12 +6394,14 @@ struct BootReattachCandidate {
     /// enables respawning its completion watcher (TASK-567JG).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    role: Option<String>,
+    requires_worker_finalize: Option<bool>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
 }
 
-/// `(transport, harness, project_id, worktree, last_path, stdout_path,
-/// driver_config)` from a `RunMeta` lifecycle event.
+/// `(transport, harness, project_id, worktree, last_path, stdout_path, role,
+/// requires_worker_finalize, driver_config)` from a `RunMeta` lifecycle event.
 type RunMetaFields = (
     String,
     Option<String>,
@@ -6123,6 +6409,8 @@ type RunMetaFields = (
     Option<PathBuf>,
     Option<PathBuf>,
     Option<PathBuf>,
+    Option<String>,
+    Option<bool>,
     serde_json::Value,
 );
 
@@ -6177,6 +6465,8 @@ fn boot_reattach_candidate(
                 worktree,
                 last_path,
                 stdout_path,
+                role,
+                requires_worker_finalize,
                 driver_config,
             }) => {
                 meta = Some((
@@ -6186,6 +6476,8 @@ fn boot_reattach_candidate(
                     worktree,
                     last_path,
                     stdout_path,
+                    role,
+                    requires_worker_finalize,
                     driver_config,
                 ))
             }
@@ -6194,7 +6486,17 @@ fn boot_reattach_candidate(
     }
 
     let (task_id, kind_str, worker_id) = acquire?;
-    let (transport, harness, project_id, worktree, last_path, stdout_path, driver_config) = meta?;
+    let (
+        transport,
+        harness,
+        project_id,
+        worktree,
+        last_path,
+        stdout_path,
+        meta_role,
+        meta_requires,
+        driver_config,
+    ) = meta?;
     let kind = match kind_str.as_str() {
         // Babysitters watch another run; they are re-derived, not reattached.
         "babysitter" => return None,
@@ -6214,6 +6516,8 @@ fn boot_reattach_candidate(
         worktree,
         last_path,
         stdout_path,
+        role: meta_role,
+        requires_worker_finalize: meta_requires,
         driver_config,
         session_path: session_path.to_path_buf(),
     })
@@ -6293,6 +6597,15 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             runtime_id: c.runtime_id.clone(),
             boot_id: c.boot_id.clone(),
         };
+        let (role, requires_worker_finalize) = boot_reattach_terminal_contract(
+            home,
+            &c.worker_id,
+            c.kind,
+            c.harness.as_deref(),
+            &c.last_path,
+            c.role.clone(),
+            c.requires_worker_finalize,
+        );
         match supervisor
             .reattach(
                 driver.as_ref(),
@@ -6300,7 +6613,8 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                 c.kind,
                 c.task_id.clone(),
                 c.worker_id.clone(),
-                resolve_run_role(home, &c.worker_id, c.kind),
+                role.clone(),
+                requires_worker_finalize,
                 c.project_id.clone(),
                 c.worktree.clone(),
                 c.session_path.clone(),
@@ -6315,6 +6629,11 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                     task_id = %c.task_id,
                     "boot reattach: rehydrated live run"
                 );
+                if c.last_path.is_none() && c.stdout_path.is_none() {
+                    supervisor
+                        .restore_terminal_contract(&c.run_id, role, requires_worker_finalize)
+                        .await;
+                }
                 match (
                     c.last_path.clone(),
                     c.stdout_path.clone(),
@@ -10191,7 +10510,8 @@ async fn post_artifact_submit(
             ("VERSION".into(), "1".into()),
         ];
 
-        state
+        let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
+        if let Err(e) = state
             .writer
             .transaction(
                 vec![
@@ -10220,7 +10540,18 @@ async fn post_artifact_submit(
                 },
             )
             .await
-            .map_err(|e| ApiError::internal(format!("write artifact files: {e}")))?;
+        {
+            if let Some((run_id, token)) = submit_in_flight {
+                abort_artifactor_submit_terminal(&state, &run_id, token).await;
+            }
+            return Err(ApiError::internal(format!("write artifact files: {e}")));
+        }
+        if let Some((run_id, token)) = submit_in_flight {
+            commit_artifactor_submit_terminal(&state, &run_id, token).await;
+            // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
+            // declaration (writes finalize tombstone; no dispatch finalize).
+            release_artifactor_run_after_submit(&state, &run_id).await;
+        }
 
         let _ = state.index.refresh_project(&entry.id).await;
         state.events.publish(
@@ -10287,7 +10618,8 @@ async fn post_artifact_submit(
         });
     }
 
-    state
+    let submit_in_flight = prepare_artifactor_submit_terminal(&state, &art_id).await?;
+    if let Err(e) = state
         .writer
         .transaction(
             rewrites,
@@ -10303,7 +10635,18 @@ async fn post_artifact_submit(
             },
         )
         .await
-        .map_err(|e| ApiError::internal(format!("write artifact files: {e}")))?;
+    {
+        if let Some((run_id, token)) = submit_in_flight {
+            abort_artifactor_submit_terminal(&state, &run_id, token).await;
+        }
+        return Err(ApiError::internal(format!("write artifact files: {e}")));
+    }
+    if let Some((run_id, token)) = submit_in_flight {
+        commit_artifactor_submit_terminal(&state, &run_id, token).await;
+        // orgasmic:TASK-S52X9 — successful submit IS the artifactor's terminal
+        // declaration (writes finalize tombstone; no dispatch finalize).
+        release_artifactor_run_after_submit(&state, &run_id).await;
+    }
 
     let _ = state.index.refresh_project(&entry.id).await;
     state.events.publish(
@@ -10317,6 +10660,96 @@ async fn post_artifact_submit(
     Ok(Json(
         json!({ "artifact_id": art_id, "version": new_version }),
     ))
+}
+
+/// After a successful `artifact submit`, finish the artifactor terminal for
+/// the exact run id carried from the atomic begin (TASK-ARZGD). Hot-session
+/// rmux runs stay live with the declaration already installed by commit;
+/// one-shot transports release immediately with the tombstone.
+// orgasmic:TASK-S52X9,TASK-ARZGD
+async fn prepare_artifactor_submit_terminal(
+    state: &ApiState,
+    art_id: &str,
+) -> Result<Option<(String, u64)>, ApiError> {
+    let task_id = format!("artifact.generate:{art_id}");
+    match state
+        .supervisor
+        .begin_artifactor_submit_for_task(&task_id)
+        .await
+    {
+        Ok(pair) => Ok(Some(pair)),
+        Err(crate::supervisor::SupervisorError::RunNotFound(_)) => Ok(None),
+        Err(crate::supervisor::SupervisorError::ArtifactorLifecycleBusy(_)) => {
+            Err(ApiError::conflict("artifactor lifecycle busy"))
+        }
+        Err(e) => {
+            tracing::warn!(
+                art_id,
+                error = %e,
+                "artifact submit: failed to begin artifactor submit coordinator"
+            );
+            Err(supervisor_control_error("artifact submit coordinator", e))
+        }
+    }
+}
+
+async fn commit_artifactor_submit_terminal(state: &ApiState, run_id: &str, token: u64) {
+    if let Err(e) = state
+        .supervisor
+        .commit_artifactor_submit_in_flight(run_id, token)
+        .await
+    {
+        if !matches!(e, crate::supervisor::SupervisorError::RunNotFound(_)) {
+            tracing::warn!(
+                run_id = %run_id,
+                error = %e,
+                "artifact submit: failed to commit in-flight submit marker"
+            );
+        }
+    }
+}
+
+async fn abort_artifactor_submit_terminal(state: &ApiState, run_id: &str, token: u64) {
+    let _ = state
+        .supervisor
+        .abort_artifactor_submit_in_flight(run_id, token)
+        .await;
+}
+
+async fn release_artifactor_run_after_submit(state: &ApiState, run_id: &str) {
+    let snapshot = state.supervisor.snapshot().await;
+    let Some(run) = snapshot.runs.iter().find(|run| run.run_id == run_id) else {
+        // Commit already resolved a deferred drain/cancel — nothing left.
+        return;
+    };
+    if run.driver == "rmux" {
+        // Hot-session: commit already installed the durable declaration.
+        return;
+    }
+    if let Err(e) = state
+        .supervisor
+        .release_with_finalization(
+            run_id,
+            "artifact_submitted",
+            ReleaseOutcome::Completed,
+            true,
+            None,
+        )
+        .await
+    {
+        if matches!(
+            e,
+            crate::supervisor::SupervisorError::RunNotFound(_)
+                | crate::supervisor::SupervisorError::DeferredWhileInFlight(_)
+        ) {
+            return;
+        }
+        tracing::warn!(
+            run_id = %run_id,
+            error = %e,
+            "artifact submit: failed to release artifactor run with finalize tombstone"
+        );
+    }
 }
 
 /// `POST /artifacts/:id/comments` — pin a named comment (selection-to-pin
@@ -11301,23 +11734,79 @@ async fn post_artifact_regenerate(
 
     if let Some(live_run) = live {
         // HOT PATH: route the followup into the live session — no new lease.
-        let followup_payload =
-            assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
-        let ack = state
+        // orgasmic:TASK-TZJFF — invalidate any prior submit declaration and
+        // bump the artifactor round before accepting the followup so a
+        // concurrent stream-end cannot promote a stale declaration.
+        let checkpoint = state
             .supervisor
-            .send_input(&live_run.run_id, followup_payload, &live_run.identity)
+            .begin_artifactor_regenerate_round(&live_run.run_id)
             .await
             .map_err(|e| match e {
                 crate::supervisor::SupervisorError::RunNotFound(_) => {
                     ApiError::not_found(format!("active run {}", live_run.run_id))
                 }
-                other => supervisor_control_error("artifact regenerate followup", other),
+                crate::supervisor::SupervisorError::ArtifactorLifecycleBusy(_) => {
+                    ApiError::conflict("artifactor lifecycle busy")
+                }
+                other => supervisor_control_error("artifact regenerate round", other),
             })?;
+        let followup_payload =
+            assemble_regen_context(&detail.content, &detail.comments, &extra_prompt);
+        let ack = match state
+            .supervisor
+            .send_input(&live_run.run_id, followup_payload, &live_run.identity)
+            .await
+        {
+            Ok(ack) => ack,
+            Err(e) => {
+                // orgasmic:TASK-ARZGD — regenerate_in_flight defers drains;
+                // rollback must restore the prior declaration atomically.
+                if let Err(rb) = state
+                    .supervisor
+                    .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
+                    .await
+                {
+                    if !matches!(rb, crate::supervisor::SupervisorError::RunNotFound(_)) {
+                        tracing::warn!(
+                            run_id = %live_run.run_id,
+                            error = %rb,
+                            "artifact regenerate: rollback after send_input error failed"
+                        );
+                    }
+                }
+                return Err(match e {
+                    crate::supervisor::SupervisorError::RunNotFound(_) => {
+                        ApiError::not_found(format!("active run {}", live_run.run_id))
+                    }
+                    other => supervisor_control_error("artifact regenerate followup", other),
+                });
+            }
+        };
         if !ack.accepted {
+            state
+                .supervisor
+                .rollback_artifactor_regenerate_round(&live_run.run_id, checkpoint)
+                .await
+                .map_err(|e| match e {
+                    crate::supervisor::SupervisorError::RunNotFound(_) => {
+                        ApiError::not_found(format!("active run {}", live_run.run_id))
+                    }
+                    other => supervisor_control_error("artifact regenerate rollback", other),
+                })?;
             return Err(ApiError::conflict(
                 ack.message.unwrap_or_else(|| "harness busy".to_string()),
             ));
         }
+        state
+            .supervisor
+            .commit_artifactor_regenerate_round(&live_run.run_id, checkpoint)
+            .await
+            .map_err(|e| match e {
+                crate::supervisor::SupervisorError::RunNotFound(_) => {
+                    ApiError::not_found(format!("active run {}", live_run.run_id))
+                }
+                other => supervisor_control_error("artifact regenerate commit", other),
+            })?;
         close_out_artifact_regenerate_round(ArtifactRegenerateCloseOut {
             state: &state,
             entry: &entry,
@@ -12207,6 +12696,711 @@ mod tests {
     }
 
     #[test]
+    fn boot_reattach_terminal_contract_restores_persisted_role_and_requirement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "manager",
+            RunKind::Worker,
+            Some("custom"),
+            &None,
+            Some("terminal".into()),
+            Some(false),
+        );
+        assert_eq!(role, "terminal");
+        assert!(!requires);
+
+        // Round-2 recovery persisted an explicit false and no path for these
+        // agent roles. Boot reattach must recompute the universal contract.
+        for historical_role in ["griller", "planner", "architector"] {
+            let (role, requires) = boot_reattach_terminal_contract(
+                &home,
+                historical_role,
+                RunKind::Worker,
+                Some("claude"),
+                &None,
+                Some(historical_role.into()),
+                Some(false),
+            );
+            assert_eq!(role, historical_role);
+            assert!(requires, "historical {historical_role} must fail closed");
+        }
+
+        let last = Some(PathBuf::from("/tmp/stage.last.txt"));
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "griller",
+            RunKind::Worker,
+            Some("codex"),
+            &last,
+            None,
+            None,
+        );
+        assert_eq!(role, "griller");
+        assert!(requires);
+
+        // Fail closed for unknown historical agent roles (TASK-ARZGD).
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "removed-historical-worker",
+            RunKind::Worker,
+            Some("claude"),
+            &None,
+            None,
+            None,
+        );
+        assert_eq!(role, "worker");
+        assert!(requires, "unknown agent roles must require finalize");
+
+        // Custom bare terminal proved from harness remains exempt.
+        let (role, requires) = boot_reattach_terminal_contract(
+            &home,
+            "manager",
+            RunKind::Worker,
+            Some("custom"),
+            &None,
+            None,
+            None,
+        );
+        assert_eq!(role, "terminal");
+        assert!(!requires);
+    }
+
+    #[test]
+    fn persisted_terminal_contract_fail_closed_and_custom_exempt() {
+        // orgasmic:TASK-ARZGD P2
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let contract = resolve_persisted_terminal_contract(
+            &home,
+            "gone-worker",
+            RunKind::Worker,
+            Some("claude"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(contract.requires_worker_finalize);
+        let custom = resolve_persisted_terminal_contract(
+            &home,
+            "manager",
+            RunKind::Worker,
+            Some("custom"),
+            None,
+            None,
+            None,
+            None,
+        );
+        assert_eq!(custom.role, "terminal");
+        assert!(!custom.requires_worker_finalize);
+    }
+
+    #[test]
+    fn round2_session_contract_recomputed_for_every_recovery_entry() {
+        // `post_run_recover` resolves reattach_tmux, resume_native_fork, and
+        // start_recovery_run through this exact persisted-session parser.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        for role in ["griller", "planner", "architector"] {
+            let identity = ("run-old", "rt-old", "boot-old");
+            let envelopes = vec![
+                SessionEnvelope {
+                    seq: 0,
+                    time: Utc::now(),
+                    run_id: identity.0.into(),
+                    runtime_id: identity.1.into(),
+                    boot_id: identity.2.into(),
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "acquire",
+                        "task_id": format!("TASK-{role}"),
+                        "kind": "worker",
+                        "worker_id": role,
+                    }),
+                },
+                SessionEnvelope {
+                    seq: 1,
+                    time: Utc::now(),
+                    run_id: identity.0.into(),
+                    runtime_id: identity.1.into(),
+                    boot_id: identity.2.into(),
+                    kind: SessionEventKind::Lifecycle,
+                    event: json!({
+                        "phase": "run_meta",
+                        "transport": "tmux",
+                        "harness": "claude",
+                        "role": role,
+                        "requires_worker_finalize": false,
+                        "last_path": null,
+                        "stdout_path": null,
+                        "driver_config": {},
+                    }),
+                },
+            ];
+            let contract = persisted_terminal_contract_from_session(&home, &envelopes);
+            assert_eq!(contract.role, role);
+            assert!(
+                contract.requires_worker_finalize,
+                "{role} must fail closed in every recovery action"
+            );
+            assert!(contract.last_path.is_none(), "seed remains round-2-shaped");
+        }
+    }
+
+    /// ACP-shaped driver that ends immediately — used for natural-end
+    /// tombstone tests of recovered terminal contracts (TASK-ARZGD).
+    struct ApiProtocolEndDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ApiProtocolEndDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+            });
+            Ok(orgasmic_drivers::DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ApiProtocolEndControl),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct ApiProtocolEndControl;
+
+    #[async_trait::async_trait]
+    impl orgasmic_drivers::DriverControl for ApiProtocolEndControl {
+        async fn transition_state(
+            &mut self,
+            _req: orgasmic_drivers::TransitionRequest,
+        ) -> Result<orgasmic_drivers::TransitionAck, orgasmic_drivers::DriverError> {
+            Ok(orgasmic_drivers::TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: orgasmic_drivers::BabysitterRequest,
+        ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
+            Err(orgasmic_drivers::DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(
+            &mut self,
+            _reason: &str,
+        ) -> Result<(), orgasmic_drivers::DriverError> {
+            Ok(())
+        }
+    }
+
+    /// Holding driver for API-level artifactor submit barrier tests.
+    struct ApiHoldingDriver {
+        gate: std::sync::Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ApiHoldingDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let gate = std::sync::Arc::clone(&self.gate);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                gate.notified().await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("protocol turn completed".into()),
+                    })
+                    .await;
+            });
+            Ok(orgasmic_drivers::DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ApiProtocolEndControl),
+                native_runtime: None,
+            })
+        }
+    }
+
+    async fn wait_session_reason(path: &FsPath, reason: &str) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while std::time::Instant::now() < deadline {
+            if let Ok(body) = std::fs::read_to_string(path) {
+                if body.contains(reason) {
+                    return true;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn api_artifactor_submit_barrier_writer_success_no_false_failed() {
+        // orgasmic:TASK-ARZGD — real prepare/commit coordinator path with
+        // stream-end interleaved after atomic begin, before writer commit.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let driver = ApiHoldingDriver {
+            gate: std::sync::Arc::clone(&gate),
+        };
+        let art_id = "ART-BARRIER-OK";
+        let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: format!("artifact.generate:{art_id}"),
+                    kind: RunKind::Worker,
+                    worker_id: "artifactor".into(),
+                    role: "artifactor".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: DriverConfig::from_value(json!({})),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("artifactor acquire");
+        let prepared = prepare_artifactor_submit_terminal(&state, art_id)
+            .await
+            .expect("begin submit coordinator")
+            .expect("atomic begin must install submit token");
+        assert_eq!(prepared.0, acquire.run_id);
+        gate.notify_one();
+        assert!(
+            !wait_session_reason(&session_path, "protocol_end_without_finalize").await,
+            "stream-end during in-flight must defer, not false-Fail"
+        );
+        commit_artifactor_submit_terminal(&state, &prepared.0, prepared.1).await;
+        assert!(
+            wait_session_reason(&session_path, "artifact_submitted").await,
+            "writer success must resolve deferred drain as artifact_submitted"
+        );
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(body.contains("\"outcome\":\"completed\"") || body.contains("completed"));
+        assert!(!body.contains("protocol_end_without_finalize"));
+    }
+
+    #[tokio::test]
+    async fn api_artifactor_submit_barrier_writer_failure_no_false_completed() {
+        // orgasmic:TASK-ARZGD — injected writer failure after atomic begin.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+        let driver = ApiHoldingDriver {
+            gate: std::sync::Arc::clone(&gate),
+        };
+        let art_id = "ART-BARRIER-FAIL";
+        let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+        let _ = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: format!("artifact.generate:{art_id}"),
+                    kind: RunKind::Worker,
+                    worker_id: "artifactor".into(),
+                    role: "artifactor".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: DriverConfig::from_value(json!({})),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("artifactor acquire");
+        let prepared = prepare_artifactor_submit_terminal(&state, art_id)
+            .await
+            .expect("begin submit coordinator")
+            .expect("atomic begin");
+        gate.notify_one();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        abort_artifactor_submit_terminal(&state, &prepared.0, prepared.1).await;
+        assert!(
+            wait_session_reason(&session_path, "artifact_submit_failed").await,
+            "writer failure must resolve deferred drain as Failed"
+        );
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            !body.contains("artifact_submitted"),
+            "writer failure must never write a false Completed submit tombstone: {body}"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_submit_rejects_regenerate_and_resolves_one_terminal_tombstone() {
+        // orgasmic:TASK-Y5K2C — gate the real submit handler after it installs
+        // its lifecycle token but before the durable writer transaction. The
+        // real regenerate handler must reject the overlap under both terminal
+        // schedules, and the submit resolution must own the sole tombstone.
+        for operator_cancel in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let home = Home::at(tmp.path().join("home"));
+            home.ensure().unwrap();
+            let project_root = tmp.path().join("proj");
+            seed_project(&home, &project_root, "proj");
+            let state = direct_stage_test_state(home).await;
+            let art_id = if operator_cancel {
+                "ART-8KX2M"
+            } else {
+                "ART-9KX2M"
+            };
+
+            let _ = post_artifact_submit(
+                State(state.clone()),
+                Path(art_id.to_string()),
+                Query(artifact_query("proj")),
+                Json(ArtifactSubmitRequest {
+                    content: "<RichText>v1</RichText>\n".into(),
+                    title: Some("Lifecycle gate".into()),
+                    subject_nodes: Some(vec![]),
+                    prompt: Some("Initial".into()),
+                }),
+            )
+            .await
+            .expect("seed artifact");
+
+            let protocol_end_gate = std::sync::Arc::new(tokio::sync::Notify::new());
+            let session_path = project_sessions_dir(&project_root).join(format!("{art_id}.jsonl"));
+            let acquire = state
+                .supervisor
+                .acquire(
+                    &ApiHoldingDriver {
+                        gate: std::sync::Arc::clone(&protocol_end_gate),
+                    },
+                    AcquireRequest {
+                        task_id: format!("artifact.generate:{art_id}"),
+                        kind: RunKind::Worker,
+                        worker_id: "artifactor".into(),
+                        role: "artifactor".into(),
+                        project_id: Some("proj".into()),
+                        worktree: Some(project_root.clone()),
+                        last_path: None,
+                        stdout_path: None,
+                        session_path: session_path.clone(),
+                        driver_config: DriverConfig::from_value(json!({})),
+                        babysitter_target: None,
+                        stall_timeout_secs: Some(0),
+                        max_run_duration_secs: Some(0),
+                        idle_timeout_secs: None,
+                        babysitter: None,
+                    },
+                )
+                .await
+                .expect("live artifactor");
+
+            let writer_gate = state.writer.gate_next_transaction().await;
+            let submit_state = state.clone();
+            let submit = tokio::spawn(async move {
+                post_artifact_submit(
+                    State(submit_state),
+                    Path(art_id.to_string()),
+                    Query(artifact_query("proj")),
+                    Json(ArtifactSubmitRequest {
+                        content: "<RichText>durable submit</RichText>\n".into(),
+                        title: None,
+                        subject_nodes: None,
+                        prompt: None,
+                    }),
+                )
+                .await
+            });
+            writer_gate.wait_until_entered().await;
+
+            let regenerate = post_artifact_regenerate(
+                State(state.clone()),
+                Extension(Identity::Admin),
+                Path(art_id.to_string()),
+                Query(artifact_query("proj")),
+                Json(ArtifactRegenerateRequest {
+                    extra_prompt: Some("must not overlap".into()),
+                }),
+            )
+            .await
+            .expect_err("regenerate must not overlap submit");
+            assert_eq!(regenerate.status, StatusCode::CONFLICT);
+            assert_eq!(regenerate.message, "artifactor lifecycle busy");
+
+            if operator_cancel {
+                assert!(matches!(
+                    state
+                        .supervisor
+                        .release_with_finalization(
+                            &acquire.run_id,
+                            "operator cancel",
+                            ReleaseOutcome::Cancelled,
+                            false,
+                            None,
+                        )
+                        .await,
+                    Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_))
+                ));
+            } else {
+                protocol_end_gate.notify_one();
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while std::time::Instant::now() < deadline {
+                    if read_session_file(&session_path)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter(|event| event.kind == SessionEventKind::DriverEvent)
+                        .count()
+                        >= 2
+                    {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+
+            writer_gate.release();
+            let _ = submit
+                .await
+                .expect("submit task")
+                .expect("durable submit succeeds");
+            let expected_reason = if operator_cancel {
+                "cancelled"
+            } else {
+                "artifact_submitted"
+            };
+            assert!(wait_session_reason(&session_path, expected_reason).await);
+            let events = read_session_file(&session_path).unwrap_or_default();
+            let releases: Vec<_> = events
+                .iter()
+                .filter(|event| {
+                    event.kind == SessionEventKind::Lifecycle
+                        && event.event.get("phase").and_then(|v| v.as_str()) == Some("release")
+                })
+                .collect();
+            assert_eq!(releases.len(), 1, "one terminal tombstone: {releases:?}");
+            assert_eq!(
+                releases[0].event.get("reason").and_then(|v| v.as_str()),
+                Some(expected_reason)
+            );
+            assert!(releases.iter().all(|event| {
+                event.event.get("reason").and_then(|v| v.as_str())
+                    != Some("protocol_end_without_finalize")
+            }));
+        }
+    }
+
+    #[tokio::test]
+    async fn historical_false_recovery_contract_natural_end_tombstones_per_shape() {
+        // orgasmic:TASK-Y5K2C — round-2-shaped metadata explicitly persisted
+        // false with no last_path. Every agent shape must recompute fail-closed
+        // while the harness-proven custom terminal remains exempt.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let shapes: &[(&str, &str, bool)] = &[
+            ("manager", "manager", true),
+            ("artifactor", "artifactor", true),
+            ("griller", "griller", true),
+            ("planner", "planner", true),
+            ("architector", "architector", true),
+            ("implementer", "implementer", true),
+            ("terminal", "manager", false),
+        ];
+
+        for (role, worker_id, expect_fail_closed) in shapes {
+            let session_path =
+                project_sessions_dir(&project_root).join(format!("shape-{role}.jsonl"));
+            let harness = if *role == "terminal" {
+                Some("custom")
+            } else {
+                Some("claude")
+            };
+            let contract = resolve_persisted_terminal_contract(
+                &home,
+                worker_id,
+                RunKind::Worker,
+                harness,
+                None,
+                None,
+                Some((*role).into()),
+                Some(false),
+            );
+            assert_eq!(
+                contract.requires_worker_finalize, *expect_fail_closed,
+                "contract for {role}"
+            );
+            let acquire_last = if contract.requires_worker_finalize {
+                Some(provision_recovery_last_path(
+                    &session_path,
+                    &format!("prior-{role}"),
+                ))
+            } else {
+                None
+            };
+            if *expect_fail_closed {
+                assert!(acquire_last.is_some(), "{role} recovery path provisioned");
+            }
+            let _acquire = state
+                .supervisor
+                .acquire(
+                    &ApiProtocolEndDriver,
+                    AcquireRequest {
+                        task_id: format!("recover-shape-{role}"),
+                        kind: RunKind::Worker,
+                        worker_id: (*worker_id).into(),
+                        role: contract.role.clone(),
+                        project_id: Some("proj".into()),
+                        worktree: Some(project_root.clone()),
+                        last_path: acquire_last,
+                        stdout_path: None,
+                        session_path: session_path.clone(),
+                        driver_config: DriverConfig::from_value(json!({})),
+                        babysitter_target: None,
+                        stall_timeout_secs: Some(0),
+                        max_run_duration_secs: Some(0),
+                        idle_timeout_secs: None,
+                        babysitter: None,
+                    },
+                )
+                .await
+                .unwrap_or_else(|e| panic!("acquire {role}: {e}"));
+
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < deadline {
+                if let Ok(body) = std::fs::read_to_string(&session_path) {
+                    if body.contains("\"phase\":\"release\"") || body.contains("release") {
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let body = std::fs::read_to_string(&session_path).unwrap_or_default();
+            if *expect_fail_closed {
+                assert!(
+                    body.contains("protocol_end_without_finalize"),
+                    "{role} recovery natural-end must fail closed: {body}"
+                );
+            } else {
+                assert!(
+                    !body.contains("protocol_end_without_finalize"),
+                    "custom terminal must stay exempt: {body}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_terminal_acquire_is_exempt_from_finalize_contract() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        let driver = orgasmic_drivers::TmuxTuiDriver;
+        let session_path = project_sessions_dir(&project_root).join("custom-terminal.jsonl");
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj:custom-terminal".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "terminal".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("custom terminal acquire");
+        let run_id = acquire.run_id;
+        state
+            .supervisor
+            .release(&run_id, "custom terminal closed", ReleaseOutcome::Completed)
+            .await
+            .expect("custom terminal release");
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            !body.contains("protocol_end_without_finalize"),
+            "custom terminal must be exempt: {body}"
+        );
+        assert!(body.contains("custom terminal closed"));
+    }
+
+    #[test]
     fn a_terminal_task_id_still_reads_as_operator_paced() {
         // The prefix gates the supervisor's stall/max-duration detectors; an
         // idle terminal sitting at a prompt must never read as a stalled worker.
@@ -12288,6 +13482,7 @@ mod tests {
             State(state.clone()),
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
+                run_id: None,
             }),
         )
         .await
@@ -12306,11 +13501,79 @@ mod tests {
             State(state.clone()),
             Json(ManagerReleaseRegistrationRequest {
                 project_id: "proj".into(),
+                run_id: None,
             }),
         )
         .await
         .expect("release is a no-op when nothing is registered");
         assert_eq!(no_op.status, "not_registered");
+    }
+
+    #[tokio::test]
+    async fn app_manager_release_via_run_id_writes_manager_released_tombstone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+
+        let driver = orgasmic_drivers::TmuxTuiDriver;
+        let session_path = project_sessions_dir(&project_root).join("manager-app-release.jsonl");
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: "manager.launch:proj".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "manager".into(),
+                    role: "manager".into(),
+                    project_id: Some("proj".into()),
+                    worktree: Some(project_root.clone()),
+                    last_path: None,
+                    stdout_path: None,
+                    session_path: session_path.clone(),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: Some(0),
+                    max_run_duration_secs: Some(0),
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                },
+            )
+            .await
+            .expect("app manager acquire succeeds");
+        let run_id = acquire.run_id;
+
+        let Json(released) = post_manager_release(
+            State(state.clone()),
+            Json(ManagerReleaseRegistrationRequest {
+                project_id: "proj".into(),
+                run_id: Some(run_id.clone()),
+            }),
+        )
+        .await
+        .expect("app manager release via run_id succeeds");
+        assert_eq!(released.status, "released");
+        assert_eq!(released.run_id.as_deref(), Some(run_id.as_str()));
+        assert!(!state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .any(|run| run.run_id == run_id));
+
+        let body = std::fs::read_to_string(&session_path).unwrap();
+        assert!(
+            body.contains("manager_released"),
+            "release must write manager_released tombstone: {body}"
+        );
+        assert!(
+            body.contains("\"finalized_by_worker\":true"),
+            "manager release must be worker-declared: {body}"
+        );
     }
 
     #[tokio::test]
@@ -12407,6 +13670,7 @@ mod tests {
                 State(state.clone()),
                 Json(ManagerReleaseRegistrationRequest {
                     project_id: "proj".into(),
+                    run_id: None,
                 }),
             )
             .await
@@ -12739,6 +14003,8 @@ mod tests {
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
                 last_path: None,
                 stdout_path: None,
+                role: None,
+                requires_worker_finalize: None,
                 driver_config: json!({"system_wide": true}),
             })
             .unwrap(),
@@ -12808,6 +14074,8 @@ mod tests {
                             worktree: Some(tmp.path().join("proj")),
                             last_path: None,
                             stdout_path: None,
+                            role: None,
+                            requires_worker_finalize: None,
                             driver_config: json!({}),
                         })
                         .unwrap(),
@@ -12962,6 +14230,8 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: Some(last_path.clone()),
                     stdout_path: Some(stdout_path.clone()),
+                    role: None,
+                    requires_worker_finalize: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -13215,6 +14485,8 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    role: None,
+                    requires_worker_finalize: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -13718,8 +14990,9 @@ mod tests {
     }
 
     #[test]
-    fn stage_outcome_treats_protocol_end_completed_release_as_success() {
-        // orgasmic:TASK-8PXDP — grill/plan stage runs keep protocol-end = success.
+    fn stage_outcome_treats_worker_finalize_tombstone_as_success() {
+        // orgasmic:TASK-S52X9 — grill/plan succeed only via worker-declared
+        // finalize, not protocol RunComplete alone.
         let tmp = tempfile::tempdir().unwrap();
         let session_path = tmp.path().join("grill-session.jsonl");
         let identity = RuntimeIdentity {
@@ -13752,9 +15025,9 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::Release {
-                    reason: "driver stream closed".into(),
+                    reason: "worker finalize for TASK-GRILL".into(),
                     outcome: ReleaseOutcome::Completed,
-                    finalized_by_worker: false,
+                    finalized_by_worker: true,
                 })
                 .unwrap(),
             )
@@ -13764,6 +15037,45 @@ mod tests {
         assert!(matches!(
             stage_outcome_from_session(&session_path),
             StageOutcome::Completed
+        ));
+    }
+
+    #[test]
+    fn stage_outcome_treats_protocol_end_without_finalize_as_failed() {
+        // orgasmic:TASK-S52X9
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("grill-failed.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-stage-fail".into(),
+            runtime_id: "rt-stage".into(),
+            boot_id: "boot-stage".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunComplete {
+                    summary: Some("protocol turn done".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "protocol_end_without_finalize".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(matches!(
+            stage_outcome_from_session(&session_path),
+            StageOutcome::Failed { .. }
         ));
     }
 
@@ -15981,6 +17293,8 @@ mod tests {
 
     #[tokio::test]
     async fn stage_completion_event_emitted_when_run_completes() {
+        // orgasmic:TASK-S52X9 — stage success requires a worker-declared
+        // finalize tombstone (RunComplete alone is not enough).
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -15994,13 +17308,28 @@ mod tests {
             runtime_id: "rt-stage-completed".into(),
             boot_id: "boot-stage-completed".into(),
         };
-        write_stage_session(
-            &session_path,
-            identity,
-            DriverEvent::RunComplete {
-                summary: Some("done".into()),
-            },
-        );
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunComplete {
+                    summary: Some("done".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-036-COMPLETE".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
 
         spawn_stage_completion_watcher(
             state.clone(),
@@ -18249,10 +19578,37 @@ mod tests {
             std::fs::read_to_string(art_dir.join("reviews.org")).unwrap()
         );
 
-        let _ = state
+        let session_path = state
             .supervisor
-            .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .find(|run| run.run_id == first.0.run_id)
+            .map(|run| run.session_path.clone())
+            .expect("live artifactor run after round-2 regenerate");
+        let pre_release = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            !pre_release.contains("protocol_end_without_finalize"),
+            "round-2 hot path must not false-fail before final release: {pre_release}"
+        );
+        state
+            .supervisor
+            .release_with_finalization(
+                &first.0.run_id,
+                "artifact_submitted",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("declaration-aware final release");
+
+        let session_body = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            session_body.contains("artifact_submitted"),
+            "round-2 hot path must preserve the v2 submit declaration through final release: {session_body}"
+        );
     }
 
     #[tokio::test]
@@ -18315,6 +19671,21 @@ mod tests {
         .await
         .expect("first regenerate should succeed");
 
+        // Real prior submit on the live artifactor run (TASK-ARZGD).
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1 submitted</RichText>\n".into(),
+                title: Some("Busy harness".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Submitted round".into()),
+            }),
+        )
+        .await
+        .expect("live-run submit should install prior declaration");
+
         let art_dir = artifact_dir(&project_root, art_id);
         let org_before = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
         let reviews_before = std::fs::read_to_string(art_dir.join("reviews.org")).unwrap();
@@ -18322,10 +19693,20 @@ mod tests {
             .join(".orgasmic/tx")
             .join(format!("{}.org", Utc::now().format("%Y-%m")));
         let tx_before = std::fs::read_to_string(&tx_path).unwrap_or_default();
+        let session_path = state
+            .supervisor
+            .snapshot()
+            .await
+            .runs
+            .iter()
+            .find(|run| run.run_id == first.0.run_id)
+            .map(|run| run.session_path.clone())
+            .expect("live artifactor after prior submit");
 
         // Harness is mid-turn until the dispatch prompt is consumed and the
         // composer prompt reappears — followup must be refused with no durable
-        // mutation (arch_045Q0.1 ordering).
+        // mutation (arch_045Q0.1 ordering). regenerate_in_flight must restore
+        // the prior declaration atomically (TASK-ARZGD P3).
         let err = post_artifact_regenerate(
             State(state.clone()),
             Extension(Identity::Admin),
@@ -18351,11 +19732,34 @@ mod tests {
             std::fs::read_to_string(&tx_path).unwrap_or_default(),
             tx_before
         );
+        let pre_end = std::fs::read_to_string(&session_path).unwrap_or_default();
+        assert!(
+            !pre_end.contains("protocol_end_without_finalize"),
+            "busy reject must not false-fail the prior submitted round: {pre_end}"
+        );
 
-        let _ = state
+        // Natural end of the hot session — prior declaration is the tombstone.
+        state
             .supervisor
-            .release(&first.0.run_id, "test cleanup", ReleaseOutcome::Completed)
-            .await;
+            .release_with_finalization(
+                &first.0.run_id,
+                "artifact_submitted",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            )
+            .await
+            .expect("prior declaration must still be releasable after busy reject");
+        let body = std::fs::read_to_string(&session_path).unwrap_or_default();
+        let submitted = body.matches("artifact_submitted").count();
+        assert!(
+            submitted >= 1,
+            "exactly one artifact_submitted Completed tombstone expected: {body}"
+        );
+        assert!(
+            !body.contains("protocol_end_without_finalize"),
+            "natural end after busy reject must not false-Fail: {body}"
+        );
     }
 
     #[tokio::test]
