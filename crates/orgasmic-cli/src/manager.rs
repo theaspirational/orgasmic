@@ -482,35 +482,41 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     let response = match runtime.block_on(client.post_dispatch(&plan)) {
         Ok(response) => response,
         Err(err) => {
+            let ambiguous =
+                crate::daemon_client::DaemonClient::dispatch_failure_needs_daemon_cleanup(&err);
+            if ambiguous {
+                // POST may have been accepted; commit ownership so a live daemon
+                // run retains its declared artifact paths (TASK-1FV1N).
+                reservation.commit();
+            }
             let reason = format!("daemon dispatch failed: {err}");
-            let cleanup =
-                if crate::daemon_client::DaemonClient::dispatch_failure_needs_daemon_cleanup(&err) {
-                    // If the cleanup request can't reach the daemon either, do
-                    // NOT fall back to local deletion: the original failure was
-                    // ambiguous, so a spawned worker may own the worktree
-                    // (fencing invariant). Leave the resources for inspection
-                    // and keep going so lifecycle restore + the original error
-                    // still surface.
-                    match runtime.block_on(request_daemon_dispatch_cleanup(&client, &plan)) {
-                        Ok(outcome) => outcome,
-                        Err(cleanup_err) => CleanupOutcome {
-                            status: CleanupStatus::Partial,
-                            error: Some(sanitize_tx_value(&format!(
-                                "daemon cleanup request failed: {cleanup_err}; worktree {} and branch {} left in place",
-                                plan.worktree_path.display(),
-                                plan.branch
-                            ))),
-                        },
-                    }
-                } else {
-                    cleanup_created_resources(
-                        &plan.project_root,
-                        &plan.worktree_path,
-                        &plan.branch,
-                        &plan.last_path,
-                        &plan.stdout_path,
-                    )
-                };
+            let cleanup = if ambiguous {
+                // If the cleanup request can't reach the daemon either, do
+                // NOT fall back to local deletion: the original failure was
+                // ambiguous, so a spawned worker may own the worktree
+                // (fencing invariant). Leave the resources for inspection
+                // and keep going so lifecycle restore + the original error
+                // still surface.
+                match runtime.block_on(request_daemon_dispatch_cleanup(&client, &plan)) {
+                    Ok(outcome) => outcome,
+                    Err(cleanup_err) => CleanupOutcome {
+                        status: CleanupStatus::Partial,
+                        error: Some(sanitize_tx_value(&format!(
+                            "daemon cleanup request failed: {cleanup_err}; worktree {} and branch {} left in place",
+                            plan.worktree_path.display(),
+                            plan.branch
+                        ))),
+                    },
+                }
+            } else {
+                cleanup_created_resources(
+                    &plan.project_root,
+                    &plan.worktree_path,
+                    &plan.branch,
+                    &plan.last_path,
+                    &plan.stdout_path,
+                )
+            };
             restore_task_lifecycle_stages(&client, &plan.project_id, &pre_dispatch_stages);
             if cleanup.status != CleanupStatus::Ok {
                 bail!(
@@ -522,6 +528,9 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
             bail!(reason);
         }
     };
+
+    // POST succeeded — commit artifact ownership before any further I/O.
+    reservation.commit();
 
     println!(
         "dispatched: {} {} pid={} run_id={} worker={} driver={} harness={} brief={}",
@@ -543,7 +552,6 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     } else {
         println!("watch: orgasmic run show {}", response.run_id);
     }
-    reservation.commit();
     Ok(())
 }
 
@@ -2748,6 +2756,7 @@ fn reserve_dispatch_artifact_pair(
 
 /// Atomically reserve the (brief, last, stdout) artifact paths for a dispatch.
 /// Prefer [`DispatchArtifactReservation`] in production dispatch paths.
+#[cfg(test)]
 fn reserve_dispatch_artifact_paths(
     project_root: &Path,
     brief_path: &Path,

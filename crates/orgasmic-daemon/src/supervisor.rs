@@ -237,6 +237,12 @@ pub enum SupervisorError {
     DeferredWhileInFlight(String),
     #[error("artifactor lifecycle busy: {0}")]
     ArtifactorLifecycleBusy(String),
+    #[error("dispatch cleanup in progress for task={task_id} kind={kind:?} worktree={worktree}")]
+    CleanupInProgress {
+        task_id: String,
+        kind: RunKind,
+        worktree: String,
+    },
 }
 
 #[derive(Clone)]
@@ -260,6 +266,39 @@ struct Inner {
     /// `(task_id, Babysitter)` lease. Prevents dispatch churn from turning
     /// one stale babysitter lease into an immediate retry loop.
     babysitter_auto_spawn_backoff: HashMap<String, BabysitterAutoSpawnBackoff>,
+    /// Active dispatch cleanup reservations held through filesystem mutation
+    /// (TASK-1FV1N). Blocks reuse of the same default worktree path.
+    cleanup_reservations: HashMap<CleanupReservationKey, DispatchCleanupReservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CleanupReservationKey {
+    task_id: String,
+    kind: RunKind,
+    worktree_key: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct DispatchCleanupReservation {
+    dispatch_attempt_token: Option<String>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+}
+
+/// Durable dispatch attempt owner recovered from persisted session JSONL.
+#[derive(Debug, Clone)]
+struct DurableDispatchOwner {
+    dispatch_attempt_token: Option<String>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+    worktree: Option<PathBuf>,
+    recorded_at: chrono::DateTime<Utc>,
+}
+
+enum CleanupIdentityAuth {
+    NoOwner,
+    ExactOwner,
+    IdentityMismatch,
 }
 
 /// Owns a lease reservation until the corresponding [`RunRecord`] is live.
@@ -559,6 +598,7 @@ impl Supervisor {
                 leases: HashMap::new(),
                 runs: HashMap::new(),
                 babysitter_auto_spawn_backoff: HashMap::new(),
+                cleanup_reservations: HashMap::new(),
             })),
             writer,
             boot,
@@ -768,6 +808,20 @@ impl Supervisor {
                     kind: req.kind,
                     run_id: existing.clone(),
                 });
+            }
+            if let Some(worktree) = req.worktree.as_ref() {
+                let reservation_key = CleanupReservationKey {
+                    task_id: req.task_id.clone(),
+                    kind: req.kind,
+                    worktree_key: normalize_cleanup_worktree(worktree),
+                };
+                if guard.cleanup_reservations.contains_key(&reservation_key) {
+                    return Err(SupervisorError::CleanupInProgress {
+                        task_id: req.task_id.clone(),
+                        kind: req.kind,
+                        worktree: worktree.display().to_string(),
+                    });
+                }
             }
             guard.leases.insert(lease_key.clone(), run_id.clone());
         }
@@ -2432,10 +2486,12 @@ impl Supervisor {
     }
 
     /// Authorize and optionally release a dispatch worker for cleanup. Returns
-    /// `Conflict` when the live run or a newer tokened attempt owns the same
-    /// worktree/artifacts so filesystem cleanup must not proceed (TASK-KE0JW).
+    /// `Conflict` when the live run, a durable session owner, a newer tokened
+    /// attempt, or an in-flight cleanup reservation owns the same worktree/
+    /// artifacts so filesystem cleanup must not proceed (TASK-KE0JW, TASK-1FV1N).
     pub async fn prepare_dispatch_cleanup(
         &self,
+        sessions_dir: &Path,
         task_id: &str,
         kind: RunKind,
         dispatch_attempt_token: Option<&str>,
@@ -2444,8 +2500,16 @@ impl Supervisor {
         stdout_path: Option<&Path>,
     ) -> Result<DispatchCleanupOutcome, SupervisorError> {
         let worktree_key = normalize_cleanup_worktree(worktree_path);
+        let reservation_key = CleanupReservationKey {
+            task_id: task_id.to_string(),
+            kind,
+            worktree_key: worktree_key.clone(),
+        };
         {
             let g = self.inner.lock().await;
+            if g.cleanup_reservations.contains_key(&reservation_key) {
+                return Ok(DispatchCleanupOutcome::Conflict);
+            }
             for rec in g.runs.values() {
                 if rec.task_id != task_id || rec.kind != kind {
                     continue;
@@ -2476,6 +2540,19 @@ impl Supervisor {
                 }
             }
         }
+
+        let durable_owner = scan_durable_dispatch_owner(sessions_dir, task_id, &worktree_key);
+        match authorize_cleanup_identity(
+            dispatch_attempt_token,
+            worktree_path,
+            last_path,
+            stdout_path,
+            durable_owner.as_ref(),
+        ) {
+            CleanupIdentityAuth::IdentityMismatch => return Ok(DispatchCleanupOutcome::Conflict),
+            CleanupIdentityAuth::NoOwner | CleanupIdentityAuth::ExactOwner => {}
+        }
+
         let released_run_id = self
             .release_dispatch_worker_for_cleanup(
                 task_id,
@@ -2486,7 +2563,40 @@ impl Supervisor {
                 stdout_path,
             )
             .await?;
+
+        {
+            let mut g = self.inner.lock().await;
+            g.cleanup_reservations.insert(
+                reservation_key,
+                DispatchCleanupReservation {
+                    dispatch_attempt_token: dispatch_attempt_token.map(str::to_string),
+                    last_path: last_path.map(Path::to_path_buf),
+                    stdout_path: stdout_path.map(Path::to_path_buf),
+                },
+            );
+        }
+
         Ok(DispatchCleanupOutcome::Proceed { released_run_id })
+    }
+
+    /// Release a dispatch cleanup reservation after filesystem mutation finishes.
+    pub async fn finish_dispatch_cleanup(
+        &self,
+        task_id: &str,
+        kind: RunKind,
+        worktree_path: &Path,
+    ) {
+        let worktree_key = normalize_cleanup_worktree(worktree_path);
+        let reservation_key = CleanupReservationKey {
+            task_id: task_id.to_string(),
+            kind,
+            worktree_key,
+        };
+        self.inner
+            .lock()
+            .await
+            .cleanup_reservations
+            .remove(&reservation_key);
     }
 
     /// Clear an *orphaned* lease: one held for `(task_id, kind)` whose run
@@ -3029,6 +3139,118 @@ fn dispatch_cleanup_identity_matches(
         && path_eq(rec.last_path.as_ref(), last_path)
         && path_eq(rec.stdout_path.as_ref(), stdout_path)
         && rec.dispatch_attempt_token.as_deref() == dispatch_attempt_token
+}
+
+fn durable_owner_identity_matches(
+    owner: &DurableDispatchOwner,
+    dispatch_attempt_token: Option<&str>,
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> bool {
+    fn path_eq(left: Option<&PathBuf>, right: Option<&Path>) -> bool {
+        match (left, right) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    owner.worktree.as_deref() == Some(worktree_path)
+        && path_eq(owner.last_path.as_ref(), last_path)
+        && path_eq(owner.stdout_path.as_ref(), stdout_path)
+        && owner.dispatch_attempt_token.as_deref() == dispatch_attempt_token
+}
+
+fn authorize_cleanup_identity(
+    dispatch_attempt_token: Option<&str>,
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+    durable_owner: Option<&DurableDispatchOwner>,
+) -> CleanupIdentityAuth {
+    let Some(owner) = durable_owner else {
+        return CleanupIdentityAuth::NoOwner;
+    };
+    if durable_owner_identity_matches(
+        owner,
+        dispatch_attempt_token,
+        worktree_path,
+        last_path,
+        stdout_path,
+    ) {
+        CleanupIdentityAuth::ExactOwner
+    } else if owner.dispatch_attempt_token.is_some() || dispatch_attempt_token.is_some() {
+        CleanupIdentityAuth::IdentityMismatch
+    } else {
+        CleanupIdentityAuth::NoOwner
+    }
+}
+
+fn scan_durable_dispatch_owner(
+    sessions_dir: &Path,
+    task_id: &str,
+    worktree_key: &Path,
+) -> Option<DurableDispatchOwner> {
+    let Ok(entries) = std::fs::read_dir(sessions_dir) else {
+        return None;
+    };
+    let mut latest: Option<DurableDispatchOwner> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Ok(envelopes) = read_session_file(&path) else {
+            continue;
+        };
+        let mut current_task: Option<String> = None;
+        for envelope in &envelopes {
+            if envelope.kind != SessionEventKind::Lifecycle {
+                continue;
+            }
+            match serde_json::from_value::<Lifecycle>(envelope.event.clone()) {
+                Ok(Lifecycle::Acquire {
+                    task_id: acquired_task,
+                    ..
+                }) => current_task = Some(acquired_task),
+                Ok(Lifecycle::RunMeta {
+                    worktree,
+                    last_path,
+                    stdout_path,
+                    dispatch_attempt_token,
+                    ..
+                }) => {
+                    let Some(acquired_task) = current_task.as_deref() else {
+                        continue;
+                    };
+                    if acquired_task != task_id {
+                        continue;
+                    }
+                    let Some(wt) = worktree.as_ref() else {
+                        continue;
+                    };
+                    if normalize_cleanup_worktree(wt) != *worktree_key {
+                        continue;
+                    }
+                    let candidate = DurableDispatchOwner {
+                        dispatch_attempt_token: dispatch_attempt_token.clone(),
+                        last_path: last_path.clone(),
+                        stdout_path: stdout_path.clone(),
+                        worktree: Some(wt.clone()),
+                        recorded_at: envelope.time,
+                    };
+                    if latest
+                        .as_ref()
+                        .is_none_or(|existing| candidate.recorded_at > existing.recorded_at)
+                    {
+                        latest = Some(candidate);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    latest
 }
 
 fn normalize_cleanup_worktree(path: &Path) -> PathBuf {
@@ -6851,6 +7073,7 @@ mod tests {
 
         let outcome = sup
             .prepare_dispatch_cleanup(
+                &dir.path().join("sessions"),
                 "TASK-CLEANUP-A",
                 RunKind::Worker,
                 Some("bbbb1111cccc2222dddd3333eeee4444"),
@@ -6861,6 +7084,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(outcome, DispatchCleanupOutcome::Conflict);
+        sup.finish_dispatch_cleanup("TASK-CLEANUP-A", RunKind::Worker, &worktree)
+            .await;
     }
 
     #[tokio::test]
@@ -6880,6 +7105,7 @@ mod tests {
 
         let outcome = sup
             .prepare_dispatch_cleanup(
+                &dir.path().join("sessions"),
                 "TASK-CLEANUP-B",
                 RunKind::Worker,
                 Some(token),
@@ -6895,5 +7121,7 @@ mod tests {
             } => assert_eq!(run_id, acquired.run_id),
             other => panic!("expected proceed with release, got {other:?}"),
         }
+        sup.finish_dispatch_cleanup("TASK-CLEANUP-B", RunKind::Worker, &worktree)
+            .await;
     }
 }

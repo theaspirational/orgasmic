@@ -1971,12 +1971,12 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
     write_git_proxy(&bin_dir);
     write_sleeping_stub_codex(&bin_dir);
     let path_env = path_with_stub(&bin_dir);
-    let codex_dir = tmp.path().join("codex");
-    std::fs::create_dir_all(&codex_dir).unwrap();
-    let brief = codex_dir.join("task-timeout-brief.md");
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let brief = stem_dir.join("task-dispatch-brief.md");
     write(&brief, "timeout regression brief");
-    let worktree = tmp.path().join("worktrees/task-timeout");
-    let branch = "task-timeout-impl";
+    let branch = "task-dispatch-impl";
+    let worktree = stem_dir.join("worktree");
 
     let running = boot_with_options(
         home.clone(),
@@ -2005,10 +2005,6 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
             brief.to_str().unwrap(),
             "--from",
             &head,
-            "--worktree",
-            worktree.to_str().unwrap(),
-            "--branch",
-            branch,
         ],
         &[("ORGASMIC_DISPATCH_HTTP_TIMEOUT_SECS", "1")],
     );

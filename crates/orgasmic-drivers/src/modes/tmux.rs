@@ -378,6 +378,52 @@ impl SendChildOwner {
         *self.active.lock().unwrap() = Some(child);
     }
 
+    /// Check cancellation, spawn, and register under one lock boundary.
+    pub(crate) async fn spawn_register_and_wait(
+        &self,
+        cancel: Option<&AtomicBool>,
+        build: impl FnOnce() -> Result<tokio::process::Command, DriverError>,
+    ) -> Result<(), DriverError> {
+        self.spawn_register_setup_and_wait(cancel, build, |_| Box::pin(async { Ok(()) }))
+            .await
+    }
+
+    async fn spawn_register_setup_and_wait(
+        &self,
+        cancel: Option<&AtomicBool>,
+        build: impl FnOnce() -> Result<tokio::process::Command, DriverError>,
+        setup: impl FnOnce(
+            &mut Child,
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<(), DriverError>> + Send + '_>,
+        >,
+    ) -> Result<(), DriverError> {
+        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            return Ok(());
+        }
+        let mut child = {
+            let _guard = self.active.lock().unwrap();
+            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                return Ok(());
+            }
+            let mut cmd = build()?;
+            cmd.spawn()
+                .map_err(|e| DriverError::Transport(format!("spawn: {e}")))?
+        };
+        setup(&mut child).await?;
+        {
+            let mut guard = self.active.lock().unwrap();
+            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                drop(guard);
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Ok(());
+            }
+            *guard = Some(child);
+        }
+        wait_for_owned_send_child(self, cancel).await
+    }
+
     pub(crate) async fn kill_and_reap(&self) {
         let child = self.active.lock().unwrap().take();
         if let Some(mut child) = child {
@@ -828,30 +874,48 @@ async fn paste_text_into_pane(
         return Ok(());
     }
     let buffer_name = format!("orgasmic-{}", sanitize_tmux_name(session));
-    let mut child = tokio::process::Command::new("tmux")
-        .args(["load-buffer", "-b", &buffer_name, "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| DriverError::Transport(format!("tmux load-buffer spawn: {e}")))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(text.as_bytes())
-            .await
-            .map_err(|e| DriverError::Transport(format!("tmux load-buffer write: {e}")))?;
-        let _ = stdin.shutdown().await;
-    }
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("tmux load-buffer wait: {e}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DriverError::Transport(format!(
-            "tmux load-buffer failed: {}",
-            stderr.trim()
-        )));
+    if let Some(owner) = send_child {
+        let text = text.as_bytes().to_vec();
+        owner
+            .spawn_register_setup_and_wait(
+                cancel,
+                || {
+                    let mut cmd = tokio::process::Command::new("tmux");
+                    cmd.args(["load-buffer", "-b", &buffer_name, "-"])
+                        .stdin(Stdio::piped())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::piped());
+                    Ok(cmd)
+                },
+                |child| {
+                    Box::pin(async move {
+                        if let Some(mut stdin) = child.stdin.take() {
+                            stdin.write_all(&text).await.map_err(|e| {
+                                DriverError::Transport(format!("tmux load-buffer write: {e}"))
+                            })?;
+                            let _ = stdin.shutdown().await;
+                        }
+                        Ok(())
+                    })
+                },
+            )
+            .await?;
+    } else {
+        let mut child = tokio::process::Command::new("tmux")
+            .args(["load-buffer", "-b", &buffer_name, "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| DriverError::Transport(format!("tmux load-buffer spawn: {e}")))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(text.as_bytes())
+                .await
+                .map_err(|e| DriverError::Transport(format!("tmux load-buffer write: {e}")))?;
+            let _ = stdin.shutdown().await;
+        }
+        wait_for_send_child(child, cancel).await?;
     }
     run_tmux(
         &["paste-buffer", "-p", "-b", &buffer_name, "-t", session],
@@ -884,16 +948,25 @@ async fn run_tmux(
     send_child: Option<&SendChildOwner>,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), DriverError> {
-    let child = tokio::process::Command::new("tmux")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| DriverError::Transport(format!("tmux {:?}: {e}", args)))?;
     if let Some(owner) = send_child {
-        owner.register(child);
-        wait_for_owned_send_child(owner, cancel).await
+        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        owner
+            .spawn_register_and_wait(cancel, || {
+                let mut cmd = tokio::process::Command::new("tmux");
+                for arg in &args {
+                    cmd.arg(arg);
+                }
+                cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+                Ok(cmd)
+            })
+            .await
     } else {
+        let child = tokio::process::Command::new("tmux")
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| DriverError::Transport(format!("tmux {:?}: {e}", args)))?;
         wait_for_send_child(child, cancel).await
     }
 }
@@ -1138,6 +1211,26 @@ pub(crate) fn is_cursor_trust_dialog_layout(pane: &str, workspace_path: &str) ->
     parse_cursor_trust_component(pane, workspace_path).is_some()
 }
 
+async fn send_trust_key_guarded<S, SFut>(
+    validated_pane: &str,
+    workspace_path: &str,
+    send_key: &mut S,
+    cancel: &Option<Arc<AtomicBool>>,
+) -> Result<(), DriverError>
+where
+    S: FnMut(&str) -> SFut,
+    SFut: std::future::Future<Output = Result<(), DriverError>>,
+{
+    if startup_cancelled(cancel) {
+        return Ok(());
+    }
+    if is_cursor_trust_dialog_layout(validated_pane, workspace_path) {
+        send_key("a").await
+    } else {
+        Ok(())
+    }
+}
+
 pub(crate) fn classify_cursor_startup_frame(
     pane: &str,
     workspace_path: &str,
@@ -1285,12 +1378,18 @@ async fn accept_cursor_workspace_trust(
             let session = session.clone();
             let send_child = send_child.clone();
             let cancel_for_send = cancel.clone();
+            let workspace_for_send = workspace_path.to_string();
             move |key| {
                 let session = session.clone();
                 let key = key.to_string();
                 let send_child = send_child.clone();
                 let cancel_for_send = cancel_for_send.clone();
+                let workspace_for_send = workspace_for_send.clone();
                 async move {
+                    let pane = capture_pane_visible(&session).await?;
+                    if !is_cursor_trust_dialog_layout(&pane, &workspace_for_send) {
+                        return Ok(());
+                    }
                     send_keys(
                         &session,
                         &[key],
@@ -1358,7 +1457,13 @@ where
                                 Ok(pane)
                                     if is_cursor_trust_dialog_layout(&pane, &workspace_path) =>
                                 {
-                                    send_key("a").await?;
+                                    send_trust_key_guarded(
+                                        &pane,
+                                        &workspace_path,
+                                        &mut send_key,
+                                        &cancel,
+                                    )
+                                    .await?;
                                 }
                                 _ => {}
                             }

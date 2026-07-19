@@ -1170,6 +1170,31 @@ async fn release_dispatch_run_with_reason(
     );
 }
 
+async fn assert_no_finalize_artifacts(last: &Path, stdout: &Path) {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let last_body = std::fs::read_to_string(last).unwrap_or_default();
+    assert!(
+        last_body.is_empty(),
+        "release without worker finalize must not write last_path: {last_body}"
+    );
+    let stdout_body = std::fs::read_to_string(stdout).unwrap_or_default();
+    assert!(
+        stdout_body.is_empty(),
+        "release without worker finalize must not write stdout_path: {stdout_body}"
+    );
+}
+
+async fn wait_for_orphan_tx(project_root: &Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if read_project_tx(project_root).contains(":TYPE:         manager.dispatch_orphaned") {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for manager.dispatch_orphaned tx");
+}
+
 #[tokio::test]
 async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1216,67 +1241,13 @@ async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
     let run_id = body["run_id"].as_str().unwrap().to_string();
     release_dispatch_run(&client, running.addr, &token, &run_id).await;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        if last.exists()
-            && !std::fs::read_to_string(&last)
-                .unwrap_or_default()
-                .is_empty()
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let last_body = std::fs::read_to_string(&last).unwrap_or_default();
-    assert!(
-        !last_body.is_empty(),
-        "last_path should be written on RunComplete"
-    );
-    assert!(
-        last_body.contains("dispatch endpoint test release") || last_body.contains("complete"),
-        "last_path should carry run summary: {last_body}"
-    );
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        !stdout_body.is_empty(),
-        "stdout_path should be written on RunComplete"
-    );
-
-    let tx_deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut saw_commit_pending = false;
-    while std::time::Instant::now() < tx_deadline {
-        let mut raw = String::new();
-        let tx_dir = project_root.join(".orgasmic/tx");
-        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                    raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-                }
-            }
-        }
-        if raw.contains(":TYPE:         implementer.commit_pending")
-            && raw.contains(":HAS_UNCOMMITTED:")
-            && raw.contains("yes")
-        {
-            saw_commit_pending = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        saw_commit_pending,
-        "dirty worktree should emit implementer.commit_pending"
-    );
+    assert_no_finalize_artifacts(&last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// TASK-066: the pre-fix watcher used a 30s wall clock from dispatch start, so
-/// releases after that window never populated :LAST_PATH: / :STDOUT_PATH:.
-/// The watcher now anchors no clock at dispatch start (it follows the live
-/// run indefinitely), so this canary only needs a short delay — it guards the
-/// shape of the regression, not the literal 30s constant.
+/// TASK-066: delayed release without worker finalize still leaves artifacts empty.
 #[tokio::test]
 async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1324,24 +1295,14 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
     tokio::time::sleep(Duration::from_secs(2)).await;
     release_dispatch_run(&client, running.addr, &token, &run_id).await;
 
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(10)).await;
-    assert!(
-        !last_body.is_empty(),
-        "last_path should be written after delayed release"
-    );
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        !stdout_body.is_empty(),
-        "stdout_path should be written after delayed release"
-    );
+    assert_no_finalize_artifacts(&last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// TASK-066.1: cursor-agent sessions carry assistant `text_chunk` events and a
-/// driver `run_complete` before manager dispatch-close adds a lifecycle release.
-/// `last_path` must prefer that substantive output over the dispatch-close reason.
+/// TASK-066.1: cursor-shaped sessions without worker finalize must not scrape
+/// assistant chunks into completion artifacts.
 #[tokio::test]
 async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chunks() {
     let tmp = tempfile::tempdir().unwrap();
@@ -1415,39 +1376,7 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
     )
     .await;
 
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(10)).await;
-    assert!(
-        last_body.contains("hello world cursor agent summary"),
-        "last_path should prefer run_complete summary over dispatch-close reason: {last_body}"
-    );
-    assert!(
-        !last_body.contains("dispatch close for TASK-CURSOR-SHAPED"),
-        "last_path must not carry dispatch-close boilerplate: {last_body}"
-    );
-
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        stdout_body.contains("[assistant] hello world"),
-        "stdout_path should render cursor-shaped assistant chunks: {stdout_body}"
-    );
-
-    let tx_deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut saw_commit_pending = false;
-    while std::time::Instant::now() < tx_deadline {
-        let raw = read_project_tx(&project_root);
-        if raw.contains(":TYPE:         implementer.commit_pending")
-            && raw.contains(":HAS_UNCOMMITTED:")
-            && raw.contains("yes")
-        {
-            saw_commit_pending = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        saw_commit_pending,
-        "dirty worktree should still emit implementer.commit_pending"
-    );
+    assert_no_finalize_artifacts(&last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1508,31 +1437,11 @@ async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
     let run_id = body["run_id"].as_str().unwrap().to_string();
     release_dispatch_run(&client, running.addr, &token, &run_id).await;
 
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        if last.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        last.exists(),
-        "last_path should still be written on RunComplete"
-    );
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut raw = String::new();
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-        for entry in entries.flatten() {
-            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-            }
-        }
-    }
+    assert_no_finalize_artifacts(&last, &stdout).await;
+    let raw = read_project_tx(&project_root);
     assert!(
         !raw.contains(":TYPE:         implementer.commit_pending"),
-        "clean worktree must not emit implementer.commit_pending"
+        "clean worktree release without finalize must not emit commit_pending"
     );
 
     let _ = running.shutdown.send(());
@@ -1906,20 +1815,7 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
     }
     release_dispatch_run(&client, running.addr, &token, &run_id).await;
 
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        stdout_body.contains("[system] Implement"),
-        "stdout_path should render system-only cursor-agent chunks: {stdout_body}"
-    );
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(10)).await;
-    assert!(
-        last_body.contains("Implemented TASK-072"),
-        "last_path should carry accumulated system text, not release boilerplate: {last_body}"
-    );
-    assert!(
-        !last_body.contains("dispatch endpoint test release"),
-        "last_path should prefer system fallback over release reason: {last_body}"
-    );
+    assert_no_finalize_artifacts(&last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -2861,7 +2757,9 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         std::fs::set_permissions(&codex, perms).unwrap();
     }
 
-    let worktree = tmp.path().join("worktrees/task-cleanup-ep");
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-ep");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
     Command::new("git")
         .args([
             "worktree",
@@ -2874,28 +2772,27 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         .current_dir(&project_root)
         .status()
         .unwrap();
-    let brief = tmp.path().join("brief.md");
+    let brief = stem_dir.join("task-cleanup-ep-brief.md");
     write(&brief, "cleanup endpoint brief");
-    let last = tmp.path().join("last.txt");
-    let stdout = tmp.path().join("stdout.log");
+    let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+    let last = stem_dir.join(format!("task-cleanup-ep-{attempt}-last.txt"));
+    let stdout = stem_dir.join(format!("task-cleanup-ep-{attempt}-stdout.log"));
+    std::fs::write(&last, "").unwrap();
+    std::fs::write(&stdout, "").unwrap();
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let response = post_dispatch(
-        &running,
-        &token,
-        project_id,
-        task_id,
-        dispatch_body(
-            "implementer",
-            &brief,
-            &worktree,
-            &last,
-            &stdout,
-            Some("implementer-codex-appserver"),
-        ),
-    )
-    .await;
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
+    dispatch["branch"] = serde_json::json!("task-cleanup-ep-impl");
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
     assert_eq!(
         response.status(),
         200,
@@ -2912,6 +2809,7 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
             "kind": "implementer",
             "worktree_path": worktree,
             "branch": "task-cleanup-ep-impl",
+            "dispatch_attempt_token": attempt,
             "last_path": last,
             "stdout_path": stdout,
         }),

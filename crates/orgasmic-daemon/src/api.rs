@@ -4209,6 +4209,7 @@ async fn post_task_dispatch_cleanup(
     let cleanup = match state
         .supervisor
         .prepare_dispatch_cleanup(
+            &orgasmic_core::project_sessions_dir(&project.root),
             &task_id,
             kind.run_kind(),
             req.dispatch_attempt_token.as_deref(),
@@ -4254,6 +4255,11 @@ async fn post_task_dispatch_cleanup(
         }
     };
 
+    state
+        .supervisor
+        .finish_dispatch_cleanup(&task_id, kind.run_kind(), &req.worktree_path)
+        .await;
+
     let status = match (worktree_removed, branch_deleted, errors.is_empty()) {
         (true, true, true) => "ok",
         (false, false, true) => "noop",
@@ -4288,8 +4294,7 @@ fn remove_dispatch_worktree(
         path,
         last_path,
         stdout_path,
-    )
-    .ok();
+    )?;
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -4297,9 +4302,7 @@ fn remove_dispatch_worktree(
         .output()
         .map_err(|err| err.to_string())?;
     if output.status.success() {
-        if let Some(artifacts) = artifacts {
-            orgasmic_core::prune_validated_dispatch_attempt(&artifacts)?;
-        }
+        orgasmic_core::prune_validated_dispatch_attempt(&artifacts)?;
         Ok(true)
     } else {
         Err(format!(
@@ -4382,7 +4385,10 @@ fn validate_dispatch_path(field: &str, path: &FsPath) -> Result<(), ApiError> {
 }
 
 fn validate_dispatch_worktree_dir(path: &FsPath) -> Result<(), ApiError> {
-    match std::fs::metadata(path) {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(ApiError::bad_request("worktree path must not be a symlink"))
+        }
         Ok(meta) if meta.is_dir() => Ok(()),
         _ => Err(ApiError::bad_request(
             "worktree path does not exist or is not a directory",

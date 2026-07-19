@@ -88,14 +88,19 @@ pub fn project_dispatch_dir(project_root: &Path) -> PathBuf {
 }
 
 /// Validated dispatch attempt artifact pair for cleanup. Stores the opened
-/// stem directory handle and relative artifact names — never canonicalized
-/// sibling paths that could be redirected by symlink/TOCTOU (TASK-KE0JW).
+/// stem directory handle, no-follow artifact file handles, and relative names
+/// so unlink targets the validated inode, not a replaced same-name entry
+/// (TASK-KE0JW, TASK-1FV1N).
 pub struct DispatchAttemptArtifacts {
     pub stem: String,
     pub attempt_id: Option<String>,
     stem_dir_handle: std::fs::File,
     last_name: String,
     stdout_name: String,
+    #[cfg(unix)]
+    last_file: std::fs::File,
+    #[cfg(unix)]
+    stdout_file: std::fs::File,
 }
 
 /// Validate that `worktree_path` and the artifact pair belong to the selected
@@ -131,8 +136,24 @@ pub fn prune_dispatch_stem_after_worktree(
 pub fn prune_validated_dispatch_attempt(
     artifacts: &DispatchAttemptArtifacts,
 ) -> Result<(), String> {
-    unlink_artifact_in_stem_dir(&artifacts.stem_dir_handle, &artifacts.last_name)?;
-    unlink_artifact_in_stem_dir(&artifacts.stem_dir_handle, &artifacts.stdout_name)?;
+    #[cfg(unix)]
+    {
+        unlink_validated_artifact(
+            &artifacts.stem_dir_handle,
+            &artifacts.last_name,
+            &artifacts.last_file,
+        )?;
+        unlink_validated_artifact(
+            &artifacts.stem_dir_handle,
+            &artifacts.stdout_name,
+            &artifacts.stdout_file,
+        )?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = artifacts;
+        return Err("no-follow dispatch artifact deletion requires unix".into());
+    }
     Ok(())
 }
 
@@ -142,6 +163,19 @@ fn validate_dispatch_worktree_layout(
 ) -> Result<(PathBuf, String), String> {
     if worktree_path.file_name().and_then(|s| s.to_str()) != Some("worktree") {
         return Err("worktree path must end with /worktree".into());
+    }
+    let wt_meta = std::fs::symlink_metadata(worktree_path).map_err(|err| err.to_string())?;
+    if wt_meta.file_type().is_symlink() {
+        return Err(format!(
+            "worktree path is a symlink: {}",
+            worktree_path.display()
+        ));
+    }
+    if !wt_meta.is_dir() {
+        return Err(format!(
+            "worktree path is not a directory: {}",
+            worktree_path.display()
+        ));
     }
     let canonical_root = canonicalize_dir(project_root)?;
     let canonical_worktree = canonicalize_path(worktree_path)?;
@@ -173,6 +207,7 @@ fn validate_dispatch_artifact_pair(
     last_path: &Path,
     stdout_path: &Path,
 ) -> Result<DispatchAttemptArtifacts, String> {
+    let stem_dir_handle = open_stem_dir(stem_dir)?;
     let last_name = validate_dispatch_artifact_file(stem_dir, stem, last_path)?;
     let stdout_name = validate_dispatch_artifact_file(stem_dir, stem, stdout_path)?;
     let (last_attempt, last_kind) = parse_dispatch_artifact_name(stem, &last_name)?;
@@ -186,12 +221,22 @@ fn validate_dispatch_artifact_pair(
     if last_name.ends_with("-brief.md") || stdout_name.ends_with("-brief.md") {
         return Err("brief path cannot be a cleanup artifact".into());
     }
+    #[cfg(unix)]
+    let (last_file, stdout_file) = {
+        let last_file = open_artifact_in_stem_dir(&stem_dir_handle, &last_name)?;
+        let stdout_file = open_artifact_in_stem_dir(&stem_dir_handle, &stdout_name)?;
+        (last_file, stdout_file)
+    };
     Ok(DispatchAttemptArtifacts {
         stem: stem.to_string(),
         attempt_id: last_attempt,
-        stem_dir_handle: open_stem_dir(stem_dir)?,
+        stem_dir_handle,
         last_name,
         stdout_name,
+        #[cfg(unix)]
+        last_file,
+        #[cfg(unix)]
+        stdout_file,
     })
 }
 
@@ -200,14 +245,40 @@ fn open_stem_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_DIRECTORY | libc::O_CLOEXEC)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
         .open(stem_dir)
         .map_err(|err| err.to_string())
 }
 
 #[cfg(not(unix))]
-fn open_stem_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
-    std::fs::File::open(stem_dir).map_err(|err| err.to_string())
+fn open_stem_dir(_stem_dir: &Path) -> Result<std::fs::File, String> {
+    Err("no-follow dispatch cleanup requires unix".into())
+}
+
+#[cfg(unix)]
+fn open_artifact_in_stem_dir(
+    stem_dir: &std::fs::File,
+    name: &str,
+) -> Result<std::fs::File, String> {
+    use std::ffi::CString;
+    use std::os::unix::io::AsRawFd;
+
+    if name.contains('/') || name.contains('\0') {
+        return Err(format!("invalid artifact name {name}"));
+    }
+    let dir_fd = stem_dir.as_raw_fd();
+    let name_c = CString::new(name).map_err(|_| format!("invalid artifact name {name}"))?;
+    let file_fd = unsafe {
+        libc::openat(
+            dir_fd,
+            name_c.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if file_fd < 0 {
+        return Err(std::io::Error::last_os_error().to_string());
+    }
+    Ok(unsafe { std::fs::File::from_raw_fd(file_fd) })
 }
 
 fn validate_dispatch_artifact_file(
@@ -250,7 +321,11 @@ fn validate_dispatch_artifact_file(
 }
 
 #[cfg(unix)]
-fn unlink_artifact_in_stem_dir(stem_dir: &std::fs::File, name: &str) -> Result<(), String> {
+fn unlink_validated_artifact(
+    stem_dir: &std::fs::File,
+    name: &str,
+    validated_file: &std::fs::File,
+) -> Result<(), String> {
     use std::ffi::CString;
     use std::os::unix::io::AsRawFd;
 
@@ -258,46 +333,50 @@ fn unlink_artifact_in_stem_dir(stem_dir: &std::fs::File, name: &str) -> Result<(
         return Err(format!("invalid artifact name {name}"));
     }
     let dir_fd = stem_dir.as_raw_fd();
+    let file_fd = validated_file.as_raw_fd();
     let name_c = CString::new(name).map_err(|_| format!("invalid artifact name {name}"))?;
-    let file_fd = unsafe {
-        libc::openat(
+    let mut stat_file = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let mut stat_name = std::mem::MaybeUninit::<libc::stat>::uninit();
+    unsafe {
+        if libc::fstat(file_fd, stat_file.as_mut_ptr()) != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        if libc::fstatat(
             dir_fd,
             name_c.as_ptr(),
-            libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
-        )
-    };
-    if file_fd < 0 {
-        let err = std::io::Error::last_os_error();
-        if err.kind() == std::io::ErrorKind::NotFound {
-            return Ok(());
+            stat_name.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        ) != 0
+        {
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::NotFound {
+                return Ok(());
+            }
+            return Err(err.to_string());
         }
-        return Err(err.to_string());
-    }
-    unsafe {
-        libc::close(file_fd);
-    }
-    let rc = unsafe { libc::unlinkat(dir_fd, name_c.as_ptr(), 0) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        let err = std::io::Error::last_os_error();
-        if err.kind() == std::io::ErrorKind::NotFound {
+        let stat_file = stat_file.assume_init();
+        let stat_name = stat_name.assume_init();
+        if stat_file.st_ino != stat_name.st_ino || stat_file.st_dev != stat_name.st_dev {
+            return Err(format!(
+                "artifact identity mismatch before unlink for {name}"
+            ));
+        }
+        let rc = libc::unlinkat(dir_fd, name_c.as_ptr(), 0);
+        if rc == 0 {
             Ok(())
         } else {
-            Err(err.to_string())
+            let err = std::io::Error::last_os_error();
+            if err.kind() == std::io::ErrorKind::NotFound {
+                Ok(())
+            } else {
+                Err(err.to_string())
+            }
         }
     }
 }
 
-#[cfg(not(unix))]
-fn unlink_artifact_in_stem_dir(stem_dir: &std::fs::File, name: &str) -> Result<(), String> {
-    let path = stem_dir.metadata().ok().and_then(|_| {
-        // Best-effort non-unix fallback: use parent path from open handle is unavailable.
-        None
-    });
-    let _ = path;
-    Err("no-follow dispatch artifact deletion requires unix".into())
-}
+#[cfg(unix)]
+use std::os::unix::io::FromRawFd;
 
 fn parse_dispatch_artifact_name(
     stem: &str,
