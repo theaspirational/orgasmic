@@ -125,12 +125,12 @@ impl DaemonClient {
 
     pub(crate) fn dispatch_failure_needs_daemon_cleanup(err: &anyhow::Error) -> bool {
         let msg = err.to_string();
+        // Confirmed daemon rejection — safe to roll back CLI-local resources.
         if msg.contains("daemon returned") {
             return false;
         }
-        msg.contains("timed out")
-            || msg.contains("operation timed out")
-            || msg.contains("daemon request failed")
+        // Any other post-send error may have reached the daemon (TASK-NW4WV).
+        true
     }
 
     fn url(&self, path: &str) -> String {
@@ -454,5 +454,34 @@ mod tests {
         let _clear = ScopedEnv::clear(&[DAEMON_URL_ENV, DAEMON_TOKEN_FILE_ENV]);
 
         assert_eq!(read_bearer_token(&home).unwrap(), "home-token");
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_daemon_rejection_is_local_rollback() {
+        let err = anyhow::Error::msg(r#"daemon returned 409 Conflict: {"error":"lease held"}"#);
+        assert!(
+            !DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "confirmed daemon HTTP rejection must not trigger daemon cleanup"
+        );
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_decode_error_is_ambiguous() {
+        let err =
+            anyhow::anyhow!("decode daemon response: invalid type: integer `1`, expected a string");
+        assert!(
+            DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "post-send decode failures may have reached the daemon"
+        );
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_transport_error_is_ambiguous() {
+        let err =
+            anyhow::anyhow!("daemon request failed: connection refused — is the daemon reachable?");
+        assert!(
+            DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "transport failures after POST may have reached the daemon"
+        );
     }
 }

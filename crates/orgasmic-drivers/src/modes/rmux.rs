@@ -910,18 +910,29 @@ async fn run_rmux_cli_with_owner(
     send_child: Option<&SendChildOwner>,
     cancel: Option<&AtomicBool>,
 ) -> Result<(), DriverError> {
-    let child = tokio::process::Command::new(bin)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| {
-            DriverError::Transport(format!("rmux {}: {e}", args.first().unwrap_or(&"")))
-        })?;
     if let Some(owner) = send_child {
-        owner.register(child);
-        wait_for_owned_send_child(owner, cancel).await
+        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        owner
+            .spawn_register_and_wait(cancel, || {
+                let mut cmd = tokio::process::Command::new(bin);
+                for arg in &args {
+                    cmd.arg(arg);
+                }
+                cmd.stdout(Stdio::null())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true);
+                Ok(cmd)
+            })
+            .await
     } else {
+        let child = tokio::process::Command::new(bin)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                DriverError::Transport(format!("rmux {}: {e}", args.first().unwrap_or(&"")))
+            })?;
         wait_for_rmux_child(child, cancel).await
     }
 }

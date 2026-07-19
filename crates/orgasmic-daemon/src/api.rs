@@ -60,7 +60,7 @@ use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, DiffSummarizer, DispatchCleanupOutcome, Supervisor,
+    BabysitterAutoSpawn, DiffSummarizer, DispatchCleanupOutcome, DispatchCleanupParams, Supervisor,
     DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
@@ -4206,16 +4206,40 @@ async fn post_task_dispatch_cleanup(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     drop(snap);
 
+    let cleanup_params = DispatchCleanupParams {
+        task_id: task_id.clone(),
+        kind: kind.run_kind(),
+        branch: req.branch.clone(),
+        worktree_path: req.worktree_path.clone(),
+        dispatch_attempt_token: req.dispatch_attempt_token.clone(),
+        last_path: req.last_path.clone(),
+        stdout_path: req.stdout_path.clone(),
+    };
+
+    // Validate the entire mutation plan before changing anything (TASK-NW4WV).
+    let validated_artifacts = match orgasmic_core::validate_dispatch_cleanup_targets(
+        &project.root,
+        &req.worktree_path,
+        req.last_path.as_deref(),
+        req.stdout_path.as_deref(),
+    ) {
+        Ok(artifacts) => artifacts,
+        Err(err) => {
+            return Ok(Json(DispatchCleanupResponse {
+                status: "failed".into(),
+                released_run_id: None,
+                worktree_removed: false,
+                branch_deleted: false,
+                error: Some(format!("validation: {err}")),
+            }));
+        }
+    };
+
     let cleanup = match state
         .supervisor
         .prepare_dispatch_cleanup(
             &orgasmic_core::project_sessions_dir(&project.root),
-            &task_id,
-            kind.run_kind(),
-            req.dispatch_attempt_token.as_deref(),
-            &req.worktree_path,
-            req.last_path.as_deref(),
-            req.stdout_path.as_deref(),
+            &cleanup_params,
         )
         .await
     {
@@ -4235,18 +4259,30 @@ async fn post_task_dispatch_cleanup(
     let released_run_id = cleanup;
 
     let mut errors = Vec::new();
-    let worktree_removed = match remove_dispatch_worktree(
-        &project.root,
-        &req.worktree_path,
-        req.last_path.as_deref(),
-        req.stdout_path.as_deref(),
-    ) {
-        Ok(removed) => removed,
-        Err(err) => {
-            errors.push(format!("worktree: {err}"));
-            false
-        }
-    };
+    let worktree_removed =
+        match remove_dispatch_worktree(&project.root, &req.worktree_path, &validated_artifacts) {
+            Ok(removed) => removed,
+            Err(err) => {
+                errors.push(format!("worktree: {err}"));
+                state
+                    .supervisor
+                    .finish_dispatch_cleanup(
+                        &task_id,
+                        kind.run_kind(),
+                        &req.worktree_path,
+                        Some(&req.branch),
+                        req.dispatch_attempt_token.as_deref(),
+                    )
+                    .await;
+                return Ok(Json(DispatchCleanupResponse {
+                    status: "failed".into(),
+                    released_run_id,
+                    worktree_removed: false,
+                    branch_deleted: false,
+                    error: Some(errors.join("; ")),
+                }));
+            }
+        };
     let branch_deleted = match delete_dispatch_branch(&project.root, &req.branch) {
         Ok(deleted) => deleted,
         Err(err) => {
@@ -4257,7 +4293,13 @@ async fn post_task_dispatch_cleanup(
 
     state
         .supervisor
-        .finish_dispatch_cleanup(&task_id, kind.run_kind(), &req.worktree_path)
+        .finish_dispatch_cleanup(
+            &task_id,
+            kind.run_kind(),
+            &req.worktree_path,
+            Some(&req.branch),
+            req.dispatch_attempt_token.as_deref(),
+        )
         .await;
 
     let status = match (worktree_removed, branch_deleted, errors.is_empty()) {
@@ -4283,18 +4325,11 @@ async fn post_task_dispatch_cleanup(
 fn remove_dispatch_worktree(
     project_root: &FsPath,
     path: &FsPath,
-    last_path: Option<&FsPath>,
-    stdout_path: Option<&FsPath>,
+    artifacts: &orgasmic_core::DispatchAttemptArtifacts,
 ) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
-    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
-        project_root,
-        path,
-        last_path,
-        stdout_path,
-    )?;
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -4302,7 +4337,7 @@ fn remove_dispatch_worktree(
         .output()
         .map_err(|err| err.to_string())?;
     if output.status.success() {
-        orgasmic_core::prune_validated_dispatch_attempt(&artifacts)?;
+        orgasmic_core::prune_validated_dispatch_attempt(artifacts)?;
         Ok(true)
     } else {
         Err(format!(

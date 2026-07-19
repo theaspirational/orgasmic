@@ -402,15 +402,15 @@ impl SendChildOwner {
             return Ok(());
         }
         let mut child = {
-            let _guard = self.active.lock().unwrap();
+            let mut guard = self.active.lock().unwrap();
             if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
                 return Ok(());
             }
             let mut cmd = build()?;
+            cmd.kill_on_drop(true);
             cmd.spawn()
                 .map_err(|e| DriverError::Transport(format!("spawn: {e}")))?
         };
-        setup(&mut child).await?;
         {
             let mut guard = self.active.lock().unwrap();
             if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
@@ -421,6 +421,24 @@ impl SendChildOwner {
             }
             *guard = Some(child);
         }
+        let mut child = self
+            .active
+            .lock()
+            .unwrap()
+            .take()
+            .expect("registered child");
+        let setup_result = setup(&mut child).await;
+        {
+            let mut guard = self.active.lock().unwrap();
+            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                drop(guard);
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Ok(());
+            }
+            *guard = Some(child);
+        }
+        setup_result?;
         wait_for_owned_send_child(self, cancel).await
     }
 
@@ -957,6 +975,7 @@ async fn run_tmux(
                     cmd.arg(arg);
                 }
                 cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+                cmd.kill_on_drop(true);
                 Ok(cmd)
             })
             .await
@@ -1225,6 +1244,8 @@ where
         return Ok(());
     }
     if is_cursor_trust_dialog_layout(validated_pane, workspace_path) {
+        // Deliver immediately after synchronous re-validation on the captured
+        // frame — send_key must spawn without an intervening mux capture (TASK-NW4WV).
         send_key("a").await
     } else {
         Ok(())
@@ -1378,18 +1399,12 @@ async fn accept_cursor_workspace_trust(
             let session = session.clone();
             let send_child = send_child.clone();
             let cancel_for_send = cancel.clone();
-            let workspace_for_send = workspace_path.to_string();
             move |key| {
                 let session = session.clone();
                 let key = key.to_string();
                 let send_child = send_child.clone();
                 let cancel_for_send = cancel_for_send.clone();
-                let workspace_for_send = workspace_for_send.clone();
                 async move {
-                    let pane = capture_pane_visible(&session).await?;
-                    if !is_cursor_trust_dialog_layout(&pane, &workspace_for_send) {
-                        return Ok(());
-                    }
                     send_keys(
                         &session,
                         &[key],
@@ -1725,6 +1740,8 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::collections::VecDeque;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Mutex;
 
     /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
     /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
@@ -2226,6 +2243,68 @@ mod tests {
         assert!(
             sent.is_empty(),
             "must not send after trust frame transitions"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_no_send_when_pane_transitions_during_blocked_send() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let ready = "cursor-agent\n❯ \n";
+        let pane_state = Arc::new(Mutex::new(trust.clone()));
+        let capture_count = Arc::new(AtomicUsize::new(0));
+        let second_capture_blocked = Arc::new(tokio::sync::Notify::new());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let accept = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(200),
+            Duration::from_millis(1),
+            {
+                let pane_state = pane_state.clone();
+                let capture_count = capture_count.clone();
+                let second_capture_blocked = second_capture_blocked.clone();
+                move || {
+                    let pane_state = pane_state.clone();
+                    let capture_count = capture_count.clone();
+                    let second_capture_blocked = second_capture_blocked.clone();
+                    async move {
+                        let n = capture_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 1 {
+                            second_capture_blocked.notified().await;
+                        }
+                        Ok(pane_state.lock().unwrap().clone())
+                    }
+                }
+            },
+            || async { true },
+            {
+                let sent = sent.clone();
+                move |key: &str| {
+                    let sent = sent.clone();
+                    let key = key.to_string();
+                    async move {
+                        sent.lock().unwrap().push(key);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Ok(())
+                    }
+                }
+            },
+            None,
+        );
+        let accept = tokio::spawn(accept);
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        while capture_count.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            capture_count.load(Ordering::SeqCst) >= 2,
+            "expected trust re-validation capture to block before send"
+        );
+        *pane_state.lock().unwrap() = ready.to_string();
+        second_capture_blocked.notify_waiters();
+        assert!(accept.await.unwrap().is_ok());
+        assert!(
+            sent.lock().unwrap().is_empty(),
+            "must not send when pane transitions during blocked re-validation capture"
         );
     }
 

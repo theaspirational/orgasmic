@@ -1184,6 +1184,38 @@ async fn assert_no_finalize_artifacts(last: &Path, stdout: &Path) {
     );
 }
 
+async fn assert_orphan_without_finalize_artifacts(project_root: &Path, last: &Path, stdout: &Path) {
+    wait_for_orphan_tx(project_root).await;
+    assert_no_finalize_artifacts(last, stdout).await;
+}
+
+async fn wait_for_session_failed_release(session_path: &Path, reason: &str) {
+    use orgasmic_core::Lifecycle;
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if let Ok(envelopes) = read_session_file(session_path) {
+            for envelope in envelopes.iter().rev() {
+                if envelope.kind != SessionEventKind::Lifecycle {
+                    continue;
+                }
+                if let Ok(Lifecycle::Release {
+                    outcome,
+                    reason: release_reason,
+                    ..
+                }) = serde_json::from_value(envelope.event.clone())
+                {
+                    if outcome == orgasmic_core::ReleaseOutcome::Failed && release_reason == reason
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for failed release reason={reason}");
+}
+
 async fn wait_for_orphan_tx(project_root: &Path) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
@@ -1195,15 +1227,24 @@ async fn wait_for_orphan_tx(project_root: &Path) {
     panic!("timed out waiting for manager.dispatch_orphaned tx");
 }
 
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
+async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_empty() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-LAST";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -1214,9 +1255,12 @@ async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
     init_git_worktree(&worktree);
     write(&worktree.join("dirty.txt"), "uncommitted change\n");
 
+    let script = fake_cursor_protocol_exit_script("orphan-last");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1238,25 +1282,35 @@ async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    assert_no_finalize_artifacts(&last, &stdout).await;
+    let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// TASK-066: delayed release without worker finalize still leaves artifacts empty.
+/// TASK-066: delayed protocol end without worker finalize orphans and leaves
+/// artifacts empty.
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
+async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-DELAYED-ARTIFACTS";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-delayed.md");
     let worktree = tmp.path().join("worktree-delayed");
@@ -1266,9 +1320,16 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
     std::fs::create_dir_all(&worktree).unwrap();
     init_git_worktree(&worktree);
 
+    let mut script = fake_cursor_protocol_exit_script("orphan-delayed");
+    script.insert_str(
+        script.find("cat >/dev/null\n").unwrap() + "cat >/dev/null\n".len(),
+        "sleep 2\n",
+    );
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1290,12 +1351,10 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    assert_no_finalize_artifacts(&last, &stdout).await;
+    let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1303,15 +1362,24 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
 
 /// TASK-066.1: cursor-shaped sessions without worker finalize must not scrape
 /// assistant chunks into completion artifacts.
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chunks() {
+async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-CURSOR-SHAPED";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-cursor-shaped.md");
     let worktree = tmp.path().join("worktree-cursor-shaped");
@@ -1322,9 +1390,12 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
     init_git_worktree(&worktree);
     write(&worktree.join("dirty.txt"), "uncommitted change\n");
 
+    let script = fake_cursor_protocol_exit_script("orphan-cursor");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1346,7 +1417,6 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
     let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
 
     wait_for_session_ready(&session_path).await;
@@ -1366,31 +1436,32 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
             "summary": "hello world cursor agent summary",
         }),
     );
-
-    release_dispatch_run_with_reason(
-        &client,
-        running.addr,
-        &token,
-        &run_id,
-        "dispatch close for TASK-CURSOR-SHAPED",
-    )
-    .await;
-
-    assert_no_finalize_artifacts(&last, &stdout).await;
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
+async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-CLEAN";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree-clean");
@@ -1410,9 +1481,12 @@ async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
         .status()
         .unwrap();
 
+    let script = fake_cursor_protocol_exit_script("orphan-clean");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1434,14 +1508,14 @@ async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    assert_no_finalize_artifacts(&last, &stdout).await;
+    let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
     let raw = read_project_tx(&project_root);
     assert!(
         !raw.contains(":TYPE:         implementer.commit_pending"),
-        "clean worktree release without finalize must not emit commit_pending"
+        "clean worktree protocol end without finalize must not emit commit_pending"
     );
 
     let _ = running.shutdown.send(());
@@ -1751,17 +1825,26 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
     let _ = running.join.await;
 }
 
-/// TASK-072 item 1: system-only cursor-agent session chunks must appear in
-/// dispatch stdout artifacts after a normal release-driven completion.
+/// TASK-072 item 1: system-only session chunks without worker finalize must
+/// not appear in dispatch stdout artifacts.
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_system_only_session_writes_system_stdout_after_release() {
+async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-SYSTEM-ONLY-STDOUT";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-system-only.md");
     let worktree = tmp.path().join("worktree-system-only");
@@ -1771,9 +1854,12 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
     std::fs::create_dir_all(&worktree).unwrap();
     init_git_worktree(&worktree);
 
+    let script = fake_cursor_protocol_exit_script("orphan-system");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1795,7 +1881,6 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
     let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
 
     wait_for_session_ready(&session_path).await;
@@ -1813,9 +1898,9 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
             }),
         );
     }
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    assert_no_finalize_artifacts(&last, &stdout).await;
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1978,6 +2063,19 @@ fn fake_cursor_agent_test_lock() -> std::sync::MutexGuard<'static, ()> {
     FAKE_CURSOR_AGENT_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(unix)]
+fn fake_cursor_protocol_exit_script(session_id: &str) -> String {
+    let mut script = format!(
+        "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"{session_id}\"}}'\n"
+    );
+    for idx in 1..=15 {
+        script.push_str(&format!(
+            "printf '%s\\n' '{{\"type\":\"synthetic-chunk-{idx:02}\"}}'\n"
+        ));
+    }
+    script
 }
 
 #[cfg(unix)]
@@ -2849,6 +2947,155 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         .unwrap();
     let lease_body: serde_json::Value = lease.json().await.unwrap();
     assert_eq!(lease_body["status"], "no_lease");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-CLEANUP-BRANCH";
+    seed_worker(
+        &home,
+        "implementer-codex-appserver",
+        "acp-ws",
+        "codex",
+        "openai",
+        "gpt-5.5",
+    );
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-appserver",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tester@example.com"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    write(&project_root.join("README.md"), "init\n");
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-branch");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    let branch = "task-cleanup-branch-impl";
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            branch,
+            worktree.to_str().unwrap(),
+            &head,
+        ])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let brief = stem_dir.join("task-cleanup-branch-brief.md");
+    write(&brief, "branch mismatch cleanup brief");
+    let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+    let last = stem_dir.join(format!("task-cleanup-branch-{attempt}-last.txt"));
+    let stdout = stem_dir.join(format!("task-cleanup-branch-{attempt}-stdout.log"));
+    std::fs::write(&last, "").unwrap();
+    std::fs::write(&stdout, "").unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
+    dispatch["branch"] = serde_json::json!(branch);
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+
+    let cleanup = post_dispatch_cleanup(
+        &running,
+        &token,
+        project_id,
+        task_id,
+        serde_json::json!({
+            "kind": "implementer",
+            "worktree_path": worktree,
+            "branch": "wrong-branch-impl",
+            "dispatch_attempt_token": attempt,
+            "last_path": last,
+            "stdout_path": stdout,
+        }),
+    )
+    .await;
+    assert_eq!(cleanup.status(), 200, "cleanup endpoint transport failed");
+    let body: serde_json::Value = cleanup.json().await.unwrap();
+    assert_eq!(body["status"], "conflict");
+    assert!(!body["worktree_removed"].as_bool().unwrap_or(true));
+    assert!(!body["branch_deleted"].as_bool().unwrap_or(true));
+    assert!(
+        worktree.exists(),
+        "worktree must survive branch mismatch cleanup"
+    );
+    let branch_ref = format!("refs/heads/{branch}");
+    let branch_exists = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", branch_ref.as_str()])
+        .current_dir(&project_root)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(
+        branch_exists,
+        "dispatch branch must survive mismatch cleanup"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;

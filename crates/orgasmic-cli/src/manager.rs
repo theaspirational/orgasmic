@@ -2703,8 +2703,28 @@ impl Drop for DispatchArtifactReservation {
         if self.committed {
             return;
         }
-        for path in &self.owned {
-            let _ = std::fs::remove_file(path);
+        if let Err(err) = self.rollback_owned() {
+            tracing::warn!(
+                "dispatch artifact reservation rollback failed: {err}; paths may remain"
+            );
+        }
+    }
+}
+
+impl DispatchArtifactReservation {
+    fn rollback_owned(&mut self) -> Result<()> {
+        let mut last_error = None;
+        for path in self.owned.drain(..) {
+            if let Err(err) = std::fs::remove_file(&path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    last_error = Some(err);
+                }
+            }
+        }
+        if let Some(err) = last_error {
+            Err(err.into())
+        } else {
+            Ok(())
         }
     }
 }
@@ -2741,13 +2761,17 @@ fn reserve_dispatch_artifact_pair(
         }
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
             for path in owned {
-                let _ = std::fs::remove_file(path);
+                std::fs::remove_file(path).map_err(ReservePairError::Io)?;
             }
             Err(ReservePairError::Collision)
         }
         Err(err) => {
             for path in owned {
-                let _ = std::fs::remove_file(path);
+                if let Err(cleanup_err) = std::fs::remove_file(path) {
+                    if cleanup_err.kind() != std::io::ErrorKind::NotFound {
+                        return Err(ReservePairError::Io(cleanup_err));
+                    }
+                }
             }
             Err(ReservePairError::Io(err))
         }
@@ -3552,6 +3576,30 @@ mod tests {
         ));
         assert_eq!(std::fs::read_to_string(&last).unwrap(), "existing");
         assert!(!stdout.exists());
+    }
+
+    #[test]
+    fn reserve_dispatch_artifact_pair_second_file_collision_preserves_first_collider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root.join("task-reserve-brief.md");
+        let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+        let (_, last, stdout) = dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt);
+        std::fs::create_dir_all(last.parent().unwrap()).unwrap();
+        std::fs::write(&last, "existing-last").unwrap();
+        std::fs::write(&stdout, "existing-stdout").unwrap();
+        assert!(matches!(
+            reserve_dispatch_artifact_pair(&last, &stdout),
+            Err(ReservePairError::Collision)
+        ));
+        assert_eq!(std::fs::read_to_string(&last).unwrap(), "existing-last");
+        assert_eq!(std::fs::read_to_string(&stdout).unwrap(), "existing-stdout");
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_decode_is_ambiguous() {
+        let err = anyhow::anyhow!("decode daemon response: EOF while parsing a value");
+        assert!(crate::daemon_client::DaemonClient::dispatch_failure_needs_daemon_cleanup(&err));
     }
 
     #[test]
