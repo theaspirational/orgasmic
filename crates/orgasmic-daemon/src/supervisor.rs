@@ -39,9 +39,9 @@ use orgasmic_core::{
     Worker, WorkerEligibility,
 };
 use orgasmic_drivers::{
-    driver_for_mode_harness, AttachOutcome, DriverConfig, DriverContext, DriverControl,
-    NativeRuntimeMeta, RunKind, RuntimeOptionsRequest, TransitionRequest, UserInputRequest,
-    WorkerDriver,
+    driver_for_mode_harness, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
+    DriverContext, DriverControl, DriverError, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest,
+    TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -401,8 +401,10 @@ struct RunRecord {
     early_exit_release_taken: bool,
     /// Driver event channel closed; all queued events have been drained.
     stream_ended: bool,
-    /// PID watcher observed subprocess exit (quiescence boundary with stream end).
+    /// PID watcher observed subprocess exit (classification-only; not a release gate).
     early_exit_pid_exited: bool,
+    /// Explicit timeout/cancel/finalize release is draining; stream-end must defer.
+    explicit_release_in_progress: bool,
 }
 
 struct BabysitterAutoSpawnBackoff {
@@ -414,6 +416,38 @@ struct BabysitterAutoSpawnBackoff {
 struct ReleasedRun {
     kind: RunKind,
     babysitter_run_id: Option<String>,
+}
+
+/// Placeholder control left on a run record while an explicit release drains
+/// the event channel with the record still in the map (orgasmic:task_3TEDA).
+struct DetachedDriverControl;
+
+#[async_trait::async_trait]
+impl DriverControl for DetachedDriverControl {
+    async fn transition_state(
+        &mut self,
+        _req: TransitionRequest,
+    ) -> Result<TransitionAck, DriverError> {
+        Err(DriverError::Unsupported("detached control"))
+    }
+
+    async fn babysitter_action(
+        &mut self,
+        _req: BabysitterRequest,
+    ) -> Result<BabysitterAck, DriverError> {
+        Err(DriverError::Unsupported("detached control"))
+    }
+
+    async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+        Ok(())
+    }
+
+    async fn send_input(
+        &mut self,
+        _req: UserInputRequest,
+    ) -> Result<orgasmic_drivers::UserInputAck, DriverError> {
+        Err(DriverError::Unsupported("detached control"))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -889,6 +923,7 @@ impl Supervisor {
                 early_exit_release_taken: false,
                 stream_ended: false,
                 early_exit_pid_exited: false,
+                explicit_release_in_progress: false,
             };
             let mut g = self.inner.lock().await;
             g.runs.insert(run_id.clone(), record);
@@ -1007,7 +1042,8 @@ impl Supervisor {
             }
         }
         if let Some(pid) = pid {
-            spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
+            let _early_exit_watcher =
+                spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
         }
 
         Ok(AcquireResponse {
@@ -1080,6 +1116,157 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        crate::recovery_claim::recovery_failpoint("lifecycle_append");
+        Ok(())
+    }
+
+    /// Idempotently backfill missing recovery lifecycle events after a live-handle
+    /// reattach (pre-Acquire crash window). Order: Acquire -> RunMeta ->
+    /// NativeRuntime -> PromptDraft -> RecoveryOrigin.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn backfill_recovery_session_lifecycle(
+        &self,
+        run_id: &str,
+        session_path: &Path,
+        identity: &RuntimeIdentity,
+        task_id: &str,
+        kind: RunKind,
+        worker_id: &str,
+        role: &str,
+        requires_worker_finalize: bool,
+        transport: &str,
+        harness: Option<String>,
+        project_id: Option<String>,
+        worktree: Option<PathBuf>,
+        last_path: Option<PathBuf>,
+        stdout_path: Option<PathBuf>,
+        driver_config: DriverConfig,
+        native_runtime: Option<NativeRuntimeMeta>,
+        prompt_draft: Option<&str>,
+        recovery_origin: Option<(
+            &str,
+            &str,
+            &Path,
+            &str,
+            &str,
+            &str,
+        )>,
+    ) -> Result<(), SupervisorError> {
+        use orgasmic_core::session::read_session_file;
+        let envelopes = read_session_file(session_path).unwrap_or_default();
+        let has_acquire = envelopes.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                && matches!(
+                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                    Ok(Lifecycle::Acquire { .. })
+                )
+        });
+        let has_run_meta = envelopes.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                && matches!(
+                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                    Ok(Lifecycle::RunMeta { .. })
+                )
+        });
+        let has_native = envelopes.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                && matches!(
+                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                    Ok(Lifecycle::NativeRuntime { .. })
+                )
+        });
+        let has_prompt = envelopes.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                && matches!(
+                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                    Ok(Lifecycle::PromptDraft { .. })
+                )
+        });
+        let has_origin = envelopes.iter().any(|envelope| {
+            envelope.kind == SessionEventKind::Lifecycle
+                && matches!(
+                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                    Ok(Lifecycle::RecoveryOrigin { .. })
+                )
+        });
+
+        if !has_acquire {
+            let acquire_evt = Lifecycle::Acquire {
+                task_id: task_id.to_string(),
+                kind: match kind {
+                    RunKind::Worker => "worker".to_string(),
+                    RunKind::Babysitter => "babysitter".to_string(),
+                },
+                worker_id: worker_id.to_string(),
+            };
+            self.writer
+                .append_session(SessionAppend {
+                    run_id: run_id.to_string(),
+                    session_path: session_path.to_path_buf(),
+                    identity: identity.clone(),
+                    kind: SessionEventKind::Lifecycle,
+                    event: serde_json::to_value(&acquire_evt).map_err(into_anyhow)?,
+                })
+                .await
+                .map_err(SupervisorError::Session)?;
+            crate::recovery_claim::recovery_failpoint("lifecycle_append");
+        }
+        if !has_run_meta {
+            self.write_run_meta(
+                run_id,
+                session_path,
+                identity,
+                transport,
+                harness,
+                project_id,
+                worktree,
+                last_path,
+                stdout_path,
+                role.to_string(),
+                requires_worker_finalize,
+                driver_config,
+            )
+            .await?;
+            crate::recovery_claim::recovery_failpoint("lifecycle_append");
+        }
+        if !has_native {
+            if let Some(native) = native_runtime {
+                self.write_native_runtime(run_id, session_path, identity, native)
+                    .await?;
+                crate::recovery_claim::recovery_failpoint("lifecycle_append");
+            }
+        }
+        if !has_prompt {
+            if let Some(text) = prompt_draft {
+                self.append_prompt_draft(run_id, session_path, identity, text)
+                    .await?;
+                crate::recovery_claim::recovery_failpoint("lifecycle_append");
+            }
+        }
+        if !has_origin {
+            if let Some((
+                project_id,
+                origin_run_id,
+                origin_session_path,
+                request_id,
+                action,
+                target,
+            )) = recovery_origin
+            {
+                self.write_recovery_origin(
+                    run_id,
+                    session_path,
+                    identity,
+                    project_id,
+                    origin_run_id,
+                    origin_session_path,
+                    request_id,
+                    action,
+                    target,
+                )
+                .await?;
+            }
+        }
         Ok(())
     }
 
@@ -1203,6 +1390,7 @@ impl Supervisor {
         worktree: Option<PathBuf>,
         session_path: PathBuf,
         driver_config: DriverConfig,
+        append_reattach_marker: bool,
     ) -> Result<AcquireResponse, SupervisorError> {
         let run_id = identity.run_id.clone();
         // Lease conflict guard: do not steal an occupied lease.
@@ -1259,20 +1447,23 @@ impl Supervisor {
 
         // Append the reattach lifecycle marker to the ORIGINAL session JSONL,
         // recording the new boot that rehydrated the run.
-        let reattach_evt = Lifecycle::Reattach {
-            reattached_boot: self.boot.boot_id.clone(),
-            transport: transport.clone(),
-        };
-        self.writer
-            .append_session(SessionAppend {
-                run_id: run_id.clone(),
-                session_path: session_path.clone(),
-                identity: identity.clone(),
-                kind: SessionEventKind::Lifecycle,
-                event: serde_json::to_value(&reattach_evt).map_err(into_anyhow)?,
-            })
-            .await
-            .map_err(SupervisorError::Session)?;
+        if append_reattach_marker {
+            let reattach_evt = Lifecycle::Reattach {
+                reattached_boot: self.boot.boot_id.clone(),
+                transport: transport.clone(),
+            };
+            self.writer
+                .append_session(SessionAppend {
+                    run_id: run_id.clone(),
+                    session_path: session_path.clone(),
+                    identity: identity.clone(),
+                    kind: SessionEventKind::Lifecycle,
+                    event: serde_json::to_value(&reattach_evt).map_err(into_anyhow)?,
+                })
+                .await
+                .map_err(SupervisorError::Session)?;
+            crate::recovery_claim::recovery_failpoint("lifecycle_append");
+        }
 
         // Resume event drain into the same file.
         let writer = self.writer.clone();
@@ -1385,6 +1576,7 @@ impl Supervisor {
             early_exit_release_taken: false,
             stream_ended: false,
             early_exit_pid_exited: false,
+            explicit_release_in_progress: false,
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
@@ -1678,10 +1870,8 @@ impl Supervisor {
             babysitter_run_id,
             session_path,
             identity,
-            final_outcome,
             mut control,
             drain,
-            cleared_babysitter_backoff,
         ) = {
             let mut g = self.inner.lock().await;
             // Ownership check happens before the remove, under the same lock
@@ -1709,6 +1899,35 @@ impl Supervisor {
             }
             let rec = g
                 .runs
+                .get_mut(run_id)
+                .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+            if rec.explicit_release_in_progress || rec.early_exit_release_taken {
+                return Err(SupervisorError::RunNotFound(run_id.into()));
+            }
+            // orgasmic:task_3TEDA — stop control and drain while the record
+            // remains in the map; freeze classification only after quiescence.
+            rec.explicit_release_in_progress = true;
+            let control = std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl));
+            let drain = std::mem::replace(&mut rec.event_drain, tokio::spawn(async {}));
+            (
+                rec.task_id.clone(),
+                rec.kind,
+                rec.babysitter_run_id.clone(),
+                rec.session_path.clone(),
+                rec.identity.clone(),
+                control,
+                drain,
+            )
+        };
+        let _ = control.release(reason).await;
+        drop(control);
+        // Let the drain flush driver events (e.g. synthetic run_complete) after
+        // release ack; aborting immediately races and drops terminal events.
+        let _ = tokio::time::timeout(Duration::from_secs(5), drain).await;
+        let (final_outcome, cleared_babysitter_backoff) = {
+            let mut g = self.inner.lock().await;
+            let rec = g
+                .runs
                 .remove(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
             g.leases.remove(&lease_key(
@@ -1723,24 +1942,7 @@ impl Supervisor {
             } else {
                 false
             };
-            let task_id = rec.task_id.clone();
-            let kind = rec.kind;
-            let babysitter_run_id = rec.babysitter_run_id.clone();
-            let path = rec.session_path.clone();
-            let identity = rec.identity.clone();
-            let final_outcome = rec.terminal_outcome.unwrap_or(outcome);
-            let drain = rec.event_drain;
-            (
-                task_id,
-                kind,
-                babysitter_run_id,
-                path,
-                identity,
-                final_outcome,
-                rec.control,
-                drain,
-                cleared_babysitter_backoff,
-            )
+            (rec.terminal_outcome.unwrap_or(outcome), cleared_babysitter_backoff)
         };
         if cleared_babysitter_backoff {
             warn!(
@@ -1749,11 +1951,6 @@ impl Supervisor {
                 "babysitter auto-spawn resumed after babysitter lease release"
             );
         }
-        let _ = control.release(reason).await;
-        drop(control);
-        // Let the drain flush driver events (e.g. synthetic run_complete) after
-        // release ack; aborting immediately races and drops terminal events.
-        let _ = tokio::time::timeout(Duration::from_secs(5), drain).await;
         let evt = Lifecycle::Release {
             reason: reason.into(),
             outcome: final_outcome,
@@ -2415,8 +2612,7 @@ fn process_is_zombie(pid: u32) -> bool {
     }
 }
 
-fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
-    let writer = supervisor.writer.clone();
+fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) -> tokio::task::JoinHandle<()> {
     let inner = supervisor.inner.clone();
     tokio::spawn(async move {
         loop {
@@ -2438,30 +2634,19 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
             } else {
                 subprocess_exited(pid)
             };
-            if !exited {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
-            }
-            {
+            if exited {
                 let mut guard = inner.lock().await;
                 if let Some(rec) = guard.runs.get_mut(&run_id) {
-                    rec.early_exit_pid_exited = true;
+                    if rec.early_exit_watcher_pid == Some(pid) {
+                        // orgasmic:task_3TEDA — observation only; receiver closure
+                        // is the sole normal release trigger.
+                        rec.early_exit_pid_exited = true;
+                    }
                 }
-            }
-            complete_early_exit_release_if_ready(&writer, &inner, &run_id).await;
-            let released = {
-                let guard = inner.lock().await;
-                guard
-                    .runs
-                    .get(&run_id)
-                    .is_none_or(|rec| rec.early_exit_release_taken)
-            };
-            if released {
-                return;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
-    });
+    })
 }
 
 #[cfg(unix)]
@@ -2755,16 +2940,9 @@ fn session_is_early_exit_no_work_record(rec: &RunRecord) -> bool {
 }
 
 fn early_exit_quiescence_ready(rec: &RunRecord) -> bool {
-    if !rec.stream_ended {
-        return false;
-    }
-    if session_is_early_exit_no_work_record(rec)
-        && rec.early_exit_watcher_pid.is_some()
-        && !rec.early_exit_pid_exited
-    {
-        return false;
-    }
-    true
+    // orgasmic:task_3TEDA — stream end alone is the release gate; PID exit is
+    // classification-only and must not strand on watcher abort or reuse.
+    rec.stream_ended
 }
 
 fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
@@ -2772,32 +2950,21 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
     if rec.early_exit_release_taken {
         return None;
     }
+    if rec.explicit_release_in_progress {
+        return None;
+    }
     // Receiver/channel closure is the sole normal release boundary for
     // PID-watched subprocess runs; the watcher only publishes observations.
     if rec.early_exit_watcher_pid.is_some() && !rec.stream_ended {
         return None;
     }
-    if session_is_early_exit_no_work_record(rec) && !early_exit_quiescence_ready(rec) {
+    if !early_exit_quiescence_ready(rec) {
         return None;
     }
     let mut rec = inner.runs.remove(run_id)?;
     rec.early_exit_release_taken = true;
     remove_record_lease(inner, &rec);
     Some(rec)
-}
-
-async fn complete_early_exit_release_if_ready(
-    writer: &WriterHandle,
-    inner: &tokio::sync::Mutex<Inner>,
-    run_id: &str,
-) {
-    let release = {
-        let mut g = inner.lock().await;
-        take_stream_end_release(&mut g, run_id)
-    };
-    if let Some(rec) = release {
-        write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
-    }
 }
 
 /// TUI transports emit a terminal driver event (EOT-marker fallback; removed
@@ -3598,6 +3765,240 @@ mod tests {
         events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
     }
 
+    /// Holds the driver stream open and exposes the sender for deterministic
+    /// queued-event injection (orgasmic:task_3TEDA).
+    struct QueuedBeforeTimeoutDriver {
+        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    impl QueuedBeforeTimeoutDriver {
+        fn new() -> Self {
+            Self {
+                event_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            }
+        }
+
+        async fn inject(&self, evt: DriverEvent) {
+            if let Some(tx) = self.event_tx.lock().await.as_ref() {
+                let _ = tx.send(evt).await;
+            }
+        }
+
+        async fn close_events(&self) {
+            let _ = self.event_tx.lock().await.take();
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for QueuedBeforeTimeoutDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            *self.event_tx.lock().await = Some(tx.clone());
+            let _ = tx
+                .send(DriverEvent::Ready {
+                    protocol_version: "test-acp/1".into(),
+                    capabilities: json!({"simulated": true}),
+                })
+                .await;
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(QueuedBeforeTimeoutControl {
+                    event_tx: std::sync::Arc::clone(&self.event_tx),
+                }),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct QueuedBeforeTimeoutControl {
+        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for QueuedBeforeTimeoutControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn send_input(
+            &mut self,
+            _req: UserInputRequest,
+        ) -> Result<UserInputAck, DriverError> {
+            Ok(UserInputAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            let _ = self.event_tx.lock().await.take();
+            Ok(())
+        }
+    }
+
+    /// PID-backed driver with a controllable event channel for quiescence tests.
+    struct PidBackedControllableDriver {
+        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    impl PidBackedControllableDriver {
+        fn new() -> Self {
+            Self {
+                event_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+            }
+        }
+
+        async fn close_events(&self) {
+            let _ = self.event_tx.lock().await.take();
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for PidBackedControllableDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let child = tokio::process::Command::new("sleep")
+                .arg("300")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(DriverError::Io)?;
+            let pid = child.id().expect("sleep child pid");
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            *self.event_tx.lock().await = Some(tx.clone());
+            let _ = tx
+                .send(DriverEvent::Ready {
+                    protocol_version: "test-acp/1".into(),
+                    capabilities: json!({"simulated": true}),
+                })
+                .await;
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: Some(pid),
+                events: rx,
+                control: Box::new(PidBackedControllableControl {
+                    event_tx: std::sync::Arc::clone(&self.event_tx),
+                    child: Some(child),
+                }),
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct PidBackedControllableControl {
+        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+        child: Option<tokio::process::Child>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for PidBackedControllableControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn send_input(
+            &mut self,
+            _req: UserInputRequest,
+        ) -> Result<UserInputAck, DriverError> {
+            Ok(UserInputAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            let _ = self.event_tx.lock().await.take();
+            if let Some(mut child) = self.child.take() {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
+            Ok(())
+        }
+    }
+
+    /// Emits Ready then a fatal DriverError and closes the stream.
+    struct FatalDriverErrorDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for FatalDriverErrorDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-acp/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::DriverError {
+                        message: "simulated fatal".into(),
+                        fatal: true,
+                    })
+                    .await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ProtocolEndAcpControl),
+                native_runtime: None,
+            })
+        }
+    }
+
     #[async_trait::async_trait]
     impl DriverControl for FinalizeThenProtocolEndControl {
         async fn transition_state(
@@ -3615,6 +4016,16 @@ mod tests {
             _req: BabysitterRequest,
         ) -> Result<BabysitterAck, DriverError> {
             Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn send_input(
+            &mut self,
+            _req: UserInputRequest,
+        ) -> Result<UserInputAck, DriverError> {
+            Ok(UserInputAck {
+                accepted: true,
+                message: None,
+            })
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
@@ -3961,6 +4372,10 @@ mod tests {
     }
 
     fn assert_release_reason(path: &Path, reason: &str) {
+        assert_release(path, reason, "failed");
+    }
+
+    fn assert_release(path: &Path, reason: &str, outcome: &str) {
         let release = session_events(path)
             .into_iter()
             .find(|envelope| {
@@ -3978,8 +4393,26 @@ mod tests {
                 .event
                 .get("outcome")
                 .and_then(|value| value.as_str()),
-            Some("failed")
+            Some(outcome)
         );
+    }
+
+    fn release_count(path: &Path) -> usize {
+        session_events(path)
+            .iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Lifecycle
+                    && envelope.event.get("phase").and_then(|phase| phase.as_str())
+                        == Some("release")
+            })
+            .count()
+    }
+
+    fn driver_event_count(path: &Path) -> usize {
+        session_events(path)
+            .iter()
+            .filter(|envelope| envelope.kind == SessionEventKind::DriverEvent)
+            .count()
     }
 
     fn has_release_reason(path: &Path, reason: &str) -> bool {
@@ -6865,39 +7298,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn early_exit_quiescence_requires_stream_end_for_pid_watched_runs() {
-        let ready_no_work = RunRecord {
-            driver_has_ready: true,
-            driver_has_work: false,
-            driver_has_terminal: false,
-            stream_ended: true,
+    async fn early_exit_quiescence_requires_only_stream_end() {
+        // orgasmic:task_3TEDA — PID observation must not gate release.
+        let waiting_stream = RunRecord {
+            stream_ended: false,
             early_exit_watcher_pid: Some(42),
             early_exit_pid_exited: true,
             ..test_run_record_shell()
         };
-        assert!(early_exit_quiescence_ready(&ready_no_work));
+        assert!(!early_exit_quiescence_ready(&waiting_stream));
 
-        let waiting_pid = RunRecord {
-            early_exit_pid_exited: false,
+        let ready_without_pid_exit = RunRecord {
             driver_has_ready: true,
             driver_has_work: false,
             driver_has_terminal: false,
             stream_ended: true,
             early_exit_watcher_pid: Some(42),
-            ..test_run_record_shell()
-        };
-        assert!(!early_exit_quiescence_ready(&waiting_pid));
-
-        let with_work = RunRecord {
-            driver_has_work: true,
             early_exit_pid_exited: false,
-            driver_has_ready: true,
-            driver_has_terminal: false,
-            stream_ended: true,
-            early_exit_watcher_pid: Some(42),
             ..test_run_record_shell()
         };
-        assert!(early_exit_quiescence_ready(&with_work));
+        assert!(early_exit_quiescence_ready(&ready_without_pid_exit));
+    }
+
+    #[tokio::test]
+    async fn explicit_release_in_progress_blocks_stream_end_take() {
+        let mut inner = Inner {
+            acquisition_paused: false,
+            runs: HashMap::new(),
+            leases: HashMap::new(),
+            babysitter_auto_spawn_backoff: HashMap::new(),
+        };
+        let run_id = "run-explicit-release".to_string();
+        inner.runs.insert(
+            run_id.clone(),
+            RunRecord {
+                stream_ended: true,
+                explicit_release_in_progress: true,
+                ..test_run_record_shell()
+            },
+        );
+        assert!(take_stream_end_release(&mut inner, &run_id).is_none());
+        assert!(inner.runs.contains_key(&run_id));
     }
 
     #[tokio::test]
@@ -6915,7 +7356,7 @@ mod tests {
                 driver_has_ready: true,
                 driver_has_work: true,
                 early_exit_watcher_pid: Some(99),
-                early_exit_pid_exited: true,
+                early_exit_pid_exited: false,
                 stream_ended: false,
                 ..test_run_record_shell()
             },
@@ -6924,6 +7365,153 @@ mod tests {
         inner.runs.get_mut(&run_id).unwrap().stream_ended = true;
         assert!(take_stream_end_release(&mut inner, &run_id).is_some());
         assert!(inner.runs.is_empty());
+    }
+
+    #[tokio::test]
+    async fn watcher_abort_channel_closure_releases_pid_watched_no_work() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = PidBackedControllableDriver::new();
+        let resp = sup
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-WATCHER-ABORT", dir.path()),
+            )
+            .await
+            .unwrap();
+        let pid = resp.pid.expect("pid-backed acquire");
+        let watcher = spawn_early_exit_watcher(sup.clone(), resp.run_id.clone(), pid);
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        watcher.abort();
+        let path = dir.path().join("TASK-WATCHER-ABORT.jsonl");
+        driver.close_events().await;
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        assert_release(
+            &path,
+            "early-exit subprocess with no work envelopes",
+            "failed",
+        );
+        assert_eq!(release_count(&path), 1);
+    }
+
+    #[tokio::test]
+    async fn pid_exit_before_stream_end_defers_until_channel_closes() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = PidBackedControllableDriver::new();
+        let resp = sup
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-PID-DEFER", dir.path()),
+            )
+            .await
+            .unwrap();
+        let pid = resp.pid.expect("pid-backed acquire");
+        let _watcher = spawn_early_exit_watcher(sup.clone(), resp.run_id.clone(), pid);
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        assert!(run_is_live(&sup, &resp.run_id).await);
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline {
+            let pid_exited = sup
+                .inner
+                .lock()
+                .await
+                .runs
+                .get(&resp.run_id)
+                .is_some_and(|rec| rec.early_exit_pid_exited);
+            if pid_exited {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            sup.inner
+                .lock()
+                .await
+                .runs
+                .get(&resp.run_id)
+                .is_some_and(|rec| rec.early_exit_pid_exited),
+            "watcher should observe pid exit before stream end"
+        );
+        assert!(run_is_live(&sup, &resp.run_id).await);
+        let path = dir.path().join("TASK-PID-DEFER.jsonl");
+        driver.close_events().await;
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        assert_release(
+            &path,
+            "early-exit subprocess with no work envelopes",
+            "failed",
+        );
+    }
+
+    #[tokio::test]
+    async fn timeout_drains_queued_run_complete_before_failed_tombstone() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = QueuedBeforeTimeoutDriver::new();
+        let mut req = dispatch_impl_req("TASK-TIMEOUT-QUEUE", dir.path());
+        req.stall_timeout_secs = Some(1);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        driver
+            .inject(DriverEvent::RunComplete {
+                summary: Some("completed before timeout tombstone".into()),
+            })
+            .await;
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        assert_release(&session_path, "stall_timeout_exceeded", "completed");
+        assert_eq!(release_count(&session_path), 1);
+    }
+
+    #[tokio::test]
+    async fn delayed_queued_work_observed_before_stream_end_release() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = QueuedBeforeTimeoutDriver::new();
+        let resp = sup
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-DELAYED-WORK", dir.path()),
+            )
+            .await
+            .unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        driver
+            .inject(DriverEvent::TextChunk {
+                stream: TextStream::Assistant,
+                chunk: "late work".into(),
+                seq: 1,
+            })
+            .await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        driver.close_events().await;
+        let path = dir.path().join("TASK-DELAYED-WORK.jsonl");
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        assert_release(&path, "protocol_end_without_finalize", "failed");
+        assert!(
+            session_has_work_envelope(&session_events(&path)),
+            "queued work must land before stream-end classification"
+        );
+    }
+
+    #[tokio::test]
+    async fn fatal_driver_error_stream_end_releases_once() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = FatalDriverErrorDriver;
+        let resp = sup
+            .acquire(
+                &driver,
+                dispatch_impl_req("TASK-FATAL", dir.path()),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-FATAL.jsonl");
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        assert_release(&path, "protocol_end_without_finalize", "failed");
+        assert_eq!(release_count(&path), 1);
+        assert!(driver_event_count(&path) >= 2);
     }
 
     fn test_run_record_shell() -> RunRecord {
@@ -6967,6 +7555,7 @@ mod tests {
             early_exit_release_taken: false,
             stream_ended: false,
             early_exit_pid_exited: false,
+            explicit_release_in_progress: false,
         }
     }
 

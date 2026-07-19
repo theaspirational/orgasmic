@@ -62,8 +62,8 @@ use crate::recovery_claim::{
     load_recovery_claim, plan_pending_recovery_claim, reconcile_pending_claim,
     recovery_origin_lock, resolve_authoritative_recovery_claim,
     verify_committed_claim_against_session, CommitRecoveryDetails, IndexedRecoveryOrigin,
-    PendingRecoveryPlan, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
-    RecoveryClaimStatus, ResolvedRecoveryClaim,
+    PendingRecoveryClaimSpec, PendingRecoveryPlan, RecoveryClaim, RecoveryClaimError,
+    RecoveryClaimLocks, RecoveryClaimStatus, ResolvedRecoveryClaim,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -113,8 +113,8 @@ pub struct ApiState {
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
     /// Per-origin locks serializing Failed recovery claims and POST /recover.
     pub recovery_claim_locks: RecoveryClaimLocks,
-    /// Daemon-pinned trusted Claude executable (absolute path), resolved at boot.
-    pub trusted_claude_binary: Option<PathBuf>,
+    /// Daemon-pinned trusted Claude executable identity, resolved at boot.
+    pub trusted_claude_binary: Option<PinnedClaudeExecutable>,
 }
 
 impl ApiState {
@@ -6060,6 +6060,63 @@ fn recovery_harness_for_worker(home: &Home, worker_id: &str) -> Option<String> {
         .map(|worker| worker.harness)
 }
 
+/// Build immutable driver/harness fields for a pending recovery claim.
+fn recovery_planned_driver_fields(
+    state: &ApiState,
+    action: &str,
+    origin_envelopes: &[SessionEnvelope],
+    force_inert: bool,
+) -> Result<(DriverConfig, Option<String>, String), ApiError> {
+    let terminal_contract = persisted_terminal_contract_from_session(&state.home, origin_envelopes);
+    let native = session_native_runtime(origin_envelopes);
+    let meta = session_acquire_meta(origin_envelopes);
+    if action == "resume_native_fork" {
+        let native = native.ok_or_else(|| {
+            ApiError::bad_request("resume_native_fork requires recorded native metadata")
+        })?;
+        let session_id = validated_claude_native_session_id(
+            state.trusted_claude_binary.as_ref(),
+            &native,
+        )
+        .ok_or_else(|| {
+            ApiError::bad_request(
+                "recorded native metadata does not prove a trustworthy Claude session",
+            )
+        })?;
+        let (command, args) = reconstruct_claude_native_resume_command(
+            state.trusted_claude_binary.as_ref(),
+            &session_id,
+        )
+        .ok_or_else(|| {
+            ApiError::bad_request("trusted Claude executable unavailable for native resume")
+        })?;
+        let cfg = DriverConfig::from_value(json!({
+            "command": command.to_string_lossy(),
+            "args": args,
+            "harness": "claude",
+            "cwd": state.home.source(),
+            "force_inert": force_inert,
+            "native_resume_mode": true,
+        }));
+        return Ok((cfg, Some("claude".into()), "tmux".into()));
+    }
+    let harness = terminal_contract
+        .harness
+        .clone()
+        .or_else(|| native.as_ref().map(|n| n.provider.clone()))
+        .or_else(|| {
+            meta.as_ref()
+                .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
+        })
+        .unwrap_or_else(|| "claude".to_string());
+    let cfg = DriverConfig::from_value(json!({
+        "harness": harness.clone(),
+        "cwd": state.home.source(),
+        "force_inert": force_inert,
+    }));
+    Ok((cfg, Some(harness), "tmux".into()))
+}
+
 /// Mechanical recovery prompt (dec_052): prior run id, absolute prior session
 /// JSONL path, a mechanical summary from the JSONL, the current diff stat, and
 /// inspect-before-acting instructions. No model-generated summary.
@@ -6131,7 +6188,11 @@ async fn post_run_recover(
         .project
         .clone()
         .ok_or_else(|| ApiError::bad_request("project is required for recovery"))?;
-    let recovery = recovery_status(&state).await;
+
+    let claim_lock = state.recovery_claim_lock(&project_id, &id);
+    let _claim_guard = claim_lock.lock().await;
+
+    let recovery = recovery_status_with_locked_origin(&state, Some((&project_id, &id))).await;
     let prior = recovery
         .interrupted_runs
         .iter()
@@ -6148,9 +6209,6 @@ async fn post_run_recover(
         .clone()
         .filter(|id| !id.is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
-    let claim_lock = state.recovery_claim_lock(&project_id, &id);
-    let _claim_guard = claim_lock.lock().await;
 
     let mut pending_plan: Option<PendingRecoveryPlan> = None;
     if failed_origin {
@@ -6170,7 +6228,7 @@ async fn post_run_recover(
                     if claim.request_id != request_id {
                         return Err(recovery_claim_conflict(&id, &claim));
                     }
-                    let plan = reconcile_pending_claim(&state.home, &claim, &state.boot.boot_id)
+                    let plan = reconcile_pending_claim(&state.home, &claim)
                         .map_err(|err| {
                             ApiError::internal(format!("recovery claim reconcile failed: {err:?}"))
                         })?;
@@ -6281,20 +6339,75 @@ async fn post_run_recover(
             .parent()
             .map(|dir| dir.join(format!("recover-{}.jsonl", uuid::Uuid::new_v4())))
             .ok_or_else(|| ApiError::internal("origin session path has no parent"))?;
-        pending_plan = Some(
-            plan_pending_recovery_claim(
-                &state.home,
-                &project_id,
-                &id,
-                &request_id,
-                &prior.session_path,
-                replacement_session_path,
-                &state.boot.boot_id,
-                &action,
-                &target,
-                recovery_draft_prompt.clone(),
+        let origin_envelopes = read_session_file(&prior.session_path).unwrap_or_default();
+        let meta = session_acquire_meta(&origin_envelopes);
+        let terminal_contract =
+            persisted_terminal_contract_from_session(&state.home, &origin_envelopes);
+        let native = session_native_runtime(&origin_envelopes);
+        let force_inert = req.force_inert.unwrap_or(false);
+        let worktree = Some(state.home.source());
+        let (driver_config, harness, transport) =
+            recovery_planned_driver_fields(&state, &action, &origin_envelopes, force_inert)?;
+        let last_path = if terminal_contract.requires_worker_finalize {
+            Some(
+                terminal_contract
+                    .last_path
+                    .clone()
+                    .unwrap_or_else(|| provision_recovery_last_path(&replacement_session_path, &id)),
             )
-            .map_err(|err| match err {
+        } else {
+            None
+        };
+        let stdout_path = if terminal_contract.requires_worker_finalize {
+            terminal_contract.stdout_path.clone()
+        } else {
+            None
+        };
+        let kind = meta
+            .as_ref()
+            .map(|m| match m.kind {
+                RunKind::Worker => "worker".to_string(),
+                RunKind::Babysitter => "babysitter".to_string(),
+            })
+            .unwrap_or_else(|| "worker".to_string());
+        let spec = PendingRecoveryClaimSpec {
+            project_id: project_id.clone(),
+            origin_run_id: id.clone(),
+            request_id: request_id.clone(),
+            origin_session_path: prior.session_path.clone(),
+            replacement_session_path,
+            boot_id: state.boot.boot_id.clone(),
+            action: action.clone(),
+            target: target.clone(),
+            draft_prompt: recovery_draft_prompt.clone(),
+            force_inert,
+            task_id: meta
+                .as_ref()
+                .map(|m| m.task_id.clone())
+                .unwrap_or_else(|| format!("recover:{id}")),
+            kind,
+            worker_id: meta
+                .as_ref()
+                .map(|m| m.worker_id.clone())
+                .unwrap_or_else(|| "manager".to_string()),
+            role: terminal_contract.role.clone(),
+            requires_worker_finalize: terminal_contract.requires_worker_finalize,
+            transport,
+            harness,
+            driver_config: driver_config.0,
+            worktree: worktree.clone(),
+            last_path,
+            stdout_path,
+            planned_native_runtime: native.map(|n| orgasmic_drivers::NativeRuntimeMeta {
+                provider: n.provider,
+                session_id: n.session_id,
+                session_path: None,
+                launch_argv: vec![],
+                resume_argv: n.resume_argv,
+            }),
+        };
+        pending_plan = Some(
+            plan_pending_recovery_claim(&state.home, &spec).map_err(|err| match err {
                 RecoveryClaimError::AlreadyClaimed(claim) => recovery_claim_conflict(&id, &claim),
                 other => ApiError::internal(format!("recovery claim acquire failed: {other:?}")),
             })?,
@@ -6366,15 +6479,34 @@ async fn execute_run_recover_action(
 ) -> Result<RunRecoverResponse, ApiError> {
     let envelopes = read_session_file(&prior.session_path).unwrap_or_default();
     let meta = session_acquire_meta(&envelopes);
-    let worker_id = meta
-        .as_ref()
-        .map(|m| m.worker_id.clone())
+    let force_inert = pending_plan
+        .and_then(|p| p.claim.force_inert)
+        .unwrap_or_else(|| req.force_inert.unwrap_or(false));
+    let worker_id = pending_plan
+        .and_then(|p| p.claim.worker_id.clone())
+        .or_else(|| meta.as_ref().map(|m| m.worker_id.clone()))
         .unwrap_or_else(|| "manager".to_string());
-    let run_kind = meta.as_ref().map(|m| m.kind).unwrap_or(RunKind::Worker);
-    let worktree = Some(state.home.source());
+    let run_kind = pending_plan
+        .and_then(|p| p.claim.kind.as_deref().map(run_kind_from_lifecycle))
+        .flatten()
+        .or_else(|| meta.as_ref().map(|m| m.kind))
+        .unwrap_or(RunKind::Worker);
+    let worktree = pending_plan
+        .and_then(|p| p.claim.worktree.clone())
+        .or_else(|| Some(state.home.source()));
 
     // Shared terminal contract for every recovery entry (TASK-ARZGD P2).
-    let terminal_contract = persisted_terminal_contract_from_session(&state.home, &envelopes);
+    let terminal_contract = if let Some(plan) = pending_plan {
+        PersistedTerminalContract {
+            role: plan.claim.role.clone().unwrap_or_else(|| "worker".into()),
+            requires_worker_finalize: plan.claim.requires_worker_finalize.unwrap_or(true),
+            last_path: plan.claim.last_path.clone(),
+            stdout_path: plan.claim.stdout_path.clone(),
+            harness: plan.claim.harness.clone(),
+        }
+    } else {
+        persisted_terminal_contract_from_session(&state.home, &envelopes)
+    };
 
     match action {
         "reattach_tmux" => {
@@ -6402,8 +6534,9 @@ async fn execute_run_recover_action(
                     worktree,
                     prior.session_path.clone(),
                     DriverConfig::from_value(json!({
-                        "force_inert": req.force_inert.unwrap_or(false),
+                        "force_inert": force_inert,
                     })),
+                    true,
                 )
                 .await
                 .map_err(supervisor_recover_error)?;
@@ -6458,14 +6591,32 @@ async fn execute_run_recover_action(
                 .unwrap_or_else(|| state.home.sessions().join(&recover_name));
             let planned_identity = pending_plan.map(|plan| plan.planned_identity.clone());
 
-            // start_recovery_run uses the original harness; resume_native_fork
-            // reconstructs Claude resume/fork from validated structured identity.
-            let (driver, driver_config) = if action == "resume_native_fork" {
+            let (driver, driver_config) = if let Some(plan) = pending_plan {
+                if let Some(cfg) = plan.claim.driver_config.clone() {
+                    let harness = plan.claim.harness.as_deref().unwrap_or("claude");
+                    let driver = driver_for_mode_harness("tmux", harness)
+                        .or_else(|| driver_for_mode_harness("tmux", "claude"))
+                        .ok_or_else(|| {
+                            ApiError::internal("tmux driver unavailable for recovery run")
+                        })?;
+                    (driver, DriverConfig::from_value(cfg))
+                } else {
+                    let (cfg, _, _) =
+                        recovery_planned_driver_fields(state, action, &envelopes, force_inert)?;
+                    let harness = cfg.0.get("harness").and_then(|v| v.as_str()).unwrap_or("claude");
+                    let driver = driver_for_mode_harness("tmux", harness)
+                        .or_else(|| driver_for_mode_harness("tmux", "claude"))
+                        .ok_or_else(|| {
+                            ApiError::internal("tmux driver unavailable for recovery run")
+                        })?;
+                    (driver, cfg)
+                }
+            } else if action == "resume_native_fork" {
                 let native = native.ok_or_else(|| {
                     ApiError::bad_request("resume_native_fork requires recorded native metadata")
                 })?;
                 let session_id = validated_claude_native_session_id(
-                    state.trusted_claude_binary.as_deref(),
+                    state.trusted_claude_binary.as_ref(),
                     &native,
                 )
                 .ok_or_else(|| {
@@ -6474,7 +6625,7 @@ async fn execute_run_recover_action(
                     )
                 })?;
                 let (command, args) = reconstruct_claude_native_resume_command(
-                    state.trusted_claude_binary.as_deref(),
+                    state.trusted_claude_binary.as_ref(),
                     &session_id,
                 )
                 .ok_or_else(|| {
@@ -6488,15 +6639,11 @@ async fn execute_run_recover_action(
                     "args": args,
                     "harness": "claude",
                     "cwd": state.home.source(),
-                    "force_inert": req.force_inert.unwrap_or(false),
+                    "force_inert": force_inert,
                     "native_resume_mode": true,
                 }));
                 (driver, cfg)
             } else {
-                // start_recovery_run launches a REAL tmux session for the
-                // original harness (dec_052) — never the placeholder shell and
-                // never the deferred acp driver. The harness comes from native
-                // metadata or the recorded worker; default to claude.
                 let harness = terminal_contract
                     .harness
                     .clone()
@@ -6514,31 +6661,45 @@ async fn execute_run_recover_action(
                 let cfg = DriverConfig::from_value(json!({
                     "harness": harness,
                     "cwd": state.home.source(),
-                    "force_inert": req.force_inert.unwrap_or(false),
+                    "force_inert": force_inert,
                 }));
                 (driver, cfg)
             };
 
-            // OQ1: fresh recovery inherits the original shape's terminal
-            // contract — provision last_path when required so the
-            // requirement is set independent of path replay.
-            let last_path = if terminal_contract.requires_worker_finalize {
-                Some(
-                    terminal_contract
-                        .last_path
-                        .clone()
-                        .unwrap_or_else(|| provision_recovery_last_path(&session_path, id)),
-                )
-            } else {
-                None
-            };
-            let stdout_path = if terminal_contract.requires_worker_finalize {
-                terminal_contract.stdout_path.clone()
-            } else {
-                None
-            };
+            let last_path = pending_plan
+                .and_then(|p| p.claim.last_path.clone())
+                .or_else(|| {
+                    if terminal_contract.requires_worker_finalize {
+                        Some(
+                            terminal_contract
+                                .last_path
+                                .clone()
+                                .unwrap_or_else(|| provision_recovery_last_path(&session_path, id)),
+                        )
+                    } else {
+                        None
+                    }
+                });
+            let stdout_path = pending_plan
+                .and_then(|p| p.claim.stdout_path.clone())
+                .or_else(|| {
+                    if terminal_contract.requires_worker_finalize {
+                        terminal_contract.stdout_path.clone()
+                    } else {
+                        None
+                    }
+                });
+            let task_id = pending_plan
+                .and_then(|p| p.claim.task_id.clone())
+                .or_else(|| {
+                    meta.as_ref()
+                        .map(|m| m.task_id.clone())
+                        .or_else(|| Some(format!("recover:{id}")))
+                })
+                .unwrap_or_else(|| format!("recover:{id}"));
+            let reattach_existing = pending_plan.is_some_and(|plan| plan.reattach_existing);
 
-            let acquire = if pending_plan.is_some_and(|plan| plan.reattach_existing) {
+            let acquire = if reattach_existing {
                 let identity = pending_plan
                     .as_ref()
                     .map(|plan| plan.planned_identity.clone())
@@ -6547,15 +6708,14 @@ async fn execute_run_recover_action(
                         runtime_id: prior.runtime_id.clone(),
                         boot_id: prior.boot_id.clone(),
                     });
-                state
+                let driver_config_for_backfill = driver_config.clone();
+                let acquire = state
                     .supervisor
                     .reattach(
                         driver.as_ref(),
                         identity,
                         run_kind,
-                        meta.as_ref()
-                            .map(|m| m.task_id.clone())
-                            .unwrap_or_else(|| format!("recover:{id}")),
+                        task_id.clone(),
                         worker_id.clone(),
                         terminal_contract.role.clone(),
                         terminal_contract.requires_worker_finalize,
@@ -6563,19 +6723,45 @@ async fn execute_run_recover_action(
                         worktree.clone(),
                         session_path.clone(),
                         driver_config,
+                        false,
                     )
                     .await
-                    .map_err(supervisor_recover_error)?
+                    .map_err(supervisor_recover_error)?;
+                if let Some(plan) = pending_plan {
+                    let claim = &plan.claim;
+                    state
+                        .supervisor
+                        .backfill_recovery_session_lifecycle(
+                            &acquire.run_id,
+                            &session_path,
+                            &acquire.identity,
+                            &task_id,
+                            run_kind,
+                            &worker_id,
+                            &terminal_contract.role,
+                            terminal_contract.requires_worker_finalize,
+                            claim.transport.as_deref().unwrap_or("tmux"),
+                            claim.harness.clone(),
+                            req.project.clone(),
+                            worktree.clone(),
+                            last_path.clone(),
+                            stdout_path.clone(),
+                            driver_config_for_backfill,
+                            claim.planned_native_runtime.clone(),
+                            Some(prompt.as_str()),
+                            None,
+                        )
+                        .await
+                        .map_err(supervisor_recover_error)?;
+                }
+                acquire
             } else {
                 state
                     .supervisor
                     .acquire(
                         driver.as_ref(),
                         AcquireRequest {
-                            task_id: meta
-                                .as_ref()
-                                .map(|m| m.task_id.clone())
-                                .unwrap_or_else(|| format!("recover:{id}")),
+                            task_id,
                             kind: run_kind,
                             role: terminal_contract.role.clone(),
                             worker_id,
@@ -6601,22 +6787,25 @@ async fn execute_run_recover_action(
                 .supervisor
                 .restore_terminal_contract(
                     &acquire.run_id,
-                    terminal_contract.role,
+                    terminal_contract.role.clone(),
                     terminal_contract.requires_worker_finalize,
                 )
                 .await;
 
-            // Persist the staged recovery prompt draft (pending send).
-            state
-                .supervisor
-                .append_prompt_draft(&acquire.run_id, &session_path, &acquire.identity, &prompt)
-                .await
-                .map_err(supervisor_recover_error)?;
+            if !reattach_existing {
+                state
+                    .supervisor
+                    .append_prompt_draft(&acquire.run_id, &session_path, &acquire.identity, &prompt)
+                    .await
+                    .map_err(supervisor_recover_error)?;
+            }
 
             Ok(RunRecoverResponse {
                 run_id: acquire.run_id,
                 runtime_id: acquire.identity.runtime_id,
-                boot_id: acquire.identity.boot_id,
+                boot_id: pending_plan
+                    .and_then(|p| p.claim.boot_id.clone())
+                    .unwrap_or(acquire.identity.boot_id),
                 session_path,
                 action: action.to_string(),
                 target: target.to_string(),
@@ -6630,25 +6819,26 @@ async fn execute_run_recover_action(
 }
 
 async fn recovery_status(state: &ApiState) -> RecoveryResponse {
+    recovery_status_with_locked_origin(state, None).await
+}
+
+async fn recovery_status_with_locked_origin(
+    state: &ApiState,
+    locked_origin: Option<(&str, &str)>,
+) -> RecoveryResponse {
     let live = state.supervisor.snapshot().await;
     let live_ids: BTreeSet<_> = live.runs.iter().map(|run| run.run_id.as_str()).collect();
-    let project_roots: Vec<PathBuf> = state
-        .index
-        .snapshot()
-        .await
-        .board
-        .iter()
-        .map(|entry| entry.path.clone())
-        .collect();
+    let board = state.index.snapshot().await.board;
+    let project_roots: Vec<PathBuf> = board.iter().map(|entry| entry.path.clone()).collect();
     let recovered = classify_session_files(
         &state.home,
-        state.trusted_claude_binary.as_deref(),
+        state.trusted_claude_binary.as_ref(),
         &state.boot.boot_id,
         &live.runs,
         &project_roots,
     )
     .await;
-    let indexed_origins = collect_recovery_origin_index(&state.home, &project_roots);
+    let indexed_origins = collect_recovery_origin_index(&state.home, &board);
     let mut interrupted_runs = Vec::new();
     let mut reattached_runs = Vec::new();
     let mut failed_recoverable_runs = Vec::new();
@@ -6658,7 +6848,21 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
         }
-        apply_recovery_claim_to_run(&state.home, &state.boot.boot_id, &indexed_origins, &mut run);
+        if run.classification == "failed_recoverable" {
+            if let Some(project_id) = run.project_id.as_deref() {
+                let skip_lock =
+                    locked_origin.is_some_and(|(locked_project, locked_run)| {
+                        locked_project == project_id && locked_run == run.run_id
+                    });
+                if !skip_lock {
+                    let lock = state.recovery_claim_lock(project_id, &run.run_id);
+                    let _guard = lock.lock().await;
+                    apply_recovery_claim_to_run(&state.home, &indexed_origins, &mut run);
+                } else {
+                    apply_recovery_claim_to_run(&state.home, &indexed_origins, &mut run);
+                }
+            }
+        }
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
             "reattached" => reattached_runs.push(run),
@@ -6921,6 +7125,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                 c.worktree.clone(),
                 c.session_path.clone(),
                 DriverConfig::from_value(c.driver_config.clone()),
+                true,
             )
             .await
         {
@@ -7002,7 +7207,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
 
 async fn classify_session_files(
     home: &Home,
-    trusted_claude_binary: Option<&FsPath>,
+    trusted_claude_binary: Option<&PinnedClaudeExecutable>,
     _current_boot_id: &str,
     live_runs: &[crate::supervisor::RunSummary],
     project_roots: &[PathBuf],
@@ -7041,7 +7246,7 @@ async fn classify_session_files(
 /// parsed envelopes, so it is location-agnostic.
 async fn classify_session_dir(
     home: &Home,
-    trusted_claude_binary: Option<&FsPath>,
+    trusted_claude_binary: Option<&PinnedClaudeExecutable>,
     dir: &FsPath,
     project_id: Option<String>,
     live_ids: &std::collections::BTreeSet<&str>,
@@ -7362,9 +7567,33 @@ fn validate_safe_session_id(id: &str) -> bool {
             .all(|c| matches!(c, Component::Normal(_)))
 }
 
+/// Canonical Claude executable pinned at daemon boot with target identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PinnedClaudeExecutable {
+    /// Discovery entry (may be a symlink such as `~/.local/bin/claude`).
+    pub entry_path: PathBuf,
+    /// Canonical regular-file target executed on resume/fork.
+    pub target_path: PathBuf,
+    #[cfg(unix)]
+    pub dev: u64,
+    #[cfg(unix)]
+    pub ino: u64,
+}
+
+impl PinnedClaudeExecutable {
+    pub fn as_path(&self) -> &FsPath {
+        &self.target_path
+    }
+
+    /// Revalidate pinned target identity immediately before execute.
+    pub fn revalidate(&self) -> bool {
+        trusted_claude_target_matches_pin(self)
+    }
+}
+
 /// Resolve and pin the trusted Claude executable from daemon-owned discovery.
 /// Does not consult request/project cwd PATH or bare `claude` on PATH.
-pub fn pin_trusted_claude_binary(home: &Home) -> Option<PathBuf> {
+pub fn pin_trusted_claude_binary(home: &Home) -> Option<PinnedClaudeExecutable> {
     let mut candidates = vec![home.bin().join("claude")];
     if let Some(local_bin) = std::env::var_os("HOME").map(|home| {
         PathBuf::from(home)
@@ -7374,16 +7603,54 @@ pub fn pin_trusted_claude_binary(home: &Home) -> Option<PathBuf> {
     }) {
         candidates.push(local_bin);
     }
-    for candidate in candidates {
-        if trusted_claude_executable(&candidate) {
-            return candidate.canonicalize().ok().or(Some(candidate));
-        }
-    }
-    None
+    candidates
+        .iter()
+        .find_map(|candidate| pin_trusted_claude_candidate(candidate))
 }
 
-fn trusted_claude_executable(path: &FsPath) -> bool {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
+fn pin_trusted_claude_candidate(entry: &FsPath) -> Option<PinnedClaudeExecutable> {
+    let Ok(entry_meta) = std::fs::symlink_metadata(entry) else {
+        return None;
+    };
+    let file_type = entry_meta.file_type();
+    if !(file_type.is_file() || file_type.is_symlink()) {
+        return None;
+    }
+    let target = entry.canonicalize().ok()?;
+    let Ok(target_meta) = std::fs::metadata(&target) else {
+        return None;
+    };
+    if !target_meta.is_file() {
+        return None;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if target_meta.permissions().mode() & 0o111 == 0 {
+            return None;
+        }
+        let current_uid = unsafe { libc::getuid() };
+        if target_meta.uid() != current_uid {
+            return None;
+        }
+        Some(PinnedClaudeExecutable {
+            entry_path: entry.to_path_buf(),
+            target_path: target,
+            dev: target_meta.dev(),
+            ino: target_meta.ino(),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        Some(PinnedClaudeExecutable {
+            entry_path: entry.to_path_buf(),
+            target_path: target,
+        })
+    }
+}
+
+fn trusted_claude_target_matches_pin(pin: &PinnedClaudeExecutable) -> bool {
+    let Ok(meta) = std::fs::metadata(&pin.target_path) else {
         return false;
     };
     if !meta.is_file() {
@@ -7391,11 +7658,19 @@ fn trusted_claude_executable(path: &FsPath) -> bool {
     }
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        meta.permissions().mode() & 0o111 != 0
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        if meta.permissions().mode() & 0o111 == 0 {
+            return false;
+        }
+        let current_uid = unsafe { libc::getuid() };
+        if meta.uid() != current_uid {
+            return false;
+        }
+        meta.dev() == pin.dev && meta.ino() == pin.ino
     }
     #[cfg(not(unix))]
     {
+        let _ = pin;
         true
     }
 }
@@ -7416,10 +7691,10 @@ fn resume_argv_proves_claude_fork(resume_argv: &[String], session_id: &str) -> b
 
 /// Prove structured Claude native identity without trusting persisted argv.
 fn validated_claude_native_session_id(
-    trusted_claude_binary: Option<&FsPath>,
+    trusted_claude_binary: Option<&PinnedClaudeExecutable>,
     native: &SessionNativeRuntime,
 ) -> Option<String> {
-    trusted_claude_binary?;
+    let pinned = trusted_claude_binary.filter(|pin| pin.revalidate())?;
     if native.provider != "claude" {
         return None;
     }
@@ -7433,8 +7708,7 @@ fn validated_claude_native_session_id(
         }
         if let Some(cmd) = native.resume_argv.first() {
             if (cmd.contains('/') || cmd.contains('\\'))
-                && trusted_claude_binary
-                    .is_some_and(|trusted| trusted.to_string_lossy() != cmd.as_str())
+                && pinned.as_path().to_string_lossy() != cmd.as_str()
             {
                 return None;
             }
@@ -7448,12 +7722,12 @@ fn validated_claude_native_session_id(
 
 /// Reconstruct the daemon-owned Claude resume/fork command from validated identity.
 fn reconstruct_claude_native_resume_command(
-    trusted_claude_binary: Option<&FsPath>,
+    trusted_claude_binary: Option<&PinnedClaudeExecutable>,
     session_id: &str,
 ) -> Option<(PathBuf, Vec<String>)> {
-    let command = trusted_claude_binary?;
+    let pinned = trusted_claude_binary.filter(|pin| pin.revalidate())?;
     Some((
-        command.to_path_buf(),
+        pinned.target_path.clone(),
         vec![
             "--dangerously-skip-permissions".to_string(),
             "--resume".to_string(),
@@ -7498,7 +7772,6 @@ fn recovery_claim_conflict(origin_run_id: &str, claim: &RecoveryClaim) -> ApiErr
 
 fn apply_recovery_claim_to_run(
     home: &Home,
-    boot_id: &str,
     indexed_origins: &[IndexedRecoveryOrigin],
     run: &mut RecoveredRun,
 ) {
@@ -7513,7 +7786,6 @@ fn apply_recovery_claim_to_run(
         project_id,
         &run.run_id,
         indexed_origins,
-        boot_id,
     ) else {
         run.recovery_actions.clear();
         return;
@@ -7544,27 +7816,32 @@ fn apply_recovery_claim_to_run(
 
 fn collect_recovery_origin_index(
     home: &Home,
-    project_roots: &[PathBuf],
+    board: &[BoardEntry],
 ) -> Vec<IndexedRecoveryOrigin> {
     let mut links = Vec::new();
     let mut seen_dirs = std::collections::BTreeSet::new();
-    for root in project_roots {
-        let dir = project_sessions_dir(root);
+    for entry in board {
+        let project_id = entry.id.as_str();
+        let dir = project_sessions_dir(&entry.path);
         if !seen_dirs.insert(dir.clone()) {
             continue;
         }
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
+        for file in entries.flatten() {
+            let path = file.path();
             if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
                 continue;
             }
             let Ok(envelopes) = read_session_file(&path) else {
                 continue;
             };
-            links.extend(index_recovery_origins_in_session(&envelopes, &path));
+            links.extend(index_recovery_origins_in_session(
+                &envelopes,
+                &path,
+                project_id,
+            ));
         }
     }
     let _ = home;
@@ -7576,7 +7853,7 @@ fn collect_recovery_origin_index(
 /// recovery run. `classification` is the attach-proof result for this run.
 async fn resolve_recovery_actions(
     _home: &Home,
-    trusted_claude_binary: Option<&FsPath>,
+    trusted_claude_binary: Option<&PinnedClaudeExecutable>,
     envelopes: &[SessionEnvelope],
     classification: &str,
     failed_terminal: bool,
@@ -13023,6 +13300,97 @@ mod tests {
         path
     }
 
+    fn seed_trusted_claude_symlink_layout(home_root: &FsPath) -> PinnedClaudeExecutable {
+        let versions = home_root.join(".local/share/claude/versions/2.1.215");
+        std::fs::create_dir_all(&versions).unwrap();
+        let target = versions.join("claude");
+        std::fs::write(&target, "#!/bin/sh\nexec true\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let entry = home_root.join(".local/bin/claude");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&target, &entry).unwrap();
+        pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
+            .expect("symlink layout must pin canonical target")
+    }
+
+    #[test]
+    fn trusted_claude_symlink_layout_pins_canonical_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let pinned = seed_trusted_claude_symlink_layout(tmp.path());
+        assert!(pinned.entry_path.ends_with(".local/bin/claude"));
+        assert!(pinned.target_path.ends_with("versions/2.1.215/claude"));
+        assert!(pinned.revalidate());
+        if let Some(path) = previous {
+            std::env::set_var("HOME", path);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn pinned_claude_rejects_symlink_retarget_after_pin() {
+        let tmp = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let pinned = seed_trusted_claude_symlink_layout(tmp.path());
+        let replacement = tmp.path().join(".local/share/claude/versions/evil/claude");
+        std::fs::create_dir_all(replacement.parent().unwrap()).unwrap();
+        std::fs::write(&replacement, "#!/bin/sh\nexec true\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&replacement, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::remove_file(&pinned.entry_path).unwrap();
+            std::os::unix::fs::symlink(&replacement, &pinned.entry_path).unwrap();
+        }
+        assert!(
+            !pinned.revalidate(),
+            "replacement-after-pin must fail closed"
+        );
+        if let Some(path) = previous {
+            std::env::set_var("HOME", path);
+        } else {
+            std::env::remove_var("HOME");
+        }
+    }
+
+    #[test]
+    fn trusted_claude_rejects_non_executable_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("claude");
+        std::fs::write(&path, "#!/bin/sh\nexec true\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        assert!(pin_trusted_claude_candidate(&path).is_none());
+    }
+
+    #[test]
+    fn trusted_claude_rejects_foreign_owned_target() {
+        #[cfg(unix)]
+        {
+            let system = PathBuf::from("/bin/sh");
+            if system.is_file() {
+                use std::os::unix::fs::MetadataExt;
+                let current_uid = unsafe { libc::getuid() };
+                if std::fs::metadata(&system)
+                    .map(|meta| meta.uid() != current_uid)
+                    .unwrap_or(false)
+                {
+                    assert!(pin_trusted_claude_candidate(&system).is_none());
+                }
+            }
+        }
+    }
+
     fn seed_project(home: &Home, project_root: &FsPath, project_id: &str) {
         seed_trusted_claude_executable(home);
         symlink_repo_source(home);
@@ -14944,7 +15312,7 @@ mod tests {
         );
         let recovered = classify_session_files(
             &post_restart_state.home,
-            post_restart_state.trusted_claude_binary.as_deref(),
+            post_restart_state.trusted_claude_binary.as_ref(),
             &post_restart_state.boot.boot_id,
             &[],
             std::slice::from_ref(&project_root),
@@ -18244,7 +18612,7 @@ mod tests {
         seed_trusted_claude_executable(&home);
         let trusted = pin_trusted_claude_binary(&home);
         let actions =
-            resolve_recovery_actions(&home, trusted.as_deref(), &envelopes, "interrupted", false)
+            resolve_recovery_actions(&home, trusted.as_ref(), &envelopes, "interrupted", false)
                 .await;
         let kinds: Vec<&str> = actions.iter().map(|a| a.kind.as_str()).collect();
         assert_eq!(kinds, ["resume_native_fork", "start_recovery_run"]);
@@ -18638,7 +19006,7 @@ mod tests {
         let trusted = pin_trusted_claude_binary(&home);
         let valid_actions = resolve_recovery_actions(
             &home,
-            trusted.as_deref(),
+            trusted.as_ref(),
             &valid_resume,
             "interrupted",
             false,
@@ -18649,12 +19017,12 @@ mod tests {
             "consistent native metadata should expose resume_native_fork when trusted"
         );
         let (command, args) = reconstruct_claude_native_resume_command(
-            trusted.as_deref(),
+            trusted.as_ref(),
             "550e8400-e29b-41d4-a716-446655440000",
         )
         .expect("trusted claude required for resume command reconstruction");
         assert!(trusted.is_some());
-        assert_eq!(command, trusted.unwrap());
+        assert_eq!(command, trusted.as_ref().unwrap().target_path);
         assert_eq!(
             args,
             vec![
@@ -19002,19 +19370,31 @@ mod tests {
         let forged_path = project_sessions_dir(&project_root).join("recover-forged.jsonl");
         std::fs::create_dir_all(forged_path.parent().unwrap()).unwrap();
         std::fs::write(&forged_path, "{}\n").unwrap();
-        let plan = plan_pending_recovery_claim(
-            &home,
-            "orgasmic",
-            "run-forged-claim",
-            "req-forged",
-            &origin_path,
-            forged_path,
-            "boot-forged",
-            "start_recovery_run",
-            "worker",
-            None,
-        )
-        .unwrap();
+        let spec = PendingRecoveryClaimSpec {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-forged-claim".into(),
+            request_id: "req-forged".into(),
+            origin_session_path: origin_path,
+            replacement_session_path: forged_path,
+            boot_id: "boot-forged".into(),
+            action: "start_recovery_run".into(),
+            target: "worker".into(),
+            draft_prompt: None,
+            force_inert: false,
+            task_id: "TASK-FAILED-RECOVER".into(),
+            kind: "worker".into(),
+            worker_id: "implementer-claude-acp".into(),
+            role: "implementer".into(),
+            requires_worker_finalize: true,
+            transport: "tmux".into(),
+            harness: Some("claude".into()),
+            driver_config: serde_json::json!({"force_inert": false, "harness": "claude"}),
+            worktree: Some(project_root.to_path_buf()),
+            last_path: None,
+            stdout_path: None,
+            planned_native_runtime: None,
+        };
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
         commit_recovery_claim(
             &home,
             "orgasmic",
@@ -19181,7 +19561,7 @@ mod tests {
             ],
         ));
         let actions =
-            resolve_recovery_actions(&home, trusted.as_deref(), &envelopes, "interrupted", false)
+            resolve_recovery_actions(&home, trusted.as_ref(), &envelopes, "interrupted", false)
                 .await;
         assert!(
             actions.iter().any(|a| a.kind == "resume_native_fork"),
@@ -19236,12 +19616,351 @@ mod tests {
     #[test]
     fn reconstruct_claude_command_requires_trusted_binary() {
         assert!(reconstruct_claude_native_resume_command(None, "session-id").is_none());
-        let trusted = PathBuf::from("/trusted/claude");
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        seed_trusted_claude_executable(&home);
+        let pinned = pin_trusted_claude_binary(&home).expect("pinned claude");
         let (cmd, args) =
-            reconstruct_claude_native_resume_command(Some(trusted.as_path()), "session-id")
+            reconstruct_claude_native_resume_command(Some(&pinned), "session-id")
                 .expect("trusted path");
-        assert_eq!(cmd, trusted);
+        assert_eq!(cmd, pinned.target_path);
         assert!(args.contains(&"--fork-session".to_string()));
+        assert!(pinned.revalidate());
+    }
+
+    fn seed_argv_capture_trusted_claude_layout(
+        home_root: &FsPath,
+        trusted_log: &FsPath,
+        projects_dir: &FsPath,
+        fork_id: &str,
+    ) -> PinnedClaudeExecutable {
+        let versions = home_root.join(".local/share/claude/versions/test");
+        std::fs::create_dir_all(&versions).unwrap();
+        let target = versions.join("claude");
+        let script = format!(
+            "#!/bin/sh\n\
+             echo \"$0 $*\" > {trusted_log}\n\
+             mkdir -p {projects_dir}\n\
+             echo '{{}}' > {projects_dir}/{fork_id}.jsonl\n\
+             exec sleep 600\n",
+            trusted_log = trusted_log.display(),
+            projects_dir = projects_dir.display(),
+            fork_id = fork_id,
+        );
+        std::fs::write(&target, script).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let entry = home_root.join(".local/bin/claude");
+            std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+            if entry.exists() {
+                std::fs::remove_file(&entry).ok();
+            }
+            std::os::unix::fs::symlink(&target, &entry).unwrap();
+        }
+        pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
+            .expect("argv-capture trusted claude layout")
+    }
+
+    #[cfg(unix)]
+    fn seed_malicious_path_claude_shim(shim_dir: &FsPath, malicious_log: &FsPath) {
+        std::fs::create_dir_all(shim_dir).unwrap();
+        let shim = shim_dir.join("claude");
+        std::fs::write(
+            &shim,
+            format!(
+                "#!/bin/sh\necho \"$0 $*\" > {malicious_log}\nexec true\n",
+                malicious_log = malicious_log.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    struct PrependPathGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl PrependPathGuard {
+        fn prepend(dir: &FsPath) -> Self {
+            let previous = std::env::var_os("PATH");
+            let current = std::env::var("PATH").unwrap_or_default();
+            std::env::set_var("PATH", format!("{}:{current}", dir.display()));
+            Self { previous }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for PrependPathGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(path) => std::env::set_var("PATH", path),
+                None => std::env::remove_var("PATH"),
+            }
+        }
+    }
+
+    fn write_failed_recoverable_session_with_fork_id(
+        project_root: &FsPath,
+        run_id: &str,
+        release_reason: &str,
+        fork_session_id: &str,
+    ) -> PathBuf {
+        let path = project_sessions_dir(project_root).join(format!("{run_id}.jsonl"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let identity = RuntimeIdentity {
+            run_id: run_id.into(),
+            runtime_id: format!("rt-{run_id}"),
+            boot_id: "boot-failed".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: "TASK-FAILED-RECOVER".into(),
+                    kind: "implementer".into(),
+                    worker_id: "implementer-claude-acp".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::NativeRuntime {
+                    provider: "claude".into(),
+                    session_id: Some(fork_session_id.into()),
+                    session_path: None,
+                    launch_argv: vec!["claude".into()],
+                    resume_argv: vec![
+                        "claude".into(),
+                        "--resume".into(),
+                        fork_session_id.into(),
+                        "--fork-session".into(),
+                    ],
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: release_reason.into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn production_resume_native_fork_uses_pinned_claude_not_path_shim() {
+        let _live_guard = live_session_guard();
+        if !tmux_on_path() {
+            eprintln!(
+                "skipping production_resume_native_fork_uses_pinned_claude_not_path_shim: tmux not on PATH"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("user-home");
+        std::fs::create_dir_all(&user_home).unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::env::set_var("HOME", &user_home);
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::remove_file(home.bin().join("claude")).ok();
+        write(
+            home.user().join("workers/implementer-claude-acp.org"),
+            "* WORKER implementer-claude-acp\n:PROPERTIES:\n:ID:                          implementer-claude-acp\n:KIND:                        implementer\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-20250514\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-20250514\n:DEFAULT_EFFORT:              high\n:VERSION:                     1\n:END:\n\n** Persona\nTest worker.\n",
+        );
+        write_failed_recoverable_session(
+            &project_root,
+            "run-path-shim-recover",
+            "stall_timeout_exceeded",
+            true,
+        );
+        let trusted_log = tmp.path().join("trusted-argv.log");
+        let malicious_log = tmp.path().join("malicious-argv.log");
+        let cwd = home.source();
+        let projects_slug = orgasmic_drivers::transcript_finder::encode_claude_project_slug(&cwd);
+        let projects_dir = user_home.join(".claude/projects").join(projects_slug);
+        let pinned = seed_argv_capture_trusted_claude_layout(
+            &user_home,
+            &trusted_log,
+            &projects_dir,
+            "fork-path-shim-proven",
+        );
+        let shim_dir = tmp.path().join("malicious-path");
+        seed_malicious_path_claude_shim(&shim_dir, &malicious_log);
+        let _path_guard = PrependPathGuard::prepend(&shim_dir);
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        assert!(
+            pin_trusted_claude_binary(&home).is_some(),
+            "daemon must pin trusted Claude at boot"
+        );
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!(
+                "http://{}/api/runs/run-path-shim-recover/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "request_id": "task-3teda-path-shim",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            resp.status().is_success(),
+            "resume_native_fork recover: {}",
+            resp.status()
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let mut session_raw = String::new();
+        while std::time::Instant::now() < deadline {
+            session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+            if session_raw.contains("fork-path-shim-proven") {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(
+            session_raw.contains("fork-path-shim-proven"),
+            "native runtime must record proven fork id: {session_raw}"
+        );
+        assert!(
+            session_raw.contains(&pinned.target_path.to_string_lossy().to_string()),
+            "native runtime must use pinned trusted executable: {session_raw}"
+        );
+        let trusted_argv = std::fs::read_to_string(&trusted_log).unwrap_or_default();
+        assert!(
+            trusted_argv.contains("--resume"),
+            "trusted child must receive resume argv: {trusted_argv}"
+        );
+        assert!(
+            !malicious_log.exists(),
+            "malicious PATH shim must never execute"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn two_recovery_chain_second_resume_uses_first_fork_session_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let user_home = tmp.path().join("user-home");
+        std::fs::create_dir_all(&user_home).unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::env::set_var("HOME", &user_home);
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        std::fs::remove_file(home.bin().join("claude")).ok();
+        seed_trusted_claude_symlink_layout(&user_home);
+        write(
+            home.user().join("workers/implementer-claude-acp.org"),
+            "* WORKER implementer-claude-acp\n:PROPERTIES:\n:ID:                          implementer-claude-acp\n:KIND:                        implementer\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-20250514\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-20250514\n:DEFAULT_EFFORT:              high\n:VERSION:                     1\n:END:\n\n** Persona\nTest worker.\n",
+        );
+        write_failed_recoverable_session(
+            &project_root,
+            "run-chain-origin",
+            "stall_timeout_exceeded",
+            true,
+        );
+
+        let running = crate::Daemon::run(home.clone(), test_options()).await.unwrap();
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+
+        let first = client
+            .post(format!(
+                "http://{}/api/runs/run-chain-origin/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "task-3teda-chain-first",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(first.status().is_success(), "first recover: {}", first.status());
+        let first_body: serde_json::Value = first.json().await.unwrap();
+        let first_run_id = first_body["run_id"].as_str().unwrap().to_string();
+        let first_runtime = first_body["runtime_id"].as_str().unwrap().to_string();
+        let first_fork_id = format!("fork-{first_runtime}");
+        let first_session = PathBuf::from(first_body["session_path"].as_str().unwrap());
+        let first_raw = std::fs::read_to_string(&first_session).unwrap();
+        assert!(
+            first_raw.contains(&first_fork_id),
+            "first recovery must persist inert fork session id: {first_raw}"
+        );
+
+        write_failed_recoverable_session_with_fork_id(
+            &project_root,
+            &first_run_id,
+            "protocol_end_without_finalize",
+            &first_fork_id,
+        );
+
+        let second = client
+            .post(format!(
+                "http://{}/api/runs/{first_run_id}/recover",
+                running.addr
+            ))
+            .bearer_auth(&token)
+            .json(&json!({
+                "action": "resume_native_fork",
+                "project": "orgasmic",
+                "force_inert": true,
+                "request_id": "task-3teda-chain-second",
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert!(
+            second.status().is_success(),
+            "second recover: {}",
+            second.status()
+        );
+        let second_body: serde_json::Value = second.json().await.unwrap();
+        let second_session = PathBuf::from(second_body["session_path"].as_str().unwrap());
+        let second_raw = std::fs::read_to_string(&second_session).unwrap();
+        assert!(
+            second_raw.contains(&first_fork_id),
+            "second recovery must --resume the first fork session id: {second_raw}"
+        );
+        assert!(
+            !second_raw.contains("run-chain-origin"),
+            "second recovery must not resume the origin session id: {second_raw}"
+        );
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
     }
 
     #[tokio::test]

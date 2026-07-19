@@ -148,21 +148,32 @@ impl WorkerDriver for TmuxDriver {
             spawn_tmux_session(&session_name, &spawn_plan).await?;
             if cfg.native_resume_mode && is_claude_harness_command(harness, &spawn_plan.command) {
                 if let Some(resumed) = extract_resume_session_id(&spawn_plan.args) {
-                    tokio::time::sleep(Duration::from_millis(750)).await;
-                    let fork_id = discover_claude_fork_session_id(
+                    let discovery = wait_for_claude_fork_session_id(
                         &resumed,
                         &spawn_plan.cwd,
                         fork_probe_since,
                     )
-                    .unwrap_or_else(|| {
-                        deterministic_inert_fork_session_id(&ctx.identity.runtime_id)
-                    });
-                    native_runtime = Some(claude_native_runtime(
-                        &fork_id,
-                        &spawn_plan.cwd,
-                        &spawn_plan.command,
-                        &spawn_plan.args,
-                    ));
+                    .await;
+                    match discovery {
+                        ForkDiscoveryResult::Unique(fork_id) => {
+                            native_runtime = Some(claude_native_runtime(
+                                &fork_id,
+                                &spawn_plan.cwd,
+                                &spawn_plan.command,
+                                &spawn_plan.args,
+                            ));
+                        }
+                        ForkDiscoveryResult::Ambiguous => {
+                            return Err(DriverError::Transport(
+                                "ambiguous Claude fork session discovery".into(),
+                            ));
+                        }
+                        ForkDiscoveryResult::NotFound => {
+                            return Err(DriverError::Transport(
+                                "Claude fork session not discovered within launch bounds".into(),
+                            ));
+                        }
+                    }
                 }
             }
             let task = start_capture_loop(
@@ -585,26 +596,98 @@ fn claude_projects_dir(cwd: &std::path::Path) -> Option<PathBuf> {
     Some(home.join(".claude").join("projects").join(encoded))
 }
 
+/// Result of proving the Claude session created by `--fork-session`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ForkDiscoveryResult {
+    Unique(String),
+    Ambiguous,
+    NotFound,
+}
+
+const FORK_DISCOVERY_INITIAL_WAIT: Duration = Duration::from_millis(750);
+const FORK_DISCOVERY_POLL: Duration = Duration::from_millis(250);
+const FORK_DISCOVERY_MAX_AFTER_LAUNCH: Duration = Duration::from_secs(30);
+
+async fn wait_for_claude_fork_session_id(
+    resumed_session_id: &str,
+    cwd: &std::path::Path,
+    since: std::time::SystemTime,
+) -> ForkDiscoveryResult {
+    tokio::time::sleep(FORK_DISCOVERY_INITIAL_WAIT).await;
+    let deadline = since + FORK_DISCOVERY_MAX_AFTER_LAUNCH;
+    loop {
+        match discover_claude_fork_session_id(resumed_session_id, cwd, since) {
+            ForkDiscoveryResult::Unique(id) => return ForkDiscoveryResult::Unique(id),
+            ForkDiscoveryResult::Ambiguous => return ForkDiscoveryResult::Ambiguous,
+            ForkDiscoveryResult::NotFound if std::time::SystemTime::now() >= deadline => {
+                return ForkDiscoveryResult::NotFound;
+            }
+            ForkDiscoveryResult::NotFound => {
+                tokio::time::sleep(FORK_DISCOVERY_POLL).await;
+            }
+        }
+    }
+}
+
+fn canonical_projects_root(projects_dir: &std::path::Path) -> PathBuf {
+    projects_dir
+        .canonicalize()
+        .unwrap_or_else(|_| projects_dir.to_path_buf())
+}
+
+fn path_is_under_root(candidate: &std::path::Path, root: &std::path::Path) -> bool {
+    let Ok(canonical) = candidate.canonicalize() else {
+        return false;
+    };
+    let root = canonical_projects_root(root);
+    canonical == root || canonical.starts_with(&root)
+}
+
+fn fork_candidate_is_confined(path: &std::path::Path, projects_dir: &std::path::Path) -> bool {
+    path.is_file() && path_is_under_root(path, projects_dir)
+}
+
+fn validate_fork_session_stem(stem: &str) -> bool {
+    !stem.is_empty()
+        && stem != "."
+        && stem != ".."
+        && !stem.contains('/')
+        && !stem.contains('\\')
+        && std::path::Path::new(stem)
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
+}
+
 /// Discover the Claude session id created by `--fork-session` after resume.
+///
+/// Proof, not guessing: exactly one candidate within launch bounds,
+/// path-contained under the cwd-derived Claude projects dir, and distinct
+/// from the resumed session id.
 pub(crate) fn discover_claude_fork_session_id(
     resumed_session_id: &str,
     cwd: &std::path::Path,
     since: std::time::SystemTime,
-) -> Option<String> {
-    let dir = claude_projects_dir(cwd)?;
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return None;
+) -> ForkDiscoveryResult {
+    let Some(dir) = claude_projects_dir(cwd) else {
+        return ForkDiscoveryResult::NotFound;
     };
-    let mut best: Option<(std::time::SystemTime, String)> = None;
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return ForkDiscoveryResult::NotFound;
+    };
+    let launch_upper = since + FORK_DISCOVERY_MAX_AFTER_LAUNCH;
+    let mut candidates = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
             continue;
         }
+        if !fork_candidate_is_confined(&path, &dir) {
+            continue;
+        }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        if stem == resumed_session_id {
+        if stem == resumed_session_id || !validate_fork_session_stem(stem) {
             continue;
         }
         let Ok(meta) = entry.metadata() else {
@@ -613,14 +696,16 @@ pub(crate) fn discover_claude_fork_session_id(
         let Ok(modified) = meta.modified() else {
             continue;
         };
-        if modified < since {
+        if modified < since || modified > launch_upper {
             continue;
         }
-        if best.as_ref().is_none_or(|(seen, _)| modified > *seen) {
-            best = Some((modified, stem.to_string()));
-        }
+        candidates.push(stem.to_string());
     }
-    best.map(|(_, id)| id)
+    match candidates.len() {
+        0 => ForkDiscoveryResult::NotFound,
+        1 => ForkDiscoveryResult::Unique(candidates.remove(0)),
+        _ => ForkDiscoveryResult::Ambiguous,
+    }
 }
 
 pub(crate) fn deterministic_inert_fork_session_id(runtime_id: &str) -> String {
@@ -1558,6 +1643,137 @@ mod tests {
         assert_eq!(
             deterministic_inert_fork_session_id("rt-fork"),
             "fork-rt-fork"
+        );
+    }
+
+    fn with_home<F: FnOnce()>(home: &std::path::Path, f: F) {
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", home);
+        f();
+        match previous {
+            Some(path) => std::env::set_var("HOME", path),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+
+    fn touch_claude_fork_jsonl(
+        home: &std::path::Path,
+        cwd: &std::path::Path,
+        session_id: &str,
+        modified: std::time::SystemTime,
+    ) -> std::path::PathBuf {
+        let dir = super::claude_projects_dir(cwd).expect("projects dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{session_id}.jsonl"));
+        std::fs::write(&path, "{}\n").unwrap();
+        filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(modified)).unwrap();
+        let _ = home;
+        path
+    }
+
+    #[test]
+    fn fork_discovery_returns_unique_confined_candidate() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-unique", since);
+            let result =
+                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(
+                result,
+                super::ForkDiscoveryResult::Unique("fork-unique".into())
+            );
+        });
+    }
+
+    #[test]
+    fn fork_discovery_not_found_when_no_candidate() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now();
+            let result =
+                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        });
+    }
+
+    #[test]
+    fn fork_discovery_ambiguous_when_multiple_candidates() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-a", since);
+            touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-b", since);
+            let result =
+                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(result, super::ForkDiscoveryResult::Ambiguous);
+        });
+    }
+
+    #[test]
+    fn fork_discovery_wrong_cwd_excludes_unrelated_project_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd_a = tmp.path().join("repo-a");
+            let cwd_b = tmp.path().join("repo-b");
+            std::fs::create_dir_all(&cwd_a).unwrap();
+            std::fs::create_dir_all(&cwd_b).unwrap();
+            let since = std::time::SystemTime::now();
+            touch_claude_fork_jsonl(tmp.path(), &cwd_b, "fork-other-cwd", since);
+            let result =
+                super::discover_claude_fork_session_id("origin-session", &cwd_a, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        });
+    }
+
+    #[test]
+    fn fork_discovery_accepts_candidate_created_after_initial_wait() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            let delayed = since + Duration::from_millis(900);
+            touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-delayed", delayed);
+            let result =
+                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(
+                result,
+                super::ForkDiscoveryResult::Unique("fork-delayed".into())
+            );
+        });
+    }
+
+    #[tokio::test]
+    async fn fork_discovery_polls_until_delayed_candidate_within_launch_bounds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let previous = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let since = std::time::SystemTime::now();
+        let delayed = since + Duration::from_millis(900);
+        let cwd_for_delay = cwd.clone();
+        let home_for_delay = tmp.path().to_path_buf();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(900)).await;
+            touch_claude_fork_jsonl(&home_for_delay, &cwd_for_delay, "fork-late", delayed);
+        });
+        let result =
+            super::wait_for_claude_fork_session_id("origin-session", &cwd, since).await;
+        match previous {
+            Some(path) => std::env::set_var("HOME", path),
+            None => std::env::remove_var("HOME"),
+        }
+        assert_eq!(
+            result,
+            super::ForkDiscoveryResult::Unique("fork-late".into())
         );
     }
 
