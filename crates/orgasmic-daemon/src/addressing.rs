@@ -16,6 +16,17 @@ pub fn validate_supported_pair(mode: &str, harness: &str) -> Result<(), String> 
     drivers_validate_supported_pair(mode, harness)
 }
 
+/// Raw argv tokens are valid only for the custom harness.
+pub fn validate_address_harness_args(harness: &str, harness_args: &[String]) -> Result<(), String> {
+    if harness == "custom" || harness_args.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "harness_args are only valid for custom harness; got {} args for {harness}",
+        harness_args.len()
+    ))
+}
+
 /// Historical/compat run label — never used as routing authority.
 pub fn compatibility_worker_id(kind: WorkerKind, mode: &str, harness: &str) -> String {
     format!("{}-{}-{}", kind.as_str(), harness.trim(), mode.trim())
@@ -58,5 +69,17 @@ mod tests {
     fn compatibility_label_is_not_routing_authority() {
         let id = compatibility_worker_id(WorkerKind::Implementer, "acp-stdio", "cursor-agent");
         assert_eq!(id, "implementer-cursor-agent-acp-stdio");
+    }
+
+    #[test]
+    fn harness_args_rejected_for_builtin_harness() {
+        let err = validate_address_harness_args("codex", &["--flag".into()]).unwrap_err();
+        assert!(err.contains("harness_args are only valid for custom harness"));
+    }
+
+    #[test]
+    fn harness_args_allowed_for_custom_harness() {
+        validate_address_harness_args("custom", &["opencode".into(), "--print-logs".into()])
+            .unwrap();
     }
 }

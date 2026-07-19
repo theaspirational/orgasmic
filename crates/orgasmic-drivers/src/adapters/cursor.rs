@@ -201,6 +201,8 @@ impl HarnessEventAdapter for CursorAdapter {
         if self.terminal_emitted.swap(true, Ordering::SeqCst) {
             return;
         }
+        let seq = self.next_seq();
+        let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 
@@ -384,6 +386,7 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &CursorAgentConfig) -> Vec<D
         chunk: "cursor-agent simulated response".into(),
         seq: 2,
     });
+    events.push(DriverEvent::AgentTurnComplete { seq: 3 });
     events.push(DriverEvent::RunComplete {
         summary: Some("cursor-agent simulated complete".into()),
     });
@@ -881,6 +884,8 @@ impl CursorAgentTranslator {
         if self.terminal_emitted.swap(true, Ordering::SeqCst) {
             return;
         }
+        let seq = self.next_seq();
+        let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 

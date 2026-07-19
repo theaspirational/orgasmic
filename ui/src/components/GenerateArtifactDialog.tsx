@@ -18,6 +18,7 @@ import { generateArtifact } from '@/lib/api';
 
 import {
   emptyTransportSelection,
+  harnessArgTokens,
   TransportPicker,
   type TransportSelection,
 } from './TransportPicker';
@@ -68,7 +69,7 @@ export function GenerateArtifactDialog({
           mode: transport.mode,
           harness: transport.harness,
           harness_args:
-            transport.harness === 'custom' ? transport.harness_args : undefined,
+            transport.harness === 'custom' ? harnessArgTokens(transport.harness_args) : undefined,
           model: transport.model.length > 0 ? transport.model : null,
           effort: transport.effort.length > 0 ? transport.effort : null,
         },

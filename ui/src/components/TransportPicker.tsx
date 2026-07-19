@@ -14,13 +14,27 @@ import { fetchManagerDrivers } from '@/lib/api';
 import type { ManagerDriverProfile } from '@/lib/types';
 import { useResource } from '@/lib/useResource';
 
+export type HarnessArgRow = {
+  id: string;
+  token: string;
+};
+
 export type TransportSelection = {
   mode: string;
   harness: string;
   model: string;
   effort: string;
-  harness_args: string[];
+  harness_args: HarnessArgRow[];
 };
+
+function createHarnessArgRow(token = ''): HarnessArgRow {
+  return { id: crypto.randomUUID(), token };
+}
+
+/** Flatten argv rows to the wire payload (tokens preserved verbatim). */
+export function harnessArgTokens(rows: HarnessArgRow[]): string[] {
+  return rows.map((row) => row.token);
+}
 
 /** Kind + installed (mode, harness) selectors backed by `/managers/drivers`. */
 export function TransportPicker({
@@ -108,13 +122,14 @@ export function TransportPicker({
       {value.harness === 'custom' ? (
         <div className="flex flex-col gap-2 text-sm">
           <span className="font-medium">Custom argv</span>
-          {value.harness_args.map((token, index) => (
-            <div key={`${index}-${token}`} className="flex gap-2">
+          {value.harness_args.map((row) => (
+            <div key={row.id} className="flex gap-2">
               <Input
-                value={token}
+                value={row.token}
                 onChange={(event) => {
-                  const next = [...value.harness_args];
-                  next[index] = event.target.value;
+                  const next = value.harness_args.map((entry) =>
+                    entry.id === row.id ? { ...entry, token: event.target.value } : entry,
+                  );
                   onChange({ ...value, harness_args: next });
                 }}
                 className="font-mono text-xs"
@@ -124,7 +139,7 @@ export function TransportPicker({
                 variant="outline"
                 size="sm"
                 onClick={() => {
-                  const next = value.harness_args.filter((_, i) => i !== index);
+                  const next = value.harness_args.filter((entry) => entry.id !== row.id);
                   onChange({ ...value, harness_args: next });
                 }}
               >
@@ -138,7 +153,10 @@ export function TransportPicker({
             size="sm"
             className="self-start"
             onClick={() =>
-              onChange({ ...value, harness_args: [...value.harness_args, ''] })
+              onChange({
+                ...value,
+                harness_args: [...value.harness_args, createHarnessArgRow('')],
+              })
             }
           >
             Add token

@@ -74,11 +74,7 @@ impl CursorAcpAdapter {
     }
 
     fn cfg_model(&self) -> Option<String> {
-        self.cfg
-            .as_ref()
-            .and_then(|cfg| cfg.model.clone())
-            .map(|model| model.trim().to_string())
-            .filter(|model| !model.is_empty())
+        self.cfg.as_ref().and_then(|cfg| cfg.model.clone())
     }
 
     fn worktree(&self) -> Option<PathBuf> {
@@ -176,12 +172,7 @@ impl HarnessEventAdapter for CursorAcpAdapter {
         self.cfg = Some(cfg.clone());
         let mut post_session = Vec::new();
         // Explicit model override only — never invent a default (dec_WDR5K item 9).
-        if let Some(model) = cfg
-            .model
-            .as_deref()
-            .map(str::trim)
-            .filter(|m| !m.is_empty())
-        {
+        if let Some(model) = cfg.model.clone() {
             post_session.push(json!({
                 "method": "session/set_config_option",
                 "params": {
@@ -439,9 +430,12 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             })));
         }
         Ok(HarnessControlOutcome {
-            events: vec![DriverEvent::RunComplete {
-                summary: Some(reason),
-            }],
+            events: crate::r#trait::turn_boundary_events(
+                self.next_seq(),
+                DriverEvent::RunComplete {
+                    summary: Some(reason),
+                },
+            ),
             wire_messages,
             close: true,
             ..HarnessControlOutcome::default()
@@ -603,21 +597,22 @@ impl CursorAcpAdapter {
             .or_else(|| response.get("stop_reason"))
             .and_then(Value::as_str)
             .unwrap_or("end_turn");
-        match reason {
+        let seq = self.next_seq();
+        let terminal = match reason {
             "end_turn" | "max_tokens" => {
                 self.terminal_emitted = true;
-                vec![DriverEvent::RunComplete {
+                DriverEvent::RunComplete {
                     summary: response
                         .get("summary")
                         .and_then(Value::as_str)
                         .map(ToString::to_string),
-                }]
+                }
             }
             "cancelled" => {
                 self.terminal_emitted = true;
-                vec![DriverEvent::RunComplete {
+                DriverEvent::RunComplete {
                     summary: Some("cursor ACP turn cancelled".into()),
-                }]
+                }
             }
             "refusal" | "max_turn_requests" => {
                 self.terminal_emitted = true;
@@ -625,18 +620,21 @@ impl CursorAcpAdapter {
                 // non-success outcomes for an orgasmic worker run: map them to
                 // RunFail with a typed code so supervisors do not treat a model
                 // refusal or turn-budget exhaustion as accepted completion.
-                vec![DriverEvent::RunFail {
+                DriverEvent::RunFail {
                     error_code: format!("cursor_acp_stop_reason_{reason}"),
                     error_markdown: format!(
                         "cursor ACP stopped with StopReason::{reason}: {response}"
                     ),
-                }]
+                }
             }
-            other => vec![DriverEvent::DriverError {
-                fatal: false,
-                message: format!("cursor ACP unknown stopReason {other}: {response}"),
-            }],
-        }
+            other => {
+                return vec![DriverEvent::DriverError {
+                    fatal: false,
+                    message: format!("cursor ACP unknown stopReason {other}: {response}"),
+                }];
+            }
+        };
+        crate::r#trait::turn_boundary_events(seq, terminal)
     }
 
     fn prompt_messages(&self, text: &str) -> Vec<WireMessage> {
@@ -1242,6 +1240,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runtime_options_switch_emits_set_config_option() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter
+            .stdio_session_init(
+                &ctx(),
+                &DriverConfig::from_value(json!({ "model": "fixture-a" })),
+            )
+            .unwrap();
+        adapter
+            .on_ws_thread_started(
+                "stdio",
+                &json!({
+                    "sessionId": "sess-fixture",
+                    "models": {
+                        "currentModelId": "fixture-a",
+                        "availableModels": [
+                            { "modelId": "fixture-a", "name": "Fixture A" },
+                            { "modelId": "fixture-b", "name": "Fixture B" }
+                        ]
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        let outcome = adapter
+            .switch_runtime_options(RuntimeOptionsRequest {
+                model: Some("fixture-b".into()),
+                ..RuntimeOptionsRequest::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.wire_messages.len(), 1);
+        match &outcome.wire_messages[0] {
+            WireMessage::JsonRpc { method, params } => {
+                assert_eq!(method, "session/set_config_option");
+                assert_eq!(params["sessionId"], "sess-fixture");
+                assert_eq!(params["configId"], "model");
+                assert_eq!(params["value"], "fixture-b");
+            }
+            other => panic!("expected JSON-RPC set_config_option, got {other:?}"),
+        }
+        let catalog = adapter.runtime_options_catalog().await.unwrap();
+        assert_eq!(catalog.current.model.as_deref(), Some("fixture-b"));
+        assert!(catalog.live_switching);
+    }
+
+    #[tokio::test]
     async fn session_new_models_block_becomes_runtime_catalog() {
         let mut adapter = CursorAcpAdapter::new();
         adapter.ctx = Some(ctx());
@@ -1395,8 +1442,9 @@ mod tests {
                 .on_ws_response("session/prompt", json!({"stopReason": reason}))
                 .await
                 .unwrap();
+            assert!(matches!(&events[0], DriverEvent::AgentTurnComplete { .. }));
             assert!(
-                matches!(&events[0], DriverEvent::RunFail { error_code, .. } if error_code == &format!("cursor_acp_stop_reason_{reason}"))
+                matches!(&events[1], DriverEvent::RunFail { error_code, .. } if error_code == &format!("cursor_acp_stop_reason_{reason}"))
             );
             adapter.terminal_emitted = false;
         }

@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use std::str::FromStr;
 
 use orgasmic_core::{SandboxAllowlist, WorkerKind};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Supervisor-floor timeouts mirrored as kind defaults when templates omit them.
 pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 600;
@@ -69,6 +69,12 @@ pub struct GovernancePatch {
     pub linked_skills: Option<Vec<String>>,
     /// Tri-state babysitter attachment: absent = inherit, `Some(None)` = disable,
     /// `Some(Some(addr))` = explicit address.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_babysitter_patch",
+        serialize_with = "serialize_babysitter_patch",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub babysitter: Option<Option<BabysitterAddress>>,
     pub sandbox_permissions: Option<SandboxPermissionsPatch>,
 }
@@ -297,6 +303,37 @@ pub fn known_governance_patch_keys() -> &'static [&'static str] {
     ]
 }
 
+/// Deserialize tri-state babysitter overlay: absent field = inherit (`None`),
+/// JSON/YAML null = disable (`Some(None)`), object = explicit address.
+fn deserialize_babysitter_patch<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<BabysitterAddress>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(Some(None)),
+        other => BabysitterAddress::deserialize(other)
+            .map(|addr| Some(Some(addr)))
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+fn serialize_babysitter_patch<S>(
+    value: &Option<Option<BabysitterAddress>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        None => serializer.serialize_none(),
+        Some(None) => serializer.serialize_none(),
+        Some(Some(addr)) => addr.serialize(serializer),
+    }
+}
+
 pub fn known_sandbox_permission_keys() -> &'static [&'static str] {
     &[
         "allow_exec",
@@ -471,6 +508,75 @@ mod tests {
         assert!(!sandbox.allow_patch, "dispatch layer");
         assert!(!sandbox.allow_network, "kind layer must survive");
         assert!(sandbox.allow_writes_outside_cwd, "untouched default field");
+    }
+
+    #[test]
+    fn babysitter_patch_absent_field_inherits() {
+        let patch: GovernancePatch = serde_json::from_str(r#"{"max_iterations": 5}"#).unwrap();
+        assert_eq!(patch.babysitter, None);
+    }
+
+    #[test]
+    fn babysitter_patch_null_disables() {
+        let patch: GovernancePatch = serde_json::from_str(r#"{"babysitter": null}"#).unwrap();
+        assert_eq!(patch.babysitter, Some(None));
+    }
+
+    #[test]
+    fn babysitter_patch_object_sets_explicit_address() {
+        let patch: GovernancePatch = serde_json::from_str(
+            r#"{"babysitter": {"mode": "acp-stdio", "harness": "codex", "model": "gpt-5"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            patch.babysitter,
+            Some(Some(BabysitterAddress {
+                mode: "acp-stdio".into(),
+                harness: "codex".into(),
+                harness_args: Vec::new(),
+                model: Some("gpt-5".into()),
+                effort: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn babysitter_patch_yaml_null_disables() {
+        let patch: GovernancePatch = serde_yaml::from_str(
+            r#"
+babysitter: null
+max_iterations: 7
+"#,
+        )
+        .unwrap();
+        assert_eq!(patch.babysitter, Some(None));
+        assert_eq!(patch.max_iterations, Some(7));
+    }
+
+    #[test]
+    fn babysitter_patch_disable_overrides_lower_layer_address() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                babysitter: Some(Some(BabysitterAddress {
+                    mode: "tmux".into(),
+                    harness: "codex".into(),
+                    ..BabysitterAddress::default()
+                })),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+        let dispatch_patch: GovernancePatch =
+            serde_json::from_str(r#"{"babysitter": null}"#).unwrap();
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &overlay,
+            Some(&dispatch_patch),
+        );
+        assert!(resolved.babysitter.is_none());
     }
 
     #[test]

@@ -32,6 +32,16 @@ use crate::runtime_options::{
     RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc, RuntimeOptionsRequest,
 };
 
+/// Protocol signal for one completed agent/model turn.
+pub fn agent_turn_complete(seq: u64) -> DriverEvent {
+    DriverEvent::AgentTurnComplete { seq }
+}
+
+/// Prepend a turn boundary before a terminal run event.
+pub fn turn_boundary_events(seq: u64, terminal: DriverEvent) -> Vec<DriverEvent> {
+    vec![agent_turn_complete(seq), terminal]
+}
+
 /// What a driver instance is running.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -378,11 +388,16 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
     }
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
-        Ok(HarnessControlOutcome::close_with(
-            DriverEvent::RunComplete {
-                summary: Some(reason),
-            },
-        ))
+        Ok(HarnessControlOutcome {
+            events: turn_boundary_events(
+                self.next_seq(),
+                DriverEvent::RunComplete {
+                    summary: Some(reason),
+                },
+            ),
+            close: true,
+            ..HarnessControlOutcome::default()
+        })
     }
 
     fn terminal_emitted(&self) -> bool {
@@ -396,6 +411,8 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         events: &mpsc::Sender<DriverEvent>,
         summary: Option<String>,
     ) {
+        let seq = self.next_seq();
+        let _ = events.send(agent_turn_complete(seq)).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 }

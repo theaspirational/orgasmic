@@ -640,9 +640,11 @@ export type GovernancePatch = {
     allow_writes_outside_cwd?: boolean | null;
   } | null;
   babysitter?: {
-    worker_id?: string;
     mode?: string;
     harness?: string;
+    harness_args?: string[];
+    model?: string | null;
+    effort?: string | null;
   } | null;
   max_iterations?: number | null;
   context_budget?: number | null;

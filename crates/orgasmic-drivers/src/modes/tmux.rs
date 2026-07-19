@@ -1360,13 +1360,9 @@ fn default_command_for_harness(harness: &str, cfg: &TmuxTuiConfig) -> (String, V
     match harness {
         "claude" => {
             let mut args = Vec::new();
-            if let Some(model) = cfg
-                .model
-                .as_deref()
-                .filter(|model| !model.trim().is_empty())
-            {
+            if let Some(model) = cfg.model.as_ref() {
                 args.push("--model".to_string());
-                args.push(model.to_string());
+                args.push(model.clone());
             }
             args.push("--dangerously-skip-permissions".to_string());
             ("claude".to_string(), args)

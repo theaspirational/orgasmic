@@ -82,39 +82,6 @@ fn seed_worker_kind(
     );
 }
 
-fn seed_worker_with_babysitter(
-    home: &Home,
-    id: &str,
-    babysitter_id: &str,
-    driver: &str,
-    harness: &str,
-    provider: &str,
-    model: &str,
-) {
-    write(
-        &home.user().join(format!("workers/{id}.org")),
-        format!(
-            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        implementer\n:DRIVER:                      {driver}\n:HARNESS:                     {harness}\n:PROVIDERS:                   {provider}\n:MODELS:                      {model}\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            {provider}\n:DEFAULT_MODEL:               {model}\n:DEFAULT_EFFORT:              high\n:BABYSITTER_WORKER:           {babysitter_id}\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
-        ),
-    );
-}
-
-fn seed_babysitter_worker(
-    home: &Home,
-    id: &str,
-    driver: &str,
-    harness: &str,
-    provider: &str,
-    model: &str,
-) {
-    write(
-        &home.user().join(format!("workers/{id}.org")),
-        format!(
-            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        babysitter\n:DRIVER:                      {driver}\n:HARNESS:                     {harness}\n:PROVIDERS:                   {provider}\n:MODELS:                      {model}\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            {provider}\n:DEFAULT_MODEL:               {model}\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           watching, poking, escalating, restarting\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest babysitter worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
-        ),
-    );
-}
-
 fn seed_project(
     home: &Home,
     project_root: &Path,

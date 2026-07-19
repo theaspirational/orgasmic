@@ -294,14 +294,10 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         {
             args.push("--dangerously-skip-permissions".to_string());
         }
-        if let Some(model) = cfg
-            .model
-            .as_deref()
-            .filter(|model| !model.trim().is_empty())
-        {
+        if let Some(model) = cfg.model.as_ref() {
             if !args.iter().any(|arg| arg == "--model") {
                 args.push("--model".to_string());
-                args.push(model.to_string());
+                args.push(model.clone());
             }
         }
         // Deterministic native Claude session identity (mirrors tmux): pin
@@ -1250,9 +1246,13 @@ async fn watch_line_stream_exit(
 async fn emit_run_complete_once(
     events: &mpsc::Sender<DriverEvent>,
     terminal_emitted: &AtomicBool,
+    turn_seq: &mut u64,
     summary: Option<String>,
 ) {
     if !terminal_emitted.swap(true, Ordering::SeqCst) {
+        let seq = *turn_seq;
+        *turn_seq = turn_seq.saturating_add(1);
+        let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 }
@@ -1481,6 +1481,10 @@ impl DriverControl for RmuxControl {
             }
         }
         if !self.terminal_emitted.swap(true, Ordering::SeqCst) {
+            let _ = self
+                .events
+                .send(DriverEvent::AgentTurnComplete { seq: 0 })
+                .await;
             let _ = self
                 .events
                 .send(DriverEvent::RunComplete {
@@ -2156,6 +2160,8 @@ mod tests {
         assert!(capabilities["rmux_binary"].is_object());
         assert_eq!(capabilities["rmux_binary"]["found"], false);
         s.control.release("done").await.unwrap();
+        let turn = s.events.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let ev2 = s.events.recv().await.unwrap();
         assert!(matches!(ev2, DriverEvent::RunComplete { .. }));
     }
@@ -2566,6 +2572,7 @@ mod tests {
                 .expect("timed out waiting for rmux exit event")
                 .expect("event stream closed");
             match ev {
+                DriverEvent::AgentTurnComplete { .. } => {}
                 DriverEvent::RunComplete { summary } => {
                     saw_complete = true;
                     assert_eq!(

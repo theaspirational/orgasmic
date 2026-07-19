@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 
 use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
@@ -516,6 +516,7 @@ struct EventSeqs {
     stderr: u64,
     system: u64,
     tool: u64,
+    turn: u64,
 }
 
 impl EventSeqs {
@@ -535,6 +536,12 @@ impl EventSeqs {
     fn next_tool(&mut self) -> u64 {
         let seq = self.tool;
         self.tool += 1;
+        seq
+    }
+
+    fn next_turn(&mut self) -> u64 {
+        let seq = self.turn;
+        self.turn += 1;
         seq
     }
 }
@@ -593,12 +600,14 @@ async fn dispatch_notification(
             }
         }
         "turn/completed" => {
-            emit_turn_completion(params, events).await;
+            emit_turn_completion(params, events, seqs).await;
             return Ok(true);
         }
         "thread/closed" => {
             // No fabricated summary: the daemon assembles the worker's real
             // report from the assistant text chunks when summary is None.
+            let seq = seqs.next_turn();
+            let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
             let _ = events
                 .send(DriverEvent::RunComplete { summary: None })
                 .await;
@@ -646,7 +655,13 @@ async fn send_driver_error(events: &mpsc::Sender<DriverEvent>, fatal: bool, mess
         .await;
 }
 
-async fn emit_turn_completion(params: &Value, events: &mpsc::Sender<DriverEvent>) {
+async fn emit_turn_completion(
+    params: &Value,
+    events: &mpsc::Sender<DriverEvent>,
+    seqs: &mut EventSeqs,
+) {
+    let seq = seqs.next_turn();
+    let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
     let turn = params.get("turn").unwrap_or(params);
     match turn.get("status").and_then(Value::as_str) {
         Some("failed") => {
@@ -819,17 +834,22 @@ fn thread_start_params(
     cfg: &CodexAppserverConfig,
 ) -> Result<Value, DriverError> {
     let cwd = effective_cwd(ctx)?;
-    Ok(json!({
-        "model": cfg.model,
-        "cwd": cwd,
-        "runtimeWorkspaceRoots": [cwd],
-        "baseInstructions": format!(
+    let mut params = Map::new();
+    if let Some(model) = cfg.model.clone() {
+        params.insert("model".to_string(), json!(model));
+    }
+    params.insert("cwd".to_string(), json!(cwd));
+    params.insert("runtimeWorkspaceRoots".to_string(), json!([cwd]));
+    params.insert(
+        "baseInstructions".to_string(),
+        json!(format!(
             "You are running under orgasmic for task {} using worker {}.",
             ctx.task_id, ctx.worker_id
-        ),
-        "experimentalRawEvents": true,
-        "persistExtendedHistory": false,
-    }))
+        )),
+    );
+    params.insert("experimentalRawEvents".to_string(), json!(true));
+    params.insert("persistExtendedHistory".to_string(), json!(false));
+    Ok(Value::Object(params))
 }
 
 fn initialize_params() -> Value {
@@ -851,16 +871,19 @@ fn turn_start_params(thread_id: &str, ctx: &DriverContext, cfg: &CodexAppserverC
 }
 
 fn turn_start_input_params(thread_id: &str, input: String, cfg: &CodexAppserverConfig) -> Value {
-    let mut params = json!({
-        "threadId": thread_id,
-        "input": [text_input(input)],
-        "model": cfg.model,
-        "effort": cfg.reasoning_effort,
-    });
-    if let Some(speed) = cfg.speed {
-        params["serviceTier"] = json!(codex_service_tier(speed));
+    let mut params = Map::new();
+    params.insert("threadId".to_string(), json!(thread_id));
+    params.insert("input".to_string(), json!([text_input(input)]));
+    if let Some(model) = cfg.model.clone() {
+        params.insert("model".to_string(), json!(model));
     }
-    params
+    if let Some(effort) = cfg.reasoning_effort.clone() {
+        params.insert("effort".to_string(), json!(effort));
+    }
+    if let Some(speed) = cfg.speed {
+        params.insert("serviceTier".to_string(), json!(codex_service_tier(speed)));
+    }
+    Value::Object(params)
 }
 
 fn codex_service_tier(speed: RuntimeSpeed) -> &'static str {
@@ -1413,6 +1436,8 @@ mod tests {
         .await
         .unwrap();
         assert!(terminal);
+        let turn = rx.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let event = rx.recv().await.unwrap();
         assert!(
             matches!(event, DriverEvent::RunComplete { summary: None }),
@@ -1435,6 +1460,8 @@ mod tests {
         .await
         .unwrap();
         assert!(terminal);
+        let turn = rx.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let event = rx.recv().await.unwrap();
         assert!(
             matches!(event, DriverEvent::RunComplete { summary: None }),
@@ -1457,6 +1484,8 @@ mod tests {
         .await
         .unwrap();
         assert!(terminal);
+        let turn = rx.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let event = rx.recv().await.unwrap();
         assert!(
             matches!(

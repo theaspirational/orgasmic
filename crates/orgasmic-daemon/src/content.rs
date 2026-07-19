@@ -20,11 +20,7 @@ pub struct WorkerView {
     pub driver: String,
     pub harness: String,
     pub providers: Vec<String>,
-    pub models: Vec<String>,
-    pub reasoning_efforts: Vec<String>,
     pub default_provider: Option<String>,
-    pub default_model: Option<String>,
-    pub default_effort: Option<String>,
     pub linked_skills: Vec<String>,
     pub applicable_states: Vec<String>,
     pub max_iterations: Option<u32>,
@@ -393,11 +389,7 @@ fn worker_view_from_worker(
         driver: worker.driver.to_string(),
         harness: worker.harness.to_string(),
         providers: worker.providers,
-        models: Vec::new(),
-        reasoning_efforts: Vec::new(),
         default_provider: worker.default_provider,
-        default_model: None,
-        default_effort: None,
         linked_skills: worker
             .linked_skills
             .iter()
