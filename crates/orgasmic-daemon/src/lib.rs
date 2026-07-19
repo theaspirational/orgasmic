@@ -318,6 +318,7 @@ impl Daemon {
             dispatch_response_delay: opts.dispatch_response_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            trusted_claude_binary: api::pin_trusted_claude_binary(&home),
         };
 
         // Boot auto-reattach: rehydrate still-live runs (notably the operator's

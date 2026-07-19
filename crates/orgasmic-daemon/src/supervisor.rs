@@ -5,8 +5,8 @@
 //!
 //! Invariants the supervisor enforces:
 //!
-//! - **AC #2**: at most one active run per `(task_id, RunKind)` tuple. A
-//!   second `acquire` for the same key while a run is live returns
+//! - **AC #2**: at most one active run per `(project_id, task_id, RunKind)`
+//!   tuple. A second `acquire` for the same key while a run is live returns
 //!   [`SupervisorError::LeaseHeld`].
 //! - **AC #3**: every driver event lands in a per-run JSONL through the
 //!   serialized [`crate::writer::WriterHandle`], plus a `Lifecycle::Acquire`
@@ -230,6 +230,17 @@ pub enum SupervisorError {
     ArtifactorLifecycleBusy(String),
 }
 
+/// Canonical supervisor lease identity (TASK-QPKCD / TASK-EMY0M).
+pub(crate) type LeaseKey = (String, String, RunKind);
+
+pub(crate) fn lease_key(project_id: Option<&str>, task_id: &str, kind: RunKind) -> LeaseKey {
+    (
+        project_id.unwrap_or_default().to_string(),
+        task_id.to_string(),
+        kind,
+    )
+}
+
 #[derive(Clone)]
 pub struct Supervisor {
     inner: Arc<Mutex<Inner>>,
@@ -239,8 +250,8 @@ pub struct Supervisor {
 
 struct Inner {
     acquisition_paused: bool,
-    /// `(task_id, RunKind)` → run_id. Single-entry guard for AC #2.
-    leases: HashMap<(String, RunKind), String>,
+    /// `(project_id, task_id, RunKind)` → run_id. Single-entry guard for AC #2.
+    leases: HashMap<LeaseKey, String>,
     /// run_id → live run record. Holds the driver control handle so the
     /// supervisor can call `release` later.
     runs: HashMap<String, RunRecord>,
@@ -259,12 +270,12 @@ struct Inner {
 /// a stale guard from removing a newer holder's lease.
 struct LeaseReservation {
     inner: Arc<Mutex<Inner>>,
-    key: Option<(String, RunKind)>,
+    key: Option<LeaseKey>,
     run_id: String,
 }
 
 impl LeaseReservation {
-    fn new(inner: Arc<Mutex<Inner>>, key: (String, RunKind), run_id: String) -> Self {
+    fn new(inner: Arc<Mutex<Inner>>, key: LeaseKey, run_id: String) -> Self {
         Self {
             inner,
             key: Some(key),
@@ -276,7 +287,7 @@ impl LeaseReservation {
         self.key = None;
     }
 
-    fn remove_if_unowned(inner: &mut Inner, key: &(String, RunKind), run_id: &str) {
+    fn remove_if_unowned(inner: &mut Inner, key: &LeaseKey, run_id: &str) {
         let reserved_by_this_run = inner.leases.get(key).is_some_and(|held| held == run_id);
         if reserved_by_this_run && !inner.runs.contains_key(run_id) {
             inner.leases.remove(key);
@@ -388,6 +399,10 @@ struct RunRecord {
     driver_has_ready: bool,
     /// Exactly-once guard for canonical early-exit Failed release.
     early_exit_release_taken: bool,
+    /// Driver event channel closed; all queued events have been drained.
+    stream_ended: bool,
+    /// PID watcher observed subprocess exit (quiescence boundary with stream end).
+    early_exit_pid_exited: bool,
 }
 
 struct BabysitterAutoSpawnBackoff {
@@ -737,7 +752,7 @@ impl Supervisor {
                 RuntimeIdentity::new(&run_id, &self.boot.boot_id),
             )
         };
-        let lease_key = (req.task_id.clone(), req.kind);
+        let lease_key = lease_key(req.project_id.as_deref(), &req.task_id, req.kind);
         {
             let mut guard = self.inner.lock().await;
             if guard.acquisition_paused {
@@ -872,6 +887,8 @@ impl Supervisor {
                 driver_has_terminal: false,
                 driver_has_ready: false,
                 early_exit_release_taken: false,
+                stream_ended: false,
+                early_exit_pid_exited: false,
             };
             let mut g = self.inner.lock().await;
             g.runs.insert(run_id.clone(), record);
@@ -1189,7 +1206,7 @@ impl Supervisor {
     ) -> Result<AcquireResponse, SupervisorError> {
         let run_id = identity.run_id.clone();
         // Lease conflict guard: do not steal an occupied lease.
-        let lease_key = (task_id.clone(), kind);
+        let lease_key = lease_key(project_id.as_deref(), &task_id, kind);
         {
             let mut guard = self.inner.lock().await;
             if guard.acquisition_paused {
@@ -1366,6 +1383,8 @@ impl Supervisor {
             driver_has_terminal: false,
             driver_has_ready: false,
             early_exit_release_taken: false,
+            stream_ended: false,
+            early_exit_pid_exited: false,
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
@@ -1692,7 +1711,11 @@ impl Supervisor {
                 .runs
                 .remove(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-            g.leases.remove(&(rec.task_id.clone(), rec.kind));
+            g.leases.remove(&lease_key(
+                rec.project_id.as_deref(),
+                &rec.task_id,
+                rec.kind,
+            ));
             let cleared_babysitter_backoff = if rec.kind == RunKind::Babysitter {
                 g.babysitter_auto_spawn_backoff
                     .remove(&rec.task_id)
@@ -2178,12 +2201,14 @@ impl Supervisor {
     /// a worker or lease was cleared.
     pub async fn release_dispatch_worker_for_cleanup(
         &self,
+        project_id: &str,
         task_id: &str,
         kind: RunKind,
     ) -> Result<Option<String>, SupervisorError> {
+        let key = lease_key(Some(project_id), task_id, kind);
         let run_id = {
             let g = self.inner.lock().await;
-            g.leases.get(&(task_id.to_string(), kind)).cloned()
+            g.leases.get(&key).cloned()
         };
         let Some(run_id) = run_id else {
             return Ok(None);
@@ -2201,7 +2226,7 @@ impl Supervisor {
             .await?;
             return Ok(Some(run_id));
         }
-        match self.release_orphaned_lease(task_id, kind).await {
+        match self.release_orphaned_lease(project_id, task_id, kind).await {
             OrphanedLeaseOutcome::Released { run_id } => Ok(Some(run_id)),
             OrphanedLeaseOutcome::NoLease => Ok(None),
             OrphanedLeaseOutcome::HeldByLiveRun { run_id } => {
@@ -2216,18 +2241,19 @@ impl Supervisor {
         }
     }
 
-    /// Clear an *orphaned* lease: one held for `(task_id, kind)` whose run
-    /// record no longer exists (e.g. the CLI timed out while the daemon
-    /// completed the acquire, then the run died without releasing). Returns
-    /// what happened so the caller can report it honestly. A lease backed by
-    /// a live run is NOT cleared — release the run instead.
+    /// Clear an *orphaned* lease: one held for `(project_id, task_id, kind)`
+    /// whose run record no longer exists (e.g. the CLI timed out while the
+    /// daemon completed the acquire, then the run died without releasing).
+    /// Returns what happened so the caller can report it honestly. A lease
+    /// backed by a live run is NOT cleared — release the run instead.
     pub async fn release_orphaned_lease(
         &self,
+        project_id: &str,
         task_id: &str,
         kind: RunKind,
     ) -> OrphanedLeaseOutcome {
         let mut g = self.inner.lock().await;
-        let key = (task_id.to_string(), kind);
+        let key = lease_key(Some(project_id), task_id, kind);
         let Some(run_id) = g.leases.get(&key).cloned() else {
             return OrphanedLeaseOutcome::NoLease;
         };
@@ -2390,70 +2416,94 @@ fn process_is_zombie(pid: u32) -> bool {
 }
 
 fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
+    let writer = supervisor.writer.clone();
+    let inner = supervisor.inner.clone();
     tokio::spawn(async move {
         let safety = Instant::now() + Duration::from_secs(30);
-        let mut exit_observed: Option<Instant> = None;
         loop {
             if Instant::now() >= safety {
+                force_early_exit_safety_release(&writer, &inner, &run_id).await;
                 return;
             }
-            let should_continue = {
-                let guard = supervisor.inner.lock().await;
+            let still_watching = {
+                let guard = inner.lock().await;
                 guard.runs.get(&run_id).is_some_and(|rec| {
                     rec.early_exit_watcher_pid == Some(pid) && !rec.early_exit_release_taken
                 })
             };
-            if !should_continue {
+            if !still_watching {
                 return;
             }
-            if !subprocess_exited(pid) {
-                exit_observed = None;
+            let stream_ended = {
+                let guard = inner.lock().await;
+                guard.runs.get(&run_id).is_some_and(|rec| rec.stream_ended)
+            };
+            let exited = if stream_ended {
+                subprocess_exited_or_unprobeable(pid)
+            } else {
+                subprocess_exited(pid)
+            };
+            if !exited {
                 tokio::time::sleep(Duration::from_millis(250)).await;
                 continue;
             }
-            let exit_at = *exit_observed.get_or_insert_with(Instant::now);
-            if exit_at.elapsed() < Duration::from_millis(500) {
-                tokio::time::sleep(Duration::from_millis(250)).await;
-                continue;
+            {
+                let mut guard = inner.lock().await;
+                if let Some(rec) = guard.runs.get_mut(&run_id) {
+                    rec.early_exit_pid_exited = true;
+                }
             }
-            let no_work = {
-                let guard = supervisor.inner.lock().await;
+            complete_early_exit_release_if_ready(&writer, &inner, &run_id).await;
+            let released = {
+                let guard = inner.lock().await;
                 guard
                     .runs
                     .get(&run_id)
-                    .is_some_and(session_is_early_exit_no_work_record)
+                    .is_none_or(|rec| rec.early_exit_release_taken)
             };
-            if !no_work {
-                return;
-            }
-            let taken = {
-                let mut guard = supervisor.inner.lock().await;
-                try_take_early_exit_release(&mut guard, &run_id)
-            };
-            if let Some(rec) = taken {
-                tracing::info!(
-                    run_id = %run_id,
-                    pid,
-                    "auto-releasing early-exit subprocess run with no work envelopes"
-                );
-                append_terminal_release(
-                    &supervisor.writer,
-                    rec,
-                    ResolvedTerminalRelease {
-                        reason: "early-exit subprocess with no work envelopes".into(),
-                        outcome: ReleaseOutcome::Failed,
-                        finalized_by_worker: false,
-                    },
-                )
-                .await;
-                return;
-            }
-            if exit_at.elapsed() >= Duration::from_secs(10) {
+            if released {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
         }
     });
+}
+
+#[cfg(unix)]
+fn subprocess_exited_or_unprobeable(pid: u32) -> bool {
+    if pid == 0 {
+        tracing::warn!(pid, "refusing to probe invalid process id");
+        return true;
+    }
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        tracing::warn!(
+            pid,
+            "process id does not fit platform pid_t; treating as exited"
+        );
+        return true;
+    };
+    let result = if unsafe { libc::kill(pid, 0) } == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error().raw_os_error())
+    };
+    match result {
+        Ok(()) | Err(Some(libc::EPERM)) => false,
+        Err(Some(libc::ESRCH)) => true,
+        Err(errno) => {
+            tracing::warn!(
+                pid,
+                ?errno,
+                "unexpected kill(pid, 0) after stream end; treating as exited"
+            );
+            true
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn subprocess_exited_or_unprobeable(_pid: u32) -> bool {
+    true
 }
 
 #[cfg(unix)]
@@ -2697,38 +2747,93 @@ fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
     )
 }
 
+fn remove_record_lease(inner: &mut Inner, rec: &RunRecord) {
+    inner.leases.remove(&lease_key(
+        rec.project_id.as_deref(),
+        &rec.task_id,
+        rec.kind,
+    ));
+}
+
 fn session_is_early_exit_no_work_record(rec: &RunRecord) -> bool {
     rec.driver_has_ready && !rec.driver_has_work && !rec.driver_has_terminal
 }
 
-enum StreamEndEarlyExitDecision {
-    DeferToWatcher,
-    Release,
+fn early_exit_quiescence_ready(rec: &RunRecord) -> bool {
+    if !rec.stream_ended {
+        return false;
+    }
+    if rec.early_exit_watcher_pid.is_some() && !rec.early_exit_pid_exited {
+        return false;
+    }
+    true
 }
 
-fn stream_end_early_exit_decision(rec: &RunRecord) -> StreamEndEarlyExitDecision {
-    if !session_is_early_exit_no_work_record(rec) {
-        return StreamEndEarlyExitDecision::Release;
-    }
-    if rec.early_exit_watcher_pid.is_some() && !rec.early_exit_release_taken {
-        StreamEndEarlyExitDecision::DeferToWatcher
-    } else {
-        StreamEndEarlyExitDecision::Release
-    }
-}
-
-fn try_take_early_exit_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
+fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
     let rec = inner.runs.get(run_id)?;
-    if rec.early_exit_release_taken
-        || !session_is_early_exit_no_work_record(rec)
-        || rec.early_exit_watcher_pid.is_none()
-    {
+    if rec.early_exit_release_taken {
+        return None;
+    }
+    if session_is_early_exit_no_work_record(rec) && !early_exit_quiescence_ready(rec) {
+        return None;
+    }
+    if rec.early_exit_watcher_pid.is_some() && !rec.driver_has_ready && !rec.stream_ended {
+        return None;
+    }
+    if rec.early_exit_watcher_pid.is_some() && !rec.driver_has_ready {
+        // Subprocess stream may close before Ready is delivered; defer to the
+        // PID watcher until quiescence or the safety deadline.
         return None;
     }
     let mut rec = inner.runs.remove(run_id)?;
     rec.early_exit_release_taken = true;
-    inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+    remove_record_lease(inner, &rec);
     Some(rec)
+}
+
+async fn complete_early_exit_release_if_ready(
+    writer: &WriterHandle,
+    inner: &tokio::sync::Mutex<Inner>,
+    run_id: &str,
+) {
+    let release = {
+        let mut g = inner.lock().await;
+        take_stream_end_release(&mut g, run_id)
+    };
+    if let Some(rec) = release {
+        write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
+    }
+}
+
+async fn force_early_exit_safety_release(
+    writer: &WriterHandle,
+    inner: &tokio::sync::Mutex<Inner>,
+    run_id: &str,
+) {
+    let release = {
+        let mut g = inner.lock().await;
+        let Some(rec) = g.runs.get_mut(run_id) else {
+            return;
+        };
+        if rec.early_exit_release_taken {
+            return;
+        }
+        rec.stream_ended = true;
+        rec.early_exit_pid_exited = true;
+        take_stream_end_release(&mut g, run_id)
+    };
+    if let Some(rec) = release {
+        append_terminal_release(
+            writer,
+            rec,
+            ResolvedTerminalRelease {
+                reason: "early-exit watcher safety deadline".into(),
+                outcome: ReleaseOutcome::Failed,
+                finalized_by_worker: false,
+            },
+        )
+        .await;
+    }
 }
 
 /// TUI transports emit a terminal driver event (EOT-marker fallback; removed
@@ -2780,14 +2885,14 @@ fn take_deferred_artifactor_release(inner: &mut Inner, run_id: &str) -> Deferred
         let Some(rec) = inner.runs.remove(run_id) else {
             return DeferredArtifactorRelease::None;
         };
-        inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+        remove_record_lease(inner, &rec);
         return DeferredArtifactorRelease::Cancel(rec);
     }
     if rec.pending_terminal_drain {
         let Some(rec) = inner.runs.remove(run_id) else {
             return DeferredArtifactorRelease::None;
         };
-        inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+        remove_record_lease(inner, &rec);
         return DeferredArtifactorRelease::Drain(rec);
     }
     DeferredArtifactorRelease::None
@@ -2889,7 +2994,7 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     }
 
     let rec = inner.runs.remove(run_id)?;
-    inner.leases.remove(&(rec.task_id.clone(), rec.kind));
+    remove_record_lease(inner, &rec);
     let resolved = resolve_terminal_release(&rec, TerminalReleaseSource::TerminalEvent);
     Some(TerminalRelease {
         run_id: run_id.to_string(),
@@ -2902,15 +3007,26 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     })
 }
 
-fn claim_run_on_stream_end(inner: &mut Inner, run_id: &str) -> Option<RunRecord> {
-    let mut rec = inner.runs.remove(run_id)?;
-    inner.leases.remove(&(rec.task_id.clone(), rec.kind));
-    if artifactor_lifecycle_in_flight(&rec) {
-        rec.pending_terminal_drain = true;
-        inner.runs.insert(run_id.to_string(), rec);
-        return None;
+async fn finish_stream_end_terminal_drain(
+    writer: &WriterHandle,
+    inner: &tokio::sync::Mutex<Inner>,
+    run_id: &str,
+) {
+    let release = {
+        let mut g = inner.lock().await;
+        let Some(rec) = g.runs.get_mut(run_id) else {
+            return;
+        };
+        rec.stream_ended = true;
+        if artifactor_lifecycle_in_flight(rec) {
+            rec.pending_terminal_drain = true;
+            return;
+        }
+        take_stream_end_release(&mut g, run_id)
+    };
+    if let Some(rec) = release {
+        write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
     }
-    Some(rec)
 }
 
 async fn append_terminal_release(
@@ -2940,33 +3056,18 @@ async fn write_terminal_release_from_record(
     rec: RunRecord,
     source: TerminalReleaseSource,
 ) {
-    let resolved = resolve_terminal_release(&rec, source);
-    append_terminal_release(writer, rec, resolved).await;
-}
-
-async fn finish_stream_end_terminal_drain(
-    writer: &WriterHandle,
-    inner: &tokio::sync::Mutex<Inner>,
-    run_id: &str,
-) {
-    let release = {
-        let mut g = inner.lock().await;
-        let Some(rec) = claim_run_on_stream_end(&mut g, run_id) else {
-            return;
-        };
-        match stream_end_early_exit_decision(&rec) {
-            StreamEndEarlyExitDecision::DeferToWatcher => {
-                let lease_key = (rec.task_id.clone(), rec.kind);
-                g.leases.insert(lease_key, run_id.to_string());
-                g.runs.insert(run_id.to_string(), rec);
-                None
-            }
-            StreamEndEarlyExitDecision::Release => Some(rec),
+    let resolved = if session_is_early_exit_no_work_record(&rec)
+        && rec.early_exit_watcher_pid.is_some()
+    {
+        ResolvedTerminalRelease {
+            reason: "early-exit subprocess with no work envelopes".into(),
+            outcome: ReleaseOutcome::Failed,
+            finalized_by_worker: false,
         }
+    } else {
+        resolve_terminal_release(&rec, source)
     };
-    if let Some(rec) = release {
-        write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
-    }
+    append_terminal_release(writer, rec, resolved).await;
 }
 
 async fn finish_driver_terminal_release(writer: &WriterHandle, release: TerminalRelease) {
@@ -4720,7 +4821,7 @@ mod tests {
         let driver = TmuxTuiDriver;
         // No lease at all → nothing to clear.
         assert_eq!(
-            sup.release_orphaned_lease("TASK-ORPHAN", RunKind::Worker)
+            sup.release_orphaned_lease("orgasmic", "TASK-ORPHAN", RunKind::Worker)
                 .await,
             OrphanedLeaseOutcome::NoLease
         );
@@ -4730,7 +4831,7 @@ mod tests {
             .unwrap();
         // A live run holds the lease → refuse to steal it.
         assert_eq!(
-            sup.release_orphaned_lease("TASK-ORPHAN", RunKind::Worker)
+            sup.release_orphaned_lease("orgasmic", "TASK-ORPHAN", RunKind::Worker)
                 .await,
             OrphanedLeaseOutcome::HeldByLiveRun {
                 run_id: r1.run_id.clone()
@@ -4743,7 +4844,7 @@ mod tests {
             g.runs.remove(&r1.run_id);
         }
         assert_eq!(
-            sup.release_orphaned_lease("TASK-ORPHAN", RunKind::Worker)
+            sup.release_orphaned_lease("orgasmic", "TASK-ORPHAN", RunKind::Worker)
                 .await,
             OrphanedLeaseOutcome::Released {
                 run_id: r1.run_id.clone()
@@ -5274,7 +5375,11 @@ mod tests {
             .lock()
             .await
             .leases
-            .get(&("TASK-NO-PID-EARLY".to_string(), RunKind::Worker))
+            .get(&lease_key(
+                Some("orgasmic"),
+                "TASK-NO-PID-EARLY",
+                RunKind::Worker,
+            ))
             .cloned();
         assert!(
             held.is_none(),
@@ -6298,7 +6403,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = TmuxTuiDriver;
         sup.inner.lock().await.leases.insert(
-            ("TASK-SPIN".to_string(), RunKind::Babysitter),
+            lease_key(Some("orgasmic"), "TASK-SPIN", RunKind::Babysitter),
             "bs-stale-lease".to_string(),
         );
 

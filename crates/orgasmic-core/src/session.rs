@@ -173,6 +173,7 @@ impl SessionWriter {
         self.file.write_all(line.as_bytes())?;
         self.file.write_all(b"\n")?;
         self.file.flush()?;
+        self.file.sync_all()?;
         let seq = self.seq;
         self.seq += 1;
         Ok(seq)

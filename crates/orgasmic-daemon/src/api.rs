@@ -58,10 +58,12 @@ use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
-    commit_recovery_claim, load_committed_recovery_claim, load_recovery_claim,
-    plan_pending_recovery_claim, reconcile_pending_claim, recovery_origin_lock,
-    verify_committed_claim_against_session, CommitRecoveryDetails, PendingRecoveryPlan,
-    RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks, RecoveryClaimStatus,
+    commit_recovery_claim, index_recovery_origins_in_session, load_committed_recovery_claim,
+    load_recovery_claim, plan_pending_recovery_claim, reconcile_pending_claim,
+    recovery_origin_lock, resolve_authoritative_recovery_claim,
+    verify_committed_claim_against_session, CommitRecoveryDetails, IndexedRecoveryOrigin,
+    PendingRecoveryPlan, RecoveryClaim, RecoveryClaimError, RecoveryClaimLocks,
+    RecoveryClaimStatus, ResolvedRecoveryClaim,
 };
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
@@ -111,6 +113,8 @@ pub struct ApiState {
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
     /// Per-origin locks serializing Failed recovery claims and POST /recover.
     pub recovery_claim_locks: RecoveryClaimLocks,
+    /// Daemon-pinned trusted Claude executable (absolute path), resolved at boot.
+    pub trusted_claude_binary: Option<PathBuf>,
 }
 
 impl ApiState {
@@ -138,8 +142,12 @@ impl ApiState {
             .clone()
     }
 
-    fn recovery_claim_lock(&self, origin_run_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        recovery_origin_lock(&self.recovery_claim_locks, origin_run_id)
+    fn recovery_claim_lock(
+        &self,
+        project_id: &str,
+        origin_run_id: &str,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        recovery_origin_lock(&self.recovery_claim_locks, project_id, origin_run_id)
     }
 }
 
@@ -1401,6 +1409,7 @@ struct PersistedTerminalContract {
 /// roles fail closed; the only exemption is a custom bare terminal proved
 /// from the recorded harness (dec_WDR5K item 6 seventh amendment).
 // orgasmic:TASK-ARZGD,dec_WDR5K
+#[allow(clippy::too_many_arguments)]
 fn resolve_persisted_terminal_contract(
     home: &Home,
     worker_id: &str,
@@ -4210,7 +4219,7 @@ async fn post_task_dispatch_cleanup(
 
     let released_run_id = state
         .supervisor
-        .release_dispatch_worker_for_cleanup(&task_id, kind.run_kind())
+        .release_dispatch_worker_for_cleanup(&project_id, &task_id, kind.run_kind())
         .await
         .map_err(|error| ApiError::internal(error.to_string()))?;
 
@@ -4301,7 +4310,7 @@ fn delete_dispatch_branch(project_root: &FsPath, branch: &str) -> Result<bool, S
 /// "restart the daemon" anti-pattern (which the restart guard now refuses).
 async fn post_task_lease_release(
     State(state): State<ApiState>,
-    Path((_project_id, task_id)): Path<(String, String)>,
+    Path((project_id, task_id)): Path<(String, String)>,
     Json(req): Json<LeaseReleaseRequest>,
 ) -> Result<Json<LeaseReleaseResponse>, ApiError> {
     let kind = match req.kind.as_deref().unwrap_or("implementer") {
@@ -4311,7 +4320,7 @@ async fn post_task_lease_release(
     };
     match state
         .supervisor
-        .release_orphaned_lease(&task_id, kind)
+        .release_orphaned_lease(&project_id, &task_id, kind)
         .await
     {
         crate::supervisor::OrphanedLeaseOutcome::Released { run_id } => {
@@ -6140,7 +6149,7 @@ async fn post_run_recover(
         .filter(|id| !id.is_empty())
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    let claim_lock = state.recovery_claim_lock(&id);
+    let claim_lock = state.recovery_claim_lock(&project_id, &id);
     let _claim_guard = claim_lock.lock().await;
 
     let mut pending_plan: Option<PendingRecoveryPlan> = None;
@@ -6249,6 +6258,9 @@ async fn post_run_recover(
                 &prior.session_path,
                 replacement_session_path,
                 &state.boot.boot_id,
+                &action,
+                &target,
+                None,
             )
             .map_err(|err| match err {
                 RecoveryClaimError::AlreadyClaimed(claim) => recovery_claim_conflict(&id, &claim),
@@ -6416,14 +6428,19 @@ async fn execute_run_recover_action(
                 let native = native.ok_or_else(|| {
                     ApiError::bad_request("resume_native_fork requires recorded native metadata")
                 })?;
-                let session_id = validated_claude_native_session_id(&state.home, &native)
-                    .ok_or_else(|| {
-                        ApiError::bad_request(
-                            "recorded native metadata does not prove a trustworthy Claude session",
-                        )
-                    })?;
-                let (command, args) =
-                    reconstruct_claude_native_resume_command(&state.home, &session_id);
+                let session_id = validated_claude_native_session_id(
+                    state.trusted_claude_binary.as_deref(),
+                    &native,
+                )
+                .ok_or_else(|| {
+                    ApiError::bad_request(
+                        "recorded native metadata does not prove a trustworthy Claude session",
+                    )
+                })?;
+                let (command, args) = reconstruct_claude_native_resume_command(
+                    state.trusted_claude_binary.as_deref(),
+                    &session_id,
+                );
                 let driver = driver_for_mode_harness("tmux", "claude").ok_or_else(|| {
                     ApiError::internal("tmux/claude driver unavailable for native resume")
                 })?;
@@ -6482,34 +6499,64 @@ async fn execute_run_recover_action(
                 None
             };
 
-            let acquire = state
-                .supervisor
-                .acquire(
-                    driver.as_ref(),
-                    AcquireRequest {
-                        task_id: meta
-                            .as_ref()
+            let acquire = if pending_plan.is_some_and(|plan| plan.reattach_existing) {
+                let identity = pending_plan
+                    .as_ref()
+                    .map(|plan| plan.planned_identity.clone())
+                    .unwrap_or(RuntimeIdentity {
+                        run_id: prior.run_id.clone(),
+                        runtime_id: prior.runtime_id.clone(),
+                        boot_id: prior.boot_id.clone(),
+                    });
+                state
+                    .supervisor
+                    .reattach(
+                        driver.as_ref(),
+                        identity,
+                        run_kind,
+                        meta.as_ref()
                             .map(|m| m.task_id.clone())
                             .unwrap_or_else(|| format!("recover:{id}")),
-                        kind: run_kind,
-                        role: terminal_contract.role.clone(),
-                        worker_id,
-                        project_id: req.project.clone(),
-                        worktree,
-                        last_path,
-                        stdout_path,
-                        session_path: session_path.clone(),
+                        worker_id.clone(),
+                        terminal_contract.role.clone(),
+                        terminal_contract.requires_worker_finalize,
+                        req.project.clone(),
+                        worktree.clone(),
+                        session_path.clone(),
                         driver_config,
-                        babysitter_target: None,
-                        stall_timeout_secs: None,
-                        max_run_duration_secs: None,
-                        idle_timeout_secs: None,
-                        babysitter: None,
-                        planned_identity,
-                    },
-                )
-                .await
-                .map_err(supervisor_recover_error)?;
+                    )
+                    .await
+                    .map_err(supervisor_recover_error)?
+            } else {
+                state
+                    .supervisor
+                    .acquire(
+                        driver.as_ref(),
+                        AcquireRequest {
+                            task_id: meta
+                                .as_ref()
+                                .map(|m| m.task_id.clone())
+                                .unwrap_or_else(|| format!("recover:{id}")),
+                            kind: run_kind,
+                            role: terminal_contract.role.clone(),
+                            worker_id,
+                            project_id: req.project.clone(),
+                            worktree,
+                            last_path,
+                            stdout_path,
+                            session_path: session_path.clone(),
+                            driver_config,
+                            babysitter_target: None,
+                            stall_timeout_secs: None,
+                            max_run_duration_secs: None,
+                            idle_timeout_secs: None,
+                            babysitter: None,
+                            planned_identity,
+                        },
+                    )
+                    .await
+                    .map_err(supervisor_recover_error)?
+            };
 
             state
                 .supervisor
@@ -6554,8 +6601,15 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         .iter()
         .map(|entry| entry.path.clone())
         .collect();
-    let recovered =
-        classify_session_files(&state.home, &state.boot.boot_id, &live.runs, &project_roots).await;
+    let recovered = classify_session_files(
+        &state.home,
+        state.trusted_claude_binary.as_deref(),
+        &state.boot.boot_id,
+        &live.runs,
+        &project_roots,
+    )
+    .await;
+    let indexed_origins = collect_recovery_origin_index(&state.home, &project_roots);
     let mut interrupted_runs = Vec::new();
     let mut reattached_runs = Vec::new();
     let mut failed_recoverable_runs = Vec::new();
@@ -6565,7 +6619,7 @@ async fn recovery_status(state: &ApiState) -> RecoveryResponse {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
         }
-        apply_recovery_claim_to_run(&state.home, &mut run);
+        apply_recovery_claim_to_run(&state.home, &state.boot.boot_id, &indexed_origins, &mut run);
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
             "reattached" => reattached_runs.push(run),
@@ -6909,6 +6963,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
 
 async fn classify_session_files(
     home: &Home,
+    trusted_claude_binary: Option<&FsPath>,
     _current_boot_id: &str,
     live_runs: &[crate::supervisor::RunSummary],
     project_roots: &[PathBuf],
@@ -6928,7 +6983,15 @@ async fn classify_session_files(
         let project_id = read_existing_project_identity(&root.join(".orgasmic/project.org"))
             .ok()
             .map(|identity| identity.project_id);
-        classify_session_dir(home, &dir, project_id, &live_ids, &mut runs).await;
+        classify_session_dir(
+            home,
+            trusted_claude_binary,
+            &dir,
+            project_id,
+            &live_ids,
+            &mut runs,
+        )
+        .await;
     }
     runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
     runs
@@ -6939,6 +7002,7 @@ async fn classify_session_files(
 /// parsed envelopes, so it is location-agnostic.
 async fn classify_session_dir(
     home: &Home,
+    trusted_claude_binary: Option<&FsPath>,
     dir: &FsPath,
     project_id: Option<String>,
     live_ids: &std::collections::BTreeSet<&str>,
@@ -6999,8 +7063,14 @@ async fn classify_session_dir(
                 // Failed tombstones stay terminal/immutable; recovery is a
                 // distinct manager-authorized run (TASK-R28CP / TASK-QPKCD).
                 let attach = classify_current_boot_session(home, envelopes, first, live_ids).await;
-                let actions =
-                    resolve_recovery_actions(home, envelopes, attach.classification, true).await;
+                let actions = resolve_recovery_actions(
+                    home,
+                    trusted_claude_binary,
+                    envelopes,
+                    attach.classification,
+                    true,
+                )
+                .await;
                 ("failed_recoverable".to_string(), terminal_reason, actions)
             } else {
                 ("terminal_noop".to_string(), terminal_reason, Vec::new())
@@ -7010,16 +7080,24 @@ async fn classify_session_dir(
             // before being marked interrupted, dec_052) and compute the
             // ordered, harness-aware recovery action list.
             let attach = classify_current_boot_session(home, envelopes, first, live_ids).await;
-            let actions =
-                resolve_recovery_actions(home, envelopes, attach.classification, false).await;
+            let actions = resolve_recovery_actions(
+                home,
+                trusted_claude_binary,
+                envelopes,
+                attach.classification,
+                false,
+            )
+            .await;
             (attach.classification.to_string(), attach.reason, actions)
         };
+        let session_project_id =
+            session_run_meta_project_id(envelopes).or_else(|| project_id.clone());
         runs.push(RecoveredRun {
             run_id: first.run_id.clone(),
             runtime_id: first.runtime_id.clone(),
             boot_id: first.boot_id.clone(),
             session_path: path,
-            project_id: project_id.clone(),
+            project_id: session_project_id,
             classification,
             reason,
             recovery_actions,
@@ -7173,6 +7251,18 @@ async fn classify_current_boot_session(
     }
 }
 
+fn session_run_meta_project_id(envelopes: &[SessionEnvelope]) -> Option<String> {
+    envelopes.iter().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()? {
+            Lifecycle::RunMeta { project_id, .. } => project_id,
+            _ => None,
+        }
+    })
+}
+
 fn session_acquire_meta(envelopes: &[SessionEnvelope]) -> Option<SessionAcquireMeta> {
     envelopes.iter().find_map(|envelope| {
         if envelope.kind != SessionEventKind::Lifecycle {
@@ -7233,22 +7323,9 @@ fn validate_safe_session_id(id: &str) -> bool {
             .all(|c| matches!(c, Component::Normal(_)))
 }
 
-/// Resolve the trusted Claude executable from daemon-owned harness discovery.
-fn resolve_trusted_claude_binary(home: &Home) -> Option<PathBuf> {
-    if let Ok(custom) = std::env::var("ORGASMIC_CLAUDE_BINARY") {
-        let path = PathBuf::from(custom);
-        if path.is_file() {
-            return path.canonicalize().ok().or(Some(path));
-        }
-    }
-    if let Some(paths) = std::env::var_os("PATH") {
-        for dir in std::env::split_paths(&paths) {
-            let candidate = dir.join("claude");
-            if candidate.is_file() {
-                return candidate.canonicalize().ok().or(Some(candidate));
-            }
-        }
-    }
+/// Resolve and pin the trusted Claude executable from daemon-owned discovery.
+/// Does not consult request/project cwd PATH or bare `claude` on PATH.
+pub fn pin_trusted_claude_binary(home: &Home) -> Option<PathBuf> {
     let candidate = home.bin().join("claude");
     if candidate.is_file() {
         return candidate.canonicalize().ok().or(Some(candidate));
@@ -7272,7 +7349,7 @@ fn resume_argv_proves_claude_fork(resume_argv: &[String], session_id: &str) -> b
 
 /// Prove structured Claude native identity without trusting persisted argv.
 fn validated_claude_native_session_id(
-    home: &Home,
+    trusted_claude_binary: Option<&FsPath>,
     native: &SessionNativeRuntime,
 ) -> Option<String> {
     if native.provider != "claude" {
@@ -7288,7 +7365,7 @@ fn validated_claude_native_session_id(
         }
         if let Some(cmd) = native.resume_argv.first() {
             if (cmd.contains('/') || cmd.contains('\\'))
-                && resolve_trusted_claude_binary(home)
+                && trusted_claude_binary
                     .is_some_and(|trusted| trusted.to_string_lossy() != cmd.as_str())
             {
                 return None;
@@ -7303,10 +7380,12 @@ fn validated_claude_native_session_id(
 
 /// Reconstruct the daemon-owned Claude resume/fork command from validated identity.
 fn reconstruct_claude_native_resume_command(
-    home: &Home,
+    trusted_claude_binary: Option<&FsPath>,
     session_id: &str,
 ) -> (PathBuf, Vec<String>) {
-    let command = resolve_trusted_claude_binary(home).unwrap_or_else(|| PathBuf::from("claude"));
+    let command = trusted_claude_binary
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("claude"));
     (
         command,
         vec![
@@ -7351,16 +7430,34 @@ fn recovery_claim_conflict(origin_run_id: &str, claim: &RecoveryClaim) -> ApiErr
     }))
 }
 
-fn apply_recovery_claim_to_run(home: &Home, run: &mut RecoveredRun) {
+fn apply_recovery_claim_to_run(
+    home: &Home,
+    boot_id: &str,
+    indexed_origins: &[IndexedRecoveryOrigin],
+    run: &mut RecoveredRun,
+) {
     if run.classification != "failed_recoverable" {
         return;
     }
     let Some(project_id) = run.project_id.as_deref() else {
         return;
     };
-    let Ok(Some(claim)) = load_committed_recovery_claim(home, project_id, &run.run_id) else {
+    let Ok(resolved) = resolve_authoritative_recovery_claim(
+        home,
+        project_id,
+        &run.run_id,
+        indexed_origins,
+        boot_id,
+    ) else {
         return;
     };
+    let claim = match resolved {
+        ResolvedRecoveryClaim::Valid(claim) | ResolvedRecoveryClaim::Reconstructed(claim) => claim,
+        ResolvedRecoveryClaim::InvalidQuarantined | ResolvedRecoveryClaim::Missing => return,
+    };
+    if claim.status != RecoveryClaimStatus::Committed {
+        return;
+    }
     if !verify_committed_claim_against_session(&claim) {
         return;
     }
@@ -7373,11 +7470,41 @@ fn apply_recovery_claim_to_run(home: &Home, run: &mut RecoveredRun) {
     );
 }
 
+fn collect_recovery_origin_index(
+    home: &Home,
+    project_roots: &[PathBuf],
+) -> Vec<IndexedRecoveryOrigin> {
+    let mut links = Vec::new();
+    let mut seen_dirs = std::collections::BTreeSet::new();
+    for root in project_roots {
+        let dir = project_sessions_dir(root);
+        if !seen_dirs.insert(dir.clone()) {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(envelopes) = read_session_file(&path) else {
+                continue;
+            };
+            links.extend(index_recovery_origins_in_session(&envelopes, &path));
+        }
+    }
+    let _ = home;
+    links
+}
+
 /// Backend-owned, ordered, harness-aware recovery action resolver (dec_052).
 /// Priority: live tmux reattach, native session resume/fork, then a fresh
 /// recovery run. `classification` is the attach-proof result for this run.
 async fn resolve_recovery_actions(
-    home: &Home,
+    _home: &Home,
+    trusted_claude_binary: Option<&FsPath>,
     envelopes: &[SessionEnvelope],
     classification: &str,
     failed_terminal: bool,
@@ -7401,7 +7528,7 @@ async fn resolve_recovery_actions(
 
     // 2. Native session resume/fork when structured Claude identity is provable.
     if let Some(native) = session_native_runtime(envelopes) {
-        if validated_claude_native_session_id(home, &native).is_some() {
+        if validated_claude_native_session_id(trusted_claude_binary, &native).is_some() {
             actions.push(RecoveryAction {
                 kind: "resume_native_fork".to_string(),
                 label: "Resume Claude (fork)".to_string(),
@@ -13015,6 +13142,7 @@ mod tests {
             dispatch_response_delay: None,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            trusted_claude_binary: pin_trusted_claude_binary(&home),
         }
     }
 
@@ -14731,6 +14859,7 @@ mod tests {
         );
         let recovered = classify_session_files(
             &post_restart_state.home,
+            post_restart_state.trusted_claude_binary.as_deref(),
             &post_restart_state.boot.boot_id,
             &[],
             std::slice::from_ref(&project_root),
@@ -14893,6 +15022,7 @@ mod tests {
 
         let recovered = classify_session_files(
             &home,
+            None,
             "boot-after-restart",
             &[],
             std::slice::from_ref(&project_root),
@@ -17898,9 +18028,14 @@ mod tests {
         let project_root = tmp.path().join("proj");
         write_nonterminal_session(&project_root, identity, "acp/1", "implementer-claude-acp");
 
-        let recovered =
-            classify_session_files(&home, "boot-test", &[], std::slice::from_ref(&project_root))
-                .await;
+        let recovered = classify_session_files(
+            &home,
+            None,
+            "boot-test",
+            &[],
+            std::slice::from_ref(&project_root),
+        )
+        .await;
 
         let run = recovered
             .iter()
@@ -17943,9 +18078,14 @@ mod tests {
             "manager-tmux-tui",
         );
 
-        let recovered =
-            classify_session_files(&home, "boot-test", &[], std::slice::from_ref(&project_root))
-                .await;
+        let recovered = classify_session_files(
+            &home,
+            None,
+            "boot-test",
+            &[],
+            std::slice::from_ref(&project_root),
+        )
+        .await;
 
         let run = recovered
             .iter()
@@ -17970,7 +18110,7 @@ mod tests {
         // metadata, the sole action is start_recovery_run.
         let envelopes: Vec<SessionEnvelope> = Vec::new();
         let home = Home::at(std::env::temp_dir().join("orgasmic-recovery-test-home"));
-        let actions = resolve_recovery_actions(&home, &envelopes, "interrupted", false).await;
+        let actions = resolve_recovery_actions(&home, None, &envelopes, "interrupted", false).await;
         assert_eq!(actions.len(), 1, "{actions:?}");
         assert_eq!(actions[0].kind, "start_recovery_run");
     }
@@ -18017,7 +18157,7 @@ mod tests {
         let home = Home::at(std::env::temp_dir().join("orgasmic-recovery-test-home2"));
         // classification "interrupted" (tmux gone): no reattach, but native
         // resume/fork is available before start_recovery_run.
-        let actions = resolve_recovery_actions(&home, &envelopes, "interrupted", false).await;
+        let actions = resolve_recovery_actions(&home, None, &envelopes, "interrupted", false).await;
         let kinds: Vec<&str> = actions.iter().map(|a| a.kind.as_str()).collect();
         assert_eq!(kinds, ["resume_native_fork", "start_recovery_run"]);
         // Manager worker_id routes recovery to the manager surface.
@@ -18237,9 +18377,14 @@ mod tests {
         let failed_path = session_path;
         let original_bytes = std::fs::read(&failed_path).unwrap();
 
-        let recovered =
-            classify_session_files(&home, "boot-test", &[], std::slice::from_ref(&project_root))
-                .await;
+        let recovered = classify_session_files(
+            &home,
+            None,
+            "boot-test",
+            &[],
+            std::slice::from_ref(&project_root),
+        )
+        .await;
         let run = recovered
             .iter()
             .find(|run| run.run_id == run_id)
@@ -18362,7 +18507,8 @@ mod tests {
         for (label, native_env) in negative_cases {
             let mut envelopes = base.clone();
             envelopes.push(native_env);
-            let actions = resolve_recovery_actions(&home, &envelopes, "interrupted", false).await;
+            let actions =
+                resolve_recovery_actions(&home, None, &envelopes, "interrupted", false).await;
             assert!(
                 !actions.iter().any(|a| a.kind == "resume_native_fork"),
                 "{label} must not expose resume_native_fork: {actions:?}"
@@ -18376,7 +18522,7 @@ mod tests {
             vec!["claude", "--resume", "other-session-id", "--fork-session"],
         ));
         let actions =
-            resolve_recovery_actions(&home, &mismatched_resume, "interrupted", false).await;
+            resolve_recovery_actions(&home, None, &mismatched_resume, "interrupted", false).await;
         assert!(
             !actions.iter().any(|a| a.kind == "resume_native_fork"),
             "resume id mismatch must not expose resume_native_fork: {actions:?}"
@@ -18394,17 +18540,17 @@ mod tests {
             ],
         ));
         let valid_actions =
-            resolve_recovery_actions(&home, &valid_resume, "interrupted", false).await;
+            resolve_recovery_actions(&home, None, &valid_resume, "interrupted", false).await;
         assert!(
             valid_actions.iter().any(|a| a.kind == "resume_native_fork"),
             "consistent native metadata should expose resume_native_fork"
         );
-        let (command, args) =
-            reconstruct_claude_native_resume_command(&home, "550e8400-e29b-41d4-a716-446655440000");
-        assert_eq!(
-            command,
-            resolve_trusted_claude_binary(&home).unwrap_or_else(|| PathBuf::from("claude"))
+        let trusted = pin_trusted_claude_binary(&home);
+        let (command, args) = reconstruct_claude_native_resume_command(
+            trusted.as_deref(),
+            "550e8400-e29b-41d4-a716-446655440000",
         );
+        assert_eq!(command, trusted.unwrap_or_else(|| PathBuf::from("claude")));
         assert_eq!(
             args,
             vec![
@@ -18760,6 +18906,9 @@ mod tests {
             &origin_path,
             forged_path,
             "boot-forged",
+            "start_recovery_run",
+            "worker",
+            None,
         )
         .unwrap();
         commit_recovery_claim(
@@ -18831,17 +18980,12 @@ mod tests {
             "protocol_end_without_finalize",
             false,
         );
-        let path_b = write_failed_recoverable_session(
+        write_failed_recoverable_session(
             &project_b,
             "run-shared-id",
             "protocol_end_without_finalize",
             false,
         );
-        // Give project-b a distinct task_id so recovery leases do not collide on
-        // run_id alone while still sharing the origin run id under test.
-        let mut lines = std::fs::read_to_string(&path_b).unwrap();
-        lines = lines.replace("TASK-FAILED-RECOVER", "TASK-FAILED-RECOVER-B");
-        std::fs::write(&path_b, lines).unwrap();
 
         let running = crate::Daemon::run(home.clone(), test_options())
             .await
@@ -18929,7 +19073,7 @@ mod tests {
                 "--dangerously-skip-permissions",
             ],
         ));
-        let actions = resolve_recovery_actions(&home, &envelopes, "interrupted", false).await;
+        let actions = resolve_recovery_actions(&home, None, &envelopes, "interrupted", false).await;
         assert!(
             actions.iter().any(|a| a.kind == "resume_native_fork"),
             "production resume_argv shape must advertise resume_native_fork: {actions:?}"
@@ -18961,6 +19105,7 @@ mod tests {
         home.ensure().unwrap();
         let recovered = rt.block_on(classify_session_files(
             &home,
+            None,
             "boot-test",
             &[],
             std::slice::from_ref(&project_root),

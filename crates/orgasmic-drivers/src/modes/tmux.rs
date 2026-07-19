@@ -15,7 +15,7 @@
 //! (`tmux new-session -d`), runs the configured command, and tears the
 //! session down on `release`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -406,6 +406,15 @@ struct TmuxSpawnPlan {
     run_id: String,
 }
 
+fn is_claude_harness_command(harness: &str, command: &str) -> bool {
+    harness == "claude"
+        && (command == "claude"
+            || Path::new(command)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name == "claude"))
+}
+
 fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> TmuxSpawnPlan {
     let cwd = cfg
         .cwd
@@ -438,7 +447,7 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         args.extend(cfg.harness_args.iter().cloned());
     }
 
-    let is_claude = harness == "claude" && command == "claude";
+    let is_claude = is_claude_harness_command(harness, &command);
     if is_claude && !cfg.native_resume_mode {
         if !args
             .iter()
@@ -473,7 +482,20 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
     }
 
     let native_runtime = if is_claude {
-        let session_id = claude_session_id(&ctx.identity.runtime_id);
+        let session_id = if cfg.native_resume_mode {
+            args.iter()
+                .enumerate()
+                .find_map(|(idx, arg)| {
+                    if arg == "--resume" {
+                        args.get(idx + 1).cloned()
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or_else(|| claude_session_id(&ctx.identity.runtime_id))
+        } else {
+            claude_session_id(&ctx.identity.runtime_id)
+        };
         Some(claude_native_runtime(&session_id, &cwd, &command, &args))
     } else {
         // Other harnesses store only real launch metadata until their native
@@ -534,7 +556,7 @@ pub(crate) fn claude_native_runtime(
     launch_argv.extend(args.iter().cloned());
     // Resume forks the prior conversation into a fresh session id (dec_052).
     let resume_argv = vec![
-        "claude".to_string(),
+        command.to_string(),
         "--resume".to_string(),
         session_id.to_string(),
         "--fork-session".to_string(),
