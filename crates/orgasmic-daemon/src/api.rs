@@ -4266,13 +4266,7 @@ async fn post_task_dispatch_cleanup(
                 errors.push(format!("worktree: {err}"));
                 state
                     .supervisor
-                    .finish_dispatch_cleanup(
-                        &task_id,
-                        kind.run_kind(),
-                        &req.worktree_path,
-                        Some(&req.branch),
-                        req.dispatch_attempt_token.as_deref(),
-                    )
+                    .finish_dispatch_cleanup(&cleanup_params)
                     .await;
                 return Ok(Json(DispatchCleanupResponse {
                     status: "failed".into(),
@@ -4293,13 +4287,7 @@ async fn post_task_dispatch_cleanup(
 
     state
         .supervisor
-        .finish_dispatch_cleanup(
-            &task_id,
-            kind.run_kind(),
-            &req.worktree_path,
-            Some(&req.branch),
-            req.dispatch_attempt_token.as_deref(),
-        )
+        .finish_dispatch_cleanup(&cleanup_params)
         .await;
 
     let status = match (worktree_removed, branch_deleted, errors.is_empty()) {

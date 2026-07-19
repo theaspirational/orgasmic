@@ -54,7 +54,7 @@ use crate::modes::tmux::{
     cancel_and_join_driver_task, claude_native_runtime, claude_session_id,
     cursor_argv_needs_startup_trust, default_input_ready_timeout, deserialize_duration_secs,
     is_dispatch_placeholder, pane_has_input_prompt, pane_requests_folder_trust,
-    push_initial_prompt_argv, wait_for_owned_send_child, SendChildOwner,
+    push_initial_prompt_argv, SendChildOwner,
 };
 
 use crate::r#trait::{
@@ -1803,6 +1803,43 @@ mod tests {
         .await;
         assert!(result.is_ok());
         assert!(sent.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn rmux_send_child_owner_release_kills_blocked_fake_cli() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("fake-rmux");
+        std::fs::write(&bin, "#!/bin/sh\nsleep 300\n").unwrap();
+        let mut perms = std::fs::metadata(&bin).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&bin, perms).unwrap();
+
+        let owner = SendChildOwner::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_task = cancel.clone();
+        let owner_for_task = owner.clone();
+        let task = tokio::spawn(async move {
+            let _ = run_rmux_cli_with_owner(
+                bin.to_str().unwrap(),
+                &["send-keys", "a"],
+                Some(&owner_for_task),
+                Some(cancel_for_task.as_ref()),
+            )
+            .await;
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let joined = tokio::time::timeout(
+            Duration::from_secs(2),
+            cancel_and_join_driver_task(cancel.as_ref(), Some(task), Some(&owner)),
+        )
+        .await;
+        assert!(
+            joined.is_ok(),
+            "release must kill/join a blocked fake rmux CLI child promptly"
+        );
     }
 
     #[tokio::test]

@@ -313,12 +313,11 @@ enum CleanupIdentityAuth {
     NoOwner,
     ExactOwner,
     IdentityMismatch,
-    AuthorityUnavailable,
 }
 
 enum DurableScanError {
     UnreadableSessionsDir,
-    UnreadableSessionFile(PathBuf),
+    UnreadableSessionFile,
 }
 
 /// Owns a lease reservation until the corresponding [`RunRecord`] is live.
@@ -2594,7 +2593,7 @@ impl Supervisor {
             params.stdout_path.as_deref(),
             durable_owner.as_ref(),
         ) {
-            CleanupIdentityAuth::IdentityMismatch | CleanupIdentityAuth::AuthorityUnavailable => {
+            CleanupIdentityAuth::IdentityMismatch => {
                 self.clear_dispatch_cleanup_reservation(
                     &params.task_id,
                     params.kind,
@@ -2640,33 +2639,32 @@ impl Supervisor {
     }
 
     /// Release a dispatch cleanup reservation after filesystem mutation finishes.
-    pub async fn finish_dispatch_cleanup(
-        &self,
-        task_id: &str,
-        kind: RunKind,
-        worktree_path: &Path,
-        branch: Option<&str>,
-        dispatch_attempt_token: Option<&str>,
-    ) {
-        let worktree_key = normalize_cleanup_worktree(worktree_path);
+    pub async fn finish_dispatch_cleanup(&self, params: &DispatchCleanupParams) {
+        let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
         let reservation_key = CleanupReservationKey {
-            task_id: task_id.to_string(),
-            kind,
+            task_id: params.task_id.clone(),
+            kind: params.kind,
             worktree_key,
         };
         let mut g = self.inner.lock().await;
         let Some(reservation) = g.cleanup_reservations.get(&reservation_key) else {
             return;
         };
-        if let Some(expected_branch) = branch {
-            if reservation.branch != expected_branch {
-                return;
-            }
-        }
-        if reservation.dispatch_attempt_token.as_deref() != dispatch_attempt_token {
+        if reservation.branch != params.branch {
             return;
         }
-        if reservation.worktree_path != worktree_path {
+        if reservation.dispatch_attempt_token.as_deref()
+            != params.dispatch_attempt_token.as_deref()
+        {
+            return;
+        }
+        if reservation.worktree_path != params.worktree_path {
+            return;
+        }
+        if reservation.last_path.as_deref() != params.last_path.as_deref() {
+            return;
+        }
+        if reservation.stdout_path.as_deref() != params.stdout_path.as_deref() {
             return;
         }
         g.cleanup_reservations.remove(&reservation_key);
@@ -3277,7 +3275,7 @@ fn scan_durable_dispatch_owner(
             continue;
         }
         let envelopes = read_session_file(&path)
-            .map_err(|_| DurableScanError::UnreadableSessionFile(path.clone()))?;
+            .map_err(|_| DurableScanError::UnreadableSessionFile)?;
         let mut current_task: Option<String> = None;
         for envelope in &envelopes {
             if envelope.kind != SessionEventKind::Lifecycle {
@@ -3320,7 +3318,7 @@ fn scan_durable_dispatch_owner(
                                 || candidate.last_path != existing.last_path
                                 || candidate.stdout_path != existing.stdout_path)
                         {
-                            return Err(DurableScanError::UnreadableSessionFile(path.clone()));
+                            return Err(DurableScanError::UnreadableSessionFile);
                         }
                     }
                     if latest
@@ -3331,7 +3329,7 @@ fn scan_durable_dispatch_owner(
                     }
                 }
                 Err(_) => {
-                    return Err(DurableScanError::UnreadableSessionFile(path.clone()));
+                    return Err(DurableScanError::UnreadableSessionFile);
                 }
                 _ => {}
             }
@@ -3490,6 +3488,7 @@ fn resolve_terminal_release(
 /// Decide the stream-end Lifecycle::Release when the driver event channel
 /// closes and the run was still live (no prior finalize / terminal
 /// release won the race). Thin wrapper kept for unit tests.
+#[cfg(test)]
 fn stream_end_release_for_transport(
     _transport: &str,
     terminal_outcome: Option<ReleaseOutcome>,
@@ -7191,13 +7190,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(outcome, DispatchCleanupOutcome::Conflict);
-        sup.finish_dispatch_cleanup(
-            "TASK-CLEANUP-A",
-            RunKind::Worker,
-            &worktree,
-            Some("task-cleanup-a-impl"),
-            Some("aaaa1111bbbb2222cccc3333dddd4444"),
-        )
+        sup.finish_dispatch_cleanup(&DispatchCleanupParams {
+            task_id: "TASK-CLEANUP-A".into(),
+            kind: RunKind::Worker,
+            branch: "task-cleanup-a-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some("aaaa1111bbbb2222cccc3333dddd4444".into()),
+            last_path: Some(dir.path().join("a-last.txt")),
+            stdout_path: Some(dir.path().join("a-stdout.log")),
+        })
         .await;
     }
 
@@ -7237,13 +7238,15 @@ mod tests {
             } => assert_eq!(run_id, acquired.run_id),
             other => panic!("expected proceed with release, got {other:?}"),
         }
-        sup.finish_dispatch_cleanup(
-            "TASK-CLEANUP-B",
-            RunKind::Worker,
-            &worktree,
-            Some("task-cleanup-b-impl"),
-            Some(token),
-        )
+        sup.finish_dispatch_cleanup(&DispatchCleanupParams {
+            task_id: "TASK-CLEANUP-B".into(),
+            kind: RunKind::Worker,
+            branch: "task-cleanup-b-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some(token.into()),
+            last_path: Some(last.clone()),
+            stdout_path: Some(stdout.clone()),
+        })
         .await;
     }
 
@@ -7286,13 +7289,6 @@ mod tests {
             "held cleanup reservation must block a second prepare"
         );
 
-        sup.finish_dispatch_cleanup(
-            "TASK-CLEANUP-RESERVE",
-            RunKind::Worker,
-            &worktree,
-            Some("task-cleanup-reserve-impl"),
-            Some(token),
-        )
-        .await;
+        sup.finish_dispatch_cleanup(&params).await;
     }
 }

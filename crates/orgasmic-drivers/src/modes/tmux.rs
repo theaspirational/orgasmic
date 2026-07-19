@@ -374,10 +374,6 @@ impl SendChildOwner {
         }
     }
 
-    pub(crate) fn register(&self, child: Child) {
-        *self.active.lock().unwrap() = Some(child);
-    }
-
     /// Check cancellation, spawn, and register under one lock boundary.
     pub(crate) async fn spawn_register_and_wait(
         &self,
@@ -402,7 +398,7 @@ impl SendChildOwner {
             return Ok(());
         }
         let mut child = {
-            let mut guard = self.active.lock().unwrap();
+            let _guard = self.active.lock().unwrap();
             if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
                 return Ok(());
             }
@@ -1740,6 +1736,8 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::collections::VecDeque;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
 
@@ -2520,6 +2518,99 @@ mod tests {
             sent.is_empty(),
             "first stable non-trust frame must terminate without trust input"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_cancel_before_spawn_leaves_no_child() {
+        let owner = SendChildOwner::new();
+        let cancel = AtomicBool::new(true);
+        owner
+            .spawn_register_and_wait(Some(&cancel), || {
+                let mut cmd = tokio::process::Command::new("sleep");
+                cmd.arg("300");
+                Ok(cmd)
+            })
+            .await
+            .unwrap();
+        owner.kill_and_reap().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_release_kills_blocked_fake_cli() {
+        let owner = SendChildOwner::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_task = cancel.clone();
+        let owner_for_task = owner.clone();
+        let task = tokio::spawn(async move {
+            let _ = owner_for_task
+                .spawn_register_and_wait(Some(cancel_for_task.as_ref()), || {
+                    let mut cmd = tokio::process::Command::new("sleep");
+                    cmd.arg("300");
+                    Ok(cmd)
+                })
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let joined = tokio::time::timeout(
+            Duration::from_secs(2),
+            cancel_and_join_driver_task(cancel.as_ref(), Some(task), Some(&owner)),
+        )
+        .await;
+        assert!(
+            joined.is_ok(),
+            "release must kill/join a blocked fake tmux CLI child promptly"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_cancel_during_blocked_wait_kills_child() {
+        let owner = SendChildOwner::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_task = cancel.clone();
+        let owner_for_task = owner.clone();
+        let task = tokio::spawn(async move {
+            let _ = owner_for_task
+                .spawn_register_and_wait(Some(cancel_for_task.as_ref()), || {
+                    let mut cmd = tokio::process::Command::new("sleep");
+                    cmd.arg("300");
+                    Ok(cmd)
+                })
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancel.store(true, Ordering::SeqCst);
+        let joined = tokio::time::timeout(
+            Duration::from_secs(2),
+            cancel_and_join_driver_task(cancel.as_ref(), Some(task), Some(&owner)),
+        )
+        .await;
+        assert!(
+            joined.is_ok(),
+            "cancel during blocked wait must kill/join the fake tmux CLI child promptly"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_child_error_does_not_leave_registered_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stub = tmp.path().join("fail.sh");
+        std::fs::write(&stub, "#!/bin/sh\nexit 42\n").unwrap();
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+        let owner = SendChildOwner::new();
+        let result = owner
+            .spawn_register_and_wait(None, || Ok(tokio::process::Command::new(&stub)))
+            .await;
+        assert!(
+            result.is_err(),
+            "child exit must surface as transport error"
+        );
+        owner.kill_and_reap().await;
     }
 
     #[tokio::test]

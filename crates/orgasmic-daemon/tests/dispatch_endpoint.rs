@@ -3100,3 +3100,356 @@ async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// TASK-NW4WV: worker finalize through the dispatch endpoint must preserve
+/// worker-authored last/stdout artifacts and must not flag an orphan.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-FINALIZE-EP";
+    seed_worker(
+        &home,
+        "implementer-codex-appserver",
+        "acp-ws",
+        "codex",
+        "openai",
+        "gpt-5.5",
+    );
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-appserver",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tester@example.com"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    write(&project_root.join("README.md"), "init\n");
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(
+        &codex,
+        "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-finalize-ep");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    let branch = "task-finalize-ep-impl";
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            branch,
+            worktree.to_str().unwrap(),
+            &head,
+        ])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let brief = stem_dir.join("task-finalize-ep-brief.md");
+    write(&brief, "finalize endpoint brief");
+    let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+    let last = stem_dir.join(format!("task-finalize-ep-{attempt}-last.txt"));
+    let stdout = stem_dir.join(format!("task-finalize-ep-{attempt}-stdout.log"));
+    std::fs::write(&last, "").unwrap();
+    std::fs::write(&stdout, "").unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
+    dispatch["branch"] = serde_json::json!(branch);
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    let run_id = body["run_id"]
+        .as_str()
+        .expect("dispatch response run_id")
+        .to_string();
+
+    let worker_last = "## Report\nendpoint finalize authoritative.";
+    let worker_stdout = "endpoint stdout authoritative.";
+    std::fs::write(&last, worker_last).unwrap();
+    std::fs::write(&stdout, worker_stdout).unwrap();
+
+    let release = reqwest::Client::new()
+        .post(format!("http://{}/api/runs/{run_id}/release", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": format!("worker finalize for {task_id}"),
+            "finalized_by_worker": true,
+            "request_id": "dispatch-endpoint-finalize-test"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        release.status().is_success(),
+        "worker finalize release failed: {}",
+        release.status()
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(std::fs::read_to_string(&last).unwrap(), worker_last);
+    assert_eq!(std::fs::read_to_string(&stdout).unwrap(), worker_stdout);
+    assert!(
+        !read_project_tx(&project_root).contains(":TYPE:         manager.dispatch_orphaned"),
+        "worker finalize must not flag manager.dispatch_orphaned"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-NW4WV: mismatched cleanup while a live tokened worker holds the lease
+/// must conflict and leave process/worktree/branch/artifacts intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-CLEANUP-LIVE";
+    seed_worker(
+        &home,
+        "implementer-codex-appserver",
+        "acp-ws",
+        "codex",
+        "openai",
+        "gpt-5.5",
+    );
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-appserver",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tester@example.com"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    write(&project_root.join("README.md"), "init\n");
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(
+        &codex,
+        "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-live");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    let branch = "task-cleanup-live-impl";
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            branch,
+            worktree.to_str().unwrap(),
+            &head,
+        ])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let brief = stem_dir.join("task-cleanup-live-brief.md");
+    write(&brief, "live cleanup mismatch brief");
+    let attempt_b = "bbbb1111cccc2222dddd3333eeee4444";
+    let last = stem_dir.join(format!("task-cleanup-live-{attempt_b}-last.txt"));
+    let stdout = stem_dir.join(format!("task-cleanup-live-{attempt_b}-stdout.log"));
+    std::fs::write(&last, "live-worker-last").unwrap();
+    std::fs::write(&stdout, "live-worker-stdout").unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt_b);
+    dispatch["branch"] = serde_json::json!(branch);
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let dispatch_body: serde_json::Value = response.json().await.unwrap();
+    let pid = dispatch_body["pid"].as_u64().expect("live dispatch pid");
+
+    let cleanup = post_dispatch_cleanup(
+        &running,
+        &token,
+        project_id,
+        task_id,
+        serde_json::json!({
+            "kind": "implementer",
+            "worktree_path": worktree,
+            "branch": branch,
+            "dispatch_attempt_token": "aaaa1111bbbb2222cccc3333dddd4444",
+            "last_path": last,
+            "stdout_path": stdout,
+        }),
+    )
+    .await;
+    assert_eq!(cleanup.status(), 200, "cleanup endpoint transport failed");
+    let cleanup_body: serde_json::Value = cleanup.json().await.unwrap();
+    assert_eq!(cleanup_body["status"], "conflict");
+    assert!(!cleanup_body["worktree_removed"].as_bool().unwrap_or(true));
+    assert!(!cleanup_body["branch_deleted"].as_bool().unwrap_or(true));
+    assert!(
+        worktree.exists(),
+        "live worker worktree must survive mismatched cleanup"
+    );
+    assert_eq!(std::fs::read_to_string(&last).unwrap(), "live-worker-last");
+    assert_eq!(
+        std::fs::read_to_string(&stdout).unwrap(),
+        "live-worker-stdout"
+    );
+    let branch_ref = format!("refs/heads/{branch}");
+    let branch_exists = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", branch_ref.as_str()])
+        .current_dir(&project_root)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(
+        branch_exists,
+        "live worker branch must survive mismatched cleanup"
+    );
+    let pid_arg = pid.to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-0", pid_arg.as_str()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false),
+        "live worker process must survive mismatched cleanup"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
