@@ -837,10 +837,10 @@ fn find_hermes(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
     }
     // Prefer native JSONL; paired session_<id>.json is metadata, not a competing transcript.
     for candidate in hermes_transcript_candidates(roots, session_id) {
-        if !candidate
+        if candidate
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "jsonl")
+            .is_none_or(|e| e != "jsonl")
         {
             continue;
         }
@@ -854,10 +854,10 @@ fn find_hermes(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
         }
     }
     for candidate in hermes_transcript_candidates(roots, session_id) {
-        if !candidate
+        if candidate
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "json")
+            .is_none_or(|e| e != "json")
         {
             continue;
         }

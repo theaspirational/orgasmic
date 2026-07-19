@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use orgasmic_core::home::Home;
 use orgasmic_core::session::{Lifecycle, SessionEnvelope, SessionEventKind};
 use orgasmic_core::RuntimeIdentity;
+use orgasmic_drivers::modes::tmux::{tmux_session_exists, tmux_session_name};
 use serde::{Deserialize, Serialize};
 
 #[cfg(unix)]
@@ -44,6 +45,11 @@ pub struct RecoveryClaim {
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub draft_prompt: Option<String>,
+    /// Stable response fields persisted before driver spawn (crash replay).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin_session_path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub planned_tmux_session: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -144,16 +150,102 @@ fn claim_path_is_safe_regular_file(path: &Path) -> bool {
     meta.is_file()
 }
 
-fn write_claim_atomic(home: &Home, claim: &RecoveryClaim) -> Result<(), RecoveryClaimError> {
-    let path = claim_path(home, &claim.project_id, &claim.origin_run_id)?;
-    let dir = path.parent().ok_or(RecoveryClaimError::InvalidIdentifier)?;
+#[cfg(unix)]
+fn parent_is_safe_directory(path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    if !parent.exists() {
+        return true;
+    }
+    let Ok(meta) = std::fs::symlink_metadata(parent) else {
+        return false;
+    };
+    meta.is_dir()
+}
+
+#[cfg(not(unix))]
+fn parent_is_safe_directory(path: &Path) -> bool {
+    path.parent()
+        .is_none_or(|parent| !parent.exists() || parent.is_dir())
+}
+
+fn read_claim_file(path: &Path) -> Result<String, RecoveryClaimError> {
+    if !claim_path_is_safe_regular_file(path) {
+        return Err(RecoveryClaimError::CorruptClaim);
+    }
+    let mut file = open_claim_file_read(path).map_err(RecoveryClaimError::Io)?;
+    let mut raw = String::new();
+    use std::io::Read;
+    file.read_to_string(&mut raw)
+        .map_err(RecoveryClaimError::Io)?;
+    Ok(raw)
+}
+
+fn ensure_claim_directory(dir: &Path) -> Result<(), RecoveryClaimError> {
+    if dir.exists() {
+        if !dir.is_dir() {
+            return Err(RecoveryClaimError::CorruptClaim);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+        }
+        return Ok(());
+    }
     std::fs::create_dir_all(dir).map_err(RecoveryClaimError::Io)?;
     #[cfg(unix)]
     {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(RecoveryClaimError::Io)?;
+    }
+    Ok(())
+}
+
+fn reconcile_stale_claim_temp(path: &Path) -> Result<(), RecoveryClaimError> {
+    let parent = path.parent().ok_or(RecoveryClaimError::InvalidIdentifier)?;
+    let stem = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .ok_or(RecoveryClaimError::InvalidIdentifier)?;
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
+        let candidate = entry.path();
+        let Some(name) = candidate.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if name.starts_with(&format!("{stem}.json.tmp.")) {
+            if claim_path_is_safe_regular_file(&candidate) {
+                if let Ok(raw) = read_claim_file(&candidate) {
+                    if serde_json::from_str::<RecoveryClaim>(&raw).is_ok() {
+                        std::fs::rename(&candidate, path).map_err(RecoveryClaimError::Io)?;
+                        sync_path(path).map_err(RecoveryClaimError::Io)?;
+                        return Ok(());
+                    }
+                }
+            }
+            let _ = std::fs::remove_file(&candidate);
+        }
+    }
+    Ok(())
+}
+
+fn write_claim_atomic(home: &Home, claim: &RecoveryClaim) -> Result<(), RecoveryClaimError> {
+    let path = claim_path(home, &claim.project_id, &claim.origin_run_id)?;
+    if !parent_is_safe_directory(&path) {
+        return Err(RecoveryClaimError::CorruptClaim);
+    }
+    let dir = path.parent().ok_or(RecoveryClaimError::InvalidIdentifier)?;
+    ensure_claim_directory(dir)?;
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
-        let tmp = path.with_extension("json.tmp");
-        {
+        let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+        let write_result = {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -163,6 +255,11 @@ fn write_claim_atomic(home: &Home, claim: &RecoveryClaim) -> Result<(), Recovery
             file.write_all(serde_json::to_string_pretty(claim).unwrap().as_bytes())
                 .map_err(RecoveryClaimError::Io)?;
             file.sync_all().map_err(RecoveryClaimError::Io)?;
+            Ok::<(), RecoveryClaimError>(())
+        };
+        if write_result.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+            return write_result;
         }
         std::fs::rename(&tmp, &path).map_err(RecoveryClaimError::Io)?;
         sync_path(&path).map_err(RecoveryClaimError::Io)?;
@@ -170,7 +267,7 @@ fn write_claim_atomic(home: &Home, claim: &RecoveryClaim) -> Result<(), Recovery
     }
     #[cfg(not(unix))]
     {
-        let tmp = path.with_extension("json.tmp");
+        let tmp = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
         {
             let mut file = OpenOptions::new()
                 .write(true)
@@ -187,6 +284,21 @@ fn write_claim_atomic(home: &Home, claim: &RecoveryClaim) -> Result<(), Recovery
     Ok(())
 }
 
+pub fn write_claim_atomic_or_reconcile(
+    home: &Home,
+    claim: &RecoveryClaim,
+) -> Result<(), RecoveryClaimError> {
+    match write_claim_atomic(home, claim) {
+        Ok(()) => Ok(()),
+        Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let path = claim_path(home, &claim.project_id, &claim.origin_run_id)?;
+            reconcile_stale_claim_temp(&path)?;
+            write_claim_atomic(home, claim)
+        }
+        Err(other) => Err(other),
+    }
+}
+
 pub fn load_recovery_claim(
     home: &Home,
     project_id: &str,
@@ -196,10 +308,7 @@ pub fn load_recovery_claim(
     if !path.exists() {
         return Ok(None);
     }
-    if !claim_path_is_safe_regular_file(&path) {
-        return Err(RecoveryClaimError::CorruptClaim);
-    }
-    let raw = std::fs::read_to_string(&path).map_err(RecoveryClaimError::Io)?;
+    let raw = read_claim_file(&path)?;
     let claim: RecoveryClaim =
         serde_json::from_str(&raw).map_err(|_| RecoveryClaimError::CorruptClaim)?;
     if claim.project_id != project_id || claim.origin_run_id != origin_run_id {
@@ -235,12 +344,43 @@ pub struct IndexedRecoveryOrigin {
     pub action: String,
     pub target: Option<String>,
     pub origin_session_path: PathBuf,
+    pub replacement_boot_id: String,
+    pub draft_prompt: Option<String>,
+}
+
+fn session_run_meta_project(envelopes: &[SessionEnvelope]) -> Option<String> {
+    envelopes.iter().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()? {
+            Lifecycle::RunMeta { project_id, .. } => project_id,
+            _ => None,
+        }
+    })
+}
+
+fn session_prompt_draft(envelopes: &[SessionEnvelope]) -> Option<String> {
+    envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()? {
+            Lifecycle::PromptDraft { text, sent: false } => Some(text),
+            _ => None,
+        }
+    })
 }
 
 pub fn index_recovery_origins_in_session(
     envelopes: &[SessionEnvelope],
-    _session_path: &Path,
+    session_path: &Path,
 ) -> Vec<IndexedRecoveryOrigin> {
+    let Some(first) = envelopes.first() else {
+        return Vec::new();
+    };
+    let run_meta_project = session_run_meta_project(envelopes);
+    let draft_prompt = session_prompt_draft(envelopes);
     let mut links = Vec::new();
     for envelope in envelopes {
         if envelope.kind != SessionEventKind::Lifecycle {
@@ -260,6 +400,21 @@ pub fn index_recovery_origins_in_session(
             origin_session_path,
         } = lifecycle
         {
+            if envelope.run_id != replacement_run_id {
+                continue;
+            }
+            if replacement_session_path != session_path {
+                continue;
+            }
+            if run_meta_project
+                .as_deref()
+                .is_some_and(|meta| meta != project_id)
+            {
+                continue;
+            }
+            if !origin_session_path.is_absolute() || !origin_session_path.exists() {
+                continue;
+            }
             links.push(IndexedRecoveryOrigin {
                 project_id,
                 origin_run_id,
@@ -269,13 +424,15 @@ pub fn index_recovery_origins_in_session(
                 action,
                 target,
                 origin_session_path,
+                replacement_boot_id: first.boot_id.clone(),
+                draft_prompt: draft_prompt.clone(),
             });
         }
     }
     links
 }
 
-pub fn reconstruct_claim_from_origin(link: &IndexedRecoveryOrigin, boot_id: &str) -> RecoveryClaim {
+pub fn reconstruct_claim_from_origin(link: &IndexedRecoveryOrigin) -> RecoveryClaim {
     RecoveryClaim {
         project_id: link.project_id.clone(),
         origin_run_id: link.origin_run_id.clone(),
@@ -285,10 +442,12 @@ pub fn reconstruct_claim_from_origin(link: &IndexedRecoveryOrigin, boot_id: &str
         replacement_session_path: link.replacement_session_path.clone(),
         replacement_runtime_id: String::new(),
         runtime_id: None,
-        boot_id: Some(boot_id.to_string()),
+        boot_id: Some(link.replacement_boot_id.clone()),
         action: Some(link.action.clone()),
         target: link.target.clone().or_else(|| Some("worker".to_string())),
-        draft_prompt: None,
+        draft_prompt: link.draft_prompt.clone(),
+        origin_session_path: Some(link.origin_session_path.clone()),
+        planned_tmux_session: None,
     }
 }
 
@@ -299,47 +458,58 @@ pub fn resolve_authoritative_recovery_claim(
     indexed_origins: &[IndexedRecoveryOrigin],
     boot_id: &str,
 ) -> Result<ResolvedRecoveryClaim, RecoveryClaimError> {
-    if let Some(claim) = load_recovery_claim(home, project_id, origin_run_id)? {
-        if claim.status == RecoveryClaimStatus::Committed {
-            if verify_committed_claim_against_session(&claim) {
-                return Ok(ResolvedRecoveryClaim::Valid(claim));
-            }
-            quarantine_invalid_claim(home, project_id, origin_run_id)?;
-            if let Some(link) = indexed_origins
-                .iter()
-                .find(|link| link.project_id == project_id && link.origin_run_id == origin_run_id)
-            {
-                let mut reconstructed = reconstruct_claim_from_origin(link, boot_id);
-                if let Ok(envelopes) = orgasmic_core::session::read_session_file(
-                    &reconstructed.replacement_session_path,
-                ) {
-                    if let Some(first) = envelopes.first() {
-                        reconstructed.replacement_runtime_id = first.runtime_id.clone();
-                        reconstructed.runtime_id = Some(first.runtime_id.clone());
-                    }
+    let _ = boot_id;
+    let loaded = load_recovery_claim(home, project_id, origin_run_id);
+    match loaded {
+        Ok(Some(claim)) => {
+            if claim.status == RecoveryClaimStatus::Committed {
+                if verify_committed_claim_against_session(&claim) {
+                    return Ok(ResolvedRecoveryClaim::Valid(claim));
                 }
-                write_claim_atomic(home, &reconstructed)?;
-                return Ok(ResolvedRecoveryClaim::Reconstructed(reconstructed));
+                quarantine_invalid_claim(home, project_id, origin_run_id)?;
+                return reconstruct_or_quarantine(home, project_id, origin_run_id, indexed_origins);
             }
-            return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
+            Ok(ResolvedRecoveryClaim::Valid(claim))
         }
-        return Ok(ResolvedRecoveryClaim::Valid(claim));
+        Ok(None) => reconstruct_or_quarantine(home, project_id, origin_run_id, indexed_origins),
+        Err(RecoveryClaimError::CorruptClaim) => {
+            quarantine_invalid_claim(home, project_id, origin_run_id)?;
+            reconstruct_or_quarantine(home, project_id, origin_run_id, indexed_origins)
+        }
+        Err(err) => Err(err),
     }
+}
+
+fn reconstruct_or_quarantine(
+    home: &Home,
+    project_id: &str,
+    origin_run_id: &str,
+    indexed_origins: &[IndexedRecoveryOrigin],
+) -> Result<ResolvedRecoveryClaim, RecoveryClaimError> {
     if let Some(link) = indexed_origins
         .iter()
         .find(|link| link.project_id == project_id && link.origin_run_id == origin_run_id)
     {
-        let mut reconstructed = reconstruct_claim_from_origin(link, boot_id);
+        let mut reconstructed = reconstruct_claim_from_origin(link);
         if let Ok(envelopes) =
             orgasmic_core::session::read_session_file(&reconstructed.replacement_session_path)
         {
             if let Some(first) = envelopes.first() {
                 reconstructed.replacement_runtime_id = first.runtime_id.clone();
                 reconstructed.runtime_id = Some(first.runtime_id.clone());
+                if reconstructed.boot_id.is_none() {
+                    reconstructed.boot_id = Some(first.boot_id.clone());
+                }
+            }
+            if reconstructed.draft_prompt.is_none() {
+                reconstructed.draft_prompt = session_prompt_draft(&envelopes);
             }
         }
-        write_claim_atomic(home, &reconstructed)?;
+        write_claim_atomic_or_reconcile(home, &reconstructed)?;
         return Ok(ResolvedRecoveryClaim::Reconstructed(reconstructed));
+    }
+    if load_recovery_claim(home, project_id, origin_run_id)?.is_some() {
+        return Ok(ResolvedRecoveryClaim::InvalidQuarantined);
     }
     Ok(ResolvedRecoveryClaim::Missing)
 }
@@ -376,7 +546,7 @@ pub fn plan_pending_recovery_claim(
     project_id: &str,
     origin_run_id: &str,
     request_id: &str,
-    _origin_session_path: &Path,
+    origin_session_path: &Path,
     replacement_session_path: PathBuf,
     boot_id: &str,
     action: &str,
@@ -396,6 +566,11 @@ pub fn plan_pending_recovery_claim(
         replacement_uuid.simple()
     );
     let replacement_runtime_id = uuid::Uuid::new_v4().to_string();
+    let planned_identity = RuntimeIdentity::planned(
+        replacement_run_id.clone(),
+        replacement_runtime_id.clone(),
+        boot_id,
+    );
     let claim = RecoveryClaim {
         project_id: project_id.to_string(),
         origin_run_id: origin_run_id.to_string(),
@@ -409,10 +584,10 @@ pub fn plan_pending_recovery_claim(
         action: Some(action.to_string()),
         target: Some(target.to_string()),
         draft_prompt,
+        origin_session_path: Some(origin_session_path.to_path_buf()),
+        planned_tmux_session: Some(tmux_session_name(&planned_identity)),
     };
-    write_claim_atomic(home, &claim)?;
-    let planned_identity =
-        RuntimeIdentity::planned(replacement_run_id, replacement_runtime_id, boot_id);
+    write_claim_atomic_or_reconcile(home, &claim)?;
     Ok(PendingRecoveryPlan {
         claim,
         planned_identity,
@@ -434,7 +609,7 @@ pub fn commit_recovery_claim(
     claim.action = Some(details.action);
     claim.target = Some(details.target);
     claim.draft_prompt = details.draft_prompt;
-    write_claim_atomic(home, &claim)?;
+    write_claim_atomic_or_reconcile(home, &claim)?;
     Ok(claim)
 }
 
@@ -502,11 +677,16 @@ pub fn reconcile_pending_claim(
         claim.replacement_runtime_id.clone(),
         boot_id,
     );
+    let tmux_live = claim
+        .planned_tmux_session
+        .as_deref()
+        .is_some_and(tmux_session_exists)
+        || tmux_session_exists(&tmux_session_name(&planned_identity));
     if !claim.replacement_session_path.exists() {
         return Ok(Some(PendingRecoveryPlan {
             claim: claim.clone(),
             planned_identity,
-            reattach_existing: false,
+            reattach_existing: tmux_live,
         }));
     }
     let Ok(envelopes) = orgasmic_core::session::read_session_file(&claim.replacement_session_path)
@@ -514,7 +694,7 @@ pub fn reconcile_pending_claim(
         return Ok(Some(PendingRecoveryPlan {
             claim: claim.clone(),
             planned_identity,
-            reattach_existing: false,
+            reattach_existing: tmux_live,
         }));
     };
     if let Some((_, _, action)) = recovery_origin_in_session(
@@ -558,7 +738,7 @@ pub fn reconcile_pending_claim(
     Ok(Some(PendingRecoveryPlan {
         claim: claim.clone(),
         planned_identity,
-        reattach_existing: has_acquire,
+        reattach_existing: has_acquire || tmux_live,
     }))
 }
 
@@ -685,6 +865,8 @@ mod tests {
             action: Some("start_recovery_run".into()),
             target: Some("worker".into()),
             draft_prompt: None,
+            origin_session_path: None,
+            planned_tmux_session: None,
         };
         assert!(!verify_committed_claim_against_session(&claim));
     }
@@ -740,5 +922,101 @@ mod tests {
             .unwrap()
             .expect("pending with existing origin link reconciles");
         assert_eq!(plan.claim.status, RecoveryClaimStatus::Committed);
+    }
+
+    #[test]
+    fn corrupt_claim_quarantines_and_reconstructs_from_session_truth() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let origin_path = project_sessions_dir(&project_root).join("run-corrupt-origin.jsonl");
+        std::fs::create_dir_all(origin_path.parent().unwrap()).unwrap();
+        std::fs::write(&origin_path, "{}\n").unwrap();
+        let replacement_path = project_sessions_dir(&project_root).join("recover-truth.jsonl");
+        let claim_path = claim_path(&home, "orgasmic", "run-corrupt-origin").unwrap();
+        std::fs::create_dir_all(claim_path.parent().unwrap()).unwrap();
+        std::fs::write(&claim_path, "{not-json").unwrap();
+
+        let identity = RuntimeIdentity {
+            run_id: "run-replacement".into(),
+            runtime_id: "rt-replacement".into(),
+            boot_id: "boot-truth".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&replacement_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RecoveryOrigin {
+                    project_id: "orgasmic".into(),
+                    origin_run_id: "run-corrupt-origin".into(),
+                    origin_session_path: origin_path,
+                    request_id: "req-truth".into(),
+                    replacement_run_id: "run-replacement".into(),
+                    replacement_session_path: replacement_path.clone(),
+                    action: "start_recovery_run".into(),
+                    target: Some("worker".into()),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        let links = index_recovery_origins_in_session(
+            &orgasmic_core::session::read_session_file(&replacement_path).unwrap(),
+            &replacement_path,
+        );
+        let resolved = resolve_authoritative_recovery_claim(
+            &home,
+            "orgasmic",
+            "run-corrupt-origin",
+            &links,
+            "boot-new",
+        )
+        .unwrap();
+        assert!(matches!(resolved, ResolvedRecoveryClaim::Reconstructed(_)));
+        assert!(claim_path.with_extension("json.quarantine").exists());
+        assert!(load_recovery_claim(&home, "orgasmic", "run-corrupt-origin")
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn stale_temp_claim_is_reconciled_on_retry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let origin_path = project_sessions_dir(&project_root).join("run-temp-wedge.jsonl");
+        std::fs::create_dir_all(origin_path.parent().unwrap()).unwrap();
+        std::fs::write(&origin_path, "{}\n").unwrap();
+        let replacement_path = project_sessions_dir(&project_root).join("recover-temp.jsonl");
+        let claim = RecoveryClaim {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-temp-wedge".into(),
+            request_id: "req-temp".into(),
+            status: RecoveryClaimStatus::Pending,
+            replacement_run_id: "run-temp-replacement".into(),
+            replacement_session_path: replacement_path,
+            replacement_runtime_id: "rt-temp".into(),
+            runtime_id: None,
+            boot_id: None,
+            action: Some("start_recovery_run".into()),
+            target: Some("worker".into()),
+            draft_prompt: Some("stable draft".into()),
+            origin_session_path: Some(origin_path),
+            planned_tmux_session: Some("orgasmic-run-temp-replacement-rt-temp".into()),
+        };
+        write_claim_atomic(&home, &claim).unwrap();
+        let path = claim_path(&home, "orgasmic", "run-temp-wedge").unwrap();
+        let stale = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+        std::fs::remove_file(&path).unwrap();
+        std::fs::write(&stale, serde_json::to_string_pretty(&claim).unwrap()).unwrap();
+        write_claim_atomic_or_reconcile(&home, &claim).unwrap();
+        assert!(path.exists());
+        let loaded = load_recovery_claim(&home, "orgasmic", "run-temp-wedge")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.draft_prompt.as_deref(), Some("stable draft"));
     }
 }

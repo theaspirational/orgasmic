@@ -6188,7 +6188,7 @@ async fn post_run_recover(
     }
 
     // Resolve the explicit action, or auto-pick when exactly one exists.
-    let action = match req.action.clone() {
+    let mut action = match req.action.clone() {
         Some(a) => {
             if !prior.recovery_actions.iter().any(|act| act.kind == a) {
                 return Err(ApiError::bad_request(format!(
@@ -6230,18 +6230,50 @@ async fn post_run_recover(
         },
     };
 
+    if let Some(plan) = pending_plan.as_ref() {
+        if let Some(claimed_action) = plan.claim.action.as_deref() {
+            if action != claimed_action {
+                return Err(ApiError::conflict_json(json!({
+                    "error": "recovery action does not match pending claim",
+                    "origin_run_id": id,
+                    "claimed_action": claimed_action,
+                    "requested_action": action,
+                })));
+            }
+            action = claimed_action.to_string();
+        }
+    }
+
     if failed_origin && action == "reattach_tmux" {
         return Err(ApiError::bad_request(
             "reattach_tmux is not valid for terminal Failed records",
         ));
     }
 
-    let target = prior
-        .recovery_actions
-        .iter()
-        .find(|act| act.kind == action)
-        .map(|act| act.target.clone())
+    let target = pending_plan
+        .as_ref()
+        .and_then(|plan| plan.claim.target.clone())
+        .or_else(|| {
+            prior
+                .recovery_actions
+                .iter()
+                .find(|act| act.kind == action)
+                .map(|act| act.target.clone())
+        })
         .unwrap_or_else(|| "worker".to_string());
+
+    let recovery_draft_prompt = {
+        let envelopes = read_session_file(&prior.session_path).unwrap_or_default();
+        let diff_stat = crate::supervisor::GitDiffSummarizer
+            .summarize(Some(state.home.source().as_path()))
+            .to_string();
+        Some(build_recovery_prompt(
+            &id,
+            &prior.session_path,
+            &envelopes,
+            &diff_stat,
+        ))
+    };
 
     if failed_origin && pending_plan.is_none() {
         let replacement_session_path = prior
@@ -6260,7 +6292,7 @@ async fn post_run_recover(
                 &state.boot.boot_id,
                 &action,
                 &target,
-                None,
+                recovery_draft_prompt.clone(),
             )
             .map_err(|err| match err {
                 RecoveryClaimError::AlreadyClaimed(claim) => recovery_claim_conflict(&id, &claim),
@@ -6400,7 +6432,11 @@ async fn execute_run_recover_action(
             let diff_stat = crate::supervisor::GitDiffSummarizer
                 .summarize(worktree.as_deref())
                 .to_string();
-            let prompt = build_recovery_prompt(id, &prior.session_path, &envelopes, &diff_stat);
+            let prompt = pending_plan
+                .and_then(|plan| plan.claim.draft_prompt.clone())
+                .unwrap_or_else(|| {
+                    build_recovery_prompt(id, &prior.session_path, &envelopes, &diff_stat)
+                });
 
             let recover_name = pending_plan
                 .and_then(|plan| {
@@ -6440,7 +6476,10 @@ async fn execute_run_recover_action(
                 let (command, args) = reconstruct_claude_native_resume_command(
                     state.trusted_claude_binary.as_deref(),
                     &session_id,
-                );
+                )
+                .ok_or_else(|| {
+                    ApiError::bad_request("trusted Claude executable unavailable for native resume")
+                })?;
                 let driver = driver_for_mode_harness("tmux", "claude").ok_or_else(|| {
                     ApiError::internal("tmux/claude driver unavailable for native resume")
                 })?;
@@ -7326,11 +7365,39 @@ fn validate_safe_session_id(id: &str) -> bool {
 /// Resolve and pin the trusted Claude executable from daemon-owned discovery.
 /// Does not consult request/project cwd PATH or bare `claude` on PATH.
 pub fn pin_trusted_claude_binary(home: &Home) -> Option<PathBuf> {
-    let candidate = home.bin().join("claude");
-    if candidate.is_file() {
-        return candidate.canonicalize().ok().or(Some(candidate));
+    let mut candidates = vec![home.bin().join("claude")];
+    if let Some(local_bin) = std::env::var_os("HOME").map(|home| {
+        PathBuf::from(home)
+            .join(".local")
+            .join("bin")
+            .join("claude")
+    }) {
+        candidates.push(local_bin);
+    }
+    for candidate in candidates {
+        if trusted_claude_executable(&candidate) {
+            return candidate.canonicalize().ok().or(Some(candidate));
+        }
     }
     None
+}
+
+fn trusted_claude_executable(path: &FsPath) -> bool {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 fn resume_argv_proves_claude_fork(resume_argv: &[String], session_id: &str) -> bool {
@@ -7352,6 +7419,7 @@ fn validated_claude_native_session_id(
     trusted_claude_binary: Option<&FsPath>,
     native: &SessionNativeRuntime,
 ) -> Option<String> {
+    trusted_claude_binary?;
     if native.provider != "claude" {
         return None;
     }
@@ -7382,19 +7450,17 @@ fn validated_claude_native_session_id(
 fn reconstruct_claude_native_resume_command(
     trusted_claude_binary: Option<&FsPath>,
     session_id: &str,
-) -> (PathBuf, Vec<String>) {
-    let command = trusted_claude_binary
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("claude"));
-    (
-        command,
+) -> Option<(PathBuf, Vec<String>)> {
+    let command = trusted_claude_binary?;
+    Some((
+        command.to_path_buf(),
         vec![
             "--dangerously-skip-permissions".to_string(),
             "--resume".to_string(),
             session_id.to_string(),
             "--fork-session".to_string(),
         ],
-    )
+    ))
 }
 
 fn recovery_response_from_claim(
@@ -7449,11 +7515,17 @@ fn apply_recovery_claim_to_run(
         indexed_origins,
         boot_id,
     ) else {
+        run.recovery_actions.clear();
         return;
     };
     let claim = match resolved {
         ResolvedRecoveryClaim::Valid(claim) | ResolvedRecoveryClaim::Reconstructed(claim) => claim,
-        ResolvedRecoveryClaim::InvalidQuarantined | ResolvedRecoveryClaim::Missing => return,
+        ResolvedRecoveryClaim::InvalidQuarantined => {
+            run.recovery_actions.clear();
+            run.reason = format!("{}; recovery claim invalid/quarantined", run.reason);
+            return;
+        }
+        ResolvedRecoveryClaim::Missing => return,
     };
     if claim.status != RecoveryClaimStatus::Committed {
         return;
@@ -12939,7 +13011,20 @@ mod tests {
         std::os::unix::fs::symlink(repo_root(), home.source()).unwrap();
     }
 
+    fn seed_trusted_claude_executable(home: &Home) -> PathBuf {
+        let path = home.bin().join("claude");
+        std::fs::create_dir_all(home.bin()).unwrap();
+        std::fs::write(&path, "#!/bin/sh\nexec true\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        path
+    }
+
     fn seed_project(home: &Home, project_root: &FsPath, project_id: &str) {
+        seed_trusted_claude_executable(home);
         symlink_repo_source(home);
         write(
             project_root.join(".orgasmic/project.org"),
@@ -18154,10 +18239,13 @@ mod tests {
                 .unwrap(),
             },
         ];
-        let home = Home::at(std::env::temp_dir().join("orgasmic-recovery-test-home2"));
-        // classification "interrupted" (tmux gone): no reattach, but native
-        // resume/fork is available before start_recovery_run.
-        let actions = resolve_recovery_actions(&home, None, &envelopes, "interrupted", false).await;
+        let home = Home::at(std::env::temp_dir().join("orgasmic-recovery-test-home"));
+        home.ensure().unwrap();
+        seed_trusted_claude_executable(&home);
+        let trusted = pin_trusted_claude_binary(&home);
+        let actions =
+            resolve_recovery_actions(&home, trusted.as_deref(), &envelopes, "interrupted", false)
+                .await;
         let kinds: Vec<&str> = actions.iter().map(|a| a.kind.as_str()).collect();
         assert_eq!(kinds, ["resume_native_fork", "start_recovery_run"]);
         // Manager worker_id routes recovery to the manager surface.
@@ -18542,15 +18630,31 @@ mod tests {
         let valid_actions =
             resolve_recovery_actions(&home, None, &valid_resume, "interrupted", false).await;
         assert!(
-            valid_actions.iter().any(|a| a.kind == "resume_native_fork"),
-            "consistent native metadata should expose resume_native_fork"
+            !valid_actions.iter().any(|a| a.kind == "resume_native_fork"),
+            "resume_native_fork requires a trusted Claude executable"
         );
+        home.ensure().unwrap();
+        seed_trusted_claude_executable(&home);
         let trusted = pin_trusted_claude_binary(&home);
+        let valid_actions = resolve_recovery_actions(
+            &home,
+            trusted.as_deref(),
+            &valid_resume,
+            "interrupted",
+            false,
+        )
+        .await;
+        assert!(
+            valid_actions.iter().any(|a| a.kind == "resume_native_fork"),
+            "consistent native metadata should expose resume_native_fork when trusted"
+        );
         let (command, args) = reconstruct_claude_native_resume_command(
             trusted.as_deref(),
             "550e8400-e29b-41d4-a716-446655440000",
-        );
-        assert_eq!(command, trusted.unwrap_or_else(|| PathBuf::from("claude")));
+        )
+        .expect("trusted claude required for resume command reconstruction");
+        assert!(trusted.is_some());
+        assert_eq!(command, trusted.unwrap());
         assert_eq!(
             args,
             vec![
@@ -19047,6 +19151,9 @@ mod tests {
     #[tokio::test]
     async fn production_native_metadata_with_permission_flags_advertises_resume() {
         let home = Home::at(std::env::temp_dir().join("orgasmic-native-prod-test"));
+        home.ensure().unwrap();
+        seed_trusted_claude_executable(&home);
+        let trusted = pin_trusted_claude_binary(&home);
         let base = vec![SessionEnvelope {
             seq: 0,
             time: Utc::now(),
@@ -19073,7 +19180,9 @@ mod tests {
                 "--dangerously-skip-permissions",
             ],
         ));
-        let actions = resolve_recovery_actions(&home, None, &envelopes, "interrupted", false).await;
+        let actions =
+            resolve_recovery_actions(&home, trusted.as_deref(), &envelopes, "interrupted", false)
+                .await;
         assert!(
             actions.iter().any(|a| a.kind == "resume_native_fork"),
             "production resume_argv shape must advertise resume_native_fork: {actions:?}"
@@ -19122,6 +19231,17 @@ mod tests {
             "historical continuation must not block recovery actions: {:?}",
             run.recovery_actions
         );
+    }
+
+    #[test]
+    fn reconstruct_claude_command_requires_trusted_binary() {
+        assert!(reconstruct_claude_native_resume_command(None, "session-id").is_none());
+        let trusted = PathBuf::from("/trusted/claude");
+        let (cmd, args) =
+            reconstruct_claude_native_resume_command(Some(trusted.as_path()), "session-id")
+                .expect("trusted path");
+        assert_eq!(cmd, trusted);
+        assert!(args.contains(&"--fork-session".to_string()));
     }
 
     #[tokio::test]

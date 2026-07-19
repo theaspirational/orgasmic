@@ -141,9 +141,30 @@ impl WorkerDriver for TmuxDriver {
         let inert = inert_reason.is_some();
         let session_name = tmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let fork_probe_since = std::time::SystemTime::now();
+        let mut native_runtime = spawn_plan.native_runtime.clone();
 
         let capture_task = if !inert {
             spawn_tmux_session(&session_name, &spawn_plan).await?;
+            if cfg.native_resume_mode && is_claude_harness_command(harness, &spawn_plan.command) {
+                if let Some(resumed) = extract_resume_session_id(&spawn_plan.args) {
+                    tokio::time::sleep(Duration::from_millis(750)).await;
+                    let fork_id = discover_claude_fork_session_id(
+                        &resumed,
+                        &spawn_plan.cwd,
+                        fork_probe_since,
+                    )
+                    .unwrap_or_else(|| {
+                        deterministic_inert_fork_session_id(&ctx.identity.runtime_id)
+                    });
+                    native_runtime = Some(claude_native_runtime(
+                        &fork_id,
+                        &spawn_plan.cwd,
+                        &spawn_plan.command,
+                        &spawn_plan.args,
+                    ));
+                }
+            }
             let task = start_capture_loop(
                 session_name.clone(),
                 tx.clone(),
@@ -176,6 +197,18 @@ impl WorkerDriver for TmuxDriver {
             }
             Some(task)
         } else {
+            if cfg.native_resume_mode && is_claude_harness_command(harness, &spawn_plan.command) {
+                if let Some(resumed) = extract_resume_session_id(&spawn_plan.args) {
+                    let fork_id = deterministic_inert_fork_session_id(&ctx.identity.runtime_id);
+                    native_runtime = Some(claude_native_runtime(
+                        &fork_id,
+                        &spawn_plan.cwd,
+                        &spawn_plan.command,
+                        &spawn_plan.args,
+                    ));
+                    let _ = resumed;
+                }
+            }
             None
         };
 
@@ -209,7 +242,7 @@ impl WorkerDriver for TmuxDriver {
                 kill_on_drop: true,
                 released: false,
             }),
-            native_runtime: spawn_plan.native_runtime,
+            native_runtime,
         })
     }
 
@@ -379,6 +412,18 @@ pub fn tmux_session_name(identity: &RuntimeIdentity) -> String {
     format!("orgasmic-{}-{}", identity.run_id, identity.runtime_id)
 }
 
+/// Synchronous tmux session probe for crash-reconciliation paths that cannot
+/// await driver I/O.
+pub fn tmux_session_exists(session: &str) -> bool {
+    std::process::Command::new("tmux")
+        .args(["has-session", "-t", session])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 async fn has_tmux_session(session: &str) -> Result<bool, DriverError> {
     let status = tokio::process::Command::new("tmux")
         .args(["has-session", "-t", session])
@@ -448,42 +493,38 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
     }
 
     let is_claude = is_claude_harness_command(harness, &command);
-    if is_claude && !cfg.native_resume_mode {
+    if is_claude {
         if !args
             .iter()
             .any(|arg| arg == "--dangerously-skip-permissions")
         {
             args.push("--dangerously-skip-permissions".to_string());
         }
-        if let Some(model) = cfg
-            .model
-            .as_deref()
-            .filter(|model| !model.trim().is_empty())
-        {
-            if !args.iter().any(|arg| arg == "--model") {
-                args.push("--model".to_string());
-                args.push(model.to_string());
+        if !cfg.native_resume_mode {
+            if let Some(model) = cfg
+                .model
+                .as_deref()
+                .filter(|model| !model.trim().is_empty())
+            {
+                if !args.iter().any(|arg| arg == "--model") {
+                    args.push("--model".to_string());
+                    args.push(model.to_string());
+                }
             }
-        }
-        // Deterministic native Claude session identity: pin --session-id to the
-        // run's runtime_id (a UUID) so recovery can resume/fork it exactly.
-        let session_id = claude_session_id(&ctx.identity.runtime_id);
-        if !args.iter().any(|arg| arg == "--session-id") {
-            args.push("--session-id".to_string());
-            args.push(session_id);
-        }
-    } else if is_claude && cfg.native_resume_mode {
-        if !args
-            .iter()
-            .any(|arg| arg == "--dangerously-skip-permissions")
-        {
-            args.push("--dangerously-skip-permissions".to_string());
+            // Deterministic native Claude session identity: pin --session-id to the
+            // run's runtime_id (a UUID) so recovery can resume/fork it exactly.
+            let session_id = claude_session_id(&ctx.identity.runtime_id);
+            if !args.iter().any(|arg| arg == "--session-id") {
+                args.push("--session-id".to_string());
+                args.push(session_id);
+            }
         }
     }
 
     let native_runtime = if is_claude {
-        let session_id = if cfg.native_resume_mode {
-            args.iter()
+        if cfg.native_resume_mode {
+            let resumed_session_id = args
+                .iter()
                 .enumerate()
                 .find_map(|(idx, arg)| {
                     if arg == "--resume" {
@@ -492,11 +533,17 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
                         None
                     }
                 })
-                .unwrap_or_else(|| claude_session_id(&ctx.identity.runtime_id))
+                .unwrap_or_else(|| claude_session_id(&ctx.identity.runtime_id));
+            Some(claude_native_runtime_pending_fork(
+                &resumed_session_id,
+                &cwd,
+                &command,
+                &args,
+            ))
         } else {
-            claude_session_id(&ctx.identity.runtime_id)
-        };
-        Some(claude_native_runtime(&session_id, &cwd, &command, &args))
+            let session_id = claude_session_id(&ctx.identity.runtime_id);
+            Some(claude_native_runtime(&session_id, &cwd, &command, &args))
+        }
     } else {
         // Other harnesses store only real launch metadata until their native
         // session semantics are known (dec_052).
@@ -526,6 +573,92 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
 /// The runtime_id is already a UUID, so it satisfies `claude --session-id`.
 pub(crate) fn claude_session_id(runtime_id: &str) -> String {
     runtime_id.to_string()
+}
+
+fn claude_projects_dir(cwd: &std::path::Path) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let encoded: String = cwd
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c == '/' || c == '.' { '-' } else { c })
+        .collect();
+    Some(home.join(".claude").join("projects").join(encoded))
+}
+
+/// Discover the Claude session id created by `--fork-session` after resume.
+pub(crate) fn discover_claude_fork_session_id(
+    resumed_session_id: &str,
+    cwd: &std::path::Path,
+    since: std::time::SystemTime,
+) -> Option<String> {
+    let dir = claude_projects_dir(cwd)?;
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return None;
+    };
+    let mut best: Option<(std::time::SystemTime, String)> = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if stem == resumed_session_id {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if modified < since {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(seen, _)| modified > *seen) {
+            best = Some((modified, stem.to_string()));
+        }
+    }
+    best.map(|(_, id)| id)
+}
+
+pub(crate) fn deterministic_inert_fork_session_id(runtime_id: &str) -> String {
+    format!("fork-{runtime_id}")
+}
+
+fn extract_resume_session_id(args: &[String]) -> Option<String> {
+    args.iter().enumerate().find_map(|(idx, arg)| {
+        if arg == "--resume" {
+            args.get(idx + 1).cloned()
+        } else {
+            None
+        }
+    })
+}
+
+fn claude_native_runtime_pending_fork(
+    resumed_session_id: &str,
+    _cwd: &std::path::Path,
+    command: &str,
+    args: &[String],
+) -> NativeRuntimeMeta {
+    let mut launch_argv = vec![command.to_string()];
+    launch_argv.extend(args.iter().cloned());
+    let resume_argv = vec![
+        command.to_string(),
+        "--resume".to_string(),
+        resumed_session_id.to_string(),
+        "--fork-session".to_string(),
+        "--dangerously-skip-permissions".to_string(),
+    ];
+    NativeRuntimeMeta {
+        provider: "claude".to_string(),
+        session_id: None,
+        session_path: None,
+        launch_argv,
+        resume_argv,
+    }
 }
 
 /// Claude stores conversation JSONL under
@@ -1399,6 +1532,32 @@ mod tests {
                 "--fork-session".to_string(),
                 "--dangerously-skip-permissions".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn native_resume_spawn_plan_defers_fork_session_id_until_discovery() {
+        let cfg = TmuxTuiConfig {
+            harness: Some("claude".into()),
+            native_resume_mode: true,
+            command: Some("/trusted/claude".into()),
+            args: vec![
+                "--resume".into(),
+                "origin-session-id".into(),
+                "--fork-session".into(),
+            ],
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-fork", RunKind::Worker), "claude");
+        let native = plan.native_runtime.expect("pending fork metadata");
+        assert!(native.session_id.is_none());
+        assert_eq!(
+            native.resume_argv.get(2).map(String::as_str),
+            Some("origin-session-id")
+        );
+        assert_eq!(
+            deterministic_inert_fork_session_id("rt-fork"),
+            "fork-rt-fork"
         );
     }
 

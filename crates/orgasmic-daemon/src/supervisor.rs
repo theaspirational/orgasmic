@@ -2419,12 +2419,7 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) {
     let writer = supervisor.writer.clone();
     let inner = supervisor.inner.clone();
     tokio::spawn(async move {
-        let safety = Instant::now() + Duration::from_secs(30);
         loop {
-            if Instant::now() >= safety {
-                force_early_exit_safety_release(&writer, &inner, &run_id).await;
-                return;
-            }
             let still_watching = {
                 let guard = inner.lock().await;
                 guard.runs.get(&run_id).is_some_and(|rec| {
@@ -2763,7 +2758,10 @@ fn early_exit_quiescence_ready(rec: &RunRecord) -> bool {
     if !rec.stream_ended {
         return false;
     }
-    if rec.early_exit_watcher_pid.is_some() && !rec.early_exit_pid_exited {
+    if session_is_early_exit_no_work_record(rec)
+        && rec.early_exit_watcher_pid.is_some()
+        && !rec.early_exit_pid_exited
+    {
         return false;
     }
     true
@@ -2774,15 +2772,12 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
     if rec.early_exit_release_taken {
         return None;
     }
+    // Receiver/channel closure is the sole normal release boundary for
+    // PID-watched subprocess runs; the watcher only publishes observations.
+    if rec.early_exit_watcher_pid.is_some() && !rec.stream_ended {
+        return None;
+    }
     if session_is_early_exit_no_work_record(rec) && !early_exit_quiescence_ready(rec) {
-        return None;
-    }
-    if rec.early_exit_watcher_pid.is_some() && !rec.driver_has_ready && !rec.stream_ended {
-        return None;
-    }
-    if rec.early_exit_watcher_pid.is_some() && !rec.driver_has_ready {
-        // Subprocess stream may close before Ready is delivered; defer to the
-        // PID watcher until quiescence or the safety deadline.
         return None;
     }
     let mut rec = inner.runs.remove(run_id)?;
@@ -2802,37 +2797,6 @@ async fn complete_early_exit_release_if_ready(
     };
     if let Some(rec) = release {
         write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
-    }
-}
-
-async fn force_early_exit_safety_release(
-    writer: &WriterHandle,
-    inner: &tokio::sync::Mutex<Inner>,
-    run_id: &str,
-) {
-    let release = {
-        let mut g = inner.lock().await;
-        let Some(rec) = g.runs.get_mut(run_id) else {
-            return;
-        };
-        if rec.early_exit_release_taken {
-            return;
-        }
-        rec.stream_ended = true;
-        rec.early_exit_pid_exited = true;
-        take_stream_end_release(&mut g, run_id)
-    };
-    if let Some(rec) = release {
-        append_terminal_release(
-            writer,
-            rec,
-            ResolvedTerminalRelease {
-                reason: "early-exit watcher safety deadline".into(),
-                outcome: ReleaseOutcome::Failed,
-                finalized_by_worker: false,
-            },
-        )
-        .await;
     }
 }
 
@@ -3056,17 +3020,16 @@ async fn write_terminal_release_from_record(
     rec: RunRecord,
     source: TerminalReleaseSource,
 ) {
-    let resolved = if session_is_early_exit_no_work_record(&rec)
-        && rec.early_exit_watcher_pid.is_some()
-    {
-        ResolvedTerminalRelease {
-            reason: "early-exit subprocess with no work envelopes".into(),
-            outcome: ReleaseOutcome::Failed,
-            finalized_by_worker: false,
-        }
-    } else {
-        resolve_terminal_release(&rec, source)
-    };
+    let resolved =
+        if session_is_early_exit_no_work_record(&rec) && rec.early_exit_watcher_pid.is_some() {
+            ResolvedTerminalRelease {
+                reason: "early-exit subprocess with no work envelopes".into(),
+                outcome: ReleaseOutcome::Failed,
+                finalized_by_worker: false,
+            }
+        } else {
+            resolve_terminal_release(&rec, source)
+        };
     append_terminal_release(writer, rec, resolved).await;
 }
 
@@ -6899,5 +6862,150 @@ mod tests {
             .status();
         let _ = wrapper.kill();
         let _ = wrapper.wait();
+    }
+
+    #[tokio::test]
+    async fn early_exit_quiescence_requires_stream_end_for_pid_watched_runs() {
+        let ready_no_work = RunRecord {
+            driver_has_ready: true,
+            driver_has_work: false,
+            driver_has_terminal: false,
+            stream_ended: true,
+            early_exit_watcher_pid: Some(42),
+            early_exit_pid_exited: true,
+            ..test_run_record_shell()
+        };
+        assert!(early_exit_quiescence_ready(&ready_no_work));
+
+        let waiting_pid = RunRecord {
+            early_exit_pid_exited: false,
+            driver_has_ready: true,
+            driver_has_work: false,
+            driver_has_terminal: false,
+            stream_ended: true,
+            early_exit_watcher_pid: Some(42),
+            ..test_run_record_shell()
+        };
+        assert!(!early_exit_quiescence_ready(&waiting_pid));
+
+        let with_work = RunRecord {
+            driver_has_work: true,
+            early_exit_pid_exited: false,
+            driver_has_ready: true,
+            driver_has_terminal: false,
+            stream_ended: true,
+            early_exit_watcher_pid: Some(42),
+            ..test_run_record_shell()
+        };
+        assert!(early_exit_quiescence_ready(&with_work));
+    }
+
+    #[tokio::test]
+    async fn stream_end_release_defers_until_channel_closure_when_pid_watched() {
+        let mut inner = Inner {
+            acquisition_paused: false,
+            runs: HashMap::new(),
+            leases: HashMap::new(),
+            babysitter_auto_spawn_backoff: HashMap::new(),
+        };
+        let run_id = "run-quiescence".to_string();
+        inner.runs.insert(
+            run_id.clone(),
+            RunRecord {
+                driver_has_ready: true,
+                driver_has_work: true,
+                early_exit_watcher_pid: Some(99),
+                early_exit_pid_exited: true,
+                stream_ended: false,
+                ..test_run_record_shell()
+            },
+        );
+        assert!(take_stream_end_release(&mut inner, &run_id).is_none());
+        inner.runs.get_mut(&run_id).unwrap().stream_ended = true;
+        assert!(take_stream_end_release(&mut inner, &run_id).is_some());
+        assert!(inner.runs.is_empty());
+    }
+
+    fn test_run_record_shell() -> RunRecord {
+        RunRecord {
+            task_id: "TASK".into(),
+            kind: RunKind::Worker,
+            worker_id: "w".into(),
+            role: "implementer".into(),
+            transport: "subprocess".into(),
+            harness: None,
+            project_id: None,
+            worktree: None,
+            sub_state: None,
+            identity: RuntimeIdentity::new("run-test", "boot-test"),
+            session_path: PathBuf::from("/tmp/run.jsonl"),
+            babysitter_target: None,
+            last_path: None,
+            stdout_path: None,
+            requires_worker_finalize: true,
+            terminal_round: 0,
+            terminal_declaration: None,
+            artifactor_lifecycle: ArtifactorLifecycle::Idle,
+            pending_terminal_drain: false,
+            pending_cancel: false,
+            babysitter_run_id: None,
+            last_driver_event_at: Instant::now(),
+            run_started_at: Instant::now(),
+            last_input_at: Instant::now(),
+            stall_timeout: None,
+            max_run_duration: None,
+            idle_timeout: None,
+            next_event_seq: 0,
+            terminal_outcome: None,
+            control: Box::new(NoopControl),
+            event_drain: tokio::spawn(async {}),
+            babysitter_summary: None,
+            early_exit_watcher_pid: None,
+            driver_has_work: false,
+            driver_has_terminal: false,
+            driver_has_ready: false,
+            early_exit_release_taken: false,
+            stream_ended: false,
+            early_exit_pid_exited: false,
+        }
+    }
+
+    struct NoopControl;
+
+    #[async_trait::async_trait]
+    impl DriverControl for NoopControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Ok(BabysitterAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            Ok(())
+        }
+
+        async fn send_input(
+            &mut self,
+            _req: UserInputRequest,
+        ) -> Result<UserInputAck, DriverError> {
+            Ok(UserInputAck {
+                accepted: true,
+                message: None,
+            })
+        }
     }
 }
