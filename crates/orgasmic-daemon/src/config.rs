@@ -570,7 +570,7 @@ dispatch:
   auto_commit_signal: false
   implementer:
     max_iterations: 30
-    context_budget: 200000
+    context_budget_chars: 200000
   "implementer,codex":
     stall_timeout_secs: 120
     sandbox_permissions:
@@ -590,7 +590,7 @@ dispatch:
             None,
         );
         assert_eq!(kind_only.max_iterations, Some(30));
-        assert_eq!(kind_only.context_budget, Some(200_000));
+        assert_eq!(kind_only.context_budget_chars, Some(200_000));
         // kind overlay does not set stall; code default remains
         assert_eq!(kind_only.stall_timeout_secs, Some(600));
 
@@ -605,6 +605,30 @@ dispatch:
         let sandbox = kind_harness.sandbox_permissions.expect("sandbox overlay");
         assert!(!sandbox.allow_exec);
         assert!(sandbox.allow_network);
+    }
+
+    #[test]
+    fn dispatch_overlay_legacy_context_budget_migrates_to_chars() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        std::fs::write(
+            home.config(),
+            r#"
+dispatch:
+  implementer:
+    context_budget: 50000
+"#,
+        )
+        .unwrap();
+        let cfg = DaemonConfig::load(&home).unwrap();
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            None,
+            &cfg.dispatch_governance,
+            None,
+        );
+        assert_eq!(resolved.context_budget_chars, Some(200_000));
     }
 
     #[test]

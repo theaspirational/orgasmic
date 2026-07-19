@@ -286,12 +286,9 @@ impl HarnessEventAdapter for ClaudeAdapter {
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
         let text = format!("orgasmic control: release requested\nreason: {reason}");
         Ok(HarnessControlOutcome {
-            events: crate::r#trait::turn_boundary_events(
-                self.next_seq(),
-                DriverEvent::RunComplete {
-                    summary: Some(reason),
-                },
-            ),
+            events: vec![DriverEvent::RunComplete {
+                summary: Some(reason),
+            }],
             stdin_payloads: vec![json_line_bytes(&claude_user_message(text))?],
             close: true,
             ..HarnessControlOutcome::default()
@@ -780,8 +777,6 @@ mod tests {
         let ev = s.events.recv().await.unwrap();
         assert!(matches!(ev, DriverEvent::Ready { .. }));
         s.control.release("done").await.unwrap();
-        let turn = s.events.recv().await.unwrap();
-        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let last = s.events.recv().await.unwrap();
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         assert!(matches!(last, DriverEvent::RunComplete { .. }));

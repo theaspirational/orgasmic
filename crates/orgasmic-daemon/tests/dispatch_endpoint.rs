@@ -61,8 +61,8 @@ fn read_token(home: &Home) -> String {
         .to_string()
 }
 
-fn seed_worker(home: &Home, id: &str, driver: &str, harness: &str, provider: &str, model: &str) {
-    seed_worker_kind(home, id, "implementer", driver, harness, provider, model);
+fn seed_worker(home: &Home, id: &str, driver: &str, harness: &str, provider: &str, _model: &str) {
+    seed_worker_kind(home, id, "implementer", driver, harness, provider, _model);
 }
 
 fn seed_worker_kind(
@@ -72,12 +72,12 @@ fn seed_worker_kind(
     driver: &str,
     harness: &str,
     provider: &str,
-    model: &str,
+    _model: &str,
 ) {
     write(
         &home.user().join(format!("workers/{id}.org")),
         format!(
-            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        {kind}\n:DRIVER:                      {driver}\n:HARNESS:                     {harness}\n:PROVIDERS:                   {provider}\n:MODELS:                      {model}\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            {provider}\n:DEFAULT_MODEL:               {model}\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
+            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        {kind}\n:DRIVER:                      {driver}\n:HARNESS:                     {harness}\n:PROVIDERS:                   {provider}\n:DEFAULT_PROVIDER:            {provider}\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
         ),
     );
 }
@@ -430,6 +430,181 @@ async fn dispatch_endpoint_auto_spawns_babysitter_jsonl() {
 }
 
 #[tokio::test]
+async fn dispatch_endpoint_governance_babysitter_null_disables_inherited_spawn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    write(
+        &home.config(),
+        r#"
+dispatch:
+  implementer:
+    max_iterations: 10
+    context_budget: 50000
+    babysitter:
+      mode: acp-ws
+      harness: codex
+  "implementer,codex":
+    max_iterations: 20
+    context_budget_chars: 80000
+    babysitter:
+      mode: acp-ws
+      harness: codex
+      model: inherited-kind-harness-model
+      effort: high
+"#,
+    );
+    symlink_repo_source(&home);
+    let project_root = tmp.path().join("proj");
+    let task_id = "TASK-GOV-BABYSITTER-MATRIX";
+    write(
+        &project_root.join(".orgasmic/tasks/backlog.org"),
+        format!(
+            "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG {task_id} Governance babysitter matrix\n:PROPERTIES:\n:ID:               {task_id}\n:END:\n\n* BACKLOG TASK-GOV-BABYSITTER-DISABLE Null disable case\n:PROPERTIES:\n:ID:               TASK-GOV-BABYSITTER-DISABLE\n:END:\n\n* BACKLOG TASK-GOV-BABYSITTER-EXPLICIT Explicit override case\n:PROPERTIES:\n:ID:               TASK-GOV-BABYSITTER-EXPLICIT\n:END:\n"
+        ),
+    );
+    write(
+        &home.board(),
+        format!(
+            "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT proj-dispatch\n:PROPERTIES:\n:ID:               proj-dispatch\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
+            project_root.display()
+        ),
+    );
+    let brief = tmp.path().join("brief.md");
+    let worktree = tmp.path().join("worktree");
+    let last = tmp.path().join("last.txt");
+    let stdout = tmp.path().join("stdout.log");
+    write(&brief, "governance babysitter matrix brief\n");
+    std::fs::create_dir_all(&worktree).unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+
+    // Layer 3 inheritance: kind+harness babysitter address wins over kind-only.
+    let mut inherited_body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
+    inherited_body["mode"] = serde_json::json!("acp-ws");
+    inherited_body["harness"] = serde_json::json!("codex");
+    let inherited = post_dispatch(&running, &token, "proj-dispatch", task_id, inherited_body).await;
+    assert!(
+        inherited.status().is_success(),
+        "inherited babysitter dispatch: {}",
+        inherited.status()
+    );
+    let inherited_json: serde_json::Value = inherited.json().await.unwrap();
+    let inherited_run_id = inherited_json["run_id"].as_str().unwrap();
+    let inherited_babysitter = project_root
+        .join(".orgasmic/tmp/sessions")
+        .join(format!("{inherited_run_id}.babysitter.jsonl"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < deadline {
+        if inherited_babysitter.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        inherited_babysitter.exists(),
+        "config kind+harness babysitter must auto-spawn child: {}",
+        inherited_babysitter.display()
+    );
+    let inherited_body_text = std::fs::read_to_string(&inherited_babysitter).unwrap();
+    assert!(
+        inherited_body_text.contains("inherited-kind-harness-model"),
+        "resolved babysitter model must reach child acquire: {inherited_body_text}"
+    );
+    assert!(
+        inherited_body_text.contains("\"effort\":\"high\"")
+            || inherited_body_text.contains("\"reasoning_effort\":\"high\""),
+        "kind+harness babysitter effort must reach child driver_config: {inherited_body_text}"
+    );
+
+    // Layer 4 explicit null disables inherited babysitter for this request.
+    let mut disabled_body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
+    disabled_body["mode"] = serde_json::json!("acp-ws");
+    disabled_body["harness"] = serde_json::json!("codex");
+    disabled_body["governance"] = serde_json::json!({ "babysitter": null });
+    let disabled = post_dispatch(
+        &running,
+        &token,
+        "proj-dispatch",
+        "TASK-GOV-BABYSITTER-DISABLE",
+        disabled_body,
+    )
+    .await;
+    assert!(
+        disabled.status().is_success(),
+        "null babysitter disable dispatch: {}",
+        disabled.status()
+    );
+    let disabled_json: serde_json::Value = disabled.json().await.unwrap();
+    let disabled_run_id = disabled_json["run_id"].as_str().unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let disabled_babysitter = project_root
+        .join(".orgasmic/tmp/sessions")
+        .join(format!("{disabled_run_id}.babysitter.jsonl"));
+    assert!(
+        !disabled_babysitter.exists(),
+        "JSON null babysitter must prevent child acquire even when config inherits one"
+    );
+
+    // Explicit per-request object replaces inherited address for this dispatch.
+    let mut explicit_body = dispatch_body("implementer", &brief, &worktree, &last, &stdout, None);
+    explicit_body["mode"] = serde_json::json!("acp-ws");
+    explicit_body["harness"] = serde_json::json!("codex");
+    explicit_body["governance"] = serde_json::json!({
+        "babysitter": {
+            "mode": "acp-ws",
+            "harness": "codex",
+            "model": "request-explicit-model",
+            "effort": "low"
+        },
+        "max_iterations": 99
+    });
+    let explicit = post_dispatch(
+        &running,
+        &token,
+        "proj-dispatch",
+        "TASK-GOV-BABYSITTER-EXPLICIT",
+        explicit_body,
+    )
+    .await;
+    assert!(
+        explicit.status().is_success(),
+        "explicit babysitter dispatch: {}",
+        explicit.status()
+    );
+    let explicit_json: serde_json::Value = explicit.json().await.unwrap();
+    let explicit_run_id = explicit_json["run_id"].as_str().unwrap();
+    let explicit_babysitter = project_root
+        .join(".orgasmic/tmp/sessions")
+        .join(format!("{explicit_run_id}.babysitter.jsonl"));
+    let explicit_deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while std::time::Instant::now() < explicit_deadline {
+        if explicit_babysitter.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        explicit_babysitter.exists(),
+        "explicit request babysitter must spawn child"
+    );
+    let explicit_body_text = std::fs::read_to_string(&explicit_babysitter).unwrap();
+    assert!(
+        explicit_body_text.contains("request-explicit-model"),
+        "request babysitter model must reach child: {explicit_body_text}"
+    );
+    assert!(
+        explicit_body_text.contains("\"effort\":\"low\"")
+            || explicit_body_text.contains("\"reasoning_effort\":\"low\""),
+        "request babysitter effort must reach child: {explicit_body_text}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test]
 async fn state_flip_to_in_progress_does_not_spawn_worker() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -590,7 +765,7 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
     write(
         &home.user().join(format!("workers/{worker_id}.org")),
         format!(
-            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:SANDBOX_PERMISSIONS:         allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
+            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:SANDBOX_PERMISSIONS:         allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
         ),
     );
     write(

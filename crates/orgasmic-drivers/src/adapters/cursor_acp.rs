@@ -377,10 +377,9 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             .session_id
             .clone()
             .ok_or_else(|| DriverError::Transport("cursor ACP session missing".into()))?;
-        let model = req
-            .model
-            .clone()
-            .ok_or_else(|| DriverError::Unsupported("cursor ACP runtime options require model"))?;
+        let model = req.model.clone().ok_or(DriverError::Unsupported(
+            "cursor ACP runtime options require model",
+        ))?;
         if model.is_empty() {
             return Err(DriverError::Unsupported(
                 "cursor ACP runtime options require model",
@@ -420,6 +419,12 @@ impl HarnessEventAdapter for CursorAcpAdapter {
     }
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
+        if self.terminal_emitted {
+            return Ok(HarnessControlOutcome {
+                close: true,
+                ..HarnessControlOutcome::default()
+            });
+        }
         self.terminal_emitted = true;
         let mut wire_messages = Vec::new();
         if let Some(session_id) = self.session_id.as_deref() {
@@ -430,12 +435,9 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             })));
         }
         Ok(HarnessControlOutcome {
-            events: crate::r#trait::turn_boundary_events(
-                self.next_seq(),
-                DriverEvent::RunComplete {
-                    summary: Some(reason),
-                },
-            ),
+            events: vec![DriverEvent::RunComplete {
+                summary: Some(reason),
+            }],
             wire_messages,
             close: true,
             ..HarnessControlOutcome::default()

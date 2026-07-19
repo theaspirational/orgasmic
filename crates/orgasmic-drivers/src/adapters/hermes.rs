@@ -474,6 +474,12 @@ impl HarnessEventAdapter for HermesAdapter {
     }
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
+        if self.terminal_emitted {
+            return Ok(HarnessControlOutcome {
+                close: true,
+                ..HarnessControlOutcome::default()
+            });
+        }
         self.terminal_emitted = true;
         let wire_messages = if self.session_id.is_some() {
             Vec::new()
@@ -484,12 +490,9 @@ impl HarnessEventAdapter for HermesAdapter {
             }))]
         };
         Ok(HarnessControlOutcome {
-            events: crate::r#trait::turn_boundary_events(
-                self.take_seq(),
-                DriverEvent::RunComplete {
-                    summary: Some(reason.clone()),
-                },
-            ),
+            events: vec![DriverEvent::RunComplete {
+                summary: Some(reason.clone()),
+            }],
             wire_messages,
             close: true,
             ..HarnessControlOutcome::default()

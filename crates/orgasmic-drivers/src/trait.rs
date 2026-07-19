@@ -389,12 +389,9 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
         Ok(HarnessControlOutcome {
-            events: turn_boundary_events(
-                self.next_seq(),
-                DriverEvent::RunComplete {
-                    summary: Some(reason),
-                },
-            ),
+            events: vec![DriverEvent::RunComplete {
+                summary: Some(reason),
+            }],
             close: true,
             ..HarnessControlOutcome::default()
         })
@@ -411,8 +408,6 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         events: &mpsc::Sender<DriverEvent>,
         summary: Option<String>,
     ) {
-        let seq = self.next_seq();
-        let _ = events.send(agent_turn_complete(seq)).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 }

@@ -201,8 +201,6 @@ impl HarnessEventAdapter for CursorAdapter {
         if self.terminal_emitted.swap(true, Ordering::SeqCst) {
             return;
         }
-        let seq = self.next_seq();
-        let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 
@@ -884,8 +882,6 @@ impl CursorAgentTranslator {
         if self.terminal_emitted.swap(true, Ordering::SeqCst) {
             return;
         }
-        let seq = self.next_seq();
-        let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
         let _ = events.send(DriverEvent::RunComplete { summary }).await;
     }
 

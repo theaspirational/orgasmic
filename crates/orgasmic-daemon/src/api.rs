@@ -1050,7 +1050,7 @@ fn verbatim_optional(value: Option<String>) -> Option<String> {
     value
 }
 
-fn enforce_context_budget(
+fn enforce_context_budget_chars(
     compiled_chars: usize,
     budget: Option<u32>,
     context: &str,
@@ -1060,7 +1060,7 @@ fn enforce_context_budget(
     };
     if compiled_chars > budget as usize {
         return Err(ApiError::bad_request(format!(
-            "{context} compiled prompt exceeds context_budget ({compiled_chars} characters > {budget} character limit)"
+            "{context} compiled prompt exceeds context_budget_chars ({compiled_chars} characters > {budget} character limit)"
         )));
     }
     Ok(())
@@ -2389,6 +2389,9 @@ async fn post_manager_launch(
         .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
     drop(snap);
 
+    validate_address_harness_args(&req.harness, &req.harness_args)
+        .map_err(ApiError::bad_request)?;
+
     let driver = driver_for_mode_harness(&req.mode, &req.harness).ok_or_else(|| {
         ApiError::bad_request(format!(
             "unsupported manager driver {}/{}",
@@ -2959,9 +2962,9 @@ async fn post_stage(
     )?;
 
     let prompt = compile_stage_prompt(&state.home, spec, &mut values)?;
-    enforce_context_budget(
-        prompt.compiled.len(),
-        worker.context_budget,
+    enforce_context_budget_chars(
+        prompt.compiled.chars().count(),
+        worker.context_budget_chars,
         &format!("{} stage", spec.stage),
     )?;
     let bundle = stage_prompt_bundle(spec, &worker, &prompt.id, &prompt.compiled);
@@ -3125,7 +3128,7 @@ struct StageWorker {
     missing_skills: Vec<String>,
     babysitter: Option<BabysitterAddress>,
     max_iterations: Option<u32>,
-    context_budget: Option<u32>,
+    context_budget_chars: Option<u32>,
     applicable_states: Vec<String>,
     stall_timeout_secs: Option<u32>,
     max_run_duration_secs: Option<u32>,
@@ -3183,7 +3186,7 @@ fn resolve_addressed_stage_worker(
         missing_skills,
         babysitter: gov.babysitter,
         max_iterations: gov.max_iterations,
-        context_budget: gov.context_budget,
+        context_budget_chars: gov.context_budget_chars,
         applicable_states: gov.applicable_states,
         stall_timeout_secs: gov.stall_timeout_secs,
         max_run_duration_secs: gov.max_run_duration_secs,
@@ -3220,7 +3223,7 @@ fn stage_worker_from_view(worker: crate::content::WorkerView) -> StageWorker {
         missing_skills: worker.missing_skills,
         babysitter: None,
         max_iterations: worker.max_iterations,
-        context_budget: worker.context_budget,
+        context_budget_chars: worker.context_budget_chars,
         applicable_states: worker.applicable_states,
         stall_timeout_secs: worker.stall_timeout_secs,
         max_run_duration_secs: worker.max_run_duration_secs,
@@ -3315,7 +3318,7 @@ fn load_stage_worker_path(home: &Home, path: &FsPath, id: &str) -> Result<StageW
         missing_skills,
         babysitter: None,
         max_iterations: worker.max_iterations,
-        context_budget: worker.context_budget,
+        context_budget_chars: worker.context_budget_chars,
         applicable_states: worker.applicable_states,
         harness_args: worker.harness_args.clone(),
         stall_timeout_secs: worker.stall_timeout_secs,
@@ -3425,8 +3428,12 @@ fn fill_stage_slot_values(
     if let Some(max_iterations) = worker.max_iterations {
         insert_slot(values, "run.max_iterations", max_iterations.to_string());
     }
-    if let Some(context_budget) = worker.context_budget {
-        insert_slot(values, "run.context_budget", context_budget.to_string());
+    if let Some(context_budget_chars) = worker.context_budget_chars {
+        insert_slot(
+            values,
+            "run.context_budget_chars",
+            context_budget_chars.to_string(),
+        );
     }
     insert_slot(values, "evidence.so_far", graph_evidence(project));
     insert_slot(values, "worklog.tail", String::new());
@@ -3915,7 +3922,7 @@ fn build_babysitter_auto_spawn(
         missing_skills,
         babysitter: None,
         max_iterations: gov.max_iterations,
-        context_budget: gov.context_budget,
+        context_budget_chars: gov.context_budget_chars,
         applicable_states: gov.applicable_states,
         stall_timeout_secs: gov.stall_timeout_secs,
         max_run_duration_secs: gov.max_run_duration_secs,
@@ -3938,8 +3945,11 @@ fn build_babysitter_auto_spawn(
     if let Some(max_iterations) = babysitter.max_iterations {
         values.insert("run.max_iterations".to_string(), max_iterations.to_string());
     }
-    if let Some(context_budget) = babysitter.context_budget {
-        values.insert("run.context_budget".to_string(), context_budget.to_string());
+    if let Some(context_budget_chars) = babysitter.context_budget_chars {
+        values.insert(
+            "run.context_budget_chars".to_string(),
+            context_budget_chars.to_string(),
+        );
     }
     values.insert("skills.all".to_string(), skills_manifest(home)?);
     hydrate_skill_slots(home, &babysitter, &mut values)?;
@@ -3967,9 +3977,9 @@ fn build_babysitter_auto_spawn(
             "babysitter prompt compile failed: {messages}"
         )));
     }
-    enforce_context_budget(
-        compiled.text.len(),
-        babysitter.context_budget,
+    enforce_context_budget_chars(
+        compiled.text.chars().count(),
+        babysitter.context_budget_chars,
         "babysitter spawn",
     )?;
     let bundle = format!(
@@ -4004,7 +4014,7 @@ fn build_babysitter_auto_spawn(
         linked_skills: babysitter.linked_skills,
         sandbox_permissions: babysitter.sandbox_permissions,
         max_iterations: babysitter.max_iterations,
-        context_budget: babysitter.context_budget,
+        context_budget_chars: babysitter.context_budget_chars,
         harness_args: babysitter.harness_args,
     }))
 }
@@ -4824,8 +4834,11 @@ fn compile_dispatch_prompt_bundle(
     if let Some(max_iterations) = worker.max_iterations {
         values.insert("run.max_iterations".to_string(), max_iterations.to_string());
     }
-    if let Some(context_budget) = worker.context_budget {
-        values.insert("run.context_budget".to_string(), context_budget.to_string());
+    if let Some(context_budget_chars) = worker.context_budget_chars {
+        values.insert(
+            "run.context_budget_chars".to_string(),
+            context_budget_chars.to_string(),
+        );
     }
     hydrate_skill_slots(home, worker, &mut values)?;
     let req = crate::prompt_compiler::PromptCompileRequest {
@@ -4852,9 +4865,9 @@ fn compile_dispatch_prompt_bundle(
             "dispatch prompt compile failed: {messages}"
         )));
     }
-    enforce_context_budget(
+    enforce_context_budget_chars(
         compiled.char_count,
-        worker.context_budget,
+        worker.context_budget_chars,
         "dispatch prompt",
     )?;
     Ok(format!(
@@ -4943,10 +4956,10 @@ async fn record_dispatch_started(
             serde_json::to_string(&record.req.harness_args).unwrap_or_else(|_| "[]".into()),
         ));
     }
-    if let Some(model) = non_empty_field(record.req.model_override.clone()) {
+    if let Some(model) = verbatim_optional(record.req.model_override.clone()) {
         extra.push(("MODEL".to_string(), model));
     }
-    if let Some(effort) = non_empty_field(record.req.effort_override.clone()) {
+    if let Some(effort) = verbatim_optional(record.req.effort_override.clone()) {
         extra.push(("EFFORT".to_string(), effort));
     }
     if let Some(goal_id) = non_empty_field(record.req.goal_id.clone()) {
@@ -5030,10 +5043,10 @@ async fn record_dispatch_created(
         extra.push(("PID".to_string(), pid.to_string()));
     }
     extra.push(("DISPATCH_TX".to_string(), record.dispatch_tx_id.to_string()));
-    if let Some(model) = non_empty_field(record.req.model_override.clone()) {
+    if let Some(model) = verbatim_optional(record.req.model_override.clone()) {
         extra.push(("MODEL_OVERRIDE".to_string(), model));
     }
-    if let Some(effort) = non_empty_field(record.req.effort_override.clone()) {
+    if let Some(effort) = verbatim_optional(record.req.effort_override.clone()) {
         extra.push(("EFFORT_OVERRIDE".to_string(), effort));
     }
     if let Some(provider) = non_empty_field(record.req.provider_override.clone()) {
@@ -13180,9 +13193,9 @@ async fn launch_artifact_generation(
         &state.dispatch_governance,
         governance,
     )?;
-    enforce_context_budget(
+    enforce_context_budget_chars(
         bundle.chars().count(),
-        worker.context_budget,
+        worker.context_budget_chars,
         "artifact prompt",
     )?;
     let worker_id = worker.id.clone();
@@ -14151,7 +14164,7 @@ mod tests {
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
@@ -16140,6 +16153,19 @@ mod tests {
     /// through supervisor handlers (not a raw adapter unit test).
     struct CursorAcpFixtureDriver;
 
+    thread_local! {
+        static CURSOR_ACP_FIXTURE_WIRE: std::cell::RefCell<Vec<orgasmic_drivers::WireMessage>> =
+            std::cell::RefCell::new(Vec::new());
+    }
+
+    fn clear_cursor_acp_fixture_wire() {
+        CURSOR_ACP_FIXTURE_WIRE.with(|wire| wire.borrow_mut().clear());
+    }
+
+    fn take_cursor_acp_fixture_wire() -> Vec<orgasmic_drivers::WireMessage> {
+        CURSOR_ACP_FIXTURE_WIRE.with(|wire| std::mem::take(&mut *wire.borrow_mut()))
+    }
+
     #[async_trait::async_trait]
     impl WorkerDriver for CursorAcpFixtureDriver {
         fn transport(&self) -> &'static str {
@@ -16240,6 +16266,8 @@ mod tests {
             req: RuntimeOptionsRequest,
         ) -> Result<orgasmic_drivers::RuntimeOptionsAck, orgasmic_drivers::DriverError> {
             let outcome = self.adapter.switch_runtime_options(req).await?;
+            CURSOR_ACP_FIXTURE_WIRE
+                .with(|wire| wire.borrow_mut().extend(outcome.wire_messages.clone()));
             orgasmic_drivers::modes::jsonrpc::emit_events(&self.events, outcome.events).await;
             Ok(orgasmic_drivers::RuntimeOptionsAck {
                 accepted: true,
@@ -16300,6 +16328,7 @@ mod tests {
         home.ensure().unwrap();
         let state = direct_stage_test_state(home).await;
         let session_path = tmp.path().join("TASK-CURSOR-RUNTIME.jsonl");
+        clear_cursor_acp_fixture_wire();
         let acquire = cursor_acp_fixture_acquire(&state, session_path).await;
 
         let Json(catalog_resp) =
@@ -16325,6 +16354,18 @@ mod tests {
         .await
         .expect("runtime options switch");
         assert!(switch_resp.accepted);
+
+        let wire = take_cursor_acp_fixture_wire();
+        assert_eq!(wire.len(), 1, "switch must capture outbound wire message");
+        match &wire[0] {
+            orgasmic_drivers::WireMessage::JsonRpc { method, params } => {
+                assert_eq!(method, "session/set_config_option");
+                assert_eq!(params["configId"], "model");
+                assert_eq!(params["value"], "fixture-b");
+                assert_eq!(params["sessionId"], "sess-api-fixture");
+            }
+            other => panic!("expected JsonRpc wire message, got {other:?}"),
+        }
 
         let Json(after) = get_run_runtime_options(State(state), Path(acquire.run_id))
             .await
@@ -17958,14 +17999,27 @@ mod tests {
     }
 
     #[test]
-    fn context_budget_enforces_character_limit_not_token_estimate() {
-        let err = enforce_context_budget(101, Some(100), "dispatch").unwrap_err();
+    fn context_budget_chars_enforces_character_limit_not_token_estimate() {
+        let err = enforce_context_budget_chars(101, Some(100), "dispatch").unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
         assert!(err.message.contains("101 characters"));
         assert!(err.message.contains("100 character limit"));
+        assert!(err.message.contains("context_budget_chars"));
         assert!(!err.message.contains("token"));
-        enforce_context_budget(100, Some(100), "dispatch").unwrap();
-        enforce_context_budget(10_000, None, "dispatch").unwrap();
+        enforce_context_budget_chars(100, Some(100), "dispatch").unwrap();
+        enforce_context_budget_chars(10_000, None, "dispatch").unwrap();
+    }
+
+    #[test]
+    fn context_budget_chars_counts_unicode_scalars_not_bytes() {
+        // "añ": ñ is one scalar but two UTF-8 bytes.
+        let text = "a".repeat(99) + "ñ";
+        assert_eq!(text.len(), 101);
+        assert_eq!(text.chars().count(), 100);
+        enforce_context_budget_chars(text.chars().count(), Some(100), "stage").unwrap();
+        let err =
+            enforce_context_budget_chars(text.chars().count(), Some(99), "stage").unwrap_err();
+        assert!(err.message.contains("100 characters"));
     }
 
     #[test]
@@ -17984,7 +18038,9 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        assert!(err.message.contains("harness_args are only valid for custom harness"));
+        assert!(err
+            .message
+            .contains("harness_args are only valid for custom harness"));
     }
 
     #[test]
@@ -18017,6 +18073,245 @@ mod tests {
                     err.message
                 )
             });
+        }
+    }
+
+    #[test]
+    fn compile_launch_boot_recovery_without_worker_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj-no-workers");
+        let overlay = DispatchGovernanceOverlay::default();
+
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "subprocess-stream-json",
+            "cursor-agent",
+            Vec::new(),
+            &overlay,
+            None,
+        )
+        .unwrap();
+        let brief = tmp.path().join("brief.md");
+        std::fs::write(&brief, "no-worker compile smoke").unwrap();
+        let mut project = test_project(&project_root, &[], &[], &[]);
+        project.project_id = "proj-no-workers".into();
+        project.tasks.push(crate::index::TaskSummary {
+            id: "TASK-NO-WORKERS".into(),
+            title: "no workers".into(),
+            lifecycle_stage: orgasmic_core::LifecycleStage::Backlog,
+            parent_task: None,
+            depends_on: Vec::new(),
+            implements: Vec::new(),
+            produces: Vec::new(),
+            read_scope: Vec::new(),
+            write_scope: Vec::new(),
+            owner: crate::index::TaskOwner::Human,
+            run_id: None,
+            priority: None,
+            worker: None,
+            provider: None,
+            model: None,
+            reasoning_effort: None,
+            test_cmd: None,
+            tags: Vec::new(),
+            source_file: project_root.join(".orgasmic/tasks/backlog.org"),
+            sandbox_permissions: None,
+        });
+        compile_dispatch_prompt_bundle(
+            &home,
+            &project,
+            DispatchEndpointKind::Implementer,
+            "TASK-NO-WORKERS",
+            &worker,
+            "brief body",
+        )
+        .unwrap();
+
+        for spec in [
+            stage_spec("grill"),
+            stage_spec("plan"),
+            stage_spec("architect"),
+        ] {
+            let mut values = orgasmic_core::SlotValues::new();
+            values.insert("worker.id".into(), worker.id.clone());
+            compile_stage_prompt(&home, spec, &mut values).unwrap();
+        }
+
+        let envelopes = vec![
+            SessionEnvelope {
+                seq: 0,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "acquire",
+                    "task_id": "TASK-NO-WORKERS",
+                    "kind": "worker",
+                    "worker_id": "implementer-cursor-agent-subprocess-stream-json",
+                }),
+            },
+            SessionEnvelope {
+                seq: 1,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "run_meta",
+                    "transport": "subprocess-stream-json",
+                    "harness": "cursor-agent",
+                    "role": "implementer",
+                    "requires_worker_finalize": true,
+                    "last_path": null,
+                    "stdout_path": null,
+                    "driver_config": {},
+                }),
+            },
+        ];
+        let contract = persisted_terminal_contract_from_session(&home, &envelopes).unwrap();
+        assert_eq!(contract.role, "implementer");
+        assert!(contract.requires_worker_finalize);
+    }
+
+    #[tokio::test]
+    async fn manager_launch_rejects_harness_args_on_builtin_harness() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj-manager");
+        let state = direct_stage_test_state(home).await;
+
+        let err = post_manager_launch(
+            State(state),
+            Json(ManagerLaunchRequest {
+                project_id: "proj-manager".into(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                model: None,
+                effort: None,
+                harness_args: vec!["--smuggle".into()],
+                system_wide: false,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err
+            .message
+            .contains("harness_args are only valid for custom harness"));
+    }
+
+    #[test]
+    fn dispatch_tx_preserves_verbatim_model_and_effort_bytes() {
+        let model = "  Composer-2.5-FAST  ".to_string();
+        let effort = " XHIGH ".to_string();
+        assert_eq!(
+            verbatim_optional(Some(model.clone())),
+            Some("  Composer-2.5-FAST  ".to_string())
+        );
+        assert_eq!(
+            verbatim_optional(Some(effort.clone())),
+            Some(" XHIGH ".to_string())
+        );
+        assert_eq!(
+            verbatim_optional(Some("   ".to_string())),
+            Some("   ".to_string())
+        );
+        assert_eq!(verbatim_optional(None), None);
+    }
+
+    #[test]
+    fn dispatch_driver_config_forwards_verbatim_model_and_effort() {
+        let worker = StageWorker {
+            id: "implementer-cursor-agent-subprocess-stream-json".to_string(),
+            kind: WorkerKind::Implementer,
+            driver: "subprocess-stream-json".to_string(),
+            harness: "cursor-agent".to_string(),
+            default_provider: None,
+            linked_skills: Vec::new(),
+            persona: None,
+            operating_rules: None,
+            missing_skills: Vec::new(),
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            FsPath::new("/tmp/project"),
+            FsPath::new("/tmp/worktree"),
+            "brief",
+            DriverOverrides {
+                provider: None,
+                model: Some("  Composer-2.5-FAST  ".to_string()),
+                effort: Some(" XHIGH ".to_string()),
+            },
+            None,
+            &DriverDefaults::default(),
+            None,
+        );
+        assert_eq!(cfg.0["model"], "  Composer-2.5-FAST  ");
+        assert_eq!(cfg.0["effort"], " XHIGH ");
+        assert_eq!(cfg.0["reasoning_effort"], " XHIGH ");
+        assert!(cfg.0.get("provider").is_none() || cfg.0["provider"].is_null());
+    }
+
+    #[test]
+    fn subprocess_compose_request_preserves_verbatim_model_bytes() {
+        use orgasmic_drivers::adapters::cursor::CursorAdapter;
+        use orgasmic_drivers::HarnessEventAdapter;
+        use orgasmic_drivers::HarnessRequest;
+
+        use orgasmic_core::RuntimeIdentity;
+        use orgasmic_drivers::RunKind;
+
+        let mut adapter = CursorAdapter::new();
+        let ctx = orgasmic_drivers::DriverContext {
+            identity: RuntimeIdentity {
+                run_id: "run-wire".into(),
+                runtime_id: "rt-wire".into(),
+                boot_id: "boot-wire".into(),
+            },
+            run_kind: RunKind::Worker,
+            task_id: "TASK-WIRE".into(),
+            worker_id: "implementer-cursor-agent-subprocess-stream-json".into(),
+            project_id: Some("proj".into()),
+            worktree: Some(PathBuf::from("/tmp/worktree")),
+            babysitter_target: None,
+            continuation: None,
+        };
+        let config = DriverConfig::from_value(json!({
+            "model": "  Composer-2.5-FAST  ",
+            "effort": " XHIGH ",
+            "sandbox": "disabled",
+        }));
+        match adapter.compose_request(&ctx, &config).unwrap() {
+            HarnessRequest::Subprocess { args, .. } => {
+                let model_idx = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "--model")
+                    .map(|pair| pair[1].clone())
+                    .expect("--model in argv");
+                assert_eq!(model_idx, "  Composer-2.5-FAST  ");
+            }
+            HarnessRequest::Simulated { .. }
+            | HarnessRequest::AcpWs { .. }
+            | HarnessRequest::Tmux { .. } => {
+                // Simulated when cursor-agent absent — config still validated above.
+            }
         }
     }
 
@@ -18190,7 +18485,7 @@ mod tests {
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
@@ -18228,7 +18523,7 @@ mod tests {
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
@@ -18274,7 +18569,7 @@ mod tests {
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
@@ -18362,7 +18657,7 @@ mod tests {
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
@@ -23564,7 +23859,7 @@ mod tests {
         }
         let harness_path = harness.display();
         let worker_org = format!(
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-RH4M5 hot-session).\n"
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-RH4M5 hot-session).\n"
         );
         write(home.user().join("workers/artifactor.org"), &worker_org);
     }
@@ -23590,7 +23885,7 @@ mod tests {
         }
         let harness_path = harness.display();
         let worker_org = format!(
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:VERSION:                     1\n:END:\n"
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:VERSION:                     1\n:END:\n"
         );
         write(home.user().join("workers/artifactor.org"), &worker_org);
     }
@@ -24550,15 +24845,16 @@ mod tests {
         .expect("first regenerate should cold-spawn");
         let first_run_id = first.0.run_id.clone();
 
-        // Simulate daemon restart: release drops the run from the supervisor.
+        // Simulate daemon restart: drop the first supervisor and boot fresh state.
         state
             .supervisor
             .release(&first_run_id, "simulate restart", ReleaseOutcome::Completed)
             .await
             .unwrap();
+        let cold_state = direct_stage_test_state(home.clone()).await;
 
         let _ = post_artifact_submit(
-            State(state.clone()),
+            State(cold_state.clone()),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactSubmitRequest {
@@ -24572,7 +24868,7 @@ mod tests {
         .expect("submit v2 after restart");
 
         let _ = post_artifact_add_comment(
-            State(state.clone()),
+            State(cold_state.clone()),
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
@@ -24588,7 +24884,7 @@ mod tests {
         .expect("feedback should succeed");
 
         let resp = post_artifact_regenerate(
-            State(state.clone()),
+            State(cold_state.clone()),
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
@@ -24613,7 +24909,7 @@ mod tests {
             "regenerating"
         );
 
-        let _ = state
+        let _ = cold_state
             .supervisor
             .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
             .await;
@@ -24702,9 +24998,10 @@ mod tests {
             )
             .await
             .unwrap();
+        let cold_state = direct_stage_test_state(home.clone()).await;
 
         let resp = post_artifact_regenerate(
-            State(state.clone()),
+            State(cold_state.clone()),
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
@@ -24718,7 +25015,7 @@ mod tests {
         assert!(!resp.0.run_id.is_empty());
         assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
 
-        let _ = state
+        let _ = cold_state
             .supervisor
             .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
             .await;
@@ -24817,6 +25114,18 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
 
+        let cold_state = direct_stage_test_state(home.clone()).await;
+        assert!(
+            cold_state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.task_id != format!("artifact.generate:{art_id}")),
+            "fresh ApiState must not inherit live artifact runs from prior boot"
+        );
+
         let replacement = ArtifactLaunchAddress {
             mode: "rmux".into(),
             harness: "claude".into(),
@@ -24825,7 +25134,7 @@ mod tests {
             effort: None,
         };
         let resp = post_artifact_regenerate(
-            State(state.clone()),
+            State(cold_state.clone()),
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
@@ -24854,7 +25163,7 @@ mod tests {
             .unwrap()
             .contains(":LAUNCH_EFFORT:"));
 
-        let _ = state
+        let _ = cold_state
             .supervisor
             .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
             .await;

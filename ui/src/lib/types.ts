@@ -647,7 +647,7 @@ export type GovernancePatch = {
     effort?: string | null;
   } | null;
   max_iterations?: number | null;
-  context_budget?: number | null;
+  context_budget_chars?: number | null;
   linked_skills?: string[] | null;
   applicable_states?: string[] | null;
   stall_timeout_secs?: number | null;

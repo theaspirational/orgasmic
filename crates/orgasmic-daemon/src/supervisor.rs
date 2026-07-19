@@ -184,7 +184,7 @@ pub struct BabysitterAutoSpawn {
     pub linked_skills: Vec<String>,
     pub sandbox_permissions: Option<orgasmic_core::SandboxAllowlist>,
     pub max_iterations: Option<u32>,
-    pub context_budget: Option<u32>,
+    pub context_budget_chars: Option<u32>,
     pub harness_args: Vec<String>,
 }
 
@@ -651,22 +651,9 @@ pub fn auto_select_worker<'a>(
     task: &TaskConstraints<'_>,
     workers: &'a [Worker<'a>],
 ) -> Option<&'a Worker<'a>> {
-    let mut first_eligible = None;
-    for worker in workers {
-        if !compute_eligibility(task, worker).eligible {
-            continue;
-        }
-        if worker.default_provider.is_some()
-            && worker.default_model.is_some()
-            && worker.default_effort.is_some()
-        {
-            return Some(worker);
-        }
-        if first_eligible.is_none() {
-            first_eligible = Some(worker);
-        }
-    }
-    first_eligible
+    workers
+        .iter()
+        .find(|worker| compute_eligibility(task, worker).eligible)
 }
 
 impl Supervisor {
@@ -5115,7 +5102,7 @@ mod tests {
             linked_skills: Vec::new(),
             sandbox_permissions: None,
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             harness_args: Vec::new(),
         }
     }
@@ -5178,6 +5165,174 @@ mod tests {
         assert_eq!(
             failed_releases, 1,
             "iteration limit breach must write exactly one Failed tombstone"
+        );
+    }
+
+    /// Control release emits RunComplete only — never a fabricated turn boundary.
+    struct ReleaseRunCompleteOnlyControl {
+        events: tokio::sync::mpsc::Sender<DriverEvent>,
+        terminal_emitted: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for ReleaseRunCompleteOnlyControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn send_input(
+            &mut self,
+            _req: UserInputRequest,
+        ) -> Result<UserInputAck, DriverError> {
+            Ok(UserInputAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn release(&mut self, reason: &str) -> Result<(), DriverError> {
+            if !self
+                .terminal_emitted
+                .swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                let _ = self
+                    .events
+                    .send(DriverEvent::RunComplete {
+                        summary: Some(reason.to_string()),
+                    })
+                    .await;
+            }
+            Ok(())
+        }
+    }
+
+    /// Emits an optional count of native turn boundaries, then stays alive until release.
+    struct BoundedTurnDriver {
+        turn_boundaries: u64,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for BoundedTurnDriver {
+        fn transport(&self) -> &'static str {
+            "tmux"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(32);
+            let emit_tx = tx.clone();
+            let turn_boundaries = self.turn_boundaries;
+            tokio::spawn(async move {
+                let _ = emit_tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "bounded-turn-test/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+                for seq in 0..turn_boundaries {
+                    let _ = emit_tx.send(DriverEvent::AgentTurnComplete { seq }).await;
+                }
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(ReleaseRunCompleteOnlyControl {
+                    events: tx,
+                    terminal_emitted: std::sync::atomic::AtomicBool::new(false),
+                }),
+                native_runtime: None,
+            })
+        }
+    }
+
+    fn release_outcomes(session_path: &Path) -> Vec<ReleaseOutcome> {
+        session_events(session_path)
+            .into_iter()
+            .filter_map(|envelope| {
+                if envelope.kind != SessionEventKind::Lifecycle {
+                    return None;
+                }
+                match serde_json::from_value::<Lifecycle>(envelope.event) {
+                    Ok(Lifecycle::Release { outcome, .. }) => Some(outcome),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn release_after_exact_max_turns_does_not_fabricate_iteration_limit_failure() {
+        let (sup, dir, _writer) = make_supervisor();
+        let driver = BoundedTurnDriver { turn_boundaries: 1 };
+        let mut req = impl_req("TASK-RELEASE-AT-LIMIT", dir.path());
+        req.max_iterations = Some(1);
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        sup.release(&resp.run_id, "control release", ReleaseOutcome::Completed)
+            .await
+            .unwrap();
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(5)).await;
+
+        let outcomes = release_outcomes(&dir.path().join("TASK-RELEASE-AT-LIMIT.jsonl"));
+        assert!(
+            !outcomes.contains(&ReleaseOutcome::Failed),
+            "release after exactly max native turns must not fail iteration limit: {outcomes:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn release_before_any_native_turn_counts_zero_turns() {
+        let (sup, dir, _writer) = make_supervisor();
+        let driver = BoundedTurnDriver { turn_boundaries: 0 };
+        let mut req = impl_req("TASK-RELEASE-ZERO-TURNS", dir.path());
+        req.max_iterations = Some(1);
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        sup.release(&resp.run_id, "early release", ReleaseOutcome::Completed)
+            .await
+            .unwrap();
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(5)).await;
+
+        let outcomes = release_outcomes(&dir.path().join("TASK-RELEASE-ZERO-TURNS.jsonl"));
+        assert!(
+            !outcomes.contains(&ReleaseOutcome::Failed),
+            "release before any native turn must not count a fabricated boundary: {outcomes:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn excess_native_turn_boundaries_fail_exactly_once() {
+        let (sup, dir, _writer) = make_supervisor();
+        let driver = BoundedTurnDriver { turn_boundaries: 2 };
+        let mut req = impl_req("TASK-EXCESS-TURNS", dir.path());
+        req.max_iterations = Some(1);
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(5)).await;
+
+        let outcomes = release_outcomes(&dir.path().join("TASK-EXCESS-TURNS.jsonl"));
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|o| **o == ReleaseOutcome::Failed)
+                .count(),
+            1,
+            "exactly one Failed tombstone after breaching max turns: {outcomes:?}"
         );
     }
 
@@ -5900,8 +6055,6 @@ mod tests {
         TaskConstraints {
             kind: WorkerKind::Implementer,
             provider: None,
-            model: None,
-            reasoning_effort: None,
         }
     }
 
@@ -5912,15 +6065,11 @@ mod tests {
             driver: "tmux",
             harness: "codex",
             providers: vec!["openai".to_string()],
-            models: vec!["gpt-5".to_string()],
-            reasoning_efforts: vec!["high".to_string()],
             default_provider: Some("openai".to_string()),
-            default_model: Some("gpt-5".to_string()),
-            default_effort: Some("high".to_string()),
             linked_skills: Vec::new(),
             applicable_states: Vec::new(),
             max_iterations: None,
-            context_budget: None,
+            context_budget_chars: None,
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             babysitter_worker: None,
@@ -6033,22 +6182,6 @@ mod tests {
         let selected = auto_select_worker(&eligibility_task(), &workers).unwrap();
 
         assert_eq!(selected.id, "w1");
-    }
-
-    #[test]
-    fn auto_select_worker_prefers_fully_specified() {
-        let mut task = eligibility_task();
-        task.model = Some("gpt-5");
-        let mut partial = eligibility_worker("partial");
-        partial.default_model = None;
-        partial.default_effort = None;
-        partial.reasoning_efforts = Vec::new();
-        let full = eligibility_worker("full");
-        let workers = vec![partial, full];
-
-        let selected = auto_select_worker(&task, &workers).unwrap();
-
-        assert_eq!(selected.id, "full");
     }
 
     #[tokio::test]
