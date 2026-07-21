@@ -1,14 +1,6 @@
 #+title: Todo
 #+orgasmic_version: 1
 
-* TODO TASK-TMM5H TASK-QPKCD fix round 6 continuation: complete and prove recovery authority
-:PROPERTIES:
-:ID: TASK-TMM5H
-:IMPLEMENTS: dec_WDR5K
-:END:
-
-Continue salvaged QPKCD fix-round-6 WIP at 6e20c4c after Cursor internal subagent fan-out stalled. Work directly without spawning subagents; format, remove warning, complete all five acceptance areas, add missing fault/security/two-recovery tests, and finalize a clean committed branch.
-
 * TODO TASK-0SVR3 TASK-SZEWA fix round 5: native semantics and production acceptance
 :PROPERTIES:
 :ID: TASK-0SVR3

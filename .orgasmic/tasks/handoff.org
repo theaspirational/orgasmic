@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260721-finish-qpkcd-through
-:LIVENESS:         3012d3e
+:LIVENESS:         0cfac30
 :LIVENESS_AT:      [2026-07-22 Wed]
 :UPDATED_AT:       [2026-07-22 Wed]
 :END:
@@ -75,12 +75,12 @@ Manager-owned snapshot focused on goal-20260721-finish-qpkcd-through. TASK-TMM5H
 - [2026-07-22 Wed] Operator selected QPKCD/TASK-TMM5H as the next goal. Set goal-20260721-finish-qpkcd-through: finish the preserved recovery-authority continuation, require the full gate matrix and independent SHIP review, and keep AFE5Q/SZEWA paused.
 
 ** Next likely actions
-1. Dispatch TASK-TMM5H into the existing dirty task-tmm5h-impl worktree with implementer-codex-acp, gpt-5.6-sol, xhigh; audit and finish all five QPKCD acceptance areas without subagents.
+1. Monitor TASK-TMM5H run-20260721T220753-835fdd65f1a44aeea858a1da2e1b0844 through worker finalize; preserve the original task-tmm5h-impl worktree untouched as salvage evidence.
 2. Manager independently inspects the committed diff and reruns proportional gates.
 3. Dispatch an independent reviewer over the full QPKCD chain; fix blocking findings, merge only on SHIP, then close TASK-TMM5H and parent TASK-QPKCD.
 
 ** In flight
-TASK-TMM5H is the sole active stream. Preserved worktree task-tmm5h-impl at 6e20c4c has four dirty source files (+292/-160) and a clean diff-check; dispatch continuation is being prepared. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with their clean worktrees untouched. task-kkftm-review remains stale/clean and untouched.
+TASK-TMM5H is the sole active stream. implementer-codex-acp is running gpt-5.6-sol at xhigh as run-20260721T220753-835fdd65f1a44aeea858a1da2e1b0844 in task-qpkcd-fix6c from committed head 6e20c4c. Because live runtime 0.0.12 rejects an existing worktree path only at execution time, the worker is auditing and transplanting the four-file dirty delta from preserved task-tmm5h-impl; that original worktree remains untouched. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with their clean worktrees untouched. task-kkftm-review remains stale/clean and untouched.
 
 ** Divergence / Risks
 - QPKCD is security- and crash-consistency-sensitive; existing WIP is partial and must be treated as untrusted until independently verified.
