@@ -2,6 +2,20 @@
 #+orgasmic_version: 1
 #+scope: project
 
+* GOAL Finish QPKCD through TASK-TMM5H :goal:
+:PROPERTIES:
+:ID:               goal-20260721-finish-qpkcd-through
+:SET_AT:           [2026-07-21 Tue]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:END:
+
+** Statement
+Complete TASK-QPKCD by salvaging and finishing the preserved TASK-TMM5H continuation worktree. Audit the existing dirty WIP against all five recovery-authority acceptance areas, complete missing code and deterministic fault/security/recovery tests, keep TASK-AFE5Q and TASK-SZEWA paused, and preserve their worktrees untouched.
+
+** Reached When
+TASK-TMM5H is DONE with its existing WIP fully audited, formatted, committed, and verified by the full task gate matrix; an independent reviewer returns SHIP with no blocking findings; the reviewed branch is merged to main; parent TASK-QPKCD is DONE; no related dispatch remains open; TASK-AFE5Q and TASK-SZEWA worktrees remain untouched.
+
 * CLEARED Drain the backlog: ref-validation residuals + dispatch-finalize hardening :goal:
 :PROPERTIES:
 :ID:               goal-20260707-drain-the-backlog-
