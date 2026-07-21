@@ -142,6 +142,7 @@ impl WorkerDriver for TmuxDriver {
         let session_name = tmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
         let fork_probe_since = std::time::SystemTime::now();
+        let fork_candidates_before = claude_fork_candidate_names(&spawn_plan.cwd);
         let mut native_runtime = spawn_plan.native_runtime.clone();
 
         let capture_task = if !inert {
@@ -152,6 +153,7 @@ impl WorkerDriver for TmuxDriver {
                         &resumed,
                         &spawn_plan.cwd,
                         fork_probe_since,
+                        &fork_candidates_before,
                     )
                     .await;
                     match discovery {
@@ -164,11 +166,13 @@ impl WorkerDriver for TmuxDriver {
                             ));
                         }
                         ForkDiscoveryResult::Ambiguous => {
+                            kill_tmux_session(&session_name).await;
                             return Err(DriverError::Transport(
                                 "ambiguous Claude fork session discovery".into(),
                             ));
                         }
                         ForkDiscoveryResult::NotFound => {
+                            kill_tmux_session(&session_name).await;
                             return Err(DriverError::Transport(
                                 "Claude fork session not discovered within launch bounds".into(),
                             ));
@@ -608,16 +612,53 @@ const FORK_DISCOVERY_INITIAL_WAIT: Duration = Duration::from_millis(750);
 const FORK_DISCOVERY_POLL: Duration = Duration::from_millis(250);
 const FORK_DISCOVERY_MAX_AFTER_LAUNCH: Duration = Duration::from_secs(30);
 
+fn system_time_secs(time: std::time::SystemTime) -> Option<u64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+/// Filesystem mtimes are often whole-second; compare launch lower bounds at
+/// second granularity so confined candidates are not dropped on macOS.
+fn file_modified_not_before_launch(
+    modified: std::time::SystemTime,
+    since: std::time::SystemTime,
+) -> bool {
+    match (system_time_secs(modified), system_time_secs(since)) {
+        (Some(modified_secs), Some(since_secs)) => modified_secs >= since_secs,
+        _ => modified >= since,
+    }
+}
+
 async fn wait_for_claude_fork_session_id(
     resumed_session_id: &str,
     cwd: &std::path::Path,
     since: std::time::SystemTime,
+    excluded: &std::collections::BTreeSet<String>,
 ) -> ForkDiscoveryResult {
     tokio::time::sleep(FORK_DISCOVERY_INITIAL_WAIT).await;
     let deadline = since + FORK_DISCOVERY_MAX_AFTER_LAUNCH;
     loop {
-        match discover_claude_fork_session_id(resumed_session_id, cwd, since) {
-            ForkDiscoveryResult::Unique(id) => return ForkDiscoveryResult::Unique(id),
+        match discover_claude_fork_session_id_excluding(resumed_session_id, cwd, since, excluded) {
+            ForkDiscoveryResult::Unique(id) => {
+                // Give a concurrent launch one polling interval to surface;
+                // only a stable unique observation is authoritative.
+                tokio::time::sleep(FORK_DISCOVERY_POLL).await;
+                return match discover_claude_fork_session_id_excluding(
+                    resumed_session_id,
+                    cwd,
+                    since,
+                    excluded,
+                ) {
+                    ForkDiscoveryResult::Unique(confirmed) if confirmed == id => {
+                        ForkDiscoveryResult::Unique(id)
+                    }
+                    ForkDiscoveryResult::Unique(_) | ForkDiscoveryResult::Ambiguous => {
+                        ForkDiscoveryResult::Ambiguous
+                    }
+                    ForkDiscoveryResult::NotFound => ForkDiscoveryResult::NotFound,
+                };
+            }
             ForkDiscoveryResult::Ambiguous => return ForkDiscoveryResult::Ambiguous,
             ForkDiscoveryResult::NotFound if std::time::SystemTime::now() >= deadline => {
                 return ForkDiscoveryResult::NotFound;
@@ -629,22 +670,40 @@ async fn wait_for_claude_fork_session_id(
     }
 }
 
-fn canonical_projects_root(projects_dir: &std::path::Path) -> PathBuf {
-    projects_dir
-        .canonicalize()
-        .unwrap_or_else(|_| projects_dir.to_path_buf())
-}
-
 fn path_is_under_root(candidate: &std::path::Path, root: &std::path::Path) -> bool {
     let Ok(canonical) = candidate.canonicalize() else {
         return false;
     };
-    let root = canonical_projects_root(root);
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
     canonical == root || canonical.starts_with(&root)
 }
 
 fn fork_candidate_is_confined(path: &std::path::Path, projects_dir: &std::path::Path) -> bool {
-    path.is_file() && path_is_under_root(path, projects_dir)
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    meta.is_file() && !meta.file_type().is_symlink() && path_is_under_root(path, projects_dir)
+}
+
+fn claude_fork_candidate_names(cwd: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let Some(dir) = claude_projects_dir(cwd) else {
+        return Default::default();
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Default::default();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let path = entry.path();
+            (path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                && fork_candidate_is_confined(&path, &dir))
+            .then(|| path.file_stem()?.to_str().map(str::to_string))
+            .flatten()
+        })
+        .collect()
 }
 
 fn validate_fork_session_stem(stem: &str) -> bool {
@@ -663,10 +722,20 @@ fn validate_fork_session_stem(stem: &str) -> bool {
 /// Proof, not guessing: exactly one candidate within launch bounds,
 /// path-contained under the cwd-derived Claude projects dir, and distinct
 /// from the resumed session id.
+#[cfg(test)]
 pub(crate) fn discover_claude_fork_session_id(
     resumed_session_id: &str,
     cwd: &std::path::Path,
     since: std::time::SystemTime,
+) -> ForkDiscoveryResult {
+    discover_claude_fork_session_id_excluding(resumed_session_id, cwd, since, &Default::default())
+}
+
+fn discover_claude_fork_session_id_excluding(
+    resumed_session_id: &str,
+    cwd: &std::path::Path,
+    since: std::time::SystemTime,
+    excluded: &std::collections::BTreeSet<String>,
 ) -> ForkDiscoveryResult {
     let Some(dir) = claude_projects_dir(cwd) else {
         return ForkDiscoveryResult::NotFound;
@@ -687,7 +756,10 @@ pub(crate) fn discover_claude_fork_session_id(
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             continue;
         };
-        if stem == resumed_session_id || !validate_fork_session_stem(stem) {
+        if stem == resumed_session_id
+            || excluded.contains(stem)
+            || !validate_fork_session_stem(stem)
+        {
             continue;
         }
         let Ok(meta) = entry.metadata() else {
@@ -696,7 +768,7 @@ pub(crate) fn discover_claude_fork_session_id(
         let Ok(modified) = meta.modified() else {
             continue;
         };
-        if modified < since || modified > launch_upper {
+        if !file_modified_not_before_launch(modified, since) || modified > launch_upper {
             continue;
         }
         candidates.push(stem.to_string());
@@ -1646,14 +1718,33 @@ mod tests {
         );
     }
 
-    fn with_home<F: FnOnce()>(home: &std::path::Path, f: F) {
-        let previous = std::env::var_os("HOME");
-        std::env::set_var("HOME", home);
-        f();
-        match previous {
-            Some(path) => std::env::set_var("HOME", path),
-            None => std::env::remove_var("HOME"),
+    struct HomeGuard(Option<std::ffi::OsString>);
+
+    static FORK_DISCOVERY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    impl HomeGuard {
+        fn set(home: &std::path::Path) -> Self {
+            let previous = std::env::var_os("HOME");
+            std::env::set_var("HOME", home);
+            Self(previous)
         }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(path) => std::env::set_var("HOME", path),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    fn with_home<F: FnOnce()>(home: &std::path::Path, f: F) {
+        let _lock = FORK_DISCOVERY_TEST_LOCK
+            .lock()
+            .expect("fork discovery test lock");
+        let _guard = HomeGuard::set(home);
+        f();
     }
 
     fn touch_claude_fork_jsonl(
@@ -1679,8 +1770,7 @@ mod tests {
             std::fs::create_dir_all(&cwd).unwrap();
             let since = std::time::SystemTime::now() - Duration::from_millis(50);
             touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-unique", since);
-            let result =
-                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
             assert_eq!(
                 result,
                 super::ForkDiscoveryResult::Unique("fork-unique".into())
@@ -1695,8 +1785,7 @@ mod tests {
             let cwd = tmp.path().join("repo");
             std::fs::create_dir_all(&cwd).unwrap();
             let since = std::time::SystemTime::now();
-            let result =
-                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
             assert_eq!(result, super::ForkDiscoveryResult::NotFound);
         });
     }
@@ -1710,8 +1799,7 @@ mod tests {
             let since = std::time::SystemTime::now() - Duration::from_millis(50);
             touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-a", since);
             touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-b", since);
-            let result =
-                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
             assert_eq!(result, super::ForkDiscoveryResult::Ambiguous);
         });
     }
@@ -1726,8 +1814,50 @@ mod tests {
             std::fs::create_dir_all(&cwd_b).unwrap();
             let since = std::time::SystemTime::now();
             touch_claude_fork_jsonl(tmp.path(), &cwd_b, "fork-other-cwd", since);
-            let result =
-                super::discover_claude_fork_session_id("origin-session", &cwd_a, since);
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd_a, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fork_discovery_rejects_symlink_candidate() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            let projects = super::claude_projects_dir(&cwd).unwrap();
+            std::fs::create_dir_all(&projects).unwrap();
+            let outside = tmp.path().join("outside.jsonl");
+            std::fs::write(&outside, "{}\n").unwrap();
+            std::os::unix::fs::symlink(&outside, projects.join("fork-symlink.jsonl")).unwrap();
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        });
+    }
+
+    #[test]
+    fn fork_discovery_excludes_name_present_before_launch() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let before = std::time::SystemTime::now() - Duration::from_secs(2);
+            let path = touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-preexisting", before);
+            let excluded = super::claude_fork_candidate_names(&cwd);
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            filetime::set_file_mtime(
+                &path,
+                filetime::FileTime::from_system_time(std::time::SystemTime::now()),
+            )
+            .unwrap();
+            let result = super::discover_claude_fork_session_id_excluding(
+                "origin-session",
+                &cwd,
+                since,
+                &excluded,
+            );
             assert_eq!(result, super::ForkDiscoveryResult::NotFound);
         });
     }
@@ -1741,8 +1871,7 @@ mod tests {
             let since = std::time::SystemTime::now() - Duration::from_millis(50);
             let delayed = since + Duration::from_millis(900);
             touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-delayed", delayed);
-            let result =
-                super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
             assert_eq!(
                 result,
                 super::ForkDiscoveryResult::Unique("fork-delayed".into())
@@ -1751,10 +1880,13 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // serializes process-global HOME for the full async probe
     async fn fork_discovery_polls_until_delayed_candidate_within_launch_bounds() {
+        let _lock = FORK_DISCOVERY_TEST_LOCK
+            .lock()
+            .expect("fork discovery test lock");
         let tmp = tempfile::tempdir().unwrap();
-        let previous = std::env::var_os("HOME");
-        std::env::set_var("HOME", tmp.path());
+        let _home_guard = HomeGuard::set(tmp.path());
         let cwd = tmp.path().join("repo");
         std::fs::create_dir_all(&cwd).unwrap();
         let since = std::time::SystemTime::now();
@@ -1765,12 +1897,13 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(900)).await;
             touch_claude_fork_jsonl(&home_for_delay, &cwd_for_delay, "fork-late", delayed);
         });
-        let result =
-            super::wait_for_claude_fork_session_id("origin-session", &cwd, since).await;
-        match previous {
-            Some(path) => std::env::set_var("HOME", path),
-            None => std::env::remove_var("HOME"),
-        }
+        let result = super::wait_for_claude_fork_session_id(
+            "origin-session",
+            &cwd,
+            since,
+            &Default::default(),
+        )
+        .await;
         assert_eq!(
             result,
             super::ForkDiscoveryResult::Unique("fork-late".into())

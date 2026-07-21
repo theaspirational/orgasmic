@@ -41,7 +41,7 @@ use orgasmic_core::{
 use orgasmic_drivers::{
     driver_for_mode_harness, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
     DriverContext, DriverControl, DriverError, NativeRuntimeMeta, RunKind, RuntimeOptionsRequest,
-    TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
+    TransitionAck, TransitionRequest, UserInputRequest, WorkerDriver,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -389,10 +389,16 @@ struct RunRecord {
     terminal_outcome: Option<ReleaseOutcome>,
     control: Box<dyn DriverControl>,
     event_drain: tokio::task::JoinHandle<()>,
+    /// Receiver-owned barrier. Its acknowledgement means every driver event
+    /// already queued at an explicit-release boundary has been persisted.
+    event_barrier: tokio::sync::mpsc::Sender<tokio::sync::oneshot::Sender<()>>,
     /// Babysitter coalescing buffer (None on implementer runs).
     babysitter_summary: Option<BabysitterSummaryBuffer>,
     /// PID-backed early-exit watcher owns canonical no-work release when set.
     early_exit_watcher_pid: Option<u32>,
+    /// Owned PID observer. It may only publish observations into the record;
+    /// receiver closure remains the sole normal release authority.
+    early_exit_watcher: Option<tokio::task::JoinHandle<()>>,
     /// In-memory driver coordination oracle — updated as events are applied.
     driver_has_work: bool,
     driver_has_terminal: bool,
@@ -405,6 +411,10 @@ struct RunRecord {
     early_exit_pid_exited: bool,
     /// Explicit timeout/cancel/finalize release is draining; stream-end must defer.
     explicit_release_in_progress: bool,
+    /// A terminal driver event has taken the control handle and is stopping
+    /// the producer. Unlike other explicit releases, receiver closure may
+    /// remove this record and write the terminal lifecycle event.
+    terminal_event_shutdown_in_progress: bool,
 }
 
 struct BabysitterAutoSpawnBackoff {
@@ -490,12 +500,6 @@ enum TerminalReleaseSource {
 }
 
 struct TerminalRelease {
-    run_id: String,
-    session_path: PathBuf,
-    identity: RuntimeIdentity,
-    reason: String,
-    outcome: ReleaseOutcome,
-    finalized_by_worker: bool,
     control: Box<dyn DriverControl>,
 }
 
@@ -821,6 +825,7 @@ impl Supervisor {
             Err(e) => return Err(SupervisorError::Driver(e)),
         };
         let pid = session.pid;
+        crate::recovery_claim::recovery_failpoint("spawn_before_jsonl");
 
         // AC #3: write the Acquire lifecycle envelope before any driver
         // event so the JSONL stream starts with a known marker.
@@ -842,6 +847,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        crate::recovery_claim::recovery_failpoint("acquire_append");
 
         // Persist reattach metadata so a future daemon boot can rehydrate this
         // run against its still-live mux session (boot auto-reattach).
@@ -872,6 +878,8 @@ impl Supervisor {
         let run_started_at = Instant::now();
         let control = session.control;
         let events = session.events;
+        let (event_barrier, mut event_barriers) =
+            tokio::sync::mpsc::channel::<tokio::sync::oneshot::Sender<()>>(1);
         let kind = req.kind;
         // Insert the run record before the drain task starts so stream-end and
         // early-exit coordination always find a resolvable lease owner.
@@ -911,12 +919,14 @@ impl Supervisor {
                 terminal_outcome: None,
                 control,
                 event_drain: tokio::spawn(async {}),
+                event_barrier,
                 babysitter_summary: if kind == RunKind::Worker {
                     Some(BabysitterSummaryBuffer::default())
                 } else {
                     None
                 },
                 early_exit_watcher_pid: pid,
+                early_exit_watcher: None,
                 driver_has_work: false,
                 driver_has_terminal: false,
                 driver_has_ready: false,
@@ -924,6 +934,7 @@ impl Supervisor {
                 stream_ended: false,
                 early_exit_pid_exited: false,
                 explicit_release_in_progress: false,
+                terminal_event_shutdown_in_progress: false,
             };
             let mut g = self.inner.lock().await;
             g.runs.insert(run_id.clone(), record);
@@ -938,7 +949,20 @@ impl Supervisor {
         let identity_for_drain = identity.clone();
         let drain = tokio::spawn(async move {
             let mut events = events;
-            while let Some(evt) = events.recv().await {
+            loop {
+                let evt = tokio::select! {
+                    biased;
+                    event = events.recv() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                    barrier = event_barriers.recv(), if !event_barriers.is_closed() => {
+                        if let Some(barrier) = barrier {
+                            let _ = barrier.send(());
+                        }
+                        continue;
+                    }
+                };
                 let payload = match serde_json::to_value(&evt) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1042,8 +1066,13 @@ impl Supervisor {
             }
         }
         if let Some(pid) = pid {
-            let _early_exit_watcher =
-                spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
+            let watcher = spawn_early_exit_watcher(self.clone(), run_id.clone(), pid);
+            let mut g = self.inner.lock().await;
+            if let Some(rec) = g.runs.get_mut(&run_id) {
+                rec.early_exit_watcher = Some(watcher);
+            } else {
+                watcher.abort();
+            }
         }
 
         Ok(AcquireResponse {
@@ -1079,6 +1108,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        crate::recovery_claim::recovery_failpoint("native_runtime_append");
         Ok(())
     }
 
@@ -1095,6 +1125,7 @@ impl Supervisor {
         request_id: &str,
         action: &str,
         target: &str,
+        claim: Option<serde_json::Value>,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RecoveryOrigin {
             project_id: project_id.to_string(),
@@ -1105,6 +1136,7 @@ impl Supervisor {
             replacement_session_path: session_path.to_path_buf(),
             action: action.to_string(),
             target: Some(target.to_string()),
+            claim,
         };
         self.writer
             .append_session(SessionAppend {
@@ -1116,6 +1148,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        crate::recovery_claim::recovery_failpoint("recovery_origin_append");
         crate::recovery_claim::recovery_failpoint("lifecycle_append");
         Ok(())
     }
@@ -1126,6 +1159,7 @@ impl Supervisor {
     #[allow(clippy::too_many_arguments)]
     pub async fn backfill_recovery_session_lifecycle(
         &self,
+        claim: &crate::recovery_claim::RecoveryClaim,
         run_id: &str,
         session_path: &Path,
         identity: &RuntimeIdentity,
@@ -1143,17 +1177,15 @@ impl Supervisor {
         driver_config: DriverConfig,
         native_runtime: Option<NativeRuntimeMeta>,
         prompt_draft: Option<&str>,
-        recovery_origin: Option<(
-            &str,
-            &str,
-            &Path,
-            &str,
-            &str,
-            &str,
-        )>,
+        recovery_origin: Option<(&str, &str, &Path, &str, &str, &str)>,
     ) -> Result<(), SupervisorError> {
         use orgasmic_core::session::read_session_file;
         let envelopes = read_session_file(session_path).unwrap_or_default();
+        if !crate::recovery_claim::pending_session_prefix_matches_claim(claim, &envelopes) {
+            return Err(SupervisorError::Session(anyhow::anyhow!(
+                "recovery lifecycle prefix conflicts with immutable pending plan"
+            )));
+        }
         let has_acquire = envelopes.iter().any(|envelope| {
             envelope.kind == SessionEventKind::Lifecycle
                 && matches!(
@@ -1263,6 +1295,7 @@ impl Supervisor {
                     request_id,
                     action,
                     target,
+                    None,
                 )
                 .await?;
             }
@@ -1309,6 +1342,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        crate::recovery_claim::recovery_failpoint("run_meta_append");
         Ok(())
     }
 
@@ -1366,6 +1400,7 @@ impl Supervisor {
             })
             .await
             .map_err(SupervisorError::Session)?;
+        crate::recovery_claim::recovery_failpoint("prompt_draft_append");
         Ok(())
     }
 
@@ -1471,9 +1506,24 @@ impl Supervisor {
         let inner_for_drain = self.inner.clone();
         let run_id_for_drain = run_id.clone();
         let identity_for_drain = identity.clone();
+        let (event_barrier, mut event_barriers) =
+            tokio::sync::mpsc::channel::<tokio::sync::oneshot::Sender<()>>(1);
         let drain = tokio::spawn(async move {
             let mut events = session.events;
-            while let Some(evt) = events.recv().await {
+            loop {
+                let evt = tokio::select! {
+                    biased;
+                    event = events.recv() => match event {
+                        Some(event) => event,
+                        None => break,
+                    },
+                    barrier = event_barriers.recv(), if !event_barriers.is_closed() => {
+                        if let Some(barrier) = barrier {
+                            let _ = barrier.send(());
+                        }
+                        continue;
+                    }
+                };
                 let payload = match serde_json::to_value(&evt) {
                     Ok(v) => v,
                     Err(e) => {
@@ -1564,12 +1614,14 @@ impl Supervisor {
             terminal_outcome: None,
             control: session.control,
             event_drain: drain,
+            event_barrier,
             babysitter_summary: if kind == RunKind::Worker {
                 Some(BabysitterSummaryBuffer::default())
             } else {
                 None
             },
             early_exit_watcher_pid: None,
+            early_exit_watcher: None,
             driver_has_work: false,
             driver_has_terminal: false,
             driver_has_ready: false,
@@ -1577,6 +1629,7 @@ impl Supervisor {
             stream_ended: false,
             early_exit_pid_exited: false,
             explicit_release_in_progress: false,
+            terminal_event_shutdown_in_progress: false,
         };
         let mut g = self.inner.lock().await;
         g.runs.insert(run_id.clone(), record);
@@ -1871,7 +1924,9 @@ impl Supervisor {
             session_path,
             identity,
             mut control,
-            drain,
+            mut drain,
+            watcher,
+            event_barrier,
         ) = {
             let mut g = self.inner.lock().await;
             // Ownership check happens before the remove, under the same lock
@@ -1909,6 +1964,8 @@ impl Supervisor {
             rec.explicit_release_in_progress = true;
             let control = std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl));
             let drain = std::mem::replace(&mut rec.event_drain, tokio::spawn(async {}));
+            let watcher = rec.early_exit_watcher.take();
+            let event_barrier = rec.event_barrier.clone();
             (
                 rec.task_id.clone(),
                 rec.kind,
@@ -1917,13 +1974,50 @@ impl Supervisor {
                 rec.identity.clone(),
                 control,
                 drain,
+                watcher,
+                event_barrier,
             )
         };
-        let _ = control.release(reason).await;
+        let classify_from_pre_stop_events = !finalized_by_worker
+            && matches!(outcome, ReleaseOutcome::Failed | ReleaseOutcome::Cancelled);
+        // Establish a deterministic receiver boundary before control.release:
+        // the drain selects driver events before this barrier, so its ack
+        // proves all events already queued by the timeout/cancel decision were
+        // applied and persisted. Events synthesized by control.release are
+        // cleanup acknowledgements and cannot overwrite that classification.
+        let (barrier_ack, barrier_wait) = tokio::sync::oneshot::channel();
+        if event_barrier.send(barrier_ack).await.is_ok() {
+            let _ = tokio::time::timeout(Duration::from_secs(5), barrier_wait).await;
+        }
+        let pre_stop_terminal_outcome = if classify_from_pre_stop_events {
+            self.inner
+                .lock()
+                .await
+                .runs
+                .get(run_id)
+                .and_then(|rec| rec.terminal_outcome)
+        } else {
+            None
+        };
+        // Stop the producer first. The receiver drain remains live while the
+        // control path closes its sender, so events already queued at the
+        // timeout/cancel boundary are persisted before classification.
+        let _ = tokio::time::timeout(Duration::from_secs(5), control.release(reason)).await;
         drop(control);
-        // Let the drain flush driver events (e.g. synthetic run_complete) after
-        // release ack; aborting immediately races and drops terminal events.
-        let _ = tokio::time::timeout(Duration::from_secs(5), drain).await;
+        if let Some(watcher) = watcher {
+            watcher.abort();
+            let _ = watcher.await;
+        }
+        // Let the receiver reach closure and flush queued events. If a broken
+        // producer retains a sender, abort and join the drain before removing
+        // the RunRecord so no event can land after Lifecycle::Release.
+        if tokio::time::timeout(Duration::from_secs(5), &mut drain)
+            .await
+            .is_err()
+        {
+            drain.abort();
+            let _ = drain.await;
+        }
         let (final_outcome, cleared_babysitter_backoff) = {
             let mut g = self.inner.lock().await;
             let rec = g
@@ -1942,7 +2036,14 @@ impl Supervisor {
             } else {
                 false
             };
-            (rec.terminal_outcome.unwrap_or(outcome), cleared_babysitter_backoff)
+            (
+                if classify_from_pre_stop_events {
+                    pre_stop_terminal_outcome.unwrap_or(outcome)
+                } else {
+                    rec.terminal_outcome.unwrap_or(outcome)
+                },
+                cleared_babysitter_backoff,
+            )
         };
         if cleared_babysitter_backoff {
             warn!(
@@ -2003,6 +2104,31 @@ impl Supervisor {
         }
     }
 
+    /// Return a boot-reattached recovery run only when its durable identity,
+    /// containing session, and project still match the immutable recovery
+    /// plan. A fresh daemon may reattach the live mux handle before the
+    /// operator retries POST /recover; the retry must reuse that owned handle
+    /// rather than attempting a second attach against the same lease.
+    pub async fn recovery_run_if_exact(
+        &self,
+        identity: &RuntimeIdentity,
+        session_path: &Path,
+        project_id: &str,
+    ) -> Option<AcquireResponse> {
+        let g = self.inner.lock().await;
+        let rec = g.runs.get(&identity.run_id)?;
+        (rec.identity.run_id == identity.run_id
+            && rec.identity.runtime_id == identity.runtime_id
+            && rec.identity.boot_id == identity.boot_id
+            && rec.session_path == session_path
+            && rec.project_id.as_deref() == Some(project_id))
+        .then(|| AcquireResponse {
+            run_id: identity.run_id.clone(),
+            identity: identity.clone(),
+            pid: rec.early_exit_watcher_pid,
+        })
+    }
+
     /// Backfill dispatch artifact paths onto an already-live `RunRecord`.
     /// `AcquireRequest` populates these at acquire time, but `reattach` takes
     /// no `AcquireRequest`; boot auto-reattach calls this once it has read
@@ -2035,6 +2161,26 @@ impl Supervisor {
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.role = role;
             rec.requires_worker_finalize = requires_worker_finalize;
+        }
+    }
+
+    /// Restore immutable recovery-run timeout and cleanup-adjacent lifecycle
+    /// options after reattaching a pre-Acquire runtime handle.
+    pub async fn restore_recovery_run_options(
+        &self,
+        run_id: &str,
+        stall_timeout_secs: Option<u32>,
+        max_run_duration_secs: Option<u32>,
+        idle_timeout_secs: Option<u32>,
+        babysitter_target: Option<String>,
+    ) {
+        let mut g = self.inner.lock().await;
+        if let Some(rec) = g.runs.get_mut(run_id) {
+            rec.stall_timeout = resolve_timeout_secs(stall_timeout_secs, DEFAULT_STALL_TIMEOUT);
+            rec.max_run_duration =
+                resolve_timeout_secs(max_run_duration_secs, DEFAULT_MAX_RUN_DURATION);
+            rec.idle_timeout = resolve_idle_timeout_secs(idle_timeout_secs);
+            rec.babysitter_target = babysitter_target;
         }
     }
 
@@ -2612,7 +2758,11 @@ fn process_is_zombie(pid: u32) -> bool {
     }
 }
 
-fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) -> tokio::task::JoinHandle<()> {
+fn spawn_early_exit_watcher(
+    supervisor: Supervisor,
+    run_id: String,
+    pid: u32,
+) -> tokio::task::JoinHandle<()> {
     let inner = supervisor.inner.clone();
     tokio::spawn(async move {
         loop {
@@ -2629,7 +2779,9 @@ fn spawn_early_exit_watcher(supervisor: Supervisor, run_id: String, pid: u32) ->
                 let guard = inner.lock().await;
                 guard.runs.get(&run_id).is_some_and(|rec| rec.stream_ended)
             };
-            let exited = if stream_ended {
+            let exited = if process_is_zombie(pid) {
+                true
+            } else if stream_ended {
                 subprocess_exited_or_unprobeable(pid)
             } else {
                 subprocess_exited(pid)
@@ -2950,7 +3102,7 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
     if rec.early_exit_release_taken {
         return None;
     }
-    if rec.explicit_release_in_progress {
+    if rec.explicit_release_in_progress && !rec.terminal_event_shutdown_in_progress {
         return None;
     }
     // Receiver/channel closure is the sole normal release boundary for
@@ -3116,6 +3268,13 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     if inner
         .runs
         .get(run_id)
+        .is_some_and(|rec| rec.explicit_release_in_progress || rec.early_exit_release_taken)
+    {
+        return None;
+    }
+    if inner
+        .runs
+        .get(run_id)
         .is_some_and(artifactor_lifecycle_in_flight)
     {
         if let Some(rec) = inner.runs.get_mut(run_id) {
@@ -3124,17 +3283,11 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
         return None;
     }
 
-    let rec = inner.runs.remove(run_id)?;
-    remove_record_lease(inner, &rec);
-    let resolved = resolve_terminal_release(&rec, TerminalReleaseSource::TerminalEvent);
+    let rec = inner.runs.get_mut(run_id)?;
+    rec.explicit_release_in_progress = true;
+    rec.terminal_event_shutdown_in_progress = true;
     Some(TerminalRelease {
-        run_id: run_id.to_string(),
-        session_path: rec.session_path,
-        identity: rec.identity,
-        reason: resolved.reason,
-        outcome: resolved.outcome,
-        finalized_by_worker: resolved.finalized_by_worker,
-        control: rec.control,
+        control: std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl)),
     })
 }
 
@@ -3156,15 +3309,24 @@ async fn finish_stream_end_terminal_drain(
         take_stream_end_release(&mut g, run_id)
     };
     if let Some(rec) = release {
-        write_terminal_release_from_record(writer, rec, TerminalReleaseSource::StreamEnd).await;
+        let source = if rec.terminal_event_shutdown_in_progress {
+            TerminalReleaseSource::TerminalEvent
+        } else {
+            TerminalReleaseSource::StreamEnd
+        };
+        write_terminal_release_from_record(writer, rec, source).await;
     }
 }
 
 async fn append_terminal_release(
     writer: &WriterHandle,
-    rec: RunRecord,
+    mut rec: RunRecord,
     resolved: ResolvedTerminalRelease,
 ) {
+    if let Some(watcher) = rec.early_exit_watcher.take() {
+        watcher.abort();
+        let _ = watcher.await;
+    }
     let evt = Lifecycle::Release {
         reason: resolved.reason,
         outcome: resolved.outcome,
@@ -3200,24 +3362,17 @@ async fn write_terminal_release_from_record(
     append_terminal_release(writer, rec, resolved).await;
 }
 
-async fn finish_driver_terminal_release(writer: &WriterHandle, release: TerminalRelease) {
+async fn finish_driver_terminal_release(_writer: &WriterHandle, release: TerminalRelease) {
     let mut control = release.control;
-    let _ = control.release("driver terminal event").await;
+    let _ = tokio::time::timeout(
+        Duration::from_secs(5),
+        control.release("driver terminal event"),
+    )
+    .await;
     drop(control);
-    let evt = Lifecycle::Release {
-        reason: release.reason,
-        outcome: release.outcome,
-        finalized_by_worker: release.finalized_by_worker,
-    };
-    let _ = writer
-        .append_session(SessionAppend {
-            run_id: release.run_id,
-            session_path: release.session_path,
-            identity: release.identity,
-            kind: SessionEventKind::Lifecycle,
-            event: serde_json::to_value(&evt).unwrap_or(serde_json::Value::Null),
-        })
-        .await;
+    // The receiver owns the terminal boundary. Dropping the producer closes
+    // the channel; the drain then persists every queued event before it
+    // removes the record and writes Lifecycle::Release.
 }
 
 fn take_babysitter_summary_locked(
@@ -3768,7 +3923,8 @@ mod tests {
     /// Holds the driver stream open and exposes the sender for deterministic
     /// queued-event injection (orgasmic:task_3TEDA).
     struct QueuedBeforeTimeoutDriver {
-        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+        event_tx:
+            std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
     }
 
     impl QueuedBeforeTimeoutDriver {
@@ -3821,7 +3977,8 @@ mod tests {
     }
 
     struct QueuedBeforeTimeoutControl {
-        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+        event_tx:
+            std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
     }
 
     #[async_trait::async_trait]
@@ -3861,13 +4018,32 @@ mod tests {
 
     /// PID-backed driver with a controllable event channel for quiescence tests.
     struct PidBackedControllableDriver {
-        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+        event_tx:
+            std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+        reported_pid: Option<u32>,
+        send_ready: bool,
     }
 
     impl PidBackedControllableDriver {
         fn new() -> Self {
             Self {
                 event_tx: std::sync::Arc::new(tokio::sync::Mutex::new(None)),
+                reported_pid: None,
+                send_ready: true,
+            }
+        }
+
+        fn with_reported_pid(pid: u32) -> Self {
+            Self {
+                reported_pid: Some(pid),
+                ..Self::new()
+            }
+        }
+
+        fn without_ready() -> Self {
+            Self {
+                send_ready: false,
+                ..Self::new()
             }
         }
 
@@ -3887,25 +4063,28 @@ mod tests {
             ctx: DriverContext,
             _config: DriverConfig,
         ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
-            let child = tokio::process::Command::new("sleep")
+            let mut command = tokio::process::Command::new("sleep");
+            command
                 .arg("300")
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .spawn()
-                .map_err(DriverError::Io)?;
+                .kill_on_drop(true);
+            let child = command.spawn().map_err(DriverError::Io)?;
             let pid = child.id().expect("sleep child pid");
             let (tx, rx) = tokio::sync::mpsc::channel(8);
             *self.event_tx.lock().await = Some(tx.clone());
-            let _ = tx
-                .send(DriverEvent::Ready {
-                    protocol_version: "test-acp/1".into(),
-                    capabilities: json!({"simulated": true}),
-                })
-                .await;
+            if self.send_ready {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "test-acp/1".into(),
+                        capabilities: json!({"simulated": true}),
+                    })
+                    .await;
+            }
             Ok(DriverSession {
                 identity: ctx.identity,
-                pid: Some(pid),
+                pid: Some(self.reported_pid.unwrap_or(pid)),
                 events: rx,
                 control: Box::new(PidBackedControllableControl {
                     event_tx: std::sync::Arc::clone(&self.event_tx),
@@ -3917,7 +4096,8 @@ mod tests {
     }
 
     struct PidBackedControllableControl {
-        event_tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+        event_tx:
+            std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
         child: Option<tokio::process::Child>,
     }
 
@@ -5196,7 +5376,7 @@ mod tests {
     #[tokio::test]
     async fn release_frees_the_lease() {
         let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
+        let driver = AcceptingInputDriver;
         let r1 = sup
             .acquire(&driver, impl_req("TASK-100", dir.path()))
             .await
@@ -7372,18 +7552,50 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = PidBackedControllableDriver::new();
         let resp = sup
-            .acquire(
-                &driver,
-                dispatch_impl_req("TASK-WATCHER-ABORT", dir.path()),
-            )
+            .acquire(&driver, dispatch_impl_req("TASK-WATCHER-ABORT", dir.path()))
             .await
             .unwrap();
-        let pid = resp.pid.expect("pid-backed acquire");
-        let watcher = spawn_early_exit_watcher(sup.clone(), resp.run_id.clone(), pid);
         wait_for_event_count(&sup, &resp.run_id, 1).await;
-        watcher.abort();
+        {
+            let g = sup.inner.lock().await;
+            g.runs[&resp.run_id]
+                .early_exit_watcher
+                .as_ref()
+                .expect("production watcher is owned")
+                .abort();
+        }
         let path = dir.path().join("TASK-WATCHER-ABORT.jsonl");
         driver.close_events().await;
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        assert_release(
+            &path,
+            "early-exit subprocess with no work envelopes",
+            "failed",
+        );
+        assert_eq!(release_count(&path), 1);
+        let event_count = session_events(&path).len();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            session_events(&path).len(),
+            event_count,
+            "no post-release events"
+        );
+        let g = sup.inner.lock().await;
+        assert!(!g.runs.contains_key(&resp.run_id));
+        assert!(!g.leases.values().any(|owner| owner == &resp.run_id));
+    }
+
+    #[tokio::test]
+    async fn closed_channel_with_live_reused_pid_still_releases_once() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = PidBackedControllableDriver::with_reported_pid(std::process::id());
+        let resp = sup
+            .acquire(&driver, dispatch_impl_req("TASK-PID-REUSE", dir.path()))
+            .await
+            .unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        driver.close_events().await;
+        let path = dir.path().join("TASK-PID-REUSE.jsonl");
         wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
         assert_release(
             &path,
@@ -7394,18 +7606,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn pid_probe_error_and_no_ready_converge_on_channel_closure() {
+        let (sup, dir, _w) = make_supervisor();
+        let probe_error = PidBackedControllableDriver::with_reported_pid(u32::MAX);
+        let probe = sup
+            .acquire(
+                &probe_error,
+                dispatch_impl_req("TASK-PID-PROBE-ERROR", dir.path()),
+            )
+            .await
+            .unwrap();
+        wait_for_event_count(&sup, &probe.run_id, 1).await;
+        probe_error.close_events().await;
+        wait_for_run_release(&sup, &probe.run_id, Duration::from_secs(2)).await;
+        assert_eq!(
+            release_count(&dir.path().join("TASK-PID-PROBE-ERROR.jsonl")),
+            1
+        );
+
+        let no_ready = PidBackedControllableDriver::without_ready();
+        let no_ready_run = sup
+            .acquire(&no_ready, dispatch_impl_req("TASK-NO-READY", dir.path()))
+            .await
+            .unwrap();
+        no_ready.close_events().await;
+        wait_for_run_release(&sup, &no_ready_run.run_id, Duration::from_secs(2)).await;
+        assert_release(
+            &dir.path().join("TASK-NO-READY.jsonl"),
+            "protocol_end_without_finalize",
+            "failed",
+        );
+    }
+
+    #[tokio::test]
     async fn pid_exit_before_stream_end_defers_until_channel_closes() {
         let (sup, dir, _w) = make_supervisor();
         let driver = PidBackedControllableDriver::new();
         let resp = sup
-            .acquire(
-                &driver,
-                dispatch_impl_req("TASK-PID-DEFER", dir.path()),
-            )
+            .acquire(&driver, dispatch_impl_req("TASK-PID-DEFER", dir.path()))
             .await
             .unwrap();
         let pid = resp.pid.expect("pid-backed acquire");
-        let _watcher = spawn_early_exit_watcher(sup.clone(), resp.run_id.clone(), pid);
         wait_for_event_count(&sup, &resp.run_id, 1).await;
         assert!(run_is_live(&sup, &resp.run_id).await);
         let _ = Command::new("kill")
@@ -7454,11 +7695,16 @@ mod tests {
         let session_path = req.session_path.clone();
         let resp = sup.acquire(&driver, req).await.unwrap();
         wait_for_event_count(&sup, &resp.run_id, 1).await;
+        // Force the receiver to dequeue but not apply the event until the
+        // timeout path starts. The receiver barrier must carry it across the
+        // boundary without relying on a scheduling sleep.
+        let record_guard = sup.inner.lock().await;
         driver
             .inject(DriverEvent::RunComplete {
                 summary: Some("completed before timeout tombstone".into()),
             })
             .await;
+        drop(record_guard);
         age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
         sup.release_first_timed_out_run().await;
         wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
@@ -7471,10 +7717,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = QueuedBeforeTimeoutDriver::new();
         let resp = sup
-            .acquire(
-                &driver,
-                dispatch_impl_req("TASK-DELAYED-WORK", dir.path()),
-            )
+            .acquire(&driver, dispatch_impl_req("TASK-DELAYED-WORK", dir.path()))
             .await
             .unwrap();
         wait_for_event_count(&sup, &resp.run_id, 1).await;
@@ -7501,10 +7744,7 @@ mod tests {
         let (sup, dir, _w) = make_supervisor();
         let driver = FatalDriverErrorDriver;
         let resp = sup
-            .acquire(
-                &driver,
-                dispatch_impl_req("TASK-FATAL", dir.path()),
-            )
+            .acquire(&driver, dispatch_impl_req("TASK-FATAL", dir.path()))
             .await
             .unwrap();
         let path = dir.path().join("TASK-FATAL.jsonl");
@@ -7515,6 +7755,7 @@ mod tests {
     }
 
     fn test_run_record_shell() -> RunRecord {
+        let (event_barrier, _event_barriers) = tokio::sync::mpsc::channel(1);
         RunRecord {
             task_id: "TASK".into(),
             kind: RunKind::Worker,
@@ -7547,8 +7788,10 @@ mod tests {
             terminal_outcome: None,
             control: Box::new(NoopControl),
             event_drain: tokio::spawn(async {}),
+            event_barrier,
             babysitter_summary: None,
             early_exit_watcher_pid: None,
+            early_exit_watcher: None,
             driver_has_work: false,
             driver_has_terminal: false,
             driver_has_ready: false,
@@ -7556,6 +7799,7 @@ mod tests {
             stream_ended: false,
             early_exit_pid_exited: false,
             explicit_release_in_progress: false,
+            terminal_event_shutdown_in_progress: false,
         }
     }
 

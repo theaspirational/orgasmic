@@ -363,6 +363,11 @@ pub enum Lifecycle {
         action: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         target: Option<String>,
+        /// Complete immutable recovery claim snapshot. The daemon writes this
+        /// only after the replacement exists and uses it to reconstruct a
+        /// deleted claim without letting path-selected JSONL self-authenticate.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        claim: Option<Value>,
     },
     /// A recovery prompt staged for the operator. `sent = false` means the
     /// draft is pending an explicit composer send.
