@@ -6,12 +6,12 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          cleared
-:LIVENESS:         e0e8b0e
-:LIVENESS_AT:      [2026-07-16 Wed]
-:UPDATED_AT:       [2026-07-16 Wed]
+:LIVENESS:         7794fc1
+:LIVENESS_AT:      [2026-07-22 Wed]
+:UPDATED_AT:       [2026-07-22 Wed]
 :END:
 
-Manager-owned snapshot reconciled [2026-07-11 Sat] after the runtime-served entry/workflows redesign and the 0.0.11 stable publish. No active goal or in-flight work remains. Use task Evidence, the tx ledger, and Git history for implementation detail.
+Manager-owned snapshot reconciled [2026-07-22 Wed] through main 7794fc1 and the interrupted dec_WDR5K streams. No active goal or live dispatch remains; TASK-TMM5H, TASK-83WS2, and TASK-0SVR3 are paused in TODO with four worktrees preserved for an explicit next-direction choice. Use the sections below, task Evidence, the tx ledger, and Git history for detail.
 
 ** Done so far
 - Reconciled operator span 06d0956..ad38043 (44 commits outside manager sessions, 2026-06-22..07-01): dec_B4147 amendments 2-7 land fully local-first publishing (publish-runtime.sh + publish-apps.sh incl. --channel nightly, version-less assets, runtime retain-current+1 pruning, apps-stable tag namespace, unified Android versionCode); runtime 0.0.7 and apps 0.0.6 shipped, 0.0.8/0.0.7 dev lines open. Android remote-daemon connect + in-app update check (dec_PVDP3, 169d60f) with rustls/insets/APK-opener/countdown fixes. Nested decisions M2 :PARENT: tree merged (arch_Q1JVD, TASK-2DFTX; 423b267/dc3a8ad). CLI bearer auth for external daemons + stale-token auto-repair (b66ab8a/b6734d2). acp-ws codex appserver worker dropped, reviewer moved to acp-stdio (9d47627).
@@ -71,17 +71,25 @@ Manager-owned snapshot reconciled [2026-07-11 Sat] after the runtime-served entr
 - [2026-07-11 Sat] Reconciled `595c642..d290da8` (19 commits). Landed the runtime-served entry/workflows redesign (TASK-74TA6, TASK-CZTWD, TASK-3YMVC, TASK-A8559, TASK-PCDA2, TASK-KWD80), the Codex tmux/rmux placeholder fix `a7480ee`, the repo migration `c47a855`, the bounded Docker publish probe, stable runtime publishes through 0.0.11, the archived cockpit report, and the committed UI/artifact WIP snapshots. Re-verified and closed stale TASK-70VV1 and TASK-VBZ24 with current acceptance evidence. Repo is now 0.0.12-dev at `d290da8`.
 - [2026-07-16 Wed] Reconciled liveness drift d290da8..04a130a (20 commits, outside tracked manager sessions): TASK-VKP5T external-manager self-registration via orgasmic CLI (driver 'external' run, ORGASMIC_RUN_ID export, register/release verbs, external-run UI guards through the fix/rereview rounds; d517587..04a130a) — now DONE in done.org. RunDock taskbar redesign (3ec334c: per-terminal leases, tab close, agents-only menu). Five dispatch tasks landed and merged: WYSMM (mobile selection-comment quote), TJF7G (interactive artifact Q&A threaded answers), VJNJ2 (stale-401 first-login fix), H5X52 (nightly->newer-stable adoption), E7W7Q. TASK-P0FAQ filed (adopt Vercel AI Elements for the run transcript chat UI; RELATES_TO VKP5T, dec_FBBT2, dec_RDHX7). Housekeeping this session: pruned 4 orphan dispatch worktrees (all completions on main), committed daemon-written project state. LIVENESS bumped -> 04a130a. Still no active goal.
 [2026-07-16 Wed] TASK-P0FAQ DONE (adopt Vercel AI Elements for the run transcript chat UI) — operator-directed resume, dispatched via codex gpt-5.6-sol xhigh. Added user-override worker allowlists ~/.orgasmic/user/workers/{implementer,reviewer}-codex-acp.org (gpt-5.5 -> gpt-5.6-sol default, gpt-5.5 fallback) so the live daemon accepts the operator's configured codex model; repo shipped/workers/ copies STILL pin gpt-5.5 (flagged for next runtime publish). Implementer merged 7864370 (vendored AI Elements conversation/message/tool/reasoning/code-block; pure ui/src/lib/transcriptParts.ts normalizer; ManagerChatTranscript rewired; RunSurface untouched; AI Elements 1.9.0 dropped standalone 'response' -> MessageResponse from 'message'). reviewer-codex-acp (gpt-5.6-sol xhigh) VERDICT NEEDS-CHANGES, 6 findings (guards + XSS + gates all PASS) — sharpest: 64/131 tool cards stuck 'running' on the REAL implementer session because synthetic tests masked the true Codex exec/command_execution event shape. Fix subtask TASK-K7P24 (impl c6518a8, merged) resolved all 6 per manager rulings (terminal-close to completed/error on run_complete/run_fail/release; collision-safe full-content code-block cache + LRU; Streamdown @source + KaTeX CSS + semantic-token fallbacks; out-of-order call_id pairing; reduced-motion scroll; empty tool-error output) with a fixture SLICED FROM THE REAL session jsonl; MANAGER INLINE REVIEW (one-round fix) = ship (verified terminal-state logic + cache key in the diff, not just green tests). Final gates on merged main: tsc clean, vitest 253/253 (35 files, +11), VKP5T guard suite 45/45 (guard sources byte-unchanged), build ok (5694 modules). First codex-acp dispatches this session; worker-driven finalize (dec_3M7M0) held clean on all 3 (last.txt intact each time). NOT deployed — UI ships with the next runtime publish. Backlog now EMPTY. LIVENESS -> e0e8b0e.
+- [2026-07-22 Wed] Reconciled operator span e0e8b0e..7794fc1 (17 commits): dec_WDR5K wave 1 landed governance rehoming (TASK-AYXPB + TASK-63MPH), harness-native transcript finders (TASK-0SADP + TASK-WTPYT), universal dispatch finalize (TASK-P4MGK + TASK-8PXDP), and the all-run worker-declared terminal contract (TASK-S52X9 through TASK-Y5K2C), with main at 7794fc1. Closed seven stale pre-flight dispatches: TASK-ARZGD as done/landed; TASK-6ZTFM, TASK-NW4WV, TASK-3TEDA, TASK-TMM5H, TASK-83WS2, and TASK-0SVR3 as aborted, preserving every surviving worktree and returning the three interrupted active tasks to TODO.
 
 ** Next likely actions
-PAUSED — no active goal; awaiting operator direction. Backlog is now EMPTY (TASK-P0FAQ drained this session); todo/in-progress/in-review empty.
-- Optional: bump the checkout shipped/workers/{implementer,reviewer}-codex-acp.org gpt-5.5 -> gpt-5.6-sol so the codex model modernization ships with the next runtime publish. Currently only the ~/.orgasmic/user/workers/ overrides carry it (live-daemon only); a runtime publish from the checkout would otherwise revert the live daemon to gpt-5.5.
-- Optional deeper cleanup: .orgasmic/tmp/dispatch/ holds many stale brief files + stem dirs from long-closed dispatches (incl this session's task-p0faq/, task-p0faq-review/, task-k7p24/).
+PAUSED — no active goal. Choose one interrupted dec_WDR5K stream before new dispatch:
+1. TASK-TMM5H / TASK-QPKCD: salvage and finish dirty task-tmm5h-impl WIP at 6e20c4c plus four modified source files.
+2. TASK-83WS2 / TASK-AFE5Q: rerun the independent review against clean implementation commit b6a8e8e.
+3. TASK-0SVR3 / TASK-SZEWA: re-dispatch the eight-HIGH fix from clean commit 3b948c9.
+Do not merge any stream until its task-specific gates and independent review pass.
 
 ** In flight
-(none) — no live runs, open/orphan dispatches, or extra worktrees (all 3 session dispatches closed; worktrees removed). backlog/todo/in-progress/in-review all empty.
+No live runs and no open dispatch records. Four worktrees are preserved:
+- task-tmm5h-impl at 6e20c4c: resumable TASK-TMM5H / TASK-QPKCD WIP; dirty in api.rs, recovery_claim.rs, supervisor.rs, and tmux.rs.
+- task-83ws2-review at b6a8e8e: clean TASK-AFE5Q implementation-review base; reviewer produced no verdict because network failed.
+- task-0svr3-impl at 3b948c9: clean TASK-SZEWA fix base; implementer produced no changes because network failed.
+- task-kkftm-review at 3b948c9: clean stale worktree for completed TASK-KKFTM review; safe to prune only after explicit housekeeping approval.
+TASK-TMM5H, TASK-83WS2, and TASK-0SVR3 are TODO, not actively executing.
 
 ** Divergence / Risks
-- No active goal since [2026-07-11]; manager paused.
-- Codex worker model bump (gpt-5.6-sol) lives ONLY in ~/.orgasmic/user/workers/ overrides; the repo shipped/workers/ copies still pin gpt-5.5 — a runtime publish from the checkout would revert the live daemon to gpt-5.5 unless the shipped copies are bumped first.
-- Runtime: daemon live on 4848 at 0.0.12-nightly.20260713; repo HEAD e0e8b0e. The P0FAQ transcript UI change is NOT deployed (ships with the next runtime publish). parse_errors 2 are the external ORSL comma-refs (orgasmic project itself clean).
-- User-owned untracked paths ui/.design-sync/ and ui/.gitignore remain untouched.
+- No active goal; stream ordering requires operator direction.
+- Main contains the landed dec_WDR5K wave through 7794fc1, while TASK-QPKCD, TASK-AFE5Q, and TASK-SZEWA remain unmerged on preserved branches/worktrees. Do not treat those branch commits as shipped.
+- The live runtime is 0.0.12-nightly.20260713 and predates the July 18 main commits; do not use it as proof of the new finalize behavior without a publish/update.
+- No open dispatch ledger entries remain. The external ORSL comma-reference parse errors remain outside this project; orgasmic-owned state is clean.

@@ -12162,3 +12162,203 @@ Resolve 5 codex review findings on TASK-0SADP transcript finder adapters (review
 :END:
 
 Resolve 2 codex HIGH findings on TASK-P4MGK (review: .orgasmic/tmp/dispatch/task-p4mgk-review/task-p4mgk-review-last.txt). HIGH1: finalize/release not idempotent — CLI masks any 404 as success so protocol-end-during-finalize yields a run both done AND orphaned; concurrent double-finalize double-emits. HIGH2: transport-keyed Failed reclassifies ALL non-TUI protocol-end runs, breaking /grill /plan ACP artifactor ACP manager (they legitimately never finalize). Fix scopes finalize to dispatched-worker runs via a per-run capability flag; narrows dec_WDR5K item 6. Branch task-p4mgk-impl atop 4fb51fd.
+
+* DONE TASK-TZJFF TASK-S52X9 fix round: real universal termination (TUI gate, app-manager release, stage run-id, artifactor epoch races, custom exempt)
+:PROPERTIES:
+:ID: TASK-TZJFF
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-S52X9
+:END:
+
+Resolve 4 HIGH + 1 MED codex findings on TASK-S52X9 (review: .orgasmic/tmp/dispatch/task-s52x9-review/task-s52x9-review-last.txt). The commit added flags but not mechanisms. P1 unify TUI+stream-end declaration state machine (no TUI success bypass); P2 app-manager release via ORGASMIC_RUN_ID + manager.org instruction; P3 stage finalize consumes ORGASMIC_RUN_ID not git branch; P4 artifactor per-round epoch state atomic with stream-end; P5 custom bare terminals exempt (item6 seventh amendment). Plus architect stage parity. Branch task-s52x9-impl atop f6ab09f.
+
+* DONE TASK-99W9C TASK-S52X9 fix round 2: unify recovery drain + artifactor in-flight/declared split + regenerate rollback
+:PROPERTIES:
+:ID: TASK-99W9C
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-S52X9
+:END:
+
+Round-2 fix after codex re-review (2 HIGH + 1 MED). R1: reattach/continuation drains bypass the universal gate (requires_worker_finalize:false on recovery, no release tombstone) — unify one terminal-drain helper + persist/restore terminal contract & role in RunMeta. R2: artifactor prepared-submit is a durable declaration before the write (false-Completed) — split submit_in_flight(round,token) vs declared(round), defer terminal events during in-flight, atomic promote/clear after writer txn. R3: rejected regenerate loses prior declaration — make round-advance+accepted-input rollback-safe. Reviewer supplied exact design. Branch task-s52x9-impl atop e8cfaae.
+
+* DONE TASK-S52X9 Universal finalize contract: every run shape declares termination (grill/plan/artifactor/manager)
+:PROPERTIES:
+:ID: TASK-S52X9
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+dec_WDR5K item 6 sixth amendment (operator-directed). Generalize the merged requires_worker_finalize capability gate from dispatch-kinds-only into universal worker-declared termination: stage runs (grill/plan) finalize, artifactor submit is its terminal declaration, manager release is its terminal declaration; protocol-end without a declaration is Failed/anomaly for every shape. Keeps TASK-8PXDP idempotent tombstone handling, extends tombstone vocab (artifact_submitted, manager_released). Reverses the fifth amendment; subsumes TASK-FN18B.
+
+* DONE TASK-AYXPB Governance rehoming: per-kind code defaults + sparse config.yaml overlay
+:PROPERTIES:
+:ID: TASK-AYXPB
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Hardcode per-kind defaults (iterations, context budget, timeouts, applicable states, linked skills, babysitter attachment, sandbox) in the daemon. Add a dispatch: section to ~/.orgasmic/config.yaml as a sparse overlay keyed by kind or (kind,harness): absent key = code default, per-dispatch overrides win. Startup warns on unrecognized config keys instead of silently ignoring them. Model and effort are OUT OF SCOPE: per dec_WDR5K item 9 (third amendment) no model/effort identifier lives in orgasmic code or config — see TASK-SZEWA for live discovery.
+
+* DONE TASK-0SADP Transcript finder adapters: harness-native session logs replace pane capture
+:PROPERTIES:
+:ID: TASK-0SADP
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Per-harness adapters that locate the harness's own session JSONL for a run (claude ~/.claude/projects/..., codex, cursor-agent, hermes) and map run id -> native transcript. Consumers: continuation runs (term_A8GT3), artifactor, failure diagnosis (last inner message). Custom harnesses have no adapter -> no transcript, accepted per dec_WDR5K item 7.
+Sequencing: MUST land before TUI capture removal or rmux/tmux runs lose transcripts in the gap.
+
+* DONE TASK-P4MGK Universal dispatch finalize: accept worker-declared completion from every mode
+:PROPERTIES:
+:ID: TASK-P4MGK
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Make orgasmic dispatch finalize (dec_3M7M0) the completion signal for ALL modes, not just rmux: daemon accepts finalize from acp-stdio, acp-ws, subprocess-stream-json, tmux, rmux runs; each driver treats it as the primary end-of-run. Move the finalize contract prose from the rmux worker templates into prompt-specs/base_worker.org so every kind inherits it once.
+Risk to test hardest: ACP modes already have protocol turn-end events — finalize and protocol-end must not double-release or race the lease.
+
+* DONE TASK-ZB90M TASK-AFE5Q fix round: Cursor trust, lossless prompt bytes, artifact-free cancellation
+:PROPERTIES:
+:ID: TASK-ZB90M
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve Codex review findings on TASK-AFE5Q 45955f8. HIGH: fresh Cursor TUI worktrees block at workspace trust with no startup handler; add a startup-only trust transition without restoring capture truth. HIGH: preserve original prompt bytes rather than trim. MEDIUM: non-finalized releases must never synthesize completion artifacts; remove dead capture warnings and restore the dropped test attribute. LOW: remove obsolete capture/fallback prose.
+
+* DONE TASK-756WX TASK-AFE5Q fix round 2: owned Cursor trust state and attempt-scoped artifacts
+:PROPERTIES:
+:ID: TASK-756WX
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve confirmation findings after 9e88848. Replace trust substring/history polling with an owned one-shot startup state machine; keep cancellation artifact-free but not orphaned; make report paths attempt-identity-qualified to prevent stale waiter completion; delete AFE5Q dead symbols/warning suppressions; remove committed operational summary.
+
+* DONE TASK-ZHRRH TASK-AFE5Q fix round 3: bounded Cursor trust and exact attempt cleanup
+:PROPERTIES:
+:ID: TASK-ZHRRH
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve final review findings after 1bff4b9: replace remaining text-triggerable Cursor trust heuristics with bounded startup-state proof; cleanup only exact attempt artifacts; cancel and join startup tasks; clear delta warning; use collision-safe full attempt identity.
+
+* DONE TASK-ZGT1X TASK-AFE5Q fix round 4: attempt fencing and exact Cursor startup state
+:PROPERTIES:
+:ID: TASK-ZGT1X
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve ship review findings after 3a3ee20: exact first-stable-frame Cursor trust component; canonical project-root cleanup containment and exact artifact pair; cleanup fenced to dispatch attempt token/run metadata; kill/reap send-key subprocesses; atomically reserve full-UUID artifact pair.
+
+* DONE TASK-KE0JW TASK-AFE5Q fix round 5: atomic cleanup authority and startup child ownership
+:PROPERTIES:
+:ID: TASK-KE0JW
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve review findings after 271fc38: restore daemon compilation; fence full cleanup and boot-reattach token; safe RAII pair reservation; no-follow identity-bound cleanup; exact paired trust variants with recapture; atomically own/kill/reap every startup send child.
+
+* DONE TASK-R28CP TASK-QPKCD fix round: early-exit orphan + Failed-run explicit recovery
+:PROPERTIES:
+:ID: TASK-R28CP
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve Codex review findings on TASK-QPKCD a46b180. HIGH: early-exit/fatal-before-work writes completion artifacts and no manager.dispatch_orphaned; route it through Failed/orphan/no-artifact handling. MEDIUM: rescue policy promises run recover for Failed tombstones but recovery classification rejects them; preserve original Failed tombstone and expose manager-authorized resume/fork or fresh recovery actions only after explicit POST. Add session-count, historical continuation JSONL, and native-resume idle regressions.
+
+* DONE TASK-A6FGF TASK-QPKCD fix round 2: Failed rescue identity, trust and idempotency
+:PROPERTIES:
+:ID: TASK-A6FGF
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve confirmation findings after b171fca. Make literal Ready-only early exit Failed; never same-run reattach a Failed origin; reconstruct Claude native resume from validated structured identity instead of persisted argv; add durable per-origin/request-id recovery claims with collision-proof sessions and immutable origin; remove committed operational summary.
+
+* DONE TASK-DKVXF TASK-QPKCD fix round 3 continuation: complete salvaged recovery authority refactor
+:PROPERTIES:
+:ID: TASK-DKVXF
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Continue from salvaged WIP b862674 after prior Composer exit. First restore formatting/compilation, then complete no-PID early-exit ownership, daemon-home project-scoped claims, crash-atomic Pending reconciliation, and trusted structured Claude resume with full tests.
+
+* DONE TASK-7MFHB TASK-SZEWA fix round: complete governance, babysitter, zero-model and UI cutover
+:PROPERTIES:
+:ID: TASK-7MFHB
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-SZEWA
+:END:
+
+Resolve Codex review findings on TASK-SZEWA bcb96aa (6 HIGH, 3 MEDIUM, 1 LOW): sandbox non-widening; wire every governance layer/field; make babysitter an addressed Prompt Studio kind; update shipped manager authority; remove static effort/model validation and invented catalogs; persist cold artifactor address; make custom argv round-trip; validate dry-run via SUPPORTED; gate live runtime switching; remove unsolicited summary file.
+
+* DONE TASK-MYVJA TASK-SZEWA fix round 2: monotonic governance and deletion-ready address truth
+:PROPERTIES:
+:ID: TASK-MYVJA
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-SZEWA
+:END:
+
+Resolve confirmation findings after 84b6934: monotonic sandbox across all overlays; expose/enforce full governance and budgets; non-finalizing babysitter plus recovery without worker files; remove active static model/effort knowledge and preserve exact overrides; atomic whole artifact address; exact UI argv; truthful live switching; clear warnings.
+
+* DONE TASK-4W8XH TASK-AFE5Q fix round 6 independent ship review
+:PROPERTIES:
+:ID: TASK-4W8XH
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review de94d4d from task-1fv1n-impl against the full AFE5Q fix-round-6 brief and prior verdict. Verify all claimed closures and explicitly evaluate the implementer-reported unmet criteria. Read-only review; SHIP only with no blocking findings.
+
+* DONE TASK-GJ8PC TASK-QPKCD fix round 4 independent ship review
+:PROPERTIES:
+:ID: TASK-GJ8PC
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review c9d4850 from task-emy0m-impl against the full QPKCD fix-round-4 brief and prior ship verdict. Verify all claimed closures and explicitly evaluate the implementer-reported unmet crash, race, POST, and security tests. Read-only review; SHIP only with no blocking findings.
+
+* DONE TASK-JKPAP TASK-SZEWA fix round 3 independent ship review
+:PROPERTIES:
+:ID: TASK-JKPAP
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review 2475248 from task-k05mx-impl against the full SZEWA fix-round-3 brief and prior final verdict. Verify all claimed closures and explicitly evaluate the implementer-reported missing HTTP, no-worker, and wire-level matrices. Read-only review; SHIP only with no blocking findings.
+
+* DONE TASK-Y8HCP TASK-QPKCD fix round 5 independent ship review
+:PROPERTIES:
+:ID: TASK-Y8HCP
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review f80d971 from task-e3tbc-impl against the exact QPKCD fix-round-5 brief and prior six-HIGH verdict. Verify healthy-run quiescence, pre-Acquire crash authority, claim trust, pinned Claude executable, actual fork identity, and all disclosed missing tests. Read-only; SHIP only with no blocking findings.
+
+* DONE TASK-KKFTM TASK-SZEWA fix round 4 independent ship review
+:PROPERTIES:
+:ID: TASK-KKFTM
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review 3b948c9 from task-vqnz9-impl against the exact SZEWA fix-round-4 contract and prior eight-HIGH verdict. Verify native-only turn accounting, truthful budget migration, governance HTTP parity, total worker-model deletion, true cold restart, manager argv validation, real wire transport, and submitted gates. Read-only; SHIP only with no blocking findings.
+
+* DONE TASK-ARZGD TASK-S52X9 fix round 3 (escalated): artifactor lifecycle coordinator + shared recovery contract + atomic regenerate
+:PROPERTIES:
+:ID: TASK-ARZGD
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-S52X9
+:END:
+
+Design-level pass (grok-4.5-high) after 3rd codex review kept finding adjacent same-class sites. P1: ONE artifactor coordinator — atomic find+token, timeout/cancel defer to writer, no re-lookup. P2: ONE shared terminal-contract for boot AND manual recovery (recover/resume_native_fork/start_recovery_run), fail-closed for unknown agent runs, recovery inherits original shape's contract. P3: regenerate_in_flight defer for atomic rollback. Plus essential API-level race + per-shape recovery tombstone tests. Preserves round-2 confirmed-correct core. Branch task-s52x9-impl atop 7a3d1cc.
+
+* DONE TASK-Y5K2C TASK-S52X9 fix round 5: exclusive artifactor lifecycle enum + fail-closed historical contract
+:PROPERTIES:
+:ID: TASK-Y5K2C
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Round-4 codex (gpt-5.6-sol high) confirmed round-3 isolated mechanisms correct; 2 HIGH survivors. #1 submit_in_flight and regenerate_in_flight are independent Options -> concurrent submit+regenerate overlap; rollback can erase a durable submit -> false Failed. Fix: one mutually-exclusive lifecycle state; no drain/cancel/rollback resolves until all lifecycle work done. #2 resolve_persisted_terminal_contract trusts explicit historical requires=false for agent roles (round-2 recovery persisted false w/ last_path None) -> reattached agent completes without verb. Fix: honor persisted false only for harness-proven custom terminal; recompute agent-shaped historical contracts. Fixer gpt-5.6-sol high atop task-arzgd-impl 03cdc9c.
+

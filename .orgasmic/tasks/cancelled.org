@@ -211,3 +211,29 @@ Note: WSL and Git-Bash/MSYS2 already work via the unix path; this task is specif
 :END:
 
 Post-TASK-8PXDP residual (dec_WDR5K item 6 fifth amendment). The daemon now correctly keeps protocol-end = Completed for /grill, /plan stage runs, but base_worker.org (which those kinds inherit) still carries the universal 'call orgasmic dispatch finalize' instruction. The CLI rejects finalize for non-dispatch kinds, so a grill/plan worker may waste a turn attempting it. Fix: make the inherited finalize instruction conditional on being a dispatched worker (implementer/reviewer/architector), or move it out of base_worker into the dispatch-kind specs. Cosmetic/efficiency, not corrupting — daemon behavior is already correct.
+
+* CANCELLED TASK-6ZTFM TASK-QPKCD fix round 3: early-exit ownership and daemon recovery authority
+:PROPERTIES:
+:ID: TASK-6ZTFM
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve final review findings after e8df69f: close no-PID/drain-before-insert early-exit races; move claims to daemon-owned project-scoped authority; make Pending/Committed crash-atomic and reconcilable; pin trusted Claude binary with structured resume mode; clear delta clippy.
+
+* CANCELLED TASK-NW4WV TASK-AFE5Q fix round 7: atomic cleanup and startup ownership
+:PROPERTIES:
+:ID: TASK-NW4WV
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all seven HIGH findings from TASK-4W8XH review of de94d4d: atomic reservation installation; fail-closed branch/worktree/artifact identity; cancellation-atomic tmux/rmux child ownership; truthful finalize endpoint tests and warnings; mux-bound Cursor trust send; full ambiguous POST ownership and rollback handling.
+
+* CANCELLED TASK-3TEDA TASK-QPKCD fix round 6: single-authority recovery and proven native fork
+:PROPERTIES:
+:ID: TASK-3TEDA
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all five HIGH findings from TASK-Y8HCP review of f80d971: receiver-only quiescence including timeout drain; complete immutable pre-spawn plan and lifecycle backfill; handle-bound claim authority; explicit symlink-capable pinned Claude install identity with PATH-shim proof; unique fail-closed fork discovery and two-recovery chain.
+

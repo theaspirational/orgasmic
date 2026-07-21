@@ -1,21 +1,83 @@
 #+title: In Review
 #+orgasmic_version: 1
 
-* IN_REVIEW TASK-0SADP Transcript finder adapters: harness-native session logs replace pane capture
+* IN_REVIEW TASK-AFE5Q Argv prompt delivery; remove EOT marker and TUI screen capture
 :PROPERTIES:
-:ID: TASK-0SADP
+:DEPENDS_ON: TASK-P4MGK TASK-0SADP
+:ID: TASK-AFE5Q
 :IMPLEMENTS: dec_WDR5K
 :END:
 
-Per-harness adapters that locate the harness's own session JSONL for a run (claude ~/.claude/projects/..., codex, cursor-agent, hermes) and map run id -> native transcript. Consumers: continuation runs (term_A8GT3), artifactor, failure diagnosis (last inner message). Custom harnesses have no adapter -> no transcript, accepted per dec_WDR5K item 7.
-Sequencing: MUST land before TUI capture removal or rmux/tmux runs lose transcripts in the gap.
+Supported TUI harnesses receive the compiled prompt as initial-prompt argv (claude/codex/cursor-agent); paste remains only as fallback and for custom harnesses. Delete EOT marker injection + marker watching and the render/scrollback capture tasks from rmux/tmux drivers. Completion = finalize only; pane/process exit without finalize = failed run; stall/max-duration timeouts catch hangs. Live view/typing stays on the PTY-attach WebSocket (/ws/tmux/:run_id).
+Risk: hot-session and persistent-pane paths in rmux.rs special-case the marker — remove without breaking manager panes.
 
-* IN_REVIEW TASK-P4MGK Universal dispatch finalize: accept worker-declared completion from every mode
+* IN_REVIEW TASK-QPKCD Manager-authority run rescue: no auto-continuation; rescue policy as readable convention
 :PROPERTIES:
-:ID: TASK-P4MGK
+:DEPENDS_ON: TASK-P4MGK
+:ID: TASK-QPKCD
 :IMPLEMENTS: dec_WDR5K
 :END:
 
-Make orgasmic dispatch finalize (dec_3M7M0) the completion signal for ALL modes, not just rmux: daemon accepts finalize from acp-stdio, acp-ws, subprocess-stream-json, tmux, rmux runs; each driver treats it as the primary end-of-run. Move the finalize contract prose from the rmux worker templates into prompt-specs/base_worker.org so every kind inherits it once.
-Risk to test hardest: ACP modes already have protocol turn-end events — finalize and protocol-end must not double-release or race the lease.
+Failed runs (exit-without-finalize, timeout) emit tx + task state only — the daemon never auto-spawns a continuation. Rescue is a manager decision: add a rescue-policy convention file (prompt-studio conventions/), referenced by POINTER in the manager prompt-spec, which the manager reads on demand when weighing rescue vs re-dispatch vs abandon. Daemon recovery (re-attach after daemon restart) stays mechanical and is explicitly out of scope.
+
+* IN_REVIEW TASK-SZEWA Dispatch addresses (kind, mode, harness): API/UI cutover + live model catalog
+:PROPERTIES:
+:DEPENDS_ON: TASK-AYXPB
+:ID: TASK-SZEWA
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Dispatch and stage endpoints address (kind, mode, harness) + options; SUPPORTED matrix in orgasmic-drivers is the sole transport registry; babysitter is an ordinary kind. UI worker pickers become kind + transport selection. Custom harness: dispatch payload may carry raw argv (token authority suffices, dec_WDR5K item 4), argv logged verbatim in tx.
+Model/effort: orgasmic carries ZERO model knowledge (dec_WDR5K item 9). Structured catalogs come from PROTOCOL-LEVEL adapters only — the existing runtime_options_catalog trait method: codex (app-server RPC) and hermes (inventory capabilities) already implement it; probe whether claude ACP and cursor-agent ACP report models at session/new (cursor docs https://cursor.com/docs/cli/acp document initialize/authenticate/session/new/session/prompt and an optional model string on cursor/task but NO discovery method — verify against the live binary, do not assume). Boundary rule: adapters parse structured protocol responses, NEVER CLI text output — text parsing is the model-catalog equivalent of scrollback scraping. Harnesses without a protocol catalog degrade to a free-text picker with the harness default as placeholder; the manager may read harness CLIs as judgment but no orgasmic machinery depends on parsing free-form output. No provider-level static fallback, no :MODELS:/:REASONING_EFFORTS: reads, no validation of overrides: dispatch without explicit model passes no model flag (harness default applies); explicit override passes through verbatim and a nonexistent model is the harness's error, surfaced to the manager.
+
+* IN_REVIEW TASK-1FV1N TASK-AFE5Q fix round 6: durable cleanup transaction and child quiescence
+:PROPERTIES:
+:ID: TASK-1FV1N
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve final AFE5Q review findings after a734b11: durable ended-owner cleanup fencing held across deletion; fail-closed identity-bound no-follow cleanup; cancellation-atomic startup child ownership; reconcile finalize-only endpoint tests/warnings; close Cursor send race; correct artifact reservation ownership transfer.
+
+* IN_REVIEW TASK-EMY0M TASK-QPKCD fix round 4: project-scoped crash-safe rescue authority
+:PROPERTIES:
+:ID: TASK-EMY0M
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve QPKCD ship review findings after 5ce2285: unified early-exit quiescence; project-scoped leases/locks; full-plan crash reconciliation; invalid/deleted claim repair; daemon-pinned Claude executable with retained native identity.
+
+* IN_REVIEW TASK-K05MX TASK-SZEWA fix round 3: semantic governance and deletion-ready runtime
+:PROPERTIES:
+:ID: TASK-K05MX
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-SZEWA
+:END:
+
+Resolve SZEWA ship review findings after df86fcd: semantic iteration counting; truthful universal context budget; governance tri-state/parity; exact model/effort and worker-free recovery; guarded artifact restart lifecycle; central custom argv validation; live-switch acceptance; warning cleanup.
+
+* IN_REVIEW TASK-E3TBC TASK-QPKCD fix round 5: quiescence and crash-authoritative recovery
+:PROPERTIES:
+:ID: TASK-E3TBC
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all six HIGH findings from TASK-GJ8PC review of c9d4850: healthy-run-safe channel quiescence; pre-Acquire crash reconciliation and stable plan; authoritative corrupt/deleted claim repair; no PATH fallback; actual Claude fork identity; fmt and warning gates.
+
+* IN_REVIEW TASK-VQNZ9 TASK-SZEWA fix round 4: truthful semantic governance and wire proof
+:PROPERTIES:
+:ID: TASK-VQNZ9
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all eight HIGH findings from TASK-JKPAP review of 2475248: native-only turn boundaries; explicit character-budget migration; HTTP governance disable matrix; remove remaining worker model knowledge and prove no-worker/wire paths; true cold artifact restart; manager argv validation; live-switch transport capture; format/warning gates.
+
+* IN_REVIEW TASK-K8ET5 TASK-AFE5Q fix round 7 continuation: verify and finish atomic cleanup
+:PROPERTIES:
+:ID: TASK-K8ET5
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Continue salvaged AFE5Q fix-round-7 WIP at 90d9de7 after the prior Cursor run hit stall_timeout_exceeded. Complete every TASK-NW4WV acceptance item, resolve compile/clippy/test failures, add any missing deterministic race/security tests, and finalize with a clean committed branch.
 
