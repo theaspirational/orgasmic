@@ -19808,3 +19808,48 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-22 Wed 10:39:01 task.state_transitioned TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2355
+:TIME:         [2026-07-22 Wed 10:39:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       solo post-rescue review closed all four review7 blockers in 003ecf6; merged f0a9480; focused and crash-matrix gates pass
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 10:39:01 task.state_transitioned TASK-TMM5H
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2356
+:TIME:         [2026-07-22 Wed 10:39:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TMM5H
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       cumulative recovery-authority chain merged at f0a9480 after solo review and verification
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 10:39:02 task.state_transitioned TASK-QPKCD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2357
+:TIME:         [2026-07-22 Wed 10:39:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QPKCD
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       manager-authority rescue chain completed and merged at f0a9480; no auto-continuation contract preserved
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

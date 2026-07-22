@@ -12372,3 +12372,29 @@ Round-4 codex (gpt-5.6-sol high) confirmed round-3 isolated mechanisms correct; 
 :END:
 
 Fix all four blocking findings from TASK-HQR91 reviewer run run-20260722T090000-5bc9ed64f70241d596da5f2c78e749b2 and report .orgasmic/tmp/dispatch/task-hqr91-review7/task-hqr91-review7-last.txt: producer stop/join and receiver-closure authority for timeout and dead-PID paths; retained no-follow origin/pending session authority through plan and first append; wrapper identity pin plus crash-safe private-alias cleanup; and an ordering-proof, retained-handle Claude fork launch boundary. Add the missing hung-producer, POST swap/symlink/stale-handle, wrapper replacement/SIGKILL, exclusion-gap, and post-check swap regressions. Preserve all previously closed recovery invariants. Full gates and independent re-review required.
+
+* DONE TASK-HQR91 QPKCD review6c fix: close seven recovery-authority blockers :fix:
+:PROPERTIES:
+:ID: TASK-HQR91
+:IMPLEMENTS: dec_WDR5K
+:PRIORITY: high
+:END:
+
+Fix every blocking finding from TASK-TMM5H reviewer run run-20260722T061109-4f2a295a340b48de82c9d0a8f7d637ec and its report at .orgasmic/tmp/dispatch/task-qpkcd-review6c/task-qpkcd-review6c-last.txt. Required: dead-PID convergence; stop-then-drain terminal freeze; lifecycle-before-event reattach with a real killed-daemon/original-pane crash matrix; origin project/worktree cwd+diff; daemon-anchored retained-handle claim authority with duplicate fail-closed; actual Claude versioned-file symlink identity with execution-bound pin; correlated fork proof; required CLI project. Preserve all contracts and paused streams. Full gates plus independent re-review required.
+
+* DONE TASK-TMM5H TASK-QPKCD fix round 6 continuation: complete and prove recovery authority
+:PROPERTIES:
+:ID: TASK-TMM5H
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Continue salvaged QPKCD fix-round-6 WIP at 6e20c4c after Cursor internal subagent fan-out stalled. Work directly without spawning subagents; format, remove warning, complete all five acceptance areas, add missing fault/security/two-recovery tests, and finalize a clean committed branch.
+
+* DONE TASK-QPKCD Manager-authority run rescue: no auto-continuation; rescue policy as readable convention
+:PROPERTIES:
+:DEPENDS_ON: TASK-P4MGK
+:ID: TASK-QPKCD
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Failed runs (exit-without-finalize, timeout) emit tx + task state only — the daemon never auto-spawns a continuation. Rescue is a manager decision: add a rescue-policy convention file (prompt-studio conventions/), referenced by POINTER in the manager prompt-spec, which the manager reads on demand when weighing rescue vs re-dispatch vs abandon. Daemon recovery (re-attach after daemon restart) stays mechanical and is explicitly out of scope.
