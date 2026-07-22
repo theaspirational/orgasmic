@@ -1,2 +1,10 @@
 #+title: In Progress
 #+orgasmic_version: 1
+
+* IN_PROGRESS TASK-83WS2 TASK-AFE5Q fix round 7 independent ship review
+:PROPERTIES:
+:ID: TASK-83WS2
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review cumulative de94d4d..b6a8e8e from task-k8et5-impl against the full AFE5Q round-7 contract and prior seven-HIGH verdict. Verify atomic cleanup and all missing interleavings, transaction-wide identity, child ownership setup barriers, endpoint finalization truth, mux-bound send, ambiguity rollback, and warning gates. Read-only; SHIP only with no blocking findings.

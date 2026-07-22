@@ -20058,3 +20058,57 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-22 Wed 11:09:29 task.state_transitioned TASK-83WS2
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2373
+:TIME:         [2026-07-22 Wed 11:09:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-83WS2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Operator selected TASK-83WS2 as the first post-QPKCD action; manager is completing the preserved read-only review solo.
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-22 Wed 11:09:29 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2374
+:TIME:         [2026-07-22 Wed 11:09:29]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:09:30 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2375
+:TIME:         [2026-07-22 Wed 11:09:30]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:09:30 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2376
+:TIME:         [2026-07-22 Wed 11:09:30]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

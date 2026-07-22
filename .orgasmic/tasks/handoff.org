@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260722-close-afe5q-and
-:LIVENESS:         4ae89ad
+:LIVENESS:         4cc9452
 :LIVENESS_AT:      [2026-07-22 Wed]
 :UPDATED_AT:       [2026-07-22 Wed]
 :END:
@@ -26,7 +26,7 @@ Manager continuity for goal-20260722-close-afe5q-and. QPKCD is complete and its 
 4. Pull TASK-41B0T forward only if preventing another semantic-stall incident becomes the higher priority.
 
 ** In flight
-No live worker or open/orphan dispatch. Preserved active candidates: task-83ws2-review at b6a8e8e for the next read-only verdict; task-0svr3-impl at 3b948c9 and task-kkftm-review at 3b948c9 for the paused SZEWA continuation.
+TASK-83WS2 is active as a manager-solo strict read-only review over de94d4d..b6a8e8e in the preserved task-83ws2-review worktree. No worker or daemon dispatch is live. TASK-0SVR3 and task-kkftm-review remain paused and untouched.
 
 ** Divergence / Risks
 - The live daemon/runtime reports 0.0.12-nightly.20260713 and predates current main; do not treat it as proof of unshipped source behavior.
