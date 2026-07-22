@@ -79,6 +79,18 @@ struct TmuxTuiConfig {
     /// fresh `--session-id`, initial prompt bundle, or other fresh-launch flags.
     #[serde(default)]
     native_resume_mode: bool,
+    /// Daemon-authenticated provider identity, independent of the executable
+    /// target basename (Claude's real version target is named `2.x.y`).
+    #[serde(default)]
+    trusted_provider_identity: Option<String>,
+    /// Daemon-pinned executable identity and the trusted orgasmic wrapper
+    /// which opens, verifies, and executes a retained alias of that inode.
+    #[serde(default)]
+    pinned_executable: Option<PinnedExecutableIdentity>,
+    /// Provider state root captured with the executable identity. Recovery
+    /// never rediscovers this from ambient HOME at the launch boundary.
+    #[serde(default)]
+    provider_home: Option<PathBuf>,
     #[serde(default)]
     prompt_bundle_text: Option<String>,
     #[serde(
@@ -86,6 +98,16 @@ struct TmuxTuiConfig {
         deserialize_with = "deserialize_duration_secs"
     )]
     input_ready_timeout: Duration,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PinnedExecutableIdentity {
+    path: PathBuf,
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    exec_wrapper: PathBuf,
 }
 
 pub(crate) fn default_input_ready_timeout() -> Duration {
@@ -121,6 +143,28 @@ impl WorkerDriver for TmuxDriver {
                 )));
             }
         }
+        if cfg.trusted_provider_identity.as_deref() == Some("claude") {
+            let pin = cfg.pinned_executable.as_ref().ok_or_else(|| {
+                DriverError::InvalidConfig(
+                    "trusted Claude execution requires pinned_executable".into(),
+                )
+            })?;
+            if !pin.path.is_absolute()
+                || !pin.exec_wrapper.is_absolute()
+                || !cfg
+                    .provider_home
+                    .as_ref()
+                    .is_some_and(|home| home.is_absolute())
+            {
+                return Err(DriverError::InvalidConfig(
+                    "pinned executable, wrapper, and provider home paths must be absolute".into(),
+                ));
+            }
+        } else if cfg.pinned_executable.is_some() {
+            return Err(DriverError::InvalidConfig(
+                "pinned executable requires trusted provider identity".into(),
+            ));
+        }
         Ok(())
     }
 
@@ -141,28 +185,39 @@ impl WorkerDriver for TmuxDriver {
         let inert = inert_reason.is_some();
         let session_name = tmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
-        let fork_probe_since = std::time::SystemTime::now();
-        let fork_candidates_before = claude_fork_candidate_names(&spawn_plan.cwd);
         let mut native_runtime = spawn_plan.native_runtime.clone();
 
         let capture_task = if !inert {
-            spawn_tmux_session(&session_name, &spawn_plan).await?;
-            if cfg.native_resume_mode && is_claude_harness_command(harness, &spawn_plan.command) {
+            let launch_observation = spawn_tmux_session(&session_name, &spawn_plan).await?;
+            if cfg.native_resume_mode
+                && is_claude_harness_command(
+                    harness,
+                    &spawn_plan.command,
+                    cfg.trusted_provider_identity.as_deref(),
+                )
+            {
                 if let Some(resumed) = extract_resume_session_id(&spawn_plan.args) {
+                    let observation = launch_observation.ok_or_else(|| {
+                        DriverError::Transport(
+                            "trusted Claude resume did not establish a launch boundary".into(),
+                        )
+                    })?;
                     let discovery = wait_for_claude_fork_session_id(
                         &resumed,
                         &spawn_plan.cwd,
-                        fork_probe_since,
-                        &fork_candidates_before,
+                        observation.since,
+                        &observation.excluded,
+                        spawn_plan.provider_home.as_deref(),
                     )
                     .await;
                     match discovery {
                         ForkDiscoveryResult::Unique(fork_id) => {
-                            native_runtime = Some(claude_native_runtime(
+                            native_runtime = Some(claude_native_runtime_with_home(
                                 &fork_id,
                                 &spawn_plan.cwd,
                                 &spawn_plan.command,
                                 &spawn_plan.args,
+                                spawn_plan.provider_home.as_deref(),
                             ));
                         }
                         ForkDiscoveryResult::Ambiguous => {
@@ -212,14 +267,21 @@ impl WorkerDriver for TmuxDriver {
             }
             Some(task)
         } else {
-            if cfg.native_resume_mode && is_claude_harness_command(harness, &spawn_plan.command) {
+            if cfg.native_resume_mode
+                && is_claude_harness_command(
+                    harness,
+                    &spawn_plan.command,
+                    cfg.trusted_provider_identity.as_deref(),
+                )
+            {
                 if let Some(resumed) = extract_resume_session_id(&spawn_plan.args) {
                     let fork_id = deterministic_inert_fork_session_id(&ctx.identity.runtime_id);
-                    native_runtime = Some(claude_native_runtime(
+                    native_runtime = Some(claude_native_runtime_with_home(
                         &fork_id,
                         &spawn_plan.cwd,
                         &spawn_plan.command,
                         &spawn_plan.args,
+                        spawn_plan.provider_home.as_deref(),
                     ));
                     let _ = resumed;
                 }
@@ -248,7 +310,7 @@ impl WorkerDriver for TmuxDriver {
             pid: None,
             events: rx,
             control: Box::new(TmuxTuiControl {
-                events: tx,
+                events: Some(tx),
                 session_name,
                 kind: ctx.run_kind,
                 inert,
@@ -304,7 +366,7 @@ impl WorkerDriver for TmuxDriver {
                         terminal_emitted.clone(),
                     );
                     Box::new(TmuxTuiControl {
-                        events: tx.clone(),
+                        events: Some(tx.clone()),
                         session_name: session_name.clone(),
                         kind: ctx.run_kind,
                         inert: false,
@@ -321,7 +383,7 @@ impl WorkerDriver for TmuxDriver {
 }
 
 struct TmuxTuiControl {
-    events: mpsc::Sender<DriverEvent>,
+    events: Option<mpsc::Sender<DriverEvent>>,
     session_name: String,
     kind: RunKind,
     inert: bool,
@@ -340,14 +402,15 @@ impl DriverControl for TmuxTuiControl {
         if self.kind == RunKind::Babysitter {
             return Err(DriverError::WorkerToolBlocked("transition_state".into()));
         }
-        let _ = self
-            .events
-            .send(DriverEvent::TransitionState {
-                from: req.from.clone(),
-                to: req.to.clone(),
-                reason: req.reason.clone(),
-            })
-            .await;
+        if let Some(events) = self.events.as_ref() {
+            let _ = events
+                .send(DriverEvent::TransitionState {
+                    from: req.from.clone(),
+                    to: req.to.clone(),
+                    reason: req.reason.clone(),
+                })
+                .await;
+        }
         Ok(TransitionAck {
             accepted: true,
             message: None,
@@ -361,42 +424,43 @@ impl DriverControl for TmuxTuiControl {
         if self.kind == RunKind::Worker {
             return Err(DriverError::BabysitterToolBlocked(req.tool.as_str().into()));
         }
-        let _ = self
-            .events
-            .send(DriverEvent::ToolCall {
-                call_id: format!(
-                    "bs-{}",
-                    chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
-                ),
-                name: req.tool.as_str().into(),
-                args: req.payload.clone(),
-                seq: 0,
-            })
-            .await;
+        if let Some(events) = self.events.as_ref() {
+            let _ = events
+                .send(DriverEvent::ToolCall {
+                    call_id: format!(
+                        "bs-{}",
+                        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+                    ),
+                    name: req.tool.as_str().into(),
+                    args: req.payload.clone(),
+                    seq: 0,
+                })
+                .await;
+        }
         Ok(BabysitterAck {
             accepted: true,
             message: None,
         })
     }
 
-    async fn release(&mut self, reason: &str) -> Result<(), DriverError> {
+    async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
         if self.released {
             return Ok(());
         }
         self.released = true;
+        // A control-plane stop is not a provider terminal result. Mark the
+        // capture side terminal before killing the pane so teardown cannot
+        // manufacture RunComplete and override the supervisor's frozen cause.
+        self.terminal_emitted.store(true, Ordering::SeqCst);
         if let Some(task) = self.capture_task.take() {
             task.abort();
         }
+        // Receiver closure is the normal terminal authority. Dropping the
+        // control-owned sender after producers stop lets the supervisor drain
+        // every already-queued provider event and then converge.
+        self.events.take();
         if !self.inert {
             kill_tmux_session(&self.session_name).await;
-        }
-        if !self.terminal_emitted.swap(true, Ordering::SeqCst) {
-            let _ = self
-                .events
-                .send(DriverEvent::RunComplete {
-                    summary: Some(reason.to_string()),
-                })
-                .await;
         }
         Ok(())
     }
@@ -464,15 +528,24 @@ struct TmuxSpawnPlan {
     /// environment so a manager session recognises "I am already supervised"
     /// (`orgasmic manager register`, dec_3Y2E1).
     run_id: String,
+    native_resume_mode: bool,
+    trusted_provider_identity: Option<String>,
+    pinned_executable: Option<PinnedExecutableIdentity>,
+    provider_home: Option<PathBuf>,
 }
 
-fn is_claude_harness_command(harness: &str, command: &str) -> bool {
-    harness == "claude"
-        && (command == "claude"
-            || Path::new(command)
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name == "claude"))
+fn is_claude_harness_command(
+    harness: &str,
+    command: &str,
+    trusted_provider_identity: Option<&str>,
+) -> bool {
+    trusted_provider_identity == Some("claude")
+        || (harness == "claude"
+            && (command == "claude"
+                || Path::new(command)
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name == "claude")))
 }
 
 fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> TmuxSpawnPlan {
@@ -507,7 +580,8 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         args.extend(cfg.harness_args.iter().cloned());
     }
 
-    let is_claude = is_claude_harness_command(harness, &command);
+    let is_claude =
+        is_claude_harness_command(harness, &command, cfg.trusted_provider_identity.as_deref());
     if is_claude {
         if !args
             .iter()
@@ -557,7 +631,13 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
             ))
         } else {
             let session_id = claude_session_id(&ctx.identity.runtime_id);
-            Some(claude_native_runtime(&session_id, &cwd, &command, &args))
+            Some(claude_native_runtime_with_home(
+                &session_id,
+                &cwd,
+                &command,
+                &args,
+                cfg.provider_home.as_deref(),
+            ))
         }
     } else {
         // Other harnesses store only real launch metadata until their native
@@ -581,6 +661,10 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         eot_marker,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
+        native_resume_mode: cfg.native_resume_mode,
+        trusted_provider_identity: cfg.trusted_provider_identity.clone(),
+        pinned_executable: cfg.pinned_executable.clone(),
+        provider_home: cfg.provider_home.clone(),
     }
 }
 
@@ -590,14 +674,24 @@ pub(crate) fn claude_session_id(runtime_id: &str) -> String {
     runtime_id.to_string()
 }
 
-fn claude_projects_dir(cwd: &std::path::Path) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+fn claude_projects_dir_with_home(
+    cwd: &std::path::Path,
+    provider_home: Option<&std::path::Path>,
+) -> Option<PathBuf> {
+    let home = provider_home
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))?;
     let encoded: String = cwd
         .to_string_lossy()
         .chars()
         .map(|c| if c == '/' || c == '.' { '-' } else { c })
         .collect();
     Some(home.join(".claude").join("projects").join(encoded))
+}
+
+#[cfg(test)]
+fn claude_projects_dir(cwd: &std::path::Path) -> Option<PathBuf> {
+    claude_projects_dir_with_home(cwd, None)
 }
 
 /// Result of proving the Claude session created by `--fork-session`.
@@ -635,20 +729,28 @@ async fn wait_for_claude_fork_session_id(
     cwd: &std::path::Path,
     since: std::time::SystemTime,
     excluded: &std::collections::BTreeSet<String>,
+    provider_home: Option<&std::path::Path>,
 ) -> ForkDiscoveryResult {
     tokio::time::sleep(FORK_DISCOVERY_INITIAL_WAIT).await;
     let deadline = since + FORK_DISCOVERY_MAX_AFTER_LAUNCH;
     loop {
-        match discover_claude_fork_session_id_excluding(resumed_session_id, cwd, since, excluded) {
+        match discover_claude_fork_session_id_excluding_with_home(
+            resumed_session_id,
+            cwd,
+            since,
+            excluded,
+            provider_home,
+        ) {
             ForkDiscoveryResult::Unique(id) => {
                 // Give a concurrent launch one polling interval to surface;
                 // only a stable unique observation is authoritative.
                 tokio::time::sleep(FORK_DISCOVERY_POLL).await;
-                return match discover_claude_fork_session_id_excluding(
+                return match discover_claude_fork_session_id_excluding_with_home(
                     resumed_session_id,
                     cwd,
                     since,
                     excluded,
+                    provider_home,
                 ) {
                     ForkDiscoveryResult::Unique(confirmed) if confirmed == id => {
                         ForkDiscoveryResult::Unique(id)
@@ -687,8 +789,49 @@ fn fork_candidate_is_confined(path: &std::path::Path, projects_dir: &std::path::
     meta.is_file() && !meta.file_type().is_symlink() && path_is_under_root(path, projects_dir)
 }
 
+fn fork_candidate_has_provider_proof(
+    path: &std::path::Path,
+    session_id: &str,
+    cwd: &std::path::Path,
+    resumed_session_id: &str,
+) -> bool {
+    let Ok(expected_cwd) = cwd.canonicalize() else {
+        return false;
+    };
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .any(|line| {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                return false;
+            };
+            let candidate_cwd = value
+                .get("cwd")
+                .and_then(serde_json::Value::as_str)
+                .map(PathBuf::from)
+                .and_then(|path| path.canonicalize().ok());
+            value.get("sessionId").and_then(serde_json::Value::as_str) == Some(session_id)
+                && candidate_cwd.as_deref() == Some(expected_cwd.as_path())
+                && value
+                    .get("forkedFrom")
+                    .and_then(|forked| forked.get("sessionId"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(resumed_session_id)
+        })
+}
+
+#[cfg(test)]
 fn claude_fork_candidate_names(cwd: &std::path::Path) -> std::collections::BTreeSet<String> {
-    let Some(dir) = claude_projects_dir(cwd) else {
+    claude_fork_candidate_names_with_home(cwd, None)
+}
+
+fn claude_fork_candidate_names_with_home(
+    cwd: &std::path::Path,
+    provider_home: Option<&std::path::Path>,
+) -> std::collections::BTreeSet<String> {
+    let Some(dir) = claude_projects_dir_with_home(cwd, provider_home) else {
         return Default::default();
     };
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -728,16 +871,39 @@ pub(crate) fn discover_claude_fork_session_id(
     cwd: &std::path::Path,
     since: std::time::SystemTime,
 ) -> ForkDiscoveryResult {
-    discover_claude_fork_session_id_excluding(resumed_session_id, cwd, since, &Default::default())
+    discover_claude_fork_session_id_excluding_with_home(
+        resumed_session_id,
+        cwd,
+        since,
+        &Default::default(),
+        None,
+    )
 }
 
+#[cfg(test)]
 fn discover_claude_fork_session_id_excluding(
     resumed_session_id: &str,
     cwd: &std::path::Path,
     since: std::time::SystemTime,
     excluded: &std::collections::BTreeSet<String>,
 ) -> ForkDiscoveryResult {
-    let Some(dir) = claude_projects_dir(cwd) else {
+    discover_claude_fork_session_id_excluding_with_home(
+        resumed_session_id,
+        cwd,
+        since,
+        excluded,
+        None,
+    )
+}
+
+fn discover_claude_fork_session_id_excluding_with_home(
+    resumed_session_id: &str,
+    cwd: &std::path::Path,
+    since: std::time::SystemTime,
+    excluded: &std::collections::BTreeSet<String>,
+    provider_home: Option<&std::path::Path>,
+) -> ForkDiscoveryResult {
+    let Some(dir) = claude_projects_dir_with_home(cwd, provider_home) else {
         return ForkDiscoveryResult::NotFound;
     };
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -769,6 +935,9 @@ fn discover_claude_fork_session_id_excluding(
             continue;
         };
         if !file_modified_not_before_launch(modified, since) || modified > launch_upper {
+            continue;
+        }
+        if !fork_candidate_has_provider_proof(&path, stem, cwd, resumed_session_id) {
             continue;
         }
         candidates.push(stem.to_string());
@@ -842,6 +1011,16 @@ pub(crate) fn claude_native_runtime(
     command: &str,
     args: &[String],
 ) -> NativeRuntimeMeta {
+    claude_native_runtime_with_home(session_id, cwd, command, args, None)
+}
+
+fn claude_native_runtime_with_home(
+    session_id: &str,
+    cwd: &std::path::Path,
+    command: &str,
+    args: &[String],
+    provider_home: Option<&std::path::Path>,
+) -> NativeRuntimeMeta {
     let mut launch_argv = vec![command.to_string()];
     launch_argv.extend(args.iter().cloned());
     // Resume forks the prior conversation into a fresh session id (dec_052).
@@ -855,7 +1034,12 @@ pub(crate) fn claude_native_runtime(
     NativeRuntimeMeta {
         provider: "claude".to_string(),
         session_id: Some(session_id.to_string()),
-        session_path: claude_session_path(session_id, cwd),
+        session_path: provider_home
+            .and_then(|home| {
+                claude_projects_dir_with_home(cwd, Some(home))
+                    .map(|dir| dir.join(format!("{session_id}.jsonl")))
+            })
+            .or_else(|| claude_session_path(session_id, cwd)),
         launch_argv,
         resume_argv,
     }
@@ -951,9 +1135,64 @@ pub(crate) fn prompt_with_eot_instruction(bundle: &str, run_id: &str) -> String 
 const TMUX_SESSION_COLS: &str = "200";
 const TMUX_SESSION_ROWS: &str = "50";
 
-async fn spawn_tmux_session(session: &str, plan: &TmuxSpawnPlan) -> Result<(), DriverError> {
+struct ClaudeForkLaunchObservation {
+    since: std::time::SystemTime,
+    excluded: std::collections::BTreeSet<String>,
+}
+
+fn execution_command(plan: &TmuxSpawnPlan) -> Result<(String, Vec<String>), DriverError> {
+    let Some(pin) = plan.pinned_executable.as_ref() else {
+        return Ok((plan.command.clone(), plan.args.clone()));
+    };
+    if plan.trusted_provider_identity.as_deref() != Some("claude") {
+        return Err(DriverError::InvalidConfig(
+            "pinned executable requires trusted provider identity".into(),
+        ));
+    }
+    let mut args = vec![
+        "__exec-pinned".to_string(),
+        pin.path.to_string_lossy().into_owned(),
+    ];
+    #[cfg(unix)]
+    {
+        args.push(pin.dev.to_string());
+        args.push(pin.ino.to_string());
+    }
+    args.push("--".to_string());
+    args.extend(plan.args.iter().cloned());
+    Ok((pin.exec_wrapper.to_string_lossy().into_owned(), args))
+}
+
+async fn spawn_tmux_session(
+    session: &str,
+    plan: &TmuxSpawnPlan,
+) -> Result<Option<ClaudeForkLaunchObservation>, DriverError> {
     // After a daemon crash, a previous tmux pane may still hold this name.
     kill_tmux_session(session).await;
+
+    let (mut execution_command, mut execution_args) = execution_command(plan)?;
+    let gate = (plan.native_resume_mode
+        && plan.trusted_provider_identity.as_deref() == Some("claude"))
+    .then(|| {
+        std::env::temp_dir().join(format!(
+            "orgasmic-claude-launch-{}-{}",
+            sanitize_tmux_name(session),
+            uuid::Uuid::new_v4()
+        ))
+    });
+    if let Some(gate) = gate.as_ref() {
+        let mut gated_args = vec![
+            "-c".to_string(),
+            "gate=$1; shift; while [ ! -e \"$gate\" ]; do sleep 0.01; done; rm -f -- \"$gate\"; exec \"$@\""
+                .to_string(),
+            "orgasmic-claude-launch-gate".to_string(),
+            gate.to_string_lossy().into_owned(),
+            execution_command,
+        ];
+        gated_args.append(&mut execution_args);
+        execution_command = "/bin/sh".to_string();
+        execution_args = gated_args;
+    }
 
     let mut tmux = tokio::process::Command::new("tmux");
     tmux.args([
@@ -971,8 +1210,8 @@ async fn spawn_tmux_session(session: &str, plan: &TmuxSpawnPlan) -> Result<(), D
     .arg("-c")
     .arg(&plan.cwd)
     .arg("--")
-    .arg(&plan.command);
-    for a in &plan.args {
+    .arg(&execution_command);
+    for a in &execution_args {
         tmux.arg(a);
     }
     let output = tmux
@@ -989,6 +1228,27 @@ async fn spawn_tmux_session(session: &str, plan: &TmuxSpawnPlan) -> Result<(), D
             stderr.trim()
         )));
     }
+    let launch_observation = if let Some(gate) = gate {
+        // The pane is blocked in the launch gate here. Sample the exact
+        // pre-exec candidate set and lower bound, then release the original
+        // pane. This closes the old baseline-to-spawn observation window.
+        let excluded =
+            claude_fork_candidate_names_with_home(&plan.cwd, plan.provider_home.as_deref());
+        let since = std::time::SystemTime::now();
+        if let Err(error) = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&gate)
+        {
+            kill_tmux_session(session).await;
+            return Err(DriverError::Transport(format!(
+                "release Claude launch gate: {error}"
+            )));
+        }
+        Some(ClaudeForkLaunchObservation { since, excluded })
+    } else {
+        None
+    };
     // Best-effort quality-of-life options for browser attach (lifted from HAR):
     // mouse lets the operator scroll/select inside the attached xterm; the
     // rename guard keeps the session name stable for run lookups.
@@ -1003,7 +1263,7 @@ async fn spawn_tmux_session(session: &str, plan: &TmuxSpawnPlan) -> Result<(), D
             .status()
             .await;
     }
-    Ok(())
+    Ok(launch_observation)
 }
 
 async fn paste_text_into_pane(session: &str, text: &str) -> Result<(), DriverError> {
@@ -1580,7 +1840,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn inert_acquire_emits_ready() {
+    async fn inert_acquire_emits_ready_without_synthetic_terminal_on_release() {
         let d = driver();
         let mut s = d
             .acquire(ctx("run-1", RunKind::Worker), inert_config())
@@ -1589,8 +1849,10 @@ mod tests {
         let ev = s.events.recv().await.unwrap();
         assert!(matches!(ev, DriverEvent::Ready { .. }));
         s.control.release("done").await.unwrap();
-        let ev2 = s.events.recv().await.unwrap();
-        assert!(matches!(ev2, DriverEvent::RunComplete { .. }));
+        assert!(
+            s.events.recv().await.is_none(),
+            "control-plane release must close without manufacturing a terminal provider event"
+        );
     }
 
     #[tokio::test]
@@ -1756,7 +2018,17 @@ mod tests {
         let dir = super::claude_projects_dir(cwd).expect("projects dir");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("{session_id}.jsonl"));
-        std::fs::write(&path, "{}\n").unwrap();
+        std::fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "sessionId": session_id,
+                "cwd": cwd,
+                "forkedFrom": {"sessionId": "origin-session"},
+            }))
+            .unwrap()
+                + "\n",
+        )
+        .unwrap();
         filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(modified)).unwrap();
         let _ = home;
         path
@@ -1775,6 +2047,45 @@ mod tests {
                 result,
                 super::ForkDiscoveryResult::Unique("fork-unique".into())
             );
+        });
+    }
+
+    #[test]
+    fn fork_discovery_rejects_filename_only_without_provider_metadata() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            let dir = super::claude_projects_dir(&cwd).unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("filename-only.jsonl"), "{}\n").unwrap();
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        });
+    }
+
+    #[test]
+    fn fork_discovery_rejects_wrong_resumed_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            let dir = super::claude_projects_dir(&cwd).unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(
+                dir.join("wrong-parent.jsonl"),
+                serde_json::to_string(&json!({
+                    "sessionId": "wrong-parent",
+                    "cwd": cwd,
+                    "forkedFrom": {"sessionId": "another-origin"},
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
         });
     }
 
@@ -1902,6 +2213,7 @@ mod tests {
             &cwd,
             since,
             &Default::default(),
+            None,
         )
         .await;
         assert_eq!(
@@ -2354,6 +2666,10 @@ mod tests {
             eot_marker: tmux_eot_marker("run-input-ready"),
             native_runtime: None,
             run_id: "run-input-ready".into(),
+            native_resume_mode: false,
+            trusted_provider_identity: None,
+            pinned_executable: None,
+            provider_home: None,
         };
 
         let _guard = SessionGuard(session.clone());

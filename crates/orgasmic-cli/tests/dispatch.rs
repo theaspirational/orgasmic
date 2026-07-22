@@ -3484,7 +3484,7 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     write(&summary_path, "would-be finalize report");
 
     let racer_http = http.clone();
-    let racer_addr = running.addr.clone();
+    let racer_addr = running.addr;
     let racer_token = token.clone();
     let racer_run_id = run_id.clone();
     let racer_last_path = last_path.clone();

@@ -1233,7 +1233,7 @@ async fn acp_ws_routes_frames_through_adapter() {
 }
 
 #[tokio::test]
-async fn tmux_inert_mode_emits_ready_and_release_without_tmux_binary() {
+async fn tmux_inert_mode_emits_ready_then_closes_on_release_without_tmux_binary() {
     let driver = TmuxDriver::new(Box::new(MockAdapter {
         request: simulated_request(),
     }));
@@ -1250,8 +1250,7 @@ async fn tmux_inert_mode_emits_ready_and_release_without_tmux_binary() {
         } if protocol_version == "tmux-tui/1" && capabilities["inert"] == true
     ));
     session.control.release("done").await.unwrap();
-    let done = session.events.recv().await.unwrap();
-    assert!(matches!(done, DriverEvent::RunComplete { .. }));
+    assert!(session.events.recv().await.is_none());
 }
 
 #[tokio::test]

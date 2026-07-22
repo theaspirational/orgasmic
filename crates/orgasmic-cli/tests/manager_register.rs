@@ -56,7 +56,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
     symlink_repo_source(home);
     write(
         &project_root.join(".orgasmic/project.org"),
-        &format!(
+        format!(
             "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:END:\n"
         ),
     );
@@ -66,7 +66,7 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str) {
     );
     write(
         &home.board(),
-        &format!(
+        format!(
             "#+title: orgasmic board\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n:PROPERTIES:\n:ID:               {project_id}\n:PATH:             {}\n:BRANCH:           main\n:STATUS:           active\n:END:\n",
             project_root.display()
         ),

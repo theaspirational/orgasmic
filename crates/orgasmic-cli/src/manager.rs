@@ -1711,6 +1711,7 @@ fn is_stall_sweep_release_reason(reason: &str) -> bool {
     )
 }
 
+#[cfg(test)]
 fn is_worker_declared_tombstone(tombstone: DispatchReleaseTombstone) -> bool {
     matches!(
         tombstone,
