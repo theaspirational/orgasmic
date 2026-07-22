@@ -12418,3 +12418,20 @@ Harden the shipped worker contract and manager dispatch convention, without prov
 - Manager watchers must have an escalation bound and treat a live worker PID as insufficient proof of progress.
 
 Add deterministic prompt-render/contract tests proving implementer and reviewer bundles inherit the rule. Keep supervisor timeout semantics unchanged in this scoped task; file a separate design task if runtime-level semantic-stall detection is still needed.
+
+* DONE TASK-EMY0M TASK-QPKCD fix round 4: project-scoped crash-safe rescue authority
+:PROPERTIES:
+:ID: TASK-EMY0M
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-QPKCD
+:END:
+
+Resolve QPKCD ship review findings after 5ce2285: unified early-exit quiescence; project-scoped leases/locks; full-plan crash reconciliation; invalid/deleted claim repair; daemon-pinned Claude executable with retained native identity.
+
+* DONE TASK-E3TBC TASK-QPKCD fix round 5: quiescence and crash-authoritative recovery
+:PROPERTIES:
+:ID: TASK-E3TBC
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Resolve all six HIGH findings from TASK-GJ8PC review of c9d4850: healthy-run-safe channel quiescence; pre-Acquire crash reconciliation and stable plan; authoritative corrupt/deleted claim repair; no PATH fallback; actual Claude fork identity; fmt and warning gates.

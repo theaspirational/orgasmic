@@ -30,15 +30,6 @@ Model/effort: orgasmic carries ZERO model knowledge (dec_WDR5K item 9). Structur
 
 Resolve final AFE5Q review findings after a734b11: durable ended-owner cleanup fencing held across deletion; fail-closed identity-bound no-follow cleanup; cancellation-atomic startup child ownership; reconcile finalize-only endpoint tests/warnings; close Cursor send race; correct artifact reservation ownership transfer.
 
-* IN_REVIEW TASK-EMY0M TASK-QPKCD fix round 4: project-scoped crash-safe rescue authority
-:PROPERTIES:
-:ID: TASK-EMY0M
-:IMPLEMENTS: dec_WDR5K
-:PARENT: TASK-QPKCD
-:END:
-
-Resolve QPKCD ship review findings after 5ce2285: unified early-exit quiescence; project-scoped leases/locks; full-plan crash reconciliation; invalid/deleted claim repair; daemon-pinned Claude executable with retained native identity.
-
 * IN_REVIEW TASK-K05MX TASK-SZEWA fix round 3: semantic governance and deletion-ready runtime
 :PROPERTIES:
 :ID: TASK-K05MX
@@ -47,14 +38,6 @@ Resolve QPKCD ship review findings after 5ce2285: unified early-exit quiescence;
 :END:
 
 Resolve SZEWA ship review findings after df86fcd: semantic iteration counting; truthful universal context budget; governance tri-state/parity; exact model/effort and worker-free recovery; guarded artifact restart lifecycle; central custom argv validation; live-switch acceptance; warning cleanup.
-
-* IN_REVIEW TASK-E3TBC TASK-QPKCD fix round 5: quiescence and crash-authoritative recovery
-:PROPERTIES:
-:ID: TASK-E3TBC
-:IMPLEMENTS: dec_WDR5K
-:END:
-
-Resolve all six HIGH findings from TASK-GJ8PC review of c9d4850: healthy-run-safe channel quiescence; pre-Acquire crash reconciliation and stable plan; authoritative corrupt/deleted claim repair; no PATH fallback; actual Claude fork identity; fmt and warning gates.
 
 * IN_REVIEW TASK-VQNZ9 TASK-SZEWA fix round 4: truthful semantic governance and wire proof
 :PROPERTIES:

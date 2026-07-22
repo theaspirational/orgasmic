@@ -19896,3 +19896,165 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-07-22 Wed 11:08:10 manager.clear_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2361
+:TIME:         [2026-07-22 Wed 11:08:10]
+:TYPE:         manager.clear_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       QPKCD recovery-authority chain completed and merged through f0a9480; HQR91, TMM5H, QPKCD, and polling hardening are done.
+:GOAL_ID:      goal-20260721-finish-qpkcd-through
+:END:
+
+* TX 2026-07-22 Wed 11:08:10 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2362
+:TIME:         [2026-07-22 Wed 11:08:10]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       Operator selected the post-QPKCD order: TASK-83WS2, TASK-0SVR3, then TASK-DZ5NM, with TASK-41B0T available for incident-prevention reprioritization.
+:GOAL_ID:      goal-20260722-close-afe5q-and
+:REPLACES:     —
+:END:
+
+* TX 2026-07-22 Wed 11:08:11 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2363
+:TIME:         [2026-07-22 Wed 11:08:11]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:39 task.state_transitioned TASK-EMY0M
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2364
+:TIME:         [2026-07-22 Wed 11:08:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EMY0M
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Intermediate QPKCD fix round is contained in the completed cumulative recovery chain merged at f0a9480; parent TASK-QPKCD is DONE.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 11:08:40 task.state_transitioned TASK-E3TBC
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2365
+:TIME:         [2026-07-22 Wed 11:08:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E3TBC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Intermediate QPKCD fix round is contained in the completed cumulative recovery chain merged at f0a9480; parent TASK-QPKCD is DONE.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 11:08:41 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2366
+:TIME:         [2026-07-22 Wed 11:08:41]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:41 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2367
+:TIME:         [2026-07-22 Wed 11:08:41]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2368
+:TIME:         [2026-07-22 Wed 11:08:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2369
+:TIME:         [2026-07-22 Wed 11:08:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:42 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2370
+:TIME:         [2026-07-22 Wed 11:08:42]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:43 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2371
+:TIME:         [2026-07-22 Wed 11:08:43]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 11:08:43 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2372
+:TIME:         [2026-07-22 Wed 11:08:43]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

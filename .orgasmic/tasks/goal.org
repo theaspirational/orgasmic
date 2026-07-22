@@ -2,12 +2,29 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Finish QPKCD through TASK-TMM5H :goal:
+* GOAL Close AFE5Q and SZEWA, then remove worker content :goal:
+:PROPERTIES:
+:ID:               goal-20260722-close-afe5q-and
+:SET_AT:           [2026-07-22 Wed]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:END:
+
+** Statement
+Complete TASK-83WS2 as the independent read-only verdict on the existing AFE5Q candidate, resolve and close TASK-AFE5Q, continue TASK-0SVR3 until TASK-SZEWA is reviewed and closed, then undertake TASK-DZ5NM as the worker-content hard cutover. Keep TASK-41B0T available to pull forward only when semantic-stall prevention becomes the higher priority.
+
+** Reached When
+TASK-AFE5Q and TASK-SZEWA are DONE with their required fixes, production-path verification, and explicit ship verdicts; TASK-DZ5NM is implemented, reviewed, merged, and DONE; no related dispatch remains open; TASK-41B0T is either intentionally deferred with rationale or completed if pulled forward.
+
+* CLEARED Finish QPKCD through TASK-TMM5H :goal:
 :PROPERTIES:
 :ID:               goal-20260721-finish-qpkcd-through
 :SET_AT:           [2026-07-21 Tue]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-22 Wed]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
 :END:
 
 ** Statement
