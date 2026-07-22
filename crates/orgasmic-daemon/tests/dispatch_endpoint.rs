@@ -1469,6 +1469,7 @@ async fn wait_for_orphan_tx(project_root: &Path) {
 
 #[cfg(unix)]
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_empty() {
     let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
@@ -1535,6 +1536,7 @@ async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_emp
 /// artifacts empty.
 #[cfg(unix)]
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
     let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
@@ -1604,6 +1606,7 @@ async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
 /// assistant chunks into completion artifacts.
 #[cfg(unix)]
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
     let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
@@ -1686,6 +1689,7 @@ async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
     let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
@@ -2072,6 +2076,7 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
 /// not appear in dispatch stdout artifacts.
 #[cfg(unix)]
 #[tokio::test]
+#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
     let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();

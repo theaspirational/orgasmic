@@ -20451,3 +20451,220 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-22 Wed 14:00:34 task.created TASK-FG7FD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2401
+:TIME:         [2026-07-22 Wed 14:00:34]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FG7FD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Operator requested coordinated rmux 0.9 migration and the recommended hardening after reproducing SecItemCopyMatching -50 in a stale rmux daemon.
+:END:
+
+* TX 2026-07-22 Wed 14:00:41 task.state_transitioned TASK-FG7FD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2402
+:TIME:         [2026-07-22 Wed 14:00:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FG7FD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Manager-implementer proceeding solo per operator direction; source audit and coordinated migration started.
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-22 Wed 14:05:46 task.property_updated TASK-FG7FD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2403
+:TIME:         [2026-07-22 Wed 14:05:46]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FG7FD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       Scope expanded to the existing macOS LaunchAgent service adapter because persistent rmux coalition ownership belongs in daemon service installation, not the driver.
+:WRITE_SCOPE:  Cargo.toml Cargo.lock crates/orgasmic-drivers crates/orgasmic-daemon crates/orgasmic-cli .orgasmic/decisions.org .orgasmic/architecture.org .orgasmic/gotchas.org
+:END:
+
+* TX 2026-07-22 Wed 14:21:12 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2404
+:TIME:         [2026-07-22 Wed 14:21:12]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_PC7M0
+:NODE_ID:      dec_PC7M0
+:END:
+
+* TX 2026-07-22 Wed 14:21:23 graph.architecture.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2405
+:TIME:         [2026-07-22 Wed 14:21:23]
+:TYPE:         graph.architecture.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       created graph node arch_V4DKF
+:NODE_ID:      arch_V4DKF
+:END:
+
+
+* TX 2026-07-22 Wed 14:44:52 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2406
+:TIME:         [2026-07-22 Wed 14:44:52]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PC7M0
+:NODE_ID:      dec_PC7M0
+:END:
+
+* TX 2026-07-22 Wed 14:44:52 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2407
+:TIME:         [2026-07-22 Wed 14:44:52]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_V4DKF
+:NODE_ID:      arch_V4DKF
+:END:
+
+* TX 2026-07-22 Wed 14:45:51 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2408
+:TIME:         [2026-07-22 Wed 14:45:51]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PC7M0
+:NODE_ID:      dec_PC7M0
+:END:
+
+* TX 2026-07-22 Wed 14:45:51 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2409
+:TIME:         [2026-07-22 Wed 14:45:51]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_V4DKF
+:NODE_ID:      arch_V4DKF
+:END:
+
+* TX 2026-07-22 Wed 14:46:39 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2410
+:TIME:         [2026-07-22 Wed 14:46:39]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_V4DKF
+:NODE_ID:      arch_V4DKF
+:END:
+
+* TX 2026-07-22 Wed 14:48:58 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2411
+:TIME:         [2026-07-22 Wed 14:48:58]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_PC7M0
+:NODE_ID:      dec_PC7M0
+:END:
+
+* TX 2026-07-22 Wed 14:48:58 graph.decision.reparent orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2412
+:TIME:         [2026-07-22 Wed 14:48:58]
+:TYPE:         graph.decision.reparent
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       reparent decision node dec_PC7M0
+:NODE_ID:      dec_PC7M0
+:END:
+
+* TX 2026-07-22 Wed 14:49:04 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2413
+:TIME:         [2026-07-22 Wed 14:49:04]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_V4DKF
+:NODE_ID:      arch_V4DKF
+:END:
+
+* TX 2026-07-22 Wed 14:49:11 task.state_transitioned TASK-FG7FD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2414
+:TIME:         [2026-07-22 Wed 14:49:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FG7FD
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       Implemented exact rmux 0.9 CLI/daemon/SDK compatibility, independent macOS launchd ownership, Cursor Keychain preflight, and retained terminal exit propagation. Host now runs rmux 0.9.0 under active orgasmic.rmux and the daemon from this source checkout. Targeted rmux/service tests, live exit-139 test, fmt, fixtures, and workspace clippy pass; full workspace runs exposed unrelated pre-existing PATH/timing flakes that pass in isolation.
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-22 Wed 14:49:23 task.edited TASK-FG7FD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2415
+:TIME:         [2026-07-22 Wed 14:49:23]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FG7FD
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-FG7FD
+:NODE_ID:      TASK-FG7FD
+:END:
+
+* TX 2026-07-22 Wed 14:50:24 task.state_transitioned TASK-FG7FD
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2416
+:TIME:         [2026-07-22 Wed 14:50:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FG7FD
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Implemented and committed as 32d7bfa. rmux 0.9.0 is installed; orgasmic.rmux and orgasmic.daemon are separate active launchd coalitions; live Keychain preflight plus exit-139 terminal propagation pass. fmt, targeted rmux/service/graph tests, and workspace clippy pass. Workspace-wide parallel and serial sweeps each exposed a different pre-existing flaky test, both passing immediately in isolation.
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

@@ -20,10 +20,12 @@ futures.workspace = true
 libc = "0.2"
 reqwest.workspace = true
 tokio-tungstenite.workspace = true
-# rmux hybrid driver (TASK-104): typed session control. The SDK starts or
-# connects to a daemon but does NOT bundle the `rmux` binary, so the driver
-# discovers/provisions that separately (RMUX_SDK_DAEMON_BINARY or PATH).
-rmux-sdk = "0.5"
+# rmux hybrid driver (TASK-104, TASK-FG7FD): typed session control. The SDK
+# starts or connects to a daemon but does NOT bundle the `rmux` binary, so the
+# driver discovers/provisions that separately (RMUX_SDK_DAEMON_BINARY or PATH).
+# RMUX's detached RPC protocol requires the CLI, daemon, and SDK to use the
+# same release; keep this exact and mirror it in the runtime binary probe.
+rmux-sdk = "=0.9.0"
 tempfile = "3"
 
 [dev-dependencies]

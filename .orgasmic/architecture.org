@@ -1678,3 +1678,13 @@ The full Agent-Native plan block renderer (~22 block types including diagram, wi
 :END:
 
 The interactive-loop rail (dec_S02E2). Artifactor runs launch as long-lived rmux runs by default. When a regenerate/answer submission arrives while a live run holds the artifact.generate:{id} lease, the handler closes out version N exactly as the cold path does (archive vN.mdx, mark comments consumed) and then routes the followup payload — consumed comments with authors/anchors plus the extra prompt — into the live session via WorkerDriver::send_input, implemented for the rmux mode as paste-buffer + send-keys with the end-of-turn-marker instruction re-appended per round (stall babysitter keeps supervising each round). The lease doubles as session ownership; no live lease-holder means cold spawn, unchanged from arch_045Q0.1. orgasmic artifact submit stays the durable end-of-round signal: state flips regenerating on followup send, submitted on submit, and the release-watcher revert still guards a session dying mid-round. Session lifetime ends on explicit release or idle timeout; a daemon restart orphans the in-process session and the next round falls back to cold spawn (same class as TASK-567JG).
+
+* arch_V4DKF rmux launch ownership and terminal lifecycle
+:PROPERTIES:
+:ID: arch_V4DKF
+:MOTIVATED_BY: dec_PC7M0
+:SOURCE_PATHS: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-cli/src/daemon_service.rs crates/orgasmic-daemon/src/api.rs
+:TESTS: cargo test -p orgasmic-drivers && cargo test -p orgasmic-cli daemon_service::tests
+:END:
+
+The rmux mode is a version-locked SDK transport whose external CLI and hidden daemon must match RMUX_REQUIRED_VERSION. macOS service startup installs orgasmic.rmux.plist and rmux-launchd.conf before orgasmic.daemon.plist, giving the hidden daemon an independent launchd coalition and keeping it alive between sessions. Cursor acquisition first proves Keychain usability through a bounded disposable rmux pane. Worker panes retain their exit state so EOF becomes a single terminal driver event: code 0 maps to RunComplete; non-zero code, signal, missing exit state, or Keychain preflight failure maps to fatal DriverError. CLI, hidden daemon, and rmux-sdk must be upgraded as one exact release; a protocol upgrade may stop the dedicated LaunchAgent only as an explicit migration.

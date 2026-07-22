@@ -2685,7 +2685,7 @@ fn mode_binary_status(mode: &str) -> Option<(String, bool)> {
         "rmux" => {
             let probe = orgasmic_drivers::probe_rmux_binary();
             let display = probe.path.clone().unwrap_or_else(|| "rmux".to_string());
-            Some((display, probe.found))
+            Some((display, probe.usable()))
         }
         _ => None,
     }

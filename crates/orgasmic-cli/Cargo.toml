@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 orgasmic-core = { path = "../orgasmic-core" }
 orgasmic-daemon = { path = "../orgasmic-daemon" }
+orgasmic-drivers = { path = "../orgasmic-drivers" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

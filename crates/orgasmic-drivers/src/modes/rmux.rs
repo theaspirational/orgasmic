@@ -1,12 +1,11 @@
-// orgasmic:arch_A53QX, arch_C87Z9, arch_MK2Q2
-//! rmux hybrid mode driver — **bounded smoke proof** (TASK-104).
+// orgasmic:arch_A53QX, arch_C87Z9, arch_MK2Q2, arch_V4DKF, dec_PC7M0
+//! Version-locked rmux terminal driver.
 //!
-//! Strategy 3 from the rmux exploration: drive a detached session through the
-//! typed [`rmux_sdk`] facade (`Rmux::ensure_session`) while still relying on a
-//! **separately provisioned** `rmux` binary. The SDK starts or connects to a
-//! daemon, but it does *not* bundle the multiplexer itself, so the daemon
-//! binary is discovered via `RMUX_SDK_DAEMON_BINARY` or PATH (`rmux`) and that
-//! check is kept *distinct* from the wrapped harness binary check.
+//! Detached sessions are driven through the typed [`rmux_sdk`] facade while
+//! relying on a separately provisioned, exact-version `rmux` CLI/daemon. The
+//! driver discovers that binary via `RMUX_SDK_DAEMON_BINARY` or PATH, verifies
+//! it matches the SDK release, and keeps that check distinct from the wrapped
+//! harness binary check.
 //!
 //! ### Lifecycle over the typed SDK (TASK-AFE5Q)
 //!
@@ -16,15 +15,14 @@
 //! on the PTY-attach WebSocket. Pane/process exit (stream end) is a terminal
 //! signal only; finalize remains the success authority.
 //!
-//! ### Honesty contract
+//! ### Availability contract
 //!
-//! This is **not** a production terminal driver and it does not replace tmux.
-//! When the `rmux` binary is missing, when the SDK cannot reach/start a daemon,
-//! or when a capability (e.g. Web Share) is unavailable, the driver records the
-//! exact reason in the `Ready` capabilities payload and degrades to inert mode
-//! instead of faking a working integration. Nothing here should be read as
-//! "rmux is supported"; it is a reproducible probe whose output is captured in
-//! the task Evidence and `.orgasmic/decisions.org`.
+//! rmux remains an opt-in transport and does not replace the tmux default.
+//! When its binary is missing or incompatible, its SDK cannot reach the
+//! daemon, or a capability is unavailable, the driver records the exact reason
+//! in the `Ready` capabilities payload and degrades to inert mode instead of
+//! faking a working integration. On macOS, Cursor additionally requires a
+//! successful disposable Keychain preflight through the launchd-owned daemon.
 //!
 //! ### Token hygiene
 //!
@@ -68,6 +66,12 @@ const MODE: &str = "rmux";
 /// Default mode binary name probed on PATH when `RMUX_SDK_DAEMON_BINARY` is
 /// unset. Matches the crate published as `rmux` on crates.io.
 const RMUX_BINARY: &str = "rmux";
+
+/// Exact external RMUX release paired with the SDK dependency. RMUX's
+/// detached RPC protocol does not promise cross-release compatibility, so the
+/// binary probe fails closed instead of allowing Cargo's semver range and the
+/// host CLI to drift independently.
+pub const RMUX_REQUIRED_VERSION: &str = "0.9.0";
 
 /// Environment variable the rmux SDK uses to locate the daemon binary it spawns
 /// on `connect_or_start`. Mirrored here so the driver's separate binary check
@@ -146,21 +150,36 @@ struct RmuxConfig {
 /// harness binary so the catalog can report each independently).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RmuxBinaryProbe {
-    /// Whether a usable rmux binary was found.
+    /// Whether an rmux executable was found, independent of its version.
     pub found: bool,
+    /// Whether the executable reports the exact SDK-paired release.
+    pub compatible: bool,
     /// Resolved path or binary name, when found.
     pub path: Option<String>,
     /// Where the binary was resolved from: `env` or `path`.
     pub source: Option<&'static str>,
+    /// Parsed release reported by `rmux -V`, when available.
+    pub version: Option<String>,
+    /// Bounded diagnostic when the version could not be read or did not match.
+    pub version_error: Option<String>,
 }
 
 impl RmuxBinaryProbe {
     fn missing() -> Self {
         Self {
             found: false,
+            compatible: false,
             path: None,
             source: None,
+            version: None,
+            version_error: None,
         }
+    }
+
+    /// Whether this binary can safely speak to the compiled SDK.
+    #[must_use]
+    pub const fn usable(&self) -> bool {
+        self.found && self.compatible
     }
 }
 
@@ -174,20 +193,68 @@ pub fn probe_rmux_binary() -> RmuxBinaryProbe {
         // on PATH. Treat an existing file as found; otherwise still report the
         // configured value so the catalog/event shows what was attempted.
         let found = path.is_file() || binary_on_path(&path.to_string_lossy());
-        return RmuxBinaryProbe {
-            found,
-            path: Some(path.to_string_lossy().into_owned()),
-            source: Some("env"),
-        };
+        return inspect_rmux_binary(path.to_string_lossy().into_owned(), Some("env"), found);
     }
     if let Some(resolved) = which_on_path(RMUX_BINARY) {
-        return RmuxBinaryProbe {
-            found: true,
-            path: Some(resolved),
-            source: Some("path"),
-        };
+        return inspect_rmux_binary(resolved, Some("path"), true);
     }
     RmuxBinaryProbe::missing()
+}
+
+fn inspect_rmux_binary(path: String, source: Option<&'static str>, found: bool) -> RmuxBinaryProbe {
+    if !found {
+        return RmuxBinaryProbe {
+            found: false,
+            compatible: false,
+            path: Some(path),
+            source,
+            version: None,
+            version_error: None,
+        };
+    }
+
+    let output = StdCommand::new(&path)
+        .arg("-V")
+        .stdin(Stdio::null())
+        .output();
+    let (version, version_error) = match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            match parse_rmux_version(&stdout) {
+                Some(version) if version == RMUX_REQUIRED_VERSION => (Some(version), None),
+                Some(version) => {
+                    let error = format!(
+                        "rmux version mismatch: expected {RMUX_REQUIRED_VERSION}, found {version}"
+                    );
+                    (Some(version), Some(error))
+                }
+                None => (
+                    None,
+                    Some(format!(
+                        "rmux version unreadable: expected `rmux {RMUX_REQUIRED_VERSION}`"
+                    )),
+                ),
+            }
+        }
+        Ok(output) => (None, Some(format!("rmux -V exited with {}", output.status))),
+        Err(error) => (None, Some(format!("rmux -V failed: {error}"))),
+    };
+    let compatible = version_error.is_none();
+    RmuxBinaryProbe {
+        found: true,
+        compatible,
+        path: Some(path),
+        source,
+        version,
+        version_error,
+    }
+}
+
+fn parse_rmux_version(output: &str) -> Option<String> {
+    let mut words = output.split_whitespace();
+    (words.next()? == "rmux")
+        .then(|| words.next().map(ToOwned::to_owned))
+        .flatten()
 }
 
 fn which_on_path(binary: &str) -> Option<String> {
@@ -224,6 +291,14 @@ fn inert_reason(cfg: &RmuxConfig, probe: &RmuxBinaryProbe, command: &str) -> Opt
     }
     if !probe.found {
         return Some("rmux_binary_missing".to_string());
+    }
+    if !probe.compatible {
+        return Some(
+            probe
+                .version_error
+                .clone()
+                .unwrap_or_else(|| "rmux_version_unreadable".to_string()),
+        );
     }
     if !harness_binary_available(command) {
         return Some(format!("harness_binary_missing:{command}"));
@@ -746,8 +821,12 @@ fn ready_capabilities(
         "args": plan.args,
         "rmux_binary": {
             "found": probe.found,
+            "compatible": probe.compatible,
             "path": probe.path,
             "source": probe.source,
+            "version": probe.version,
+            "required_version": RMUX_REQUIRED_VERSION,
+            "version_error": probe.version_error,
         },
         "web_share": web_share.to_capabilities(),
         "smoke": true,
@@ -790,12 +869,17 @@ async fn run_live_session(
         .await
         .map_err(|e| DriverError::Transport(format!("rmux connect_or_start: {e}")))?;
 
+    if harness == "cursor-agent" {
+        preflight_cursor_keychain(&rmux, &session_target, &plan.cwd).await?;
+    }
+
     let session_name = rmux_sdk::SessionName::new(session_name.to_string())
         .map_err(|e| DriverError::Transport(format!("rmux session name: {e}")))?;
 
-    let mut process =
-        ProcessSpec::argv(std::iter::once(plan.command.clone()).chain(plan.args.iter().cloned()));
-    process.environment = Some(vec![format!("ORGASMIC_RUN_ID={}", plan.run_id)]);
+    // Create an addressable pane first, then respawn it with remain-on-exit.
+    // RMUX 0.9 retains the real exit code/signal only for a dead pane that is
+    // kept around; creating the agent process directly could destroy the last
+    // pane and session before the lifecycle watcher reads that terminal state.
     let session = rmux
         .ensure_session(
             EnsureSession::named(session_name)
@@ -803,10 +887,19 @@ async fn run_live_session(
                 .detached(true)
                 .working_directory(plan.cwd.to_string_lossy().into_owned())
                 .size(TerminalSizeSpec::new(200, 50))
-                .process(process),
+                .process(ProcessSpec::default()),
         )
         .await
         .map_err(|e| DriverError::Transport(format!("rmux ensure_session: {e}")))?;
+
+    let pane = session.pane(0, 0);
+    pane.spawn(std::iter::once(plan.command.clone()).chain(plan.args.iter().cloned()))
+        .cwd(plan.cwd.clone())
+        .env("ORGASMIC_RUN_ID", &plan.run_id)
+        .kill_existing(true)
+        .keep_alive_on_exit(true)
+        .await
+        .map_err(|e| DriverError::Transport(format!("rmux spawn pane: {e}")))?;
 
     // Let attached terminal emulators report real mouse events to rmux. Its
     // default WheelUpPane binding enters copy mode and subsequent wheel events
@@ -821,7 +914,6 @@ async fn run_live_session(
         RmuxWebShareProof::default()
     };
 
-    let pane = session.pane(0, 0);
     let lifecycle_task =
         spawn_pane_exit_watch(&pane, events.clone(), terminal_emitted.clone()).await?;
 
@@ -905,6 +997,114 @@ async fn run_live_session(
     })
 }
 
+#[cfg(target_os = "macos")]
+async fn preflight_cursor_keychain(
+    rmux: &rmux_sdk::Rmux,
+    session_target: &str,
+    cwd: &Path,
+) -> Result<(), DriverError> {
+    use rmux_sdk::{EnsureSession, EnsureSessionPolicy, PaneOutputStart, ProcessSpec, SessionName};
+
+    const MAX_OUTPUT_BYTES: usize = 8 * 1024;
+    let probe_name = SessionName::new(format!("{session_target}-keychain-preflight"))
+        .map_err(|e| DriverError::Transport(format!("rmux keychain preflight name: {e}")))?;
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(probe_name)
+                .policy(EnsureSessionPolicy::CreateOnly)
+                .detached(true)
+                .working_directory(cwd.to_string_lossy().into_owned())
+                .process(ProcessSpec::default()),
+        )
+        .await
+        .map_err(|e| DriverError::Transport(format!("rmux keychain preflight session: {e}")))?;
+    let pane = session.pane(0, 0);
+
+    let mut argv = vec![
+        "/usr/bin/security".to_string(),
+        "show-keychain-info".to_string(),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        let login = PathBuf::from(home)
+            .join("Library")
+            .join("Keychains")
+            .join("login.keychain-db");
+        if login.is_file() {
+            argv.push(login.to_string_lossy().into_owned());
+        }
+    }
+    let spawn = pane
+        .spawn(argv)
+        .cwd(cwd.to_path_buf())
+        .kill_existing(true)
+        .keep_alive_on_exit(true)
+        .await;
+    if let Err(error) = spawn {
+        let _ = session.kill().await;
+        return Err(DriverError::Transport(format!(
+            "rmux keychain preflight spawn: {error}"
+        )));
+    }
+
+    let result = pane
+        .collect_output_until_exit_starting_at(PaneOutputStart::Oldest, MAX_OUTPUT_BYTES)
+        .await;
+    let _ = session.kill().await;
+    let collection = result.map_err(|error| {
+        DriverError::Transport(format!(
+            "macOS Keychain preflight inside rmux did not complete: {error}; {}",
+            keychain_recovery_action()
+        ))
+    })?;
+    classify_macos_keychain_preflight(&collection.bytes, collection.exit_state.as_ref())
+        .map_err(DriverError::Transport)
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn preflight_cursor_keychain(
+    _rmux: &rmux_sdk::Rmux,
+    _session_target: &str,
+    _cwd: &Path,
+) -> Result<(), DriverError> {
+    Ok(())
+}
+
+fn keychain_recovery_action() -> &'static str {
+    "the rmux daemon is stale or not owned by the orgasmic.rmux user LaunchAgent; preserve any needed sessions, run `rmux kill-server`, then restart the orgasmic daemon service"
+}
+
+fn classify_macos_keychain_preflight(
+    output: &[u8],
+    exit: Option<&rmux_sdk::PaneExitState>,
+) -> Result<(), String> {
+    let text = String::from_utf8_lossy(output);
+    let lower = text.to_ascii_lowercase();
+    let err_sec_param = lower.contains("secitemcopymatching failed -50")
+        || lower.contains("seckeychaincopysettings")
+        || lower.contains("errsecparam")
+        || lower.contains("one or more parameters passed to a function were not valid");
+    if err_sec_param {
+        return Err(format!(
+            "macOS Keychain rejected the rmux process context with errSecParam (-50); {}",
+            keychain_recovery_action()
+        ));
+    }
+
+    match exit {
+        Some(exit) if exit.code == Some(0) && exit.signal.is_none() => Ok(()),
+        Some(exit) => Err(format!(
+            "macOS Keychain preflight inside rmux failed (code={:?}, signal={:?}); {}",
+            exit.code,
+            exit.signal,
+            keychain_recovery_action()
+        )),
+        None => Err(format!(
+            "macOS Keychain preflight pane disappeared without an exit status; {}",
+            keychain_recovery_action()
+        )),
+    }
+}
+
 /// Watch pane/process exit via the line stream. Drain without synthesizing
 /// TextChunks or scanning markers — live view stays on the PTY WebSocket.
 // orgasmic:TASK-AFE5Q
@@ -918,6 +1118,7 @@ async fn spawn_pane_exit_watch(
         .await
         .map_err(|e| DriverError::Transport(format!("rmux line_stream: {e}")))?;
     Ok(tokio::spawn(watch_line_stream_exit(
+        pane.clone(),
         line_stream,
         events,
         terminal_emitted,
@@ -1242,6 +1443,7 @@ async fn wait_for_pane_stable(
 /// the daemon maps that terminal event through the finalize contract
 /// (`protocol_end_without_finalize` when a declaration was required).
 async fn watch_line_stream_exit(
+    pane: rmux_sdk::Pane,
     mut lines: rmux_sdk::PaneLineStream,
     events: mpsc::Sender<DriverEvent>,
     terminal_emitted: Arc<AtomicBool>,
@@ -1255,12 +1457,7 @@ async fn watch_line_stream_exit(
                 continue;
             }
             Ok(None) => {
-                emit_run_complete_once(
-                    &events,
-                    &terminal_emitted,
-                    Some("rmux pane ended (process exited)".to_string()),
-                )
-                .await;
+                emit_pane_exit(&pane, &events, &terminal_emitted).await;
                 break;
             }
             Err(err) => {
@@ -1273,6 +1470,65 @@ async fn watch_line_stream_exit(
                 break;
             }
         }
+    }
+}
+
+async fn emit_pane_exit(
+    pane: &rmux_sdk::Pane,
+    events: &mpsc::Sender<DriverEvent>,
+    terminal_emitted: &AtomicBool,
+) {
+    let exit = match pane.info().await {
+        Ok(info) => info.panes.first().and_then(|pane| pane.exit_state.clone()),
+        Err(error) => {
+            emit_fatal_driver_error_once(
+                events,
+                terminal_emitted,
+                format!("rmux pane exit status unavailable: {error}"),
+            )
+            .await;
+            return;
+        }
+    };
+    match classify_pane_exit(exit.as_ref()) {
+        PaneTerminal::Clean(summary) => {
+            emit_run_complete_once(events, terminal_emitted, Some(summary)).await;
+        }
+        PaneTerminal::Failed(message) => {
+            emit_fatal_driver_error_once(events, terminal_emitted, message).await;
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PaneTerminal {
+    Clean(String),
+    Failed(String),
+}
+
+fn classify_pane_exit(exit: Option<&rmux_sdk::PaneExitState>) -> PaneTerminal {
+    let Some(exit) = exit else {
+        return PaneTerminal::Failed(
+            "rmux pane disappeared without retained exit status; treating the run as failed"
+                .to_string(),
+        );
+    };
+    if let Some(signal) = exit.signal {
+        let shell_code = 128_i32.saturating_add(signal);
+        let name = if signal == 11 { " (SIGSEGV)" } else { "" };
+        return PaneTerminal::Failed(format!(
+            "rmux pane exited by signal {signal}{name}; equivalent shell exit code {shell_code}"
+        ));
+    }
+    match exit.code {
+        Some(0) => PaneTerminal::Clean("rmux pane exited with code 0".to_string()),
+        Some(code) => {
+            let suffix = if code == 139 { " (SIGSEGV)" } else { "" };
+            PaneTerminal::Failed(format!("rmux pane exited with code {code}{suffix}"))
+        }
+        None => PaneTerminal::Failed(exit.message.clone().unwrap_or_else(|| {
+            "rmux pane exited without a code or signal; treating the run as failed".to_string()
+        })),
     }
 }
 
@@ -1710,6 +1966,70 @@ mod tests {
     }
 
     #[test]
+    fn rmux_version_parser_requires_the_cli_identity_prefix() {
+        assert_eq!(parse_rmux_version("rmux 0.9.0\n").as_deref(), Some("0.9.0"));
+        assert_eq!(
+            parse_rmux_version("rmux 0.9.0 (release)\n").as_deref(),
+            Some("0.9.0")
+        );
+        assert_eq!(parse_rmux_version("tmux 3.6a\n"), None);
+        assert_eq!(parse_rmux_version(""), None);
+    }
+
+    #[test]
+    fn inert_reason_rejects_cli_sdk_version_mismatch_before_harness_probe() {
+        let cfg = RmuxConfig::default();
+        let probe = RmuxBinaryProbe {
+            found: true,
+            compatible: false,
+            path: Some("/usr/local/bin/rmux".into()),
+            source: Some("path"),
+            version: Some("0.5.0".into()),
+            version_error: Some("rmux version mismatch: expected 0.9.0, found 0.5.0".into()),
+        };
+        assert_eq!(
+            inert_reason(&cfg, &probe, "definitely-not-a-real-binary-xyz").as_deref(),
+            Some("rmux version mismatch: expected 0.9.0, found 0.5.0")
+        );
+    }
+
+    #[test]
+    fn keychain_preflight_classifier_rejects_err_sec_param_even_with_zero_exit() {
+        let exit = rmux_sdk::PaneExitState::from_code(0);
+        let error = classify_macos_keychain_preflight(
+            b"ERROR: SecItemCopyMatching failed -50\r\n",
+            Some(&exit),
+        )
+        .expect_err("errSecParam must fail closed");
+        assert!(error.contains("errSecParam (-50)"), "{error}");
+        assert!(error.contains("rmux kill-server"), "{error}");
+    }
+
+    #[test]
+    fn keychain_preflight_classifier_accepts_a_clean_probe() {
+        let exit = rmux_sdk::PaneExitState::from_code(0);
+        assert!(classify_macos_keychain_preflight(b"Keychain no-timeout\r\n", Some(&exit)).is_ok());
+    }
+
+    #[test]
+    fn pane_exit_classifier_preserves_sigsegv_and_exit_139() {
+        assert_eq!(
+            classify_pane_exit(Some(&rmux_sdk::PaneExitState::from_signal(11))),
+            PaneTerminal::Failed(
+                "rmux pane exited by signal 11 (SIGSEGV); equivalent shell exit code 139".into()
+            )
+        );
+        assert_eq!(
+            classify_pane_exit(Some(&rmux_sdk::PaneExitState::from_code(139))),
+            PaneTerminal::Failed("rmux pane exited with code 139 (SIGSEGV)".into())
+        );
+        assert!(matches!(
+            classify_pane_exit(None),
+            PaneTerminal::Failed(message) if message.contains("disappeared")
+        ));
+    }
+
+    #[test]
     fn inert_reason_reports_missing_rmux_binary_separately() {
         let cfg = RmuxConfig::default();
         let probe = RmuxBinaryProbe::missing();
@@ -1726,8 +2046,11 @@ mod tests {
         let cfg = RmuxConfig::default();
         let probe = RmuxBinaryProbe {
             found: true,
+            compatible: true,
             path: Some("/usr/local/bin/rmux".into()),
             source: Some("path"),
+            version: Some(RMUX_REQUIRED_VERSION.into()),
+            version_error: None,
         };
         let reason = inert_reason(&cfg, &probe, "definitely-not-a-real-binary-xyz");
         assert_eq!(
@@ -1744,8 +2067,11 @@ mod tests {
         };
         let probe = RmuxBinaryProbe {
             found: true,
+            compatible: true,
             path: Some("/usr/local/bin/rmux".into()),
             source: Some("path"),
+            version: Some(RMUX_REQUIRED_VERSION.into()),
+            version_error: None,
         };
         assert_eq!(
             inert_reason(&cfg, &probe, "codex"),
@@ -2480,7 +2806,7 @@ mod tests {
                     saw_complete = true;
                     assert_eq!(
                         summary.as_deref(),
-                        Some("rmux pane ended (process exited)"),
+                        Some("rmux pane exited with code 0"),
                         "process exit should drive completion, not a marker"
                     );
                     break;
@@ -2498,6 +2824,45 @@ mod tests {
         );
         // release() after natural completion is idempotent (terminal already
         // emitted) and tears the session down via the typed Session::kill.
+        s.control.release("cleanup").await.unwrap();
+    }
+
+    /// A retained non-zero pane status must become a terminal driver failure
+    /// immediately; supervisors must never poll a vanished subprocess.
+    #[tokio::test]
+    async fn live_rmux_exit_139_emits_a_fatal_terminal_event() {
+        let _live_guard = live_session_guard();
+        let probe = probe_rmux_binary();
+        if !probe.usable() {
+            eprintln!("skipping live_rmux_exit_139_emits_a_fatal_terminal_event: compatible rmux binary not found");
+            return;
+        }
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", "exit 139"],
+        }));
+        let mut s = d
+            .acquire(ctx("run-exit-139", RunKind::Worker), cfg)
+            .await
+            .unwrap();
+
+        let ev = s.events.recv().await.unwrap();
+        assert!(
+            matches!(ev, DriverEvent::Ready { .. }),
+            "expected Ready, got {ev:?}"
+        );
+        let ev = tokio::time::timeout(Duration::from_secs(5), s.events.recv())
+            .await
+            .expect("timed out waiting for rmux exit 139 event")
+            .expect("event stream closed");
+        match ev {
+            DriverEvent::DriverError { fatal, message } => {
+                assert!(fatal);
+                assert_eq!(message, "rmux pane exited with code 139 (SIGSEGV)");
+            }
+            other => panic!("expected fatal exit 139 event, got {other:?}"),
+        }
         s.control.release("cleanup").await.unwrap();
     }
 
@@ -2590,7 +2955,7 @@ mod tests {
                 DriverEvent::TextChunk { .. } => saw_text = true,
                 DriverEvent::RunComplete { summary } => {
                     saw_complete = true;
-                    assert_eq!(summary.as_deref(), Some("rmux pane ended (process exited)"));
+                    assert_eq!(summary.as_deref(), Some("rmux pane exited with code 0"));
                     break;
                 }
                 DriverEvent::DriverError { fatal, message } => {
@@ -2648,7 +3013,7 @@ mod tests {
                     saw_complete = true;
                     assert_eq!(
                         summary.as_deref(),
-                        Some("rmux pane ended (process exited)"),
+                        Some("rmux pane exited with code 0"),
                         "persistent run should complete on process exit"
                     );
                     break;
