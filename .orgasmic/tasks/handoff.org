@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260721-finish-qpkcd-through
-:LIVENESS:         0cfac30
+:LIVENESS:         a7b5917
 :LIVENESS_AT:      [2026-07-22 Wed]
 :UPDATED_AT:       [2026-07-22 Wed]
 :END:
@@ -73,14 +73,15 @@ Manager-owned snapshot focused on goal-20260721-finish-qpkcd-through. TASK-TMM5H
 [2026-07-16 Wed] TASK-P0FAQ DONE (adopt Vercel AI Elements for the run transcript chat UI) — operator-directed resume, dispatched via codex gpt-5.6-sol xhigh. Added user-override worker allowlists ~/.orgasmic/user/workers/{implementer,reviewer}-codex-acp.org (gpt-5.5 -> gpt-5.6-sol default, gpt-5.5 fallback) so the live daemon accepts the operator's configured codex model; repo shipped/workers/ copies STILL pin gpt-5.5 (flagged for next runtime publish). Implementer merged 7864370 (vendored AI Elements conversation/message/tool/reasoning/code-block; pure ui/src/lib/transcriptParts.ts normalizer; ManagerChatTranscript rewired; RunSurface untouched; AI Elements 1.9.0 dropped standalone 'response' -> MessageResponse from 'message'). reviewer-codex-acp (gpt-5.6-sol xhigh) VERDICT NEEDS-CHANGES, 6 findings (guards + XSS + gates all PASS) — sharpest: 64/131 tool cards stuck 'running' on the REAL implementer session because synthetic tests masked the true Codex exec/command_execution event shape. Fix subtask TASK-K7P24 (impl c6518a8, merged) resolved all 6 per manager rulings (terminal-close to completed/error on run_complete/run_fail/release; collision-safe full-content code-block cache + LRU; Streamdown @source + KaTeX CSS + semantic-token fallbacks; out-of-order call_id pairing; reduced-motion scroll; empty tool-error output) with a fixture SLICED FROM THE REAL session jsonl; MANAGER INLINE REVIEW (one-round fix) = ship (verified terminal-state logic + cache key in the diff, not just green tests). Final gates on merged main: tsc clean, vitest 253/253 (35 files, +11), VKP5T guard suite 45/45 (guard sources byte-unchanged), build ok (5694 modules). First codex-acp dispatches this session; worker-driven finalize (dec_3M7M0) held clean on all 3 (last.txt intact each time). NOT deployed — UI ships with the next runtime publish. Backlog now EMPTY. LIVENESS -> e0e8b0e.
 - [2026-07-22 Wed] Reconciled operator span e0e8b0e..7794fc1 (17 commits): dec_WDR5K wave 1 landed governance rehoming (TASK-AYXPB + TASK-63MPH), harness-native transcript finders (TASK-0SADP + TASK-WTPYT), universal dispatch finalize (TASK-P4MGK + TASK-8PXDP), and the all-run worker-declared terminal contract (TASK-S52X9 through TASK-Y5K2C), with main at 7794fc1. Closed seven stale pre-flight dispatches: TASK-ARZGD as done/landed; TASK-6ZTFM, TASK-NW4WV, TASK-3TEDA, TASK-TMM5H, TASK-83WS2, and TASK-0SVR3 as aborted, preserving every surviving worktree and returning the three interrupted active tasks to TODO.
 - [2026-07-22 Wed] Operator selected QPKCD/TASK-TMM5H as the next goal. Set goal-20260721-finish-qpkcd-through: finish the preserved recovery-authority continuation, require the full gate matrix and independent SHIP review, and keep AFE5Q/SZEWA paused.
+- [2026-07-22 Wed] TASK-TMM5H implementer finalized cleanly at 453defd (run-20260721T220753-835fdd65f1a44aeea858a1da2e1b0844): +2517/-633 across six final-round files, including the 15-boundary recovery restart matrix. Manager independently reran fmt, diff-check, focused recovery restart, and cargo test --workspace: green. Changed-crate clippy -D is green; workspace clippy reds are proven unchanged CLI baseline lines.
 
 ** Next likely actions
-1. Monitor TASK-TMM5H run-20260721T220753-835fdd65f1a44aeea858a1da2e1b0844 through worker finalize; preserve the original task-tmm5h-impl worktree untouched as salvage evidence.
-2. Manager independently inspects the committed diff and reruns proportional gates.
-3. Dispatch an independent reviewer over the full QPKCD chain; fix blocking findings, merge only on SHIP, then close TASK-TMM5H and parent TASK-QPKCD.
+1. Dispatch reviewer-codex-acp over the complete QPKCD chain 7794fc1..453defd with gpt-5.6-sol xhigh and require an explicit SHIP or blocking findings verdict.
+2. If SHIP, merge the reviewed branch, rerun final gates, record task evidence, close TASK-TMM5H and parent TASK-QPKCD, and clear the goal. If findings block, file and execute the narrow fix round first.
+3. Preserve the original task-tmm5h-impl worktree and paused AFE5Q/SZEWA worktrees untouched until reconciliation completes.
 
 ** In flight
-TASK-TMM5H is the sole active stream. implementer-codex-acp is running gpt-5.6-sol at xhigh as run-20260721T220753-835fdd65f1a44aeea858a1da2e1b0844 in task-qpkcd-fix6c from committed head 6e20c4c. Because live runtime 0.0.12 rejects an existing worktree path only at execution time, the worker is auditing and transplanting the four-file dirty delta from preserved task-tmm5h-impl; that original worktree remains untouched. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with their clean worktrees untouched. task-kkftm-review remains stale/clean and untouched.
+No implementation process remains. TASK-TMM5H implementation finalized at 453defd in clean task-qpkcd-fix6c; manager verification is green modulo proven unchanged CLI clippy baseline. Independent review is the active stage. The original dirty task-tmm5h-impl worktree remains untouched. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with clean worktrees untouched; task-kkftm-review remains stale/clean and untouched.
 
 ** Divergence / Risks
 - QPKCD is security- and crash-consistency-sensitive; existing WIP is partial and must be treated as untrusted until independently verified.
