@@ -74,6 +74,7 @@ impl WorkerDriver for MockDriver {
                 events: Some(control_events),
                 releases: self.releases.clone(),
             }),
+            producer: None,
             native_runtime: None,
         })
     }
@@ -141,6 +142,7 @@ fn request(
         max_run_duration_secs: Some(0),
         idle_timeout_secs: None,
         babysitter: None,
+        planned_identity: None,
     }
 }
 

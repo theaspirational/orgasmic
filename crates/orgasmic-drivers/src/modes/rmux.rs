@@ -564,6 +564,7 @@ impl WorkerDriver for RmuxDriver {
                         pid: None,
                         events: rx,
                         control: Box::new(RmuxControl::inert(tx, ctx.run_kind)),
+                        producer: None,
                         native_runtime: plan.native_runtime.clone(),
                     });
                 }
@@ -608,7 +609,7 @@ impl WorkerDriver for RmuxDriver {
                 Box::new(RmuxControl {
                     events: tx,
                     kind: ctx.run_kind,
-                    capture_task,
+                    capture_abort: capture_task.as_ref().map(JoinHandle::abort_handle),
                     terminal_emitted,
                     released: false,
                     session,
@@ -622,6 +623,7 @@ impl WorkerDriver for RmuxDriver {
                     input_ready_timeout: cfg.input_ready_timeout,
                 })
             },
+            producer: capture_task,
             native_runtime: plan.native_runtime,
         })
     }
@@ -732,7 +734,7 @@ impl WorkerDriver for RmuxDriver {
                 control: Box::new(RmuxControl {
                     events: tx,
                     kind: ctx.run_kind,
-                    capture_task: Some(capture_task),
+                    capture_abort: Some(capture_task.abort_handle()),
                     terminal_emitted,
                     released: false,
                     session: Some(session),
@@ -745,6 +747,7 @@ impl WorkerDriver for RmuxDriver {
                     harness_command: Some(plan.command.clone()),
                     input_ready_timeout: cfg.input_ready_timeout,
                 }),
+                producer: Some(capture_task),
                 native_runtime: plan.native_runtime,
             }),
         }))
@@ -1373,7 +1376,7 @@ async fn mint_web_share(session: &rmux_sdk::Session) -> RmuxWebShareProof {
 struct RmuxControl {
     events: mpsc::Sender<DriverEvent>,
     kind: RunKind,
-    capture_task: Option<JoinHandle<()>>,
+    capture_abort: Option<tokio::task::AbortHandle>,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
     /// Typed session handle for a live run, so `release`/`Drop` can tear it
@@ -1405,7 +1408,7 @@ impl RmuxControl {
         Self {
             events,
             kind,
-            capture_task: None,
+            capture_abort: None,
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             released: false,
             session: None,
@@ -1522,7 +1525,7 @@ impl DriverControl for RmuxControl {
             return Ok(());
         }
         self.released = true;
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.capture_abort.take() {
             task.abort();
         }
         // Reap the detached rmux session through the typed SDK (inert runs own
@@ -1547,7 +1550,7 @@ impl DriverControl for RmuxControl {
 
 impl Drop for RmuxControl {
     fn drop(&mut self) {
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.capture_abort.take() {
             task.abort();
         }
         // System-wide / reattached runs intentionally outlive the daemon: never
@@ -1679,7 +1682,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
     }
 

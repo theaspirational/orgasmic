@@ -74,6 +74,19 @@ impl RuntimeIdentity {
             boot_id: boot_id.into(),
         }
     }
+
+    /// Predeclared identity for crash-recoverable acquire (recovery claims).
+    pub fn planned(
+        run_id: impl Into<String>,
+        runtime_id: impl Into<String>,
+        boot_id: impl Into<String>,
+    ) -> Self {
+        Self {
+            run_id: run_id.into(),
+            runtime_id: runtime_id.into(),
+            boot_id: boot_id.into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -133,6 +146,18 @@ impl SessionWriter {
         })
     }
 
+    /// Construct a writer from an already-authorized append handle. Callers
+    /// use this when pathname re-resolution would discard retained file
+    /// identity across a security-sensitive boundary.
+    pub fn from_file(path: PathBuf, file: File, identity: RuntimeIdentity) -> Self {
+        Self {
+            path,
+            file,
+            identity,
+            seq: 0,
+        }
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -160,6 +185,7 @@ impl SessionWriter {
         self.file.write_all(line.as_bytes())?;
         self.file.write_all(b"\n")?;
         self.file.flush()?;
+        self.file.sync_all()?;
         let seq = self.seq;
         self.seq += 1;
         Ok(seq)
@@ -301,6 +327,8 @@ pub enum Lifecycle {
         #[serde(default)]
         finalized_by_worker: bool,
     },
+    /// Historical auto-continuation envelope. No production path emits this
+    /// after TASK-QPKCD; kept so older session JSONL still deserializes.
     Continuation {
         previous_run: String,
         previous_session_path: PathBuf,
@@ -333,6 +361,25 @@ pub enum Lifecycle {
         launch_argv: Vec<String>,
         #[serde(default)]
         resume_argv: Vec<String>,
+    },
+    /// Typed link from a replacement recovery run back to its Failed origin.
+    /// Written into the replacement session after acquire succeeds so daemon
+    /// session truth can verify committed recovery claims.
+    RecoveryOrigin {
+        project_id: String,
+        origin_run_id: String,
+        origin_session_path: PathBuf,
+        request_id: String,
+        replacement_run_id: String,
+        replacement_session_path: PathBuf,
+        action: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target: Option<String>,
+        /// Complete immutable recovery claim snapshot. The daemon writes this
+        /// only after the replacement exists and uses it to reconstruct a
+        /// deleted claim without letting path-selected JSONL self-authenticate.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        claim: Option<Value>,
     },
     /// A recovery prompt staged for the operator. `sent = false` means the
     /// draft is pending an explicit composer send.

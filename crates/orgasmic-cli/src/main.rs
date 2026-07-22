@@ -29,6 +29,7 @@ mod path_env;
 mod test_support;
 mod update;
 
+use std::ffi::OsString;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -61,6 +62,15 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Internal retained-handle executable boundary for daemon-pinned native recovery.
+    #[command(name = "__exec-pinned", hide = true)]
+    ExecPinned {
+        target: PathBuf,
+        dev: u64,
+        ino: u64,
+        #[arg(last = true, allow_hyphen_values = true)]
+        args: Vec<OsString>,
+    },
     /// Scaffold `$ORGASMIC_HOME` (config, dirs, secrets, sessions).
     #[command(after_help = "\
 Examples:
@@ -827,8 +837,9 @@ enum RunCmd {
         id: String,
         #[arg(long)]
         action: Option<String>,
+        /// Registered project containing the origin run.
         #[arg(long)]
-        project: Option<String>,
+        project: String,
         #[arg(long = "request-id")]
         request_id: Option<String>,
         #[arg(long)]
@@ -888,6 +899,15 @@ const ENTRY_SCAFFOLD_VERSION: &str = "1";
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Cmd::ExecPinned {
+        target,
+        dev,
+        ino,
+        args,
+    } = &cli.cmd
+    {
+        return cmd_exec_pinned(target, *dev, *ino, args);
+    }
     let home = Home::from_env()?;
     let log_default = match &cli.cmd {
         Cmd::Serve { .. } => orgasmic_daemon::DaemonConfig::load(&home)
@@ -983,7 +1003,213 @@ fn main() -> Result<()> {
             reason,
             wait,
         } => cmd_stage(&home, "plan", project, reason, wait),
+        Cmd::ExecPinned { .. } => unreachable!("handled before home/tracing initialization"),
     }
+}
+
+#[cfg(unix)]
+fn scavenge_private_exec_aliases(parent: &Path) {
+    use fs2::FileExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !name.starts_with(".orgasmic-exec-") {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || metadata.uid() != unsafe { libc::getuid() }
+        {
+            continue;
+        }
+        let lease_path = path.join("lease");
+        let removable = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&lease_path)
+        {
+            Ok(lease) => FileExt::try_lock_exclusive(&lease).is_ok(),
+            Err(_) => name
+                .strip_prefix(".orgasmic-exec-")
+                .and_then(|rest| rest.split('-').next())
+                .and_then(|pid| pid.parse::<libc::pid_t>().ok())
+                .is_some_and(|pid| {
+                    (unsafe { libc::kill(pid, 0) }) != 0
+                        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                }),
+        };
+        if removable {
+            let _ = std::fs::remove_file(path.join("executable"));
+            let _ = std::fs::remove_file(&lease_path);
+            let _ = std::fs::remove_dir(&path);
+        }
+    }
+}
+
+#[cfg(unix)]
+fn cmd_exec_pinned(
+    target: &Path,
+    expected_dev: u64,
+    expected_ino: u64,
+    args: &[OsString],
+) -> Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(target)
+        .with_context(|| format!("open pinned executable {}", target.display()))?;
+    let metadata = file.metadata().context("stat pinned executable handle")?;
+    if !metadata.is_file() || metadata.dev() != expected_dev || metadata.ino() != expected_ino {
+        anyhow::bail!("pinned executable identity mismatch");
+    }
+    let target_c = std::ffi::CString::new(target.as_os_str().as_bytes())
+        .context("pinned executable path contains NUL")?;
+    let mut argv = Vec::with_capacity(args.len() + 1);
+    argv.push(target_c);
+    for arg in args {
+        argv.push(
+            std::ffi::CString::new(arg.as_os_str().as_bytes())
+                .context("pinned executable argument contains NUL")?,
+        );
+    }
+    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|arg| arg.as_ptr()).collect();
+    argv_ptrs.push(std::ptr::null());
+
+    let mut env = Vec::new();
+    for (key, value) in std::env::vars_os() {
+        let mut entry = key;
+        entry.push("=");
+        entry.push(value);
+        env.push(
+            std::ffi::CString::new(entry.as_os_str().as_bytes())
+                .context("environment contains NUL")?,
+        );
+    }
+    let mut env_ptrs: Vec<*const libc::c_char> = env.iter().map(|entry| entry.as_ptr()).collect();
+    env_ptrs.push(std::ptr::null());
+
+    // macOS has no fexecve and refuses execve(`/dev/fd/N`) for scripts. Make
+    // a private hard-link alias, then prove it still names the inode opened
+    // above. A replacement of the public version path before link creation is
+    // rejected by the identity check; after it, execution uses the retained
+    // inode alias rather than looking up the public path again.
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("pinned executable has no parent"))?;
+    scavenge_private_exec_aliases(parent);
+    let staging_dir = parent.join(format!(
+        ".orgasmic-exec-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir(&staging_dir).context("create pinned executable staging directory")?;
+    std::fs::set_permissions(&staging_dir, std::fs::Permissions::from_mode(0o700))
+        .context("protect pinned executable staging directory")?;
+    let lease_path = staging_dir.join("lease");
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&lease_path)
+        .context("create pinned executable alias lease")?;
+    fs2::FileExt::try_lock_exclusive(&lease).context("lock pinned executable alias lease")?;
+    let fd_flags = unsafe { libc::fcntl(std::os::fd::AsRawFd::as_raw_fd(&lease), libc::F_GETFD) };
+    if fd_flags < 0
+        || unsafe {
+            libc::fcntl(
+                std::os::fd::AsRawFd::as_raw_fd(&lease),
+                libc::F_SETFD,
+                fd_flags & !libc::FD_CLOEXEC,
+            )
+        } < 0
+    {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(&lease_path);
+        let _ = std::fs::remove_dir(&staging_dir);
+        return Err(error).context("retain pinned executable alias lease across exec");
+    }
+    let staged = staging_dir.join("executable");
+    let stage_result = (|| -> Result<()> {
+        std::fs::hard_link(target, &staged).context("retain pinned executable inode")?;
+        let staged_metadata =
+            std::fs::symlink_metadata(&staged).context("stat retained pinned executable inode")?;
+        if !staged_metadata.is_file()
+            || staged_metadata.dev() != metadata.dev()
+            || staged_metadata.ino() != metadata.ino()
+        {
+            anyhow::bail!("pinned executable identity changed before retained alias");
+        }
+        Ok(())
+    })();
+    if let Err(error) = stage_result {
+        let _ = std::fs::remove_file(&staged);
+        let _ = std::fs::remove_file(&lease_path);
+        let _ = std::fs::remove_dir(&staging_dir);
+        return Err(error);
+    }
+    let staged_c = std::ffi::CString::new(staged.as_os_str().as_bytes())
+        .context("retained executable path contains NUL")?;
+    let child = unsafe { libc::fork() };
+    if child < 0 {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(&staged);
+        let _ = std::fs::remove_file(&lease_path);
+        let _ = std::fs::remove_dir(&staging_dir);
+        return Err(error).context("fork retained executable");
+    }
+    if child == 0 {
+        unsafe {
+            libc::execve(staged_c.as_ptr(), argv_ptrs.as_ptr(), env_ptrs.as_ptr());
+            libc::_exit(126);
+        }
+    }
+    drop(file);
+    let mut status = 0;
+    loop {
+        let waited = unsafe { libc::waitpid(child, &mut status, 0) };
+        if waited == child {
+            break;
+        }
+        if waited < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+            break;
+        }
+    }
+    let _ = std::fs::remove_file(&staged);
+    let _ = std::fs::remove_file(&lease_path);
+    let _ = std::fs::remove_dir(&staging_dir);
+    if libc::WIFEXITED(status) {
+        std::process::exit(libc::WEXITSTATUS(status));
+    }
+    if libc::WIFSIGNALED(status) {
+        std::process::exit(128 + libc::WTERMSIG(status));
+    }
+    anyhow::bail!("retained executable ended without terminal wait status")
+}
+
+#[cfg(not(unix))]
+fn cmd_exec_pinned(
+    _target: &Path,
+    _expected_dev: u64,
+    _expected_ino: u64,
+    _args: &[OsString],
+) -> Result<()> {
+    anyhow::bail!("pinned executable handles are unsupported on this platform")
 }
 
 fn cmd_entry(home: &Home) -> Result<()> {

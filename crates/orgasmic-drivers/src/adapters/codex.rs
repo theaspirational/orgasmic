@@ -1072,19 +1072,6 @@ fn prompt_bundle(ctx: &DriverContext, cfg: &CodexAppserverConfig) -> String {
     if let Some(target) = ctx.babysitter_target.as_ref() {
         prompt.push_str(&format!("\nbabysitter_target: {target}"));
     }
-    if let Some(cont) = ctx.continuation.as_ref() {
-        prompt.push_str(&format!(
-            "\n\ncontinuation\nprevious_run: {}\nprevious_session_path: {}\ndiff_summary: {}\nacceptance_criteria:\n{}",
-            cont.previous_run,
-            cont.previous_session_path.display(),
-            cont.diff_summary,
-            cont.acceptance_criteria
-                .iter()
-                .map(|item| format!("- {item}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        ));
-    }
     prompt
 }
 
@@ -1144,7 +1131,7 @@ pub fn simulated_config() -> DriverConfig {
 }
 
 fn simulated_start_events(ctx: &DriverContext, cfg: &CodexAppserverConfig) -> Vec<DriverEvent> {
-    let mut events = vec![DriverEvent::Ready {
+    vec![DriverEvent::Ready {
         protocol_version: "codex-appserver/1".into(),
         capabilities: json!({
             "simulated": true,
@@ -1152,15 +1139,7 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &CodexAppserverConfig) -> Ve
             "model": cfg.model,
             "reasoning_effort": cfg.reasoning_effort,
         }),
-    }];
-    if let Some(cont) = ctx.continuation.as_ref() {
-        events.push(DriverEvent::TextChunk {
-            stream: TextStream::System,
-            chunk: format!("continuation: previous_run={}", cont.previous_run),
-            seq: 0,
-        });
-    }
-    events
+    }]
 }
 
 #[cfg(test)]
@@ -1183,7 +1162,6 @@ mod tests {
             project_id: None,
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
     }
 

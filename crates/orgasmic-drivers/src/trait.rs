@@ -61,24 +61,6 @@ pub struct DriverContext {
     /// Babysitters only: the run id they are observing. `None` for
     /// implementer runs.
     pub babysitter_target: Option<String>,
-    /// Continuation injection — present only for `run.continue` runs.
-    /// Implementer drivers should pass this to the worker prompt; other
-    /// drivers may ignore it.
-    pub continuation: Option<ContinuationContext>,
-}
-
-/// Continuation-run context required by `arch_004` AC #6.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ContinuationContext {
-    /// Prior run id; surfaces as the `:PREVIOUS_RUN:` tx property.
-    pub previous_run: String,
-    /// Path to the prior session JSONL.
-    pub previous_session_path: PathBuf,
-    /// One-paragraph diff summary of the current worktree against the
-    /// previous run's expected state.
-    pub diff_summary: String,
-    /// Original acceptance criteria from the task heading.
-    pub acceptance_criteria: Vec<String>,
 }
 
 /// Per-driver configuration. Each driver decides its own shape; the
@@ -509,6 +491,10 @@ pub struct DriverSession {
     /// release. Implementations are usually a thin wrapper around the
     /// driver's command channel.
     pub control: Box<dyn DriverControl>,
+    /// Driver-owned event producer. The supervisor retains this handle so a
+    /// release that cannot complete gracefully can abort and join the
+    /// producer before it drains the receiver to closure.
+    pub producer: Option<tokio::task::JoinHandle<()>>,
     /// Harness-aware native runtime identity, when the driver knows it.
     /// `None` for drivers/harnesses without native session semantics.
     pub native_runtime: Option<NativeRuntimeMeta>,

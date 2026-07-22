@@ -63,3 +63,12 @@ by `manager`; read by path.
 
 Pair node ids with a short readable handle in human-facing prose:
 TASK-YHA6V (codex thin last.txt). Applies to all agents; read by path.
+
+** rescue-policy
+:PROPERTIES:
+:SOURCE:             shipped/prompt-studio/conventions/rescue-policy.org
+:SLOT:               {{conventions.rescue_policy}}
+:END:
+
+Manager judgment for failed-run rescue (reattach / resume-fork / fresh
+recovery / abandon). Named by `manager`; read by path (not auto-injected).

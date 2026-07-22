@@ -16,11 +16,12 @@ pub mod auth;
 pub mod authz;
 pub mod config;
 pub mod content;
-pub mod governance;
 pub mod events;
+pub mod governance;
 pub mod index;
 pub mod manager_registration;
 pub mod prompt_compiler;
+pub mod recovery_claim;
 pub mod runtime;
 pub mod supervisor;
 pub mod watcher;
@@ -139,6 +140,11 @@ pub struct DaemonOptions {
     /// leaves this `None`. Tests use it to force the CLI dispatch timeout path
     /// while the daemon has already spawned the worker.
     pub dispatch_response_delay: Option<std::time::Duration>,
+    /// Trusted host-supplied executable implementing the internal
+    /// `__exec-pinned` boundary. Production leaves this unset and uses the
+    /// running orgasmic executable; process-isolated integration hosts may
+    /// inject an owned executable wrapper.
+    pub trusted_exec_wrapper_override: Option<PathBuf>,
 }
 
 impl Default for DaemonOptions {
@@ -154,6 +160,7 @@ impl Default for DaemonOptions {
             fs_watcher_enabled: true,
             tmux_input_ready_timeout_secs: None,
             dispatch_response_delay: None,
+            trusted_exec_wrapper_override: None,
         }
     }
 }
@@ -316,6 +323,9 @@ impl Daemon {
             tmux_input_ready_timeout_secs: opts.tmux_input_ready_timeout_secs,
             dispatch_response_delay: opts.dispatch_response_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            trusted_claude_binary: api::pin_trusted_claude_binary(&home),
+            trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
         };
 
         // Boot auto-reattach: rehydrate still-live runs (notably the operator's

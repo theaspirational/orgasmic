@@ -319,7 +319,6 @@ fn build_spawn_prompt(ctx: &DriverContext, cfg: &ClaudeAcpConfig) -> String {
             "project_id": ctx.project_id,
             "worktree": ctx.worktree.as_ref().map(|p| p.display().to_string()),
             "babysitter_target": ctx.babysitter_target,
-            "continuation": ctx.continuation,
         }
     });
     let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -361,26 +360,14 @@ fn json_line_bytes(value: &Value) -> Result<Vec<u8>, DriverError> {
 }
 
 fn simulated_start_events(ctx: &DriverContext, cfg: &ClaudeAcpConfig) -> Vec<DriverEvent> {
-    let mut events = vec![DriverEvent::Ready {
+    vec![DriverEvent::Ready {
         protocol_version: "acp/1".into(),
         capabilities: json!({
             "simulated": true,
             "kind": ctx.run_kind,
             "model": cfg.model,
         }),
-    }];
-    if let Some(cont) = ctx.continuation.as_ref() {
-        events.push(DriverEvent::TextChunk {
-            stream: TextStream::System,
-            chunk: format!(
-                "continuation context: previous_run={}, ac_count={}",
-                cont.previous_run,
-                cont.acceptance_criteria.len()
-            ),
-            seq: 0,
-        });
-    }
-    events
+    }]
 }
 
 struct StreamingTool {
@@ -768,7 +755,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: None,
             babysitter_target: None,
-            continuation: None,
         }
     }
 

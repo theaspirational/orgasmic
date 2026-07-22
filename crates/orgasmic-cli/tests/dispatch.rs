@@ -3484,7 +3484,7 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     write(&summary_path, "would-be finalize report");
 
     let racer_http = http.clone();
-    let racer_addr = running.addr.clone();
+    let racer_addr = running.addr;
     let racer_token = token.clone();
     let racer_run_id = run_id.clone();
     let racer_last_path = last_path.clone();
@@ -3749,7 +3749,10 @@ async fn stage_grill_finalize_from_orgasmic_run_id_on_main() {
         start_stage_on_main(&http, running.addr, &token, "grill", "TASK-STAGE-GRILL").await;
 
     let summary_path = tmp.path().join("grill-summary.md");
-    write(&summary_path, "grill finalize from main via ORGASMIC_RUN_ID");
+    write(
+        &summary_path,
+        "grill finalize from main via ORGASMIC_RUN_ID",
+    );
 
     let stdout = run_orgasmic_output_with_env(
         &home,
@@ -3872,7 +3875,10 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
         start_stage_on_main(&http, running.addr, &token, "architect", "TASK-STAGE-ARCH").await;
 
     let summary_path = tmp.path().join("architect-summary.md");
-    write(&summary_path, "architect finalize from main via ORGASMIC_RUN_ID");
+    write(
+        &summary_path,
+        "architect finalize from main via ORGASMIC_RUN_ID",
+    );
 
     let stdout = run_orgasmic_output_with_env(
         &home,

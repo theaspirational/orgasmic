@@ -2467,7 +2467,7 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     let tmp = tempfile::tempdir().unwrap();
     let bin = install_fake_cursor_agent(
         tmp.path(),
-        "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"early-exit\"}'\n",
+        "#!/bin/sh\nexec 0<&-\nexec 2>/dev/null\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"early-exit\"}'\n",
     );
     let _path_guard = PrependPathGuard::new(&bin);
     let home = Home::at(tmp.path().join("home"));
@@ -2492,6 +2492,10 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     std::fs::create_dir_all(&worktree).unwrap();
     init_git_worktree(&worktree);
 
+    let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
+    std::fs::create_dir_all(&sessions_dir).unwrap();
+    let session_count_before = count_session_jsonl(&sessions_dir);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let first = post_dispatch(
@@ -2513,6 +2517,108 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
         first.status().is_success(),
         "first dispatch: {}",
         first.status()
+    );
+    let first_body: serde_json::Value = first.json().await.unwrap();
+    let session_path = PathBuf::from(first_body["session_path"].as_str().unwrap());
+    assert_eq!(
+        count_session_jsonl(&sessions_dir),
+        session_count_before + 1,
+        "dispatch should create exactly one session file"
+    );
+
+    let orphan_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut orphaned = false;
+    while std::time::Instant::now() < orphan_deadline {
+        let raw = read_project_tx(&project_root);
+        if raw.contains(":TYPE:         manager.dispatch_orphaned") {
+            orphaned = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(
+        orphaned,
+        "early-exit without work envelopes must flag manager.dispatch_orphaned"
+    );
+
+    let release_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let mut release_count = 0usize;
+    while std::time::Instant::now() < release_deadline {
+        if let Ok(envelopes) = read_session_file(&session_path) {
+            release_count = envelopes
+                .iter()
+                .filter(|envelope| {
+                    envelope.kind == SessionEventKind::Lifecycle
+                        && envelope.event.get("phase").and_then(|phase| phase.as_str())
+                            == Some("release")
+                })
+                .count();
+            if release_count == 1 {
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert_eq!(release_count, 1, "early-exit must release exactly once");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        session_raw.contains("early-exit subprocess with no work envelopes"),
+        "early-exit tombstone must use the literal watcher release reason: {session_raw}"
+    );
+    assert!(
+        session_raw.contains("\"outcome\":\"failed\"")
+            || session_raw.contains("\"outcome\": \"failed\""),
+        "early-exit tombstone must record Failed outcome: {session_raw}"
+    );
+    let orphan_tx_count = read_project_tx(&project_root)
+        .matches(":TYPE:         manager.dispatch_orphaned")
+        .count();
+    assert_eq!(
+        orphan_tx_count, 1,
+        "early-exit orphan must emit exactly one manager.dispatch_orphaned tx"
+    );
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let session_raw_late = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        session_raw_late.contains("early-exit subprocess with no work envelopes"),
+        "late re-read must preserve literal early-exit reason: {session_raw_late}"
+    );
+    assert!(
+        session_raw_late.matches("\"phase\":\"release\"").count()
+            + session_raw_late.matches("\"phase\": \"release\"").count()
+            == 1,
+        "late re-read must still have exactly one release: {session_raw_late}"
+    );
+    assert!(
+        !last.exists()
+            || std::fs::read_to_string(&last)
+                .unwrap_or_default()
+                .is_empty(),
+        "early-exit orphan must not synthesize last.txt"
+    );
+    assert!(
+        !stdout.exists()
+            || std::fs::read_to_string(&stdout)
+                .unwrap_or_default()
+                .is_empty(),
+        "early-exit orphan must not synthesize stdout.log"
+    );
+    let runs = get_runs_json(&running, &token).await;
+    let live = runs["live"].as_array().cloned().unwrap_or_default();
+    assert!(
+        live.is_empty(),
+        "early-exit orphan must leave zero live runs: {live:?}"
+    );
+    assert_eq!(
+        count_session_jsonl(&sessions_dir),
+        session_count_before + 1,
+        "early-exit orphan must not create a replacement session"
+    );
+    assert!(
+        !session_raw.contains("\"phase\":\"continuation\"")
+            && !session_raw.contains("\"phase\": \"continuation\""),
+        "early-exit orphan must not write Lifecycle::Continuation"
     );
 
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
@@ -2545,6 +2651,19 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
     panic!("timed out waiting for early-exit lease auto-release");
+}
+
+fn count_session_jsonl(dir: &Path) -> usize {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| {
+                    entry.path().extension().and_then(|ext| ext.to_str()) == Some("jsonl")
+                })
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 /// TASK-074 item 1 + TASK-P4MGK: subprocess-stream-json still synthesizes
@@ -2592,6 +2711,8 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
+    let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
+    let session_count_before = count_session_jsonl(&sessions_dir);
     let response = post_dispatch(
         &running,
         &token,
@@ -2645,117 +2766,33 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
         "protocol-end without finalize must flag manager.dispatch_orphaned"
     );
     assert!(
-        !last.exists() || std::fs::read_to_string(&last).unwrap_or_default().is_empty(),
+        !last.exists()
+            || std::fs::read_to_string(&last)
+                .unwrap_or_default()
+                .is_empty(),
         "protocol-end without finalize must not scrape a fake last.txt"
+    );
+    // orgasmic:TASK-QPKCD — orphan path must not auto-spawn a continuation run.
+    let runs = get_runs_json(&running, &token).await;
+    let live = runs["live"].as_array().cloned().unwrap_or_default();
+    assert!(
+        live.is_empty(),
+        "protocol-end without finalize must leave zero live runs (no auto-continuation): {live:?}"
+    );
+    let session_raw = std::fs::read_to_string(&session_path).unwrap_or_default();
+    assert!(
+        !session_raw.contains("\"phase\":\"continuation\"")
+            && !session_raw.contains("\"phase\": \"continuation\""),
+        "failed dispatch must not write Lifecycle::Continuation"
+    );
+    assert_eq!(
+        count_session_jsonl(&sessions_dir),
+        session_count_before + 1,
+        "protocol-end orphan must not create a replacement session"
     );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
-}
-
-/// TASK-074.1 F-1: continuation acquire + ready-only subprocess exit auto-releases.
-#[cfg(unix)]
-#[allow(clippy::await_holding_lock)]
-#[tokio::test]
-async fn continuation_early_exit_auto_releases_stuck_lease() {
-    let _lock = fake_cursor_agent_test_lock();
-    use std::sync::Arc;
-
-    use orgasmic_daemon::events::EventBus;
-    use orgasmic_daemon::runtime::BootIdentity;
-    use orgasmic_daemon::supervisor::{
-        AcquireRequest, ContinuationSeed, StaticDiffSummarizer, Supervisor,
-    };
-    use orgasmic_daemon::writer::spawn as spawn_writer;
-    use orgasmic_drivers::adapters::cursor::CursorAdapter;
-    use orgasmic_drivers::modes::subprocess_stream_json::SubprocessStreamJsonDriver;
-    use orgasmic_drivers::{DriverConfig, RunKind};
-    use serde_json::json;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let bin = install_fake_cursor_agent(
-        tmp.path(),
-        "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"cont-early-exit\"}'\n",
-    );
-    let _path_guard = PrependPathGuard::new(&bin);
-    let worktree = tmp.path().join("worktree-cont-early");
-    std::fs::create_dir_all(&worktree).unwrap();
-    init_git_worktree(&worktree);
-
-    let writer = spawn_writer(EventBus::new());
-    let boot = Arc::new(BootIdentity::new());
-    let sup =
-        Supervisor::with_summarizer(writer, boot, Arc::new(StaticDiffSummarizer(String::new())));
-    let driver = SubprocessStreamJsonDriver::new(Box::new(CursorAdapter::new()));
-    let driver_config = DriverConfig::from_value(json!({
-        "endpoint": "stdio",
-        "model": "composer-2.5-fast",
-        "sandbox": "enabled",
-        "force": true,
-        "prompt_bundle_text": "continuation early-exit test",
-    }));
-    let task_id = "TASK-CONT-EARLY-EXIT";
-    let session_path = tmp.path().join(format!("{task_id}.jsonl"));
-    let previous_session = tmp.path().join("run-prev-cont.jsonl");
-    write(&previous_session, "");
-    let seed = ContinuationSeed {
-        previous_run: "run-prev-cont".into(),
-        previous_session_path: previous_session,
-        diff_summary: "no changes".into(),
-        acceptance_criteria: vec!["AC1".into()],
-    };
-    let make_req = || AcquireRequest {
-        task_id: task_id.into(),
-        kind: RunKind::Worker,
-        worker_id: "implementer-cursor".into(),
-        role: "implementer".into(),
-        project_id: Some("proj-dispatch".into()),
-        worktree: Some(worktree.clone()),
-        last_path: None,
-        stdout_path: None,
-        session_path: session_path.clone(),
-        driver_config: driver_config.clone(),
-        babysitter_target: None,
-        stall_timeout_secs: None,
-        max_run_duration_secs: None,
-        idle_timeout_secs: None,
-        babysitter: None,
-    };
-
-    let first = sup
-        .acquire_continuation(&driver, make_req(), seed.clone())
-        .await
-        .expect("first continuation acquire");
-    assert!(
-        first.pid.is_some(),
-        "continuation subprocess should have a pid"
-    );
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        let second = sup
-            .acquire_continuation(&driver, make_req(), seed.clone())
-            .await;
-        if let Ok(resp) = second {
-            let _ = sup
-                .release(
-                    &resp.run_id,
-                    "test cleanup",
-                    orgasmic_core::ReleaseOutcome::Cancelled,
-                )
-                .await;
-            return;
-        }
-        assert!(
-            matches!(
-                second,
-                Err(orgasmic_daemon::supervisor::SupervisorError::LeaseHeld { .. })
-            ),
-            "unexpected continuation acquire error: {second:?}"
-        );
-        tokio::time::sleep(Duration::from_millis(250)).await;
-    }
-    panic!("timed out waiting for continuation early-exit lease auto-release");
 }
 
 async fn post_dispatch_cleanup(

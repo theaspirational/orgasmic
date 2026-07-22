@@ -2645,14 +2645,28 @@ async fn task_010_recovery_routes_classify_and_continue_runs() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
+    write(&home.bin().join("claude"), "#!/bin/sh\nexec true\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(
+            home.bin().join("claude"),
+            std::fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+    }
     let project_root = tmp.path().join("proj");
     seed_project(&home, &project_root, "orgasmic");
     // Per-run transcripts live per project under `.orgasmic/tmp/sessions/`.
     let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
     write(
         &sessions_dir.join("run-old.jsonl"),
-        r#"{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{"phase":"acquire","task_id":"TASK-OLD","kind":"implementer","worker_id":"implementer-claude-acp"}}
+        format!(
+            r#"{{"seq":0,"time":"2026-05-21T20:00:00Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"acquire","task_id":"TASK-OLD","kind":"implementer","worker_id":"implementer-claude-acp"}}}}
+{{"seq":1,"time":"2026-05-21T20:00:01Z","run_id":"run-old","runtime_id":"rt-old","boot_id":"boot-old","kind":"lifecycle","event":{{"phase":"run_meta","transport":"tmux","harness":"claude","project_id":"orgasmic","worktree":{},"role":"implementer","requires_worker_finalize":true,"driver_config":{{}}}}}}
 "#,
+            serde_json::to_string(&project_root).unwrap()
+        ),
     );
     write(
         &sessions_dir.join("run-done.jsonl"),

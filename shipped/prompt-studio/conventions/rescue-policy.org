@@ -1,0 +1,73 @@
+#+title: Manager run rescue policy
+#+orgasmic_version: 1
+
+* CONVENTION rescue-policy
+:PROPERTIES:
+:NAME:       rescue-policy
+:NAMESPACE:  conventions
+:APPLIES_TO: manager
+:VERSION:    1
+:END:
+
+How the manager decides among reattach, resume/fork, fresh recovery/re-dispatch,
+or abandon after a failed agent run. Read on demand when weighing rescue — not
+injected into every manager turn, and never into worker/driver prompts.
+
+** What failed-run termination means
+A failed agent run (protocol-end without terminal declaration, fatal driver
+error, stall / max-duration / idle timeout) ends after the daemon writes the
+authoritative release tombstone and, for dispatches, a
+=manager.dispatch_orphaned= tx. The daemon never auto-spawns, restarts, or
+injects a continuation run. Rescue is an explicit manager decision via
+=orgasmic run recover= / =POST /runs/:id/recover=.
+
+Keep three terms distinct:
+- *Mechanical boot recovery* — on daemon restart, reattach a provably live
+  mux/native runtime automatically; classify interrupted/ambiguous candidates
+  read-only. Executing a recovery action that creates or resumes a run still
+  requires the manager/operator.
+- *Manager rescue* — judgment after a failed or interrupted run: reattach,
+  resume/fork, fresh recovery/re-dispatch, or abandon.
+- *Automatic continuation* — retired. Do not expect the daemon to inject a
+  follow-on run after failure.
+
+Babysitter companion spawning is not failed-run continuation; leave that policy
+alone.
+
+** Inspect before choosing
+Before any rescue action, gather evidence from:
+1. *Release tombstone* — =Lifecycle::Release= reason and outcome
+   (=protocol_end_without_finalize=, =stall_timeout_exceeded=,
+   =max_run_duration_exceeded=, =idle_timeout_exceeded=, fatal driver error).
+2. *Terminal declaration* — whether =finalized_by_worker= / an explicit
+   declaration was recorded for this run identity. Absent declaration + Failed
+   means the attempt did not complete.
+3. *Task lifecycle* — current task state and whether a newer dispatch already
+   superseded this attempt.
+4. *Native transcript* — last agent message from the harness-native session log
+   (never TUI scrollback alone).
+5. *Worktree* — =git status= / =git diff= / recent commits in the run worktree.
+6. *Runtime liveness* — whether the original tmux/rmux/native session is still
+   live and reattachable (=orgasmic recovery status=, =orgasmic run list=).
+
+** Judgment menu
+- *Reattach* when the original runtime is proven live. Prefer
+  =reattach_tmux= / the live reattach action; do not invent a second run.
+- *Resume / fork* only when harness-native session identity is trustworthy
+  (=resume_native_fork=). Prefer this when the native session id/path is intact
+  and useful work remains in that conversation.
+- *Fresh recovery / re-dispatch* when useful work exists in the worktree or
+  brief but the old runtime is dead. =start_recovery_run= may prepare a draft
+  recovery prompt; it must not auto-send it. A fresh =orgasmic manager dispatch=
+  is also valid when the attempt should restart under a new lease.
+- *Abandon* when the attempt is invalid, superseded, empty of useful work, or
+  the task has moved on. Clean up leases/worktrees as needed; never claim the
+  failed run completed.
+
+** Hard rules
+- Never treat a Failed release or =manager.dispatch_orphaned= as silent success.
+- Never assume the daemon will continue the worker for you.
+- =orgasmic run recover= is the manager-authorized rescue surface; recovery text
+  stays draft/manual input until you send it.
+- Mechanical boot reattach of a live runtime remains automatic and is not the
+  same as manager rescue of a failed run.

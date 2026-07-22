@@ -74,6 +74,7 @@ impl WorkerDriver for ExternalManagerDriver {
             // the channel and make the drain task see stream-end immediately,
             // auto-releasing the run before it ever goes live.
             control: Box::new(ExternalManagerControl { _events: tx }),
+            producer: None,
             native_runtime: None,
         })
     }
@@ -264,6 +265,7 @@ impl ManagerRegistry {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await;
@@ -387,7 +389,6 @@ mod tests {
     use super::*;
     use crate::events::EventBus;
     use crate::runtime::BootIdentity;
-    use crate::supervisor::StaticDiffSummarizer;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::{read_session_file, Lifecycle, SessionEventKind};
     use std::process::{Command, Stdio};
@@ -396,11 +397,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::with_summarizer(
-            writer,
-            boot,
-            Arc::new(StaticDiffSummarizer(String::new())),
-        );
+        let sup = Supervisor::new(writer, boot);
         (sup, dir)
     }
 
@@ -438,6 +435,7 @@ mod tests {
             max_run_duration_secs: Some(0),
             idle_timeout_secs: None,
             babysitter: None,
+            planned_identity: None,
         }
     }
 
@@ -504,6 +502,7 @@ mod tests {
                     pid: None,
                     events: rx,
                     control: Box::new(ExternalManagerControl { _events: tx }),
+                    producer: None,
                     native_runtime: None,
                 })
             }
@@ -528,6 +527,7 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -560,6 +560,7 @@ mod tests {
                     pid: None,
                     events: rx,
                     control: Box::new(ExternalManagerControl { _events: tx }),
+                    producer: None,
                     native_runtime: None,
                 })
             }
@@ -583,6 +584,7 @@ mod tests {
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
                 babysitter: None,
+                planned_identity: None,
             },
         )
         .await

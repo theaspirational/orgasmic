@@ -106,9 +106,10 @@ remain valid as references.
 - Confirm every `manager.dispatch_started` tx you appended has a matching
   `implementer.done` / `reviewer.done` / `manager.dispatch_aborted` close tx;
   never leave orphan pre-flight tx for a non-running dispatch.
-- Treat any `manager.dispatch_orphaned` tx as a worker that stalled without
-  calling `orgasmic dispatch finalize`: inspect the worktree and rescue
-  (finish + finalize, or abort) rather than assuming the run completed.
+- Treat any `manager.dispatch_orphaned` tx as a worker that ended without
+  calling `orgasmic dispatch finalize`: the daemon does not auto-continue.
+  Read `rescue-policy` and choose reattach / resume-fork / fresh recovery /
+  abandon from evidence — never assume the run completed.
 
 ** Notes
 [user-editable, not injected]

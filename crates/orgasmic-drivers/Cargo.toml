@@ -17,6 +17,7 @@ async-trait = "0.1"
 uuid.workspace = true
 chrono.workspace = true
 futures.workspace = true
+libc = "0.2"
 reqwest.workspace = true
 tokio-tungstenite.workspace = true
 # rmux hybrid driver (TASK-104): typed session control. The SDK starts or

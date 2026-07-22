@@ -126,6 +126,7 @@ pub struct SessionAppend {
     pub run_id: String,
     pub session_path: PathBuf,
     pub identity: RuntimeIdentity,
+    pub authority: Option<crate::recovery_claim::SessionFile>,
     pub kind: SessionEventKind,
     pub event: Value,
 }
@@ -410,6 +411,7 @@ async fn writer_loop(mut rx: mpsc::Receiver<WriterCommand>, events: EventBus) {
                     run_id,
                     session_path,
                     identity,
+                    authority,
                     kind,
                     event,
                 } = req;
@@ -429,6 +431,7 @@ async fn writer_loop(mut rx: mpsc::Receiver<WriterCommand>, events: EventBus) {
                     &run_id,
                     &session_path,
                     identity,
+                    authority,
                     kind,
                     event,
                 );
@@ -842,14 +845,28 @@ fn append_session_inner(
     run_id: &str,
     session_path: &Path,
     identity: RuntimeIdentity,
+    authority: Option<crate::recovery_claim::SessionFile>,
     kind: SessionEventKind,
     event: Value,
 ) -> Result<SessionAppendResult> {
     let writer = match handles.get_mut(run_id) {
         Some(w) => w,
         None => {
-            let w = SessionWriter::open(session_path, identity)
-                .with_context(|| format!("open session {}", session_path.display()))?;
+            let w = if let Some(authority) = authority {
+                if !authority
+                    .authorizes_path(session_path)
+                    .map_err(|err| anyhow!("authorized session path check failed: {err:?}"))?
+                {
+                    bail!("authorized session path changed before first append");
+                }
+                let file = authority
+                    .clone_file_for_append()
+                    .map_err(|err| anyhow!("authorized session open failed: {err:?}"))?;
+                SessionWriter::from_file(session_path.to_path_buf(), file, identity)
+            } else {
+                SessionWriter::open(session_path, identity)
+                    .with_context(|| format!("open session {}", session_path.display()))?
+            };
             handles.insert(run_id.to_string(), w);
             handles.get_mut(run_id).expect("just inserted")
         }
@@ -1195,6 +1212,7 @@ mod tests {
                 run_id: "run-lifecycle-test".into(),
                 session_path: tmp.path().join("run-lifecycle-test.jsonl"),
                 identity: RuntimeIdentity::new("run-lifecycle-test", "boot-test"),
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::json!({
                     "phase": "release",
@@ -1284,6 +1302,7 @@ mod tests {
             run_id: "run-x".into(),
             session_path: path.clone(),
             identity: RuntimeIdentity::new("run-x", "boot-1"),
+            authority: None,
             kind: SessionEventKind::Lifecycle,
             event: serde_json::json!({"type": "acquire"}),
         };

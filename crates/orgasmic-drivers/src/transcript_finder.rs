@@ -89,8 +89,13 @@ pub struct NativeTranscriptHit {
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum TranscriptFindResult {
     Found(NativeTranscriptHit),
-    NotFound { reason: String },
-    Unsupported { harness: String, reason: String },
+    NotFound {
+        reason: String,
+    },
+    Unsupported {
+        harness: String,
+        reason: String,
+    },
     Ambiguous {
         candidates: Vec<PathBuf>,
         reason: String,
@@ -309,7 +314,11 @@ pub fn encode_claude_project_slug(cwd: &Path) -> String {
         .collect()
 }
 
-pub fn claude_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &str) -> Option<PathBuf> {
+pub fn claude_transcript_path(
+    roots: &TranscriptRoots,
+    cwd: &Path,
+    session_id: &str,
+) -> Option<PathBuf> {
     if !validate_session_id_component(session_id) {
         return None;
     }
@@ -323,7 +332,8 @@ pub fn claude_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &
 
 fn find_claude(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, &roots.claude_projects, lookup.session_id.as_deref())
+        if let Some(hit) =
+            found_recorded(path, &roots.claude_projects, lookup.session_id.as_deref())
         {
             return hit;
         }
@@ -374,7 +384,11 @@ pub fn encode_cursor_project_slug(cwd: &Path) -> String {
         .collect()
 }
 
-pub fn cursor_transcript_path(roots: &TranscriptRoots, cwd: &Path, session_id: &str) -> Option<PathBuf> {
+pub fn cursor_transcript_path(
+    roots: &TranscriptRoots,
+    cwd: &Path,
+    session_id: &str,
+) -> Option<PathBuf> {
     if !validate_session_id_component(session_id) {
         return None;
     }
@@ -437,15 +451,15 @@ fn find_cursor_tui_by_cwd_time(
         }
         _ => Some(TranscriptFindResult::Ambiguous {
             candidates: matches.into_iter().map(|(p, _)| p).collect(),
-            reason: "multiple cursor-agent TUI transcripts match cwd+launch-time window"
-                .into(),
+            reason: "multiple cursor-agent TUI transcripts match cwd+launch-time window".into(),
         }),
     }
 }
 
 fn find_cursor(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, &roots.cursor_projects, lookup.session_id.as_deref())
+        if let Some(hit) =
+            found_recorded(path, &roots.cursor_projects, lookup.session_id.as_deref())
         {
             return hit;
         }
@@ -741,8 +755,12 @@ fn hermes_transcript_candidates(roots: &TranscriptRoots, session_id: &str) -> Ve
     }
     vec![
         roots.hermes_sessions.join(format!("{session_id}.jsonl")),
-        roots.hermes_sessions.join(format!("session_{session_id}.jsonl")),
-        roots.hermes_sessions.join(format!("session_{session_id}.json")),
+        roots
+            .hermes_sessions
+            .join(format!("session_{session_id}.jsonl")),
+        roots
+            .hermes_sessions
+            .join(format!("session_{session_id}.json")),
         roots.hermes_sessions.join(format!("{session_id}.json")),
     ]
 }
@@ -798,7 +816,8 @@ fn find_hermes_tui_by_launch_time(
 
 fn find_hermes(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> TranscriptFindResult {
     if let Some(path) = lookup.recorded_session_path.as_deref() {
-        if let Some(hit) = found_recorded(path, &roots.hermes_sessions, lookup.session_id.as_deref())
+        if let Some(hit) =
+            found_recorded(path, &roots.hermes_sessions, lookup.session_id.as_deref())
         {
             return hit;
         }
@@ -818,10 +837,10 @@ fn find_hermes(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
     }
     // Prefer native JSONL; paired session_<id>.json is metadata, not a competing transcript.
     for candidate in hermes_transcript_candidates(roots, session_id) {
-        if !candidate
+        if candidate
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "jsonl")
+            .is_none_or(|e| e != "jsonl")
         {
             continue;
         }
@@ -835,10 +854,10 @@ fn find_hermes(lookup: &TranscriptLookup, roots: &TranscriptRoots) -> Transcript
         }
     }
     for candidate in hermes_transcript_candidates(roots, session_id) {
-        if !candidate
+        if candidate
             .extension()
             .and_then(|e| e.to_str())
-            .is_some_and(|e| e == "json")
+            .is_none_or(|e| e != "json")
         {
             continue;
         }
@@ -1166,7 +1185,10 @@ mod tests {
             TranscriptFindResult::Found(hit) => {
                 assert_eq!(hit.path, path);
                 assert_eq!(hit.confidence, TranscriptConfidence::Medium);
-                assert_eq!(hit.correlation, "codex_session_meta_cwd_originator_launch_time");
+                assert_eq!(
+                    hit.correlation,
+                    "codex_session_meta_cwd_originator_launch_time"
+                );
             }
             other => panic!("expected Found for later run, got {other:?}"),
         }
@@ -1178,9 +1200,7 @@ mod tests {
         let roots = roots_under(tmp.path());
         let sid = "20260328_115902_00cfe3cd";
         let jsonl = roots.hermes_sessions.join(format!("{sid}.jsonl"));
-        let json = roots
-            .hermes_sessions
-            .join(format!("session_{sid}.json"));
+        let json = roots.hermes_sessions.join(format!("session_{sid}.json"));
         fs::write(&jsonl, "{\"role\":\"user\"}\n").unwrap();
         fs::write(&json, r#"{"session_id":"20260328_115902_00cfe3cd"}"#).unwrap();
 
@@ -1241,7 +1261,7 @@ mod tests {
 
     #[test]
     fn cursor_tui_resolves_unique_cwd_launch_time() {
-        use filetime::{FileTime, set_file_mtime};
+        use filetime::{set_file_mtime, FileTime};
 
         let tmp = tempfile::tempdir().unwrap();
         let roots = roots_under(tmp.path());
@@ -1286,7 +1306,7 @@ mod tests {
 
     #[test]
     fn hermes_tui_resolves_unique_launch_time() {
-        use filetime::{FileTime, set_file_mtime};
+        use filetime::{set_file_mtime, FileTime};
 
         let tmp = tempfile::tempdir().unwrap();
         let roots = roots_under(tmp.path());
@@ -1379,11 +1399,7 @@ mod tests {
     fn hermes_without_session_id_does_not_guess() {
         let tmp = tempfile::tempdir().unwrap();
         let roots = roots_under(tmp.path());
-        fs::write(
-            roots.hermes_sessions.join("session_noise.json"),
-            "{}",
-        )
-        .unwrap();
+        fs::write(roots.hermes_sessions.join("session_noise.json"), "{}").unwrap();
         let result = find_native_transcript(
             &TranscriptLookup {
                 run_id: "run-hermes".into(),

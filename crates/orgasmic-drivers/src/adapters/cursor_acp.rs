@@ -1054,7 +1054,6 @@ mod tests {
             project_id: Some("orgasmic".into()),
             worktree: Some(std::env::current_dir().unwrap()),
             babysitter_target: None,
-            continuation: None,
         }
     }
 

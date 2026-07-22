@@ -394,15 +394,18 @@ impl WorkerDriver for AcpStdioDriver {
         let heartbeat_interval = heartbeat_interval(&config);
         let adapter = compose.inner;
 
-        let control = match request {
+        let (control, producer) = match request {
             HarnessRequest::Simulated { events } => {
                 for event in events {
                     let _ = tx.send(event).await;
                 }
-                AcpStdioControlMode::Simulated {
-                    adapter,
-                    events: tx,
-                }
+                (
+                    AcpStdioControlMode::Simulated {
+                        adapter,
+                        events: tx,
+                    },
+                    None,
+                )
             }
             HarnessRequest::Subprocess {
                 binary,
@@ -449,7 +452,7 @@ impl WorkerDriver for AcpStdioDriver {
                     )));
                 };
                 let peer_id = format!("stdio:{binary}");
-                tokio::spawn(run_acp_stdio(AcpStdioRuntime {
+                let producer = tokio::spawn(run_acp_stdio(AcpStdioRuntime {
                     binary,
                     child,
                     stdin,
@@ -463,7 +466,10 @@ impl WorkerDriver for AcpStdioDriver {
                     adapter,
                     heartbeat_interval,
                 }));
-                AcpStdioControlMode::JsonRpc { commands, pid }
+                (
+                    AcpStdioControlMode::JsonRpc { commands, pid },
+                    Some(producer),
+                )
             }
             HarnessRequest::Subprocess { .. } => {
                 return SubprocessStreamJsonDriver::new(Box::new(AcpStdioComposeAdapter {
@@ -485,6 +491,7 @@ impl WorkerDriver for AcpStdioDriver {
                 kind: ctx.run_kind,
                 released: false,
             }),
+            producer,
             native_runtime: None,
         })
     }
