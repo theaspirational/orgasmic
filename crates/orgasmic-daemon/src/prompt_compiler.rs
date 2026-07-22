@@ -1466,4 +1466,25 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn manager_dispatch_convention_bounds_watcher_escalation() {
+        // orgasmic:TASK-2D0EJ — the manager must receive one terminal watcher
+        // notice instead of resetting an unbounded 30-second polling loop.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = repo_root();
+        std::os::unix::fs::symlink(&root, home.source()).unwrap();
+
+        let convention = load_named_payload(&home, "conventions", "manager-dispatch").unwrap();
+        assert!(convention.contains("declare a finite\n   observation deadline"));
+        assert!(convention.contains("A live PID alone is not\n   proof of progress"));
+        assert!(convention.contains("do not run periodic status checks"));
+        assert!(convention.contains("at\n   most one non-restarting detached retry"));
+        assert!(
+            !convention.contains("sleep 30"),
+            "manager dispatch must not prescribe an unbounded 30-second watcher"
+        );
+    }
 }
