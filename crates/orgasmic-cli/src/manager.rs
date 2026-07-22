@@ -2859,20 +2859,6 @@ fn reserve_dispatch_artifact_paths(
     Ok(paths)
 }
 
-/// Resolve the (brief, last, stdout) artifact paths for a dispatch. All three
-/// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`.
-/// Completion artifacts include a per-attempt id so consecutive dispatches cannot
-/// inherit a prior attempt's report (TASK-756WX, TASK-ZHRRH).
-fn dispatch_artifact_paths(project_root: &Path, brief_path: &Path) -> (PathBuf, PathBuf, PathBuf) {
-    loop {
-        let attempt_id = mint_dispatch_attempt_id();
-        let paths = dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
-        if !paths.1.exists() && !paths.2.exists() {
-            return paths;
-        }
-    }
-}
-
 fn dispatch_artifact_paths_for_attempt(
     project_root: &Path,
     brief_path: &Path,

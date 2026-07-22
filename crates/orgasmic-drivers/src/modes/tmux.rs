@@ -16,7 +16,7 @@
 //! session down on `release`.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::{
@@ -33,7 +33,7 @@ use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
+use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
 use crate::r#trait::{
     AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext,
@@ -192,9 +192,12 @@ impl WorkerDriver for TmuxDriver {
         let inert = inert_reason.is_some();
         let session_name = tmux_session_name(&ctx.identity);
         let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let startup_cancel = Arc::new(AtomicBool::new(false));
+        let send_child = SendChildOwner::new();
         let mut native_runtime = spawn_plan.native_runtime.clone();
 
-        let capture_task = if !inert {
+        // orgasmic:TASK-AFE5Q,TASK-756WX
+        let (lifecycle_task, startup_task) = if !inert {
             let launch_observation = spawn_tmux_session(&session_name, &spawn_plan).await?;
             if cfg.native_resume_mode
                 && is_claude_harness_command(
@@ -241,7 +244,7 @@ impl WorkerDriver for TmuxDriver {
                     }
                 }
             }
-            let task = start_capture_loop(
+            let task = start_session_exit_watch(
                 session_name.clone(),
                 tx.clone(),
                 terminal_emitted.clone(),
@@ -322,7 +325,7 @@ impl WorkerDriver for TmuxDriver {
                     let _ = resumed;
                 }
             }
-            None
+            (None, None)
         };
 
         let _ = tx
@@ -350,12 +353,15 @@ impl WorkerDriver for TmuxDriver {
                 session_name,
                 kind: ctx.run_kind,
                 inert,
-                capture_abort: capture_task.as_ref().map(JoinHandle::abort_handle),
+                lifecycle_abort: lifecycle_task.as_ref().map(JoinHandle::abort_handle),
+                startup_task,
+                startup_cancel,
+                send_child,
                 terminal_emitted,
                 kill_on_drop: true,
                 released: false,
             }),
-            producer: capture_task,
+            producer: lifecycle_task,
             native_runtime,
         })
     }
@@ -389,12 +395,9 @@ impl WorkerDriver for TmuxDriver {
             })
             .await;
         let terminal_emitted = Arc::new(AtomicBool::new(false));
-        let capture_task = start_capture_loop(
-            session_name.clone(),
-            tx.clone(),
-            tmux_eot_marker(&ctx.identity.run_id),
-            terminal_emitted.clone(),
-        );
+        let lifecycle_task =
+            start_session_exit_watch(session_name.clone(), tx.clone(), terminal_emitted.clone());
+        let lifecycle_abort = lifecycle_task.abort_handle();
 
         Ok(AttachOutcome::Attached(Attached {
             session: Box::new(DriverSession {
@@ -406,12 +409,15 @@ impl WorkerDriver for TmuxDriver {
                     session_name: session_name.clone(),
                     kind: ctx.run_kind,
                     inert: false,
-                    capture_abort: Some(capture_task.abort_handle()),
+                    lifecycle_abort: Some(lifecycle_abort),
+                    startup_task: None,
+                    startup_cancel: Arc::new(AtomicBool::new(false)),
+                    send_child: SendChildOwner::new(),
                     terminal_emitted,
                     kill_on_drop: false,
                     released: false,
                 }),
-                producer: Some(capture_task),
+                producer: Some(lifecycle_task),
                 native_runtime: None,
             }),
         }))
@@ -423,7 +429,13 @@ struct TmuxTuiControl {
     session_name: String,
     kind: RunKind,
     inert: bool,
-    capture_abort: Option<tokio::task::AbortHandle>,
+    /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
+    lifecycle_abort: Option<tokio::task::AbortHandle>,
+    /// One-shot startup helper (prompt paste or Cursor trust gate).
+    startup_task: Option<JoinHandle<()>>,
+    startup_cancel: Arc<AtomicBool>,
+    /// In-flight tmux CLI send child; killed/reaped before release returns.
+    send_child: SendChildOwner,
     terminal_emitted: Arc<AtomicBool>,
     kill_on_drop: bool,
     released: bool,
@@ -552,12 +564,18 @@ impl DriverControl for TmuxTuiControl {
         }
         self.released = true;
         // A control-plane stop is not a provider terminal result. Mark the
-        // capture side terminal before killing the pane so teardown cannot
+        // lifecycle side terminal before killing the pane so teardown cannot
         // manufacture RunComplete and override the supervisor's frozen cause.
         self.terminal_emitted.store(true, Ordering::SeqCst);
-        if let Some(task) = self.capture_abort.take() {
-            task.abort();
+        if let Some(abort) = self.lifecycle_abort.take() {
+            abort.abort();
         }
+        cancel_and_join_driver_task(
+            &self.startup_cancel,
+            self.startup_task.take(),
+            Some(&self.send_child),
+        )
+        .await;
         // Receiver closure is the normal terminal authority. Dropping the
         // control-owned sender after producers stop lets the supervisor drain
         // every already-queued provider event and then converge.
@@ -571,9 +589,11 @@ impl DriverControl for TmuxTuiControl {
 
 impl Drop for TmuxTuiControl {
     fn drop(&mut self) {
-        if let Some(task) = self.capture_abort.take() {
-            task.abort();
+        self.startup_cancel.store(true, Ordering::SeqCst);
+        if let Some(abort) = self.lifecycle_abort.take() {
+            abort.abort();
         }
+        abort_driver_task(self.startup_task.take());
         if !self.released && self.kill_on_drop && !self.inert {
             kill_tmux_session_sync(&self.session_name);
         }
@@ -658,14 +678,13 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         .clone()
         .or_else(|| ctx.worktree.clone())
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/tmp")));
-    let eot_marker = tmux_eot_marker(&ctx.identity.run_id);
-    let initial_prompt = if cfg.native_resume_mode {
+    // Trim only to detect emptiness; argv/paste delivery must preserve bytes.
+    let prompt_text = if cfg.native_resume_mode {
         None
     } else {
         cfg.prompt_bundle_text
-            .as_deref()
+            .clone()
             .filter(|bundle| !bundle.trim().is_empty())
-            .map(|bundle| prompt_with_eot_instruction(bundle, &ctx.identity.run_id))
     };
 
     let (command, mut args) = if should_use_default_command(cfg, harness) {
@@ -2931,8 +2950,7 @@ mod tests {
             command: "sleep".into(),
             args: vec!["2".into()],
             cwd,
-            initial_prompt: None,
-            eot_marker: tmux_eot_marker("run-fork-gap"),
+            paste_prompt: None,
             native_runtime: None,
             run_id: "run-fork-gap".into(),
             native_resume_mode: true,

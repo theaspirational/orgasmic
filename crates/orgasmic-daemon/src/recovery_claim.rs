@@ -1589,6 +1589,7 @@ fn claim_immutable_plan_matches_session(
                 role,
                 requires_worker_finalize,
                 driver_config,
+                ..
             } => Some((
                 transport,
                 harness,
@@ -1922,6 +1923,7 @@ pub fn pending_session_prefix_matches_claim(
                 role,
                 requires_worker_finalize,
                 driver_config,
+                ..
             } => {
                 if claim.transport.as_deref() != Some(transport.as_str())
                     || claim.harness != harness
@@ -2239,6 +2241,7 @@ mod tests {
                     worktree: claim.worktree.clone(),
                     last_path: claim.last_path.clone(),
                     stdout_path: claim.stdout_path.clone(),
+                    dispatch_attempt_token: None,
                     role: claim.role.clone(),
                     requires_worker_finalize: claim.requires_worker_finalize,
                     driver_config: claim.driver_config.clone().unwrap(),
@@ -2367,6 +2370,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
                     driver_config: serde_json::json!({}),
@@ -2535,6 +2539,7 @@ mod tests {
                     worktree: spec.worktree.clone(),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
                     driver_config: spec.driver_config.clone(),
@@ -2758,6 +2763,7 @@ mod tests {
                     worktree: None,
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
                     driver_config: serde_json::json!({}),
@@ -2786,6 +2792,7 @@ mod tests {
                     worktree: spec.worktree.clone(),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
                     driver_config: spec.driver_config.clone(),

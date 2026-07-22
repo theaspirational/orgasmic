@@ -96,6 +96,7 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
                 worktree: Some(project_root.clone()),
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 role: Some("implementer".into()),
                 requires_worker_finalize: Some(true),
                 driver_config: json!({"harness": "claude"}),

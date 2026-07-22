@@ -69,7 +69,8 @@ use crate::recovery_claim::{
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, RecoveryReattachPlan, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
+    BabysitterAutoSpawn, DispatchCleanupOutcome, DispatchCleanupParams, RecoveryReattachPlan,
+    Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
@@ -4234,6 +4235,7 @@ async fn post_task_dispatch_cleanup(
     drop(snap);
 
     let cleanup_params = DispatchCleanupParams {
+        project_id: project_id.clone(),
         task_id: task_id.clone(),
         kind: kind.run_kind(),
         branch: req.branch.clone(),
@@ -4276,7 +4278,10 @@ async fn post_task_dispatch_cleanup(
 
     let cleanup = match state
         .supervisor
-        .release_dispatch_worker_for_cleanup(&project_id, &task_id, kind.run_kind())
+        .prepare_dispatch_cleanup(
+            &orgasmic_core::project_sessions_dir(&project.root),
+            &cleanup_params,
+        )
         .await
     {
         Ok(DispatchCleanupOutcome::Conflict) => {
@@ -4815,13 +4820,9 @@ struct DispatchCompletion {
     worktree_path: PathBuf,
 }
 
-/// Follow the run while the supervisor holds it live, then flush dispatch
-/// artifact files. Deliberately anchors NO wall clock at dispatch start: a
-/// run may live arbitrarily long and still get artifacts on release. (The
-/// original watcher used a fixed 30s clock from dispatch start, TASK-060.6 /
-/// TASK-066, which silently dropped artifacts for long runs.) The only timer
-/// is the post-release grace (`dispatch_watcher_grace`) that lets the session
-/// file settle before finalizing without a terminal marker.
+/// Follow the run while the supervisor holds it live, then classify its
+/// persisted release. Worker finalize owns all success artifacts; this watcher
+/// only records failed/orphaned termination and never scrapes a report.
 fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchCompletion) {
     tokio::spawn(async move {
         let grace = state.dispatch_watcher_grace;
@@ -4935,16 +4936,39 @@ fn anomalous_without_finalize_release_reason(reason: &str) -> bool {
     )
 }
 
+/// Last `Lifecycle::Release` event's outcome, if any.
+fn dispatch_release_outcome(envelopes: &[SessionEnvelope]) -> Option<ReleaseOutcome> {
+    envelopes.iter().rev().find_map(|envelope| {
+        if envelope.kind != SessionEventKind::Lifecycle {
+            return None;
+        }
+        match serde_json::from_value::<Lifecycle>(envelope.event.clone()) {
+            Ok(Lifecycle::Release { outcome, .. }) => Some(outcome),
+            _ => None,
+        }
+    })
+}
+
 /// Subprocess harness exited after `Ready` (or fatal startup error) with no
 /// work envelopes — same orphan contract as protocol-end without finalize
 /// (TASK-R28CP / TASK-QPKCD review).
+#[cfg(test)]
 const EARLY_EXIT_NO_WORK_REASON: &str = "early-exit subprocess with no work envelopes";
+
+#[cfg(test)]
+fn is_timeout_release_reason(reason: &str) -> bool {
+    matches!(
+        reason,
+        "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
+    )
+}
 
 /// Release reasons that mean the run ended without `orgasmic dispatch
 /// finalize` and must be flagged orphan (never scraped into a fake done
 /// report). Timeouts plus ACP/subprocess protocol-end without finalize
 /// (TASK-P4MGK / dec_WDR5K): TUI EOT (`driver terminal event`) stays a
 /// scrape fallback until TASK-AFE5Q.
+#[cfg(test)]
 fn is_orphan_without_finalize_release_reason(reason: &str) -> bool {
     is_timeout_release_reason(reason)
         || reason == "protocol_end_without_finalize"
@@ -7298,6 +7322,7 @@ async fn execute_run_recover_action(
                     worktree: Some(worktree),
                     last_path,
                     stdout_path,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config,
                     babysitter_target: recovery_run_options.babysitter_target.clone(),
@@ -14376,6 +14401,7 @@ mod tests {
                     worktree: Some(project_root.to_path_buf()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(false),
                     driver_config: json!({"force_inert": false}),
@@ -19579,6 +19605,7 @@ mod tests {
                     worktree: Some(project_root.to_path_buf()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
                     driver_config: serde_json::json!({"harness": "claude"}),

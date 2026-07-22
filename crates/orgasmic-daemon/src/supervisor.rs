@@ -34,9 +34,9 @@ use std::time::Duration;
 
 use chrono::Utc;
 use orgasmic_core::{
-    compute_all, compute_eligibility, BabysitterSummaryChunk, BabysitterTool, DriverEvent,
-    Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TaskConstraints,
-    Worker, WorkerEligibility,
+    compute_all, compute_eligibility, read_session_file, BabysitterSummaryChunk, BabysitterTool,
+    DriverEvent, Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
+    TaskConstraints, Worker, WorkerEligibility,
 };
 use orgasmic_drivers::{
     driver_for_mode_harness, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
@@ -287,6 +287,7 @@ struct Inner {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CleanupReservationKey {
+    project_id: String,
     task_id: String,
     kind: RunKind,
     worktree_key: PathBuf,
@@ -304,6 +305,7 @@ struct DispatchCleanupReservation {
 /// Identity bundle for dispatch cleanup authorization (TASK-NW4WV).
 #[derive(Debug, Clone)]
 pub struct DispatchCleanupParams {
+    pub project_id: String,
     pub task_id: String,
     pub kind: RunKind,
     pub branch: String,
@@ -1006,6 +1008,7 @@ impl Supervisor {
                 req.worktree.clone(),
                 plan.last_path.clone(),
                 plan.stdout_path.clone(),
+                None,
                 req.driver_config.clone(),
                 plan.native_runtime.clone(),
                 Some(&plan.prompt_draft),
@@ -1037,6 +1040,7 @@ impl Supervisor {
                 babysitter_target: req.babysitter_target.clone(),
                 last_path: req.last_path.clone(),
                 stdout_path: req.stdout_path.clone(),
+                dispatch_attempt_token: req.dispatch_attempt_token.clone(),
                 requires_worker_finalize: run_requires_worker_finalize(&req.last_path, &req.role),
                 terminal_round: 0,
                 terminal_declaration: None,
@@ -1305,6 +1309,7 @@ impl Supervisor {
         worktree: Option<PathBuf>,
         last_path: Option<PathBuf>,
         stdout_path: Option<PathBuf>,
+        dispatch_attempt_token: Option<String>,
         driver_config: DriverConfig,
         native_runtime: Option<NativeRuntimeMeta>,
         prompt_draft: Option<&str>,
@@ -1389,6 +1394,7 @@ impl Supervisor {
                 worktree,
                 last_path,
                 stdout_path,
+                dispatch_attempt_token,
                 role.to_string(),
                 requires_worker_finalize,
                 driver_config,
@@ -1650,6 +1656,7 @@ impl Supervisor {
                 worktree.clone(),
                 plan.last_path.clone(),
                 plan.stdout_path.clone(),
+                None,
                 driver_config.clone(),
                 plan.native_runtime.clone(),
                 Some(plan.prompt_draft.as_str()),
@@ -1704,6 +1711,7 @@ impl Supervisor {
             babysitter_target: None,
             last_path: recovery_last_path,
             stdout_path: recovery_stdout_path,
+            dispatch_attempt_token: None,
             requires_worker_finalize,
             terminal_round: 0,
             terminal_declaration: None,
@@ -2034,7 +2042,7 @@ impl Supervisor {
     /// dispatch completion watcher — which may not observe the release until
     /// after this call returns — can tell a worker-declared completion apart
     /// from every other release path (stall timeout, manual cancel, driver
-    /// terminal event) and skip its scrollback-scrape fallback.
+    /// terminal event) and distinguish it from failed/orphaned termination.
     ///
     /// `caller_identity` (TASK-DWJVH, review #4 residual): when present, the
     /// same self-consistency guard `send_input`/`transition_state` already
@@ -2295,6 +2303,7 @@ impl Supervisor {
         if let Some(rec) = g.runs.get_mut(run_id) {
             rec.last_path = Some(last_path);
             rec.stdout_path = Some(stdout_path);
+            rec.dispatch_attempt_token = dispatch_attempt_token;
             rec.requires_worker_finalize = run_requires_worker_finalize(&rec.last_path, &rec.role);
         }
     }
@@ -2692,17 +2701,11 @@ impl Supervisor {
     /// Stop any live dispatch worker before daemon-side worktree/branch cleanup.
     /// Releases the worker only when task, kind, attempt token, worktree, and
     /// artifact pair all match exactly (TASK-ZGT1X).
-    pub async fn release_dispatch_worker_for_cleanup(
+    async fn release_dispatch_worker_for_cleanup(
         &self,
-        project_id: &str,
-        task_id: &str,
-        kind: RunKind,
-        dispatch_attempt_token: Option<&str>,
-        worktree_path: &Path,
-        last_path: Option<&Path>,
-        stdout_path: Option<&Path>,
+        params: &DispatchCleanupParams,
     ) -> Result<Option<String>, SupervisorError> {
-        let key = lease_key(Some(project_id), task_id, kind);
+        let key = lease_key(Some(&params.project_id), &params.task_id, params.kind);
         let run_id = {
             let g = self.inner.lock().await;
             g.leases.get(&key).cloned()
@@ -2718,14 +2721,15 @@ impl Supervisor {
         if !live {
             return Ok(None);
         }
-        match self.release_orphaned_lease(project_id, task_id, kind).await {
-            OrphanedLeaseOutcome::Released { run_id } => Ok(Some(run_id)),
-            OrphanedLeaseOutcome::NoLease => Ok(None),
-            OrphanedLeaseOutcome::HeldByLiveRun { run_id } => {
-                self.release(
-                    &run_id,
-                    "dispatch failure cleanup",
-                    ReleaseOutcome::Interrupted,
+        let matches = {
+            let g = self.inner.lock().await;
+            g.runs.get(&run_id).is_some_and(|rec| {
+                dispatch_cleanup_identity_matches(
+                    rec,
+                    params.dispatch_attempt_token.as_deref(),
+                    &params.worktree_path,
+                    params.last_path.as_deref(),
+                    params.stdout_path.as_deref(),
                 )
             })
         };
@@ -2753,6 +2757,7 @@ impl Supervisor {
     ) -> Result<DispatchCleanupOutcome, SupervisorError> {
         let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
         let reservation_key = CleanupReservationKey {
+            project_id: params.project_id.clone(),
             task_id: params.task_id.clone(),
             kind: params.kind,
             worktree_key: worktree_key.clone(),
@@ -2781,6 +2786,16 @@ impl Supervisor {
                 .keys()
                 .any(|held| held.worktree_key == worktree_key)
             {
+                return Ok(DispatchCleanupOutcome::Conflict);
+            }
+            let active_lease = lease_key(Some(&params.project_id), &params.task_id, params.kind);
+            if g.leases
+                .get(&active_lease)
+                .is_some_and(|run_id| !g.runs.contains_key(run_id))
+            {
+                // An acquire owns this lease but has not installed its
+                // RunRecord yet. Cleanup cannot prove its filesystem identity
+                // and must fail closed rather than steal the in-flight attempt.
                 return Ok(DispatchCleanupOutcome::Conflict);
             }
             for rec in g.runs.values() {
@@ -2821,6 +2836,7 @@ impl Supervisor {
                 Ok(owner) => owner,
                 Err(_) => {
                     self.clear_dispatch_cleanup_reservation(
+                        &params.project_id,
                         &params.task_id,
                         params.kind,
                         &params.worktree_path,
@@ -2838,6 +2854,7 @@ impl Supervisor {
         ) {
             CleanupIdentityAuth::IdentityMismatch => {
                 self.clear_dispatch_cleanup_reservation(
+                    &params.project_id,
                     &params.task_id,
                     params.kind,
                     &params.worktree_path,
@@ -2848,28 +2865,21 @@ impl Supervisor {
             CleanupIdentityAuth::NoOwner | CleanupIdentityAuth::ExactOwner => {}
         }
 
-        let released_run_id = self
-            .release_dispatch_worker_for_cleanup(
-                &params.task_id,
-                params.kind,
-                params.dispatch_attempt_token.as_deref(),
-                &params.worktree_path,
-                params.last_path.as_deref(),
-                params.stdout_path.as_deref(),
-            )
-            .await?;
+        let released_run_id = self.release_dispatch_worker_for_cleanup(params).await?;
 
         Ok(DispatchCleanupOutcome::Proceed { released_run_id })
     }
 
     async fn clear_dispatch_cleanup_reservation(
         &self,
+        project_id: &str,
         task_id: &str,
         kind: RunKind,
         worktree_path: &Path,
     ) {
         let worktree_key = normalize_cleanup_worktree(worktree_path);
         let reservation_key = CleanupReservationKey {
+            project_id: project_id.to_string(),
             task_id: task_id.to_string(),
             kind,
             worktree_key,
@@ -2885,6 +2895,7 @@ impl Supervisor {
     pub async fn finish_dispatch_cleanup(&self, params: &DispatchCleanupParams) {
         let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
         let reservation_key = CleanupReservationKey {
+            project_id: params.project_id.clone(),
             task_id: params.task_id.clone(),
             kind: params.kind,
             worktree_key,
@@ -3481,9 +3492,8 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
     Some(rec)
 }
 
-/// TUI transports emit a terminal driver event (EOT-marker fallback; removed
-/// later by TASK-AFE5Q). ACP / subprocess modes do not — their stream-end
-/// path handles protocol end.
+/// TUI transports emit a terminal driver event when their pane/process exits.
+/// ACP / subprocess modes use their stream-end path for protocol termination.
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
@@ -8117,6 +8127,7 @@ mod tests {
             runs: HashMap::new(),
             leases: HashMap::new(),
             babysitter_auto_spawn_backoff: HashMap::new(),
+            cleanup_reservations: HashMap::new(),
         };
         let run_id = "run-explicit-release".to_string();
         inner.runs.insert(
@@ -8138,6 +8149,7 @@ mod tests {
             runs: HashMap::new(),
             leases: HashMap::new(),
             babysitter_auto_spawn_backoff: HashMap::new(),
+            cleanup_reservations: HashMap::new(),
         };
         let run_id = "run-quiescence".to_string();
         inner.runs.insert(
@@ -8297,6 +8309,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cleanup_reservation_blocks_same_path_for_different_task() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("wt-reservation-global");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let params = DispatchCleanupParams {
+            project_id: "project-a".into(),
+            task_id: "TASK-CLEANUP-OWNER".into(),
+            kind: RunKind::Worker,
+            branch: "task-cleanup-owner-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some("aaaa1111bbbb2222cccc3333dddd4444".into()),
+            last_path: Some(dir.path().join("owner-last.txt")),
+            stdout_path: Some(dir.path().join("owner-stdout.log")),
+        };
+        assert!(matches!(
+            sup.prepare_dispatch_cleanup(&sessions, &params)
+                .await
+                .unwrap(),
+            DispatchCleanupOutcome::Proceed { .. }
+        ));
+
+        let mut acquire = dispatch_impl_req("TASK-CLEANUP-OTHER", dir.path());
+        acquire.project_id = Some("project-a".into());
+        acquire.worktree = Some(worktree.clone());
+        let err = sup.acquire(&tmux::driver(), acquire).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::CleanupInProgress { .. }));
+
+        let mut other_params = params.clone();
+        other_params.task_id = "TASK-CLEANUP-OTHER".into();
+        assert_eq!(
+            sup.prepare_dispatch_cleanup(&sessions, &other_params)
+                .await
+                .unwrap(),
+            DispatchCleanupOutcome::Conflict
+        );
+        sup.finish_dispatch_cleanup(&params).await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_refuses_lease_to_run_record_gap() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("wt-acquire-gap");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let params = DispatchCleanupParams {
+            project_id: "project-a".into(),
+            task_id: "TASK-ACQUIRE-GAP".into(),
+            kind: RunKind::Worker,
+            branch: "task-acquire-gap-impl".into(),
+            worktree_path: worktree,
+            dispatch_attempt_token: Some("bbbb1111cccc2222dddd3333eeee4444".into()),
+            last_path: Some(dir.path().join("gap-last.txt")),
+            stdout_path: Some(dir.path().join("gap-stdout.log")),
+        };
+        sup.inner.lock().await.leases.insert(
+            lease_key(Some("project-a"), "TASK-ACQUIRE-GAP", RunKind::Worker),
+            "run-in-acquire-gap".into(),
+        );
+
+        assert_eq!(
+            sup.prepare_dispatch_cleanup(&sessions, &params)
+                .await
+                .unwrap(),
+            DispatchCleanupOutcome::Conflict
+        );
+    }
+
+    #[tokio::test]
     async fn timeout_aborts_joins_hung_producer_then_drains_racing_terminal() {
         let (sup, dir, _w) = make_supervisor();
         let driver = HungProducerDriver::new(false);
@@ -8384,6 +8467,7 @@ mod tests {
             babysitter_target: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             requires_worker_finalize: true,
             terminal_round: 0,
             terminal_declaration: None,

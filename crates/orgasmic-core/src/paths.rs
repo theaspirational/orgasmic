@@ -113,11 +113,26 @@ pub fn validate_dispatch_cleanup_targets(
     last_path: Option<&Path>,
     stdout_path: Option<&Path>,
 ) -> Result<DispatchAttemptArtifacts, String> {
-    let (stem_dir, stem) = validate_dispatch_worktree_layout(project_root, worktree_path)?;
-    let worktree_handle = open_dispatch_dir(worktree_path)?;
     let last = last_path.ok_or_else(|| "last_path required for dispatch cleanup".to_string())?;
     let stdout =
         stdout_path.ok_or_else(|| "stdout_path required for dispatch cleanup".to_string())?;
+    let worktree_handle = validate_dispatch_worktree(worktree_path)?;
+    let stem_dir = last
+        .parent()
+        .ok_or_else(|| "last_path has no parent stem dir".to_string())?;
+    let stem_dir = canonicalize_path(stem_dir)?;
+    let expected_dispatch = canonicalize_dir(&project_dispatch_dir(project_root))?;
+    if stem_dir.parent() != Some(expected_dispatch.as_path()) {
+        return Err("artifacts not under project dispatch dir".into());
+    }
+    let stem = stem_dir
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| "dispatch stem dir has no name".to_string())?
+        .to_string();
+    if stem.contains("..") {
+        return Err("invalid dispatch stem".into());
+    }
     validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, worktree_handle)
 }
 
@@ -171,12 +186,12 @@ pub fn prune_validated_dispatch_attempt(
     Ok(())
 }
 
-fn validate_dispatch_worktree_layout(
-    project_root: &Path,
-    worktree_path: &Path,
-) -> Result<(PathBuf, String), String> {
-    if worktree_path.file_name().and_then(|s| s.to_str()) != Some("worktree") {
-        return Err("worktree path must end with /worktree".into());
+fn validate_dispatch_worktree(worktree_path: &Path) -> Result<std::fs::File, String> {
+    if worktree_path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("path contains ..: {}", worktree_path.display()));
     }
     let wt_meta = std::fs::symlink_metadata(worktree_path).map_err(|err| err.to_string())?;
     if wt_meta.file_type().is_symlink() {
@@ -191,28 +206,7 @@ fn validate_dispatch_worktree_layout(
             worktree_path.display()
         ));
     }
-    let canonical_root = canonicalize_dir(project_root)?;
-    let canonical_worktree = canonicalize_path(worktree_path)?;
-    if !path_within(&canonical_worktree, &canonical_root) {
-        return Err("worktree outside project root".into());
-    }
-    let stem_dir = canonical_worktree
-        .parent()
-        .ok_or_else(|| "worktree has no parent stem dir".to_string())?
-        .to_path_buf();
-    let expected_dispatch = canonicalize_dir(&project_dispatch_dir(project_root))?;
-    if stem_dir.parent() != Some(expected_dispatch.as_path()) {
-        return Err("worktree not under project dispatch dir".into());
-    }
-    let stem = stem_dir
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| "dispatch stem dir has no name".to_string())?
-        .to_string();
-    if stem.contains("..") {
-        return Err("invalid dispatch stem".into());
-    }
-    Ok((stem_dir, stem))
+    open_dispatch_dir(worktree_path)
 }
 
 fn validate_dispatch_artifact_pair(
@@ -455,10 +449,6 @@ fn canonicalize_path(path: &Path) -> Result<PathBuf, String> {
     std::fs::canonicalize(path).map_err(|err| err.to_string())
 }
 
-fn path_within(path: &Path, root: &Path) -> bool {
-    path.starts_with(root)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -596,6 +586,23 @@ mod tests {
             Some(&stdout)
         )
         .is_err());
+    }
+
+    #[test]
+    fn validate_dispatch_cleanup_accepts_registered_layout_with_external_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        let worktree = tmp.path().join("custom-worktrees/task-dispatch");
+        std::fs::create_dir_all(&stem_dir).unwrap();
+        std::fs::create_dir_all(&worktree).unwrap();
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "last").unwrap();
+        std::fs::write(&stdout, "stdout").unwrap();
+
+        validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
+            .unwrap();
     }
 
     #[test]

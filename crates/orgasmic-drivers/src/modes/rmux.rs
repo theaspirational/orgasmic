@@ -544,6 +544,7 @@ impl WorkerDriver for RmuxDriver {
             ),
             None => (RmuxWebShareProof::default(), None, None, None),
         };
+        let lifecycle_abort = lifecycle_task.as_ref().map(JoinHandle::abort_handle);
 
         let _ = tx
             .send(DriverEvent::Ready {
@@ -578,7 +579,10 @@ impl WorkerDriver for RmuxDriver {
                 Box::new(RmuxControl {
                     events: tx,
                     kind: ctx.run_kind,
-                    capture_abort: capture_task.as_ref().map(JoinHandle::abort_handle),
+                    lifecycle_abort,
+                    startup_task,
+                    startup_cancel,
+                    send_child,
                     terminal_emitted,
                     released: false,
                     session,
@@ -592,7 +596,7 @@ impl WorkerDriver for RmuxDriver {
                     input_ready_timeout: cfg.input_ready_timeout,
                 })
             },
-            producer: capture_task,
+            producer: lifecycle_task,
             native_runtime: plan.native_runtime,
         })
     }
@@ -662,6 +666,7 @@ impl WorkerDriver for RmuxDriver {
         let pane = session.pane(0, 0);
         let lifecycle_task =
             spawn_pane_exit_watch(&pane, tx.clone(), terminal_emitted.clone()).await?;
+        let lifecycle_abort = lifecycle_task.abort_handle();
 
         // No paste on reattach: the harness is already mid-conversation.
         let _ = tx
@@ -685,7 +690,10 @@ impl WorkerDriver for RmuxDriver {
                 control: Box::new(RmuxControl {
                     events: tx,
                     kind: ctx.run_kind,
-                    capture_abort: Some(capture_task.abort_handle()),
+                    lifecycle_abort: Some(lifecycle_abort),
+                    startup_task: None,
+                    startup_cancel: Arc::new(AtomicBool::new(false)),
+                    send_child: SendChildOwner::new(),
                     terminal_emitted,
                     released: false,
                     session: Some(session),
@@ -698,7 +706,7 @@ impl WorkerDriver for RmuxDriver {
                     harness_command: Some(plan.command.clone()),
                     input_ready_timeout: cfg.input_ready_timeout,
                 }),
-                producer: Some(capture_task),
+                producer: Some(lifecycle_task),
                 native_runtime: plan.native_runtime,
             }),
         }))
@@ -816,7 +824,15 @@ async fn run_live_session(
         let cancel = startup_cancel.clone();
         Some(tokio::spawn(async move {
             if command == "claude" {
-                if let Err(e) = wait_for_input_ready(&bin, &session, timeout).await {
+                if let Err(e) = wait_for_input_ready(
+                    &bin,
+                    &session,
+                    timeout,
+                    Some(&send_child),
+                    Some(cancel.as_ref()),
+                )
+                .await
+                {
                     tracing::warn!(
                         ?e,
                         "rmux TUI input field not detected within timeout; pasting anyway"
@@ -1119,6 +1135,8 @@ async fn wait_for_input_ready(
     bin: &str,
     session: &str,
     timeout: Duration,
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), DriverError> {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut poll = tokio::time::interval(Duration::from_millis(250));
@@ -1134,7 +1152,13 @@ async fn wait_for_input_ready(
             // Accept Claude's folder-trust dialog (default "Yes,
             // proceed") so a fresh worktree reaches its composer.
             if pane_requests_folder_trust(&pane) {
-                let _ = run_rmux_cli(bin, &["send-keys", "-t", session, "Enter"]).await;
+                let _ = run_rmux_cli_with_owner(
+                    bin,
+                    &["send-keys", "-t", session, "Enter"],
+                    send_child,
+                    cancel,
+                )
+                .await;
             } else if pane_has_input_prompt(&pane) {
                 return Ok(());
             }
@@ -1279,7 +1303,11 @@ async fn mint_web_share(session: &rmux_sdk::Session) -> RmuxWebShareProof {
 struct RmuxControl {
     events: mpsc::Sender<DriverEvent>,
     kind: RunKind,
-    capture_abort: Option<tokio::task::AbortHandle>,
+    /// Watches pane/process end only — never scrollback capture (TASK-AFE5Q).
+    lifecycle_abort: Option<tokio::task::AbortHandle>,
+    startup_task: Option<JoinHandle<()>>,
+    startup_cancel: Arc<AtomicBool>,
+    send_child: SendChildOwner,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
     /// Typed session handle for a live run, so `release`/`Drop` can tear it
@@ -1312,7 +1340,10 @@ impl RmuxControl {
         Self {
             events,
             kind,
-            capture_abort: None,
+            lifecycle_abort: None,
+            startup_task: None,
+            startup_cancel: Arc::new(AtomicBool::new(false)),
+            send_child: SendChildOwner::new(),
             terminal_emitted: Arc::new(AtomicBool::new(false)),
             released: false,
             session: None,
@@ -1333,8 +1364,10 @@ async fn wait_for_followup_ready(
     bin: &str,
     session: &str,
     timeout: Duration,
+    send_child: &SendChildOwner,
+    cancel: &AtomicBool,
 ) -> Result<(), DriverError> {
-    wait_for_input_ready(bin, session, timeout).await
+    wait_for_input_ready(bin, session, timeout, Some(send_child), Some(cancel)).await
 }
 
 #[async_trait]
@@ -1395,9 +1428,15 @@ impl DriverControl for RmuxControl {
         // still streaming its previous turn corrupts the in-flight turn. Gate on
         // composer input-readiness and return a clear ack when the prompt is not
         // visible yet — never paste blindly mid-stream.
-        if wait_for_followup_ready(bin, session, self.input_ready_timeout)
-            .await
-            .is_err()
+        if wait_for_followup_ready(
+            bin,
+            session,
+            self.input_ready_timeout,
+            &self.send_child,
+            &self.startup_cancel,
+        )
+        .await
+        .is_err()
         {
             return Ok(UserInputAck {
                 accepted: false,
@@ -1405,7 +1444,14 @@ impl DriverControl for RmuxControl {
             });
         }
 
-        paste_text_and_submit(bin, session, &req.input, None, None).await?;
+        paste_text_and_submit(
+            bin,
+            session,
+            &req.input,
+            Some(&self.send_child),
+            Some(&self.startup_cancel),
+        )
+        .await?;
         Ok(UserInputAck {
             accepted: true,
             message: None,
@@ -1417,9 +1463,15 @@ impl DriverControl for RmuxControl {
             return Ok(());
         }
         self.released = true;
-        if let Some(task) = self.capture_abort.take() {
-            task.abort();
+        if let Some(abort) = self.lifecycle_abort.take() {
+            abort.abort();
         }
+        cancel_and_join_driver_task(
+            &self.startup_cancel,
+            self.startup_task.take(),
+            Some(&self.send_child),
+        )
+        .await;
         // Reap the detached rmux session through the typed SDK (inert runs own
         // no session). Awaited so the session is gone when `release` returns;
         // teardown failures are non-fatal and only logged.
@@ -1442,9 +1494,11 @@ impl DriverControl for RmuxControl {
 
 impl Drop for RmuxControl {
     fn drop(&mut self) {
-        if let Some(task) = self.capture_abort.take() {
-            task.abort();
+        self.startup_cancel.store(true, Ordering::SeqCst);
+        if let Some(abort) = self.lifecycle_abort.take() {
+            abort.abort();
         }
+        abort_rmux_task(self.startup_task.take());
         // System-wide / reattached runs intentionally outlive the daemon: never
         // reap their session on an implicit Drop (only explicit `release`
         // does). Dropping the `Session` handle does not reap the session — only
@@ -2589,8 +2643,8 @@ mod tests {
 
     /// Live rmux followup delivery. Drives a minimal interactive harness that
     /// shows a composer prompt, accepts the dispatch brief, then accepts a
-    /// followup via `send_input`. Proves the followup lands in the pane with
-    /// the EOT-marker instruction appended (round-end detection contract).
+    /// followup via `send_input`. Proves the exact followup bytes land in the
+    /// pane without any synthetic completion marker.
     /// Skipped without a real rmux binary.
     #[tokio::test]
     async fn live_rmux_send_input_delivers_followup_turn() {
