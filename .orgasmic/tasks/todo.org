@@ -16,23 +16,3 @@ Resolve all eight HIGH findings from TASK-KKFTM review of 3b948c9: native turn s
 :END:
 
 Review cumulative de94d4d..b6a8e8e from task-k8et5-impl against the full AFE5Q round-7 contract and prior seven-HIGH verdict. Verify atomic cleanup and all missing interleavings, transaction-wide identity, child ownership setup barriers, endpoint finalization truth, mux-bound send, ambiguity rollback, and warning gates. Read-only; SHIP only with no blocking findings.
-
-* TODO TASK-2D0EJ Bound worker command-session polling after vanished subprocess :hardening:
-:PROPERTIES:
-:ID: TASK-2D0EJ
-:PRIORITY: high
-:RELATES_TO: TASK-HQR91
-:END:
-
-Incident evidence: TASK-HQR91 run run-20260722T063313-f001018601c74ef1a4bc852fd0c9ce98 repeatedly polled unified-exec session 52872 after its OS process disappeared. ACP heartbeats and poll tool events kept daemon liveness fresh, so the run remained apparently healthy until manager intervention.
-
-Harden the shipped worker contract and manager dispatch convention, without provider-specific daemon parsing:
-
-- Long commands must redirect output to a log and expose an atomic status sentinel when practical.
-- One owner polls a yielded command. Polling must be bounded: after repeated empty polls or no observable log/status progress, verify the concrete OS process/session instead of trusting a stale running token.
-- If the process is gone while the tool session still reports running, stop polling, classify the attempt interrupted, preserve the log, and retry at most once with a single non-restarting detached runner and atomic exit status.
-- Never launch a duplicate verification run; enumerate and stop only the manager-owned duplicate if overlap is detected.
-- On a second interruption, finalize blocked with evidence rather than loop.
-- Manager watchers must have an escalation bound and treat a live worker PID as insufficient proof of progress.
-
-Add deterministic prompt-render/contract tests proving implementer and reviewer bundles inherit the rule. Keep supervisor timeout semantics unchanged in this scoped task; file a separate design task if runtime-level semantic-stall detection is still needed.
