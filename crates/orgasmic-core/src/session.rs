@@ -146,6 +146,18 @@ impl SessionWriter {
         })
     }
 
+    /// Construct a writer from an already-authorized append handle. Callers
+    /// use this when pathname re-resolution would discard retained file
+    /// identity across a security-sensitive boundary.
+    pub fn from_file(path: PathBuf, file: File, identity: RuntimeIdentity) -> Self {
+        Self {
+            path,
+            file,
+            identity,
+            seq: 0,
+        }
+    }
+
     pub fn path(&self) -> &Path {
         &self.path
     }

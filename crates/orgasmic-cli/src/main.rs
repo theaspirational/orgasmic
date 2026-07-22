@@ -1008,6 +1008,56 @@ fn main() -> Result<()> {
 }
 
 #[cfg(unix)]
+fn scavenge_private_exec_aliases(parent: &Path) {
+    use fs2::FileExt;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+            continue;
+        };
+        if !name.starts_with(".orgasmic-exec-") {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !metadata.is_dir()
+            || metadata.file_type().is_symlink()
+            || metadata.uid() != unsafe { libc::getuid() }
+        {
+            continue;
+        }
+        let lease_path = path.join("lease");
+        let removable = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&lease_path)
+        {
+            Ok(lease) => FileExt::try_lock_exclusive(&lease).is_ok(),
+            Err(_) => name
+                .strip_prefix(".orgasmic-exec-")
+                .and_then(|rest| rest.split('-').next())
+                .and_then(|pid| pid.parse::<libc::pid_t>().ok())
+                .is_some_and(|pid| {
+                    (unsafe { libc::kill(pid, 0) }) != 0
+                        && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                }),
+        };
+        if removable {
+            let _ = std::fs::remove_file(path.join("executable"));
+            let _ = std::fs::remove_file(&lease_path);
+            let _ = std::fs::remove_dir(&path);
+        }
+    }
+}
+
+#[cfg(unix)]
 fn cmd_exec_pinned(
     target: &Path,
     expected_dev: u64,
@@ -1060,6 +1110,7 @@ fn cmd_exec_pinned(
     let parent = target
         .parent()
         .ok_or_else(|| anyhow::anyhow!("pinned executable has no parent"))?;
+    scavenge_private_exec_aliases(parent);
     let staging_dir = parent.join(format!(
         ".orgasmic-exec-{}-{}",
         std::process::id(),
@@ -1068,6 +1119,31 @@ fn cmd_exec_pinned(
     std::fs::create_dir(&staging_dir).context("create pinned executable staging directory")?;
     std::fs::set_permissions(&staging_dir, std::fs::Permissions::from_mode(0o700))
         .context("protect pinned executable staging directory")?;
+    let lease_path = staging_dir.join("lease");
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&lease_path)
+        .context("create pinned executable alias lease")?;
+    fs2::FileExt::try_lock_exclusive(&lease).context("lock pinned executable alias lease")?;
+    let fd_flags = unsafe { libc::fcntl(std::os::fd::AsRawFd::as_raw_fd(&lease), libc::F_GETFD) };
+    if fd_flags < 0
+        || unsafe {
+            libc::fcntl(
+                std::os::fd::AsRawFd::as_raw_fd(&lease),
+                libc::F_SETFD,
+                fd_flags & !libc::FD_CLOEXEC,
+            )
+        } < 0
+    {
+        let error = std::io::Error::last_os_error();
+        let _ = std::fs::remove_file(&lease_path);
+        let _ = std::fs::remove_dir(&staging_dir);
+        return Err(error).context("retain pinned executable alias lease across exec");
+    }
     let staged = staging_dir.join("executable");
     let stage_result = (|| -> Result<()> {
         std::fs::hard_link(target, &staged).context("retain pinned executable inode")?;
@@ -1083,6 +1159,7 @@ fn cmd_exec_pinned(
     })();
     if let Err(error) = stage_result {
         let _ = std::fs::remove_file(&staged);
+        let _ = std::fs::remove_file(&lease_path);
         let _ = std::fs::remove_dir(&staging_dir);
         return Err(error);
     }
@@ -1092,6 +1169,7 @@ fn cmd_exec_pinned(
     if child < 0 {
         let error = std::io::Error::last_os_error();
         let _ = std::fs::remove_file(&staged);
+        let _ = std::fs::remove_file(&lease_path);
         let _ = std::fs::remove_dir(&staging_dir);
         return Err(error).context("fork retained executable");
     }
@@ -1113,6 +1191,7 @@ fn cmd_exec_pinned(
         }
     }
     let _ = std::fs::remove_file(&staged);
+    let _ = std::fs::remove_file(&lease_path);
     let _ = std::fs::remove_dir(&staging_dir);
     if libc::WIFEXITED(status) {
         std::process::exit(libc::WEXITSTATUS(status));

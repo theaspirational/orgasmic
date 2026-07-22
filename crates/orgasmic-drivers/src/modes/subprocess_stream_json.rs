@@ -59,15 +59,18 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
         let request = adapter.compose_request(&ctx, &config)?;
         let (tx, rx) = mpsc::channel(64);
 
-        let control = match request {
+        let (control, producer) = match request {
             HarnessRequest::Simulated { events } => {
                 for event in events {
                     let _ = tx.send(event).await;
                 }
-                SubprocessControlMode::Simulated {
-                    adapter,
-                    events: tx,
-                }
+                (
+                    SubprocessControlMode::Simulated {
+                        adapter,
+                        events: tx,
+                    },
+                    None,
+                )
             }
             HarnessRequest::Subprocess {
                 binary,
@@ -126,7 +129,7 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
                 } else {
                     Some(stdin)
                 };
-                tokio::spawn(run_subprocess_stream_json(SubprocessRuntime {
+                let producer = tokio::spawn(run_subprocess_stream_json(SubprocessRuntime {
                     binary,
                     child,
                     stdin,
@@ -136,7 +139,10 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
                     events: tx,
                     adapter,
                 }));
-                SubprocessControlMode::Real { commands, pid }
+                (
+                    SubprocessControlMode::Real { commands, pid },
+                    Some(producer),
+                )
             }
             _ => {
                 return Err(DriverError::Unsupported(
@@ -154,6 +160,7 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
                 kind: ctx.run_kind,
                 released: false,
             }),
+            producer,
             native_runtime: None,
         })
     }

@@ -74,6 +74,7 @@ impl WorkerDriver for ExternalManagerDriver {
             // the channel and make the drain task see stream-end immediately,
             // auto-releasing the run before it ever goes live.
             control: Box::new(ExternalManagerControl { _events: tx }),
+            producer: None,
             native_runtime: None,
         })
     }
@@ -501,6 +502,7 @@ mod tests {
                     pid: None,
                     events: rx,
                     control: Box::new(ExternalManagerControl { _events: tx }),
+                    producer: None,
                     native_runtime: None,
                 })
             }
@@ -558,6 +560,7 @@ mod tests {
                     pid: None,
                     events: rx,
                     control: Box::new(ExternalManagerControl { _events: tx }),
+                    producer: None,
                     native_runtime: None,
                 })
             }

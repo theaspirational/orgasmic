@@ -15,6 +15,8 @@
 //! (`tmux new-session -d`), runs the configured command, and tears the
 //! session down on `release`.
 
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::{
@@ -108,6 +110,10 @@ struct PinnedExecutableIdentity {
     #[cfg(unix)]
     ino: u64,
     exec_wrapper: PathBuf,
+    #[cfg(unix)]
+    exec_wrapper_dev: u64,
+    #[cfg(unix)]
+    exec_wrapper_ino: u64,
 }
 
 pub(crate) fn default_input_ready_timeout() -> Duration {
@@ -204,10 +210,9 @@ impl WorkerDriver for TmuxDriver {
                     })?;
                     let discovery = wait_for_claude_fork_session_id(
                         &resumed,
-                        &spawn_plan.cwd,
                         observation.since,
                         &observation.excluded,
-                        spawn_plan.provider_home.as_deref(),
+                        &observation.directory,
                     )
                     .await;
                     match discovery {
@@ -314,11 +319,12 @@ impl WorkerDriver for TmuxDriver {
                 session_name,
                 kind: ctx.run_kind,
                 inert,
-                capture_task,
+                capture_abort: capture_task.as_ref().map(JoinHandle::abort_handle),
                 terminal_emitted,
                 kill_on_drop: true,
                 released: false,
             }),
+            producer: capture_task,
             native_runtime,
         })
     }
@@ -351,31 +357,30 @@ impl WorkerDriver for TmuxDriver {
                 }),
             })
             .await;
+        let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let capture_task = start_capture_loop(
+            session_name.clone(),
+            tx.clone(),
+            tmux_eot_marker(&ctx.identity.run_id),
+            terminal_emitted.clone(),
+        );
 
         Ok(AttachOutcome::Attached(Attached {
             session: Box::new(DriverSession {
                 identity: ctx.identity.clone(),
                 pid: None,
                 events: rx,
-                control: {
-                    let terminal_emitted = Arc::new(AtomicBool::new(false));
-                    let capture_task = start_capture_loop(
-                        session_name.clone(),
-                        tx.clone(),
-                        tmux_eot_marker(&ctx.identity.run_id),
-                        terminal_emitted.clone(),
-                    );
-                    Box::new(TmuxTuiControl {
-                        events: Some(tx.clone()),
-                        session_name: session_name.clone(),
-                        kind: ctx.run_kind,
-                        inert: false,
-                        capture_task: Some(capture_task),
-                        terminal_emitted,
-                        kill_on_drop: false,
-                        released: false,
-                    })
-                },
+                control: Box::new(TmuxTuiControl {
+                    events: Some(tx.clone()),
+                    session_name: session_name.clone(),
+                    kind: ctx.run_kind,
+                    inert: false,
+                    capture_abort: Some(capture_task.abort_handle()),
+                    terminal_emitted,
+                    kill_on_drop: false,
+                    released: false,
+                }),
+                producer: Some(capture_task),
                 native_runtime: None,
             }),
         }))
@@ -387,7 +392,7 @@ struct TmuxTuiControl {
     session_name: String,
     kind: RunKind,
     inert: bool,
-    capture_task: Option<JoinHandle<()>>,
+    capture_abort: Option<tokio::task::AbortHandle>,
     terminal_emitted: Arc<AtomicBool>,
     kill_on_drop: bool,
     released: bool,
@@ -452,7 +457,7 @@ impl DriverControl for TmuxTuiControl {
         // capture side terminal before killing the pane so teardown cannot
         // manufacture RunComplete and override the supervisor's frozen cause.
         self.terminal_emitted.store(true, Ordering::SeqCst);
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.capture_abort.take() {
             task.abort();
         }
         // Receiver closure is the normal terminal authority. Dropping the
@@ -468,7 +473,7 @@ impl DriverControl for TmuxTuiControl {
 
 impl Drop for TmuxTuiControl {
     fn drop(&mut self) {
-        if let Some(task) = self.capture_task.take() {
+        if let Some(task) = self.capture_abort.take() {
             task.abort();
         }
         if !self.released && self.kill_on_drop && !self.inert {
@@ -706,6 +711,15 @@ const FORK_DISCOVERY_INITIAL_WAIT: Duration = Duration::from_millis(750);
 const FORK_DISCOVERY_POLL: Duration = Duration::from_millis(250);
 const FORK_DISCOVERY_MAX_AFTER_LAUNCH: Duration = Duration::from_secs(30);
 
+#[cfg(test)]
+static CLAUDE_PRE_RELEASE_TEST_HOOK: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
+    std::sync::Mutex::new(None);
+#[cfg(test)]
+type ForkCandidatePostReadHook = Box<dyn FnOnce(&str) + Send>;
+#[cfg(test)]
+static FORK_CANDIDATE_POST_READ_TEST_HOOK: std::sync::Mutex<Option<ForkCandidatePostReadHook>> =
+    std::sync::Mutex::new(None);
+
 fn system_time_secs(time: std::time::SystemTime) -> Option<u64> {
     time.duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -726,31 +740,28 @@ fn file_modified_not_before_launch(
 
 async fn wait_for_claude_fork_session_id(
     resumed_session_id: &str,
-    cwd: &std::path::Path,
     since: std::time::SystemTime,
     excluded: &std::collections::BTreeSet<String>,
-    provider_home: Option<&std::path::Path>,
+    directory: &ClaudeProjectsDirectory,
 ) -> ForkDiscoveryResult {
     tokio::time::sleep(FORK_DISCOVERY_INITIAL_WAIT).await;
     let deadline = since + FORK_DISCOVERY_MAX_AFTER_LAUNCH;
     loop {
-        match discover_claude_fork_session_id_excluding_with_home(
+        match discover_claude_fork_session_id_in_directory(
             resumed_session_id,
-            cwd,
             since,
             excluded,
-            provider_home,
+            directory,
         ) {
             ForkDiscoveryResult::Unique(id) => {
                 // Give a concurrent launch one polling interval to surface;
                 // only a stable unique observation is authoritative.
                 tokio::time::sleep(FORK_DISCOVERY_POLL).await;
-                return match discover_claude_fork_session_id_excluding_with_home(
+                return match discover_claude_fork_session_id_in_directory(
                     resumed_session_id,
-                    cwd,
                     since,
                     excluded,
-                    provider_home,
+                    directory,
                 ) {
                     ForkDiscoveryResult::Unique(confirmed) if confirmed == id => {
                         ForkDiscoveryResult::Unique(id)
@@ -772,25 +783,8 @@ async fn wait_for_claude_fork_session_id(
     }
 }
 
-fn path_is_under_root(candidate: &std::path::Path, root: &std::path::Path) -> bool {
-    let Ok(canonical) = candidate.canonicalize() else {
-        return false;
-    };
-    let Ok(root) = root.canonicalize() else {
-        return false;
-    };
-    canonical == root || canonical.starts_with(&root)
-}
-
-fn fork_candidate_is_confined(path: &std::path::Path, projects_dir: &std::path::Path) -> bool {
-    let Ok(meta) = std::fs::symlink_metadata(path) else {
-        return false;
-    };
-    meta.is_file() && !meta.file_type().is_symlink() && path_is_under_root(path, projects_dir)
-}
-
 fn fork_candidate_has_provider_proof(
-    path: &std::path::Path,
+    file: &File,
     session_id: &str,
     cwd: &std::path::Path,
     resumed_session_id: &str,
@@ -798,9 +792,16 @@ fn fork_candidate_has_provider_proof(
     let Ok(expected_cwd) = cwd.canonicalize() else {
         return false;
     };
-    let Ok(raw) = std::fs::read_to_string(path) else {
+    let Ok(mut file) = file.try_clone() else {
         return false;
     };
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return false;
+    }
+    let mut raw = String::new();
+    if file.read_to_string(&mut raw).is_err() {
+        return false;
+    }
     raw.lines()
         .filter(|line| !line.trim().is_empty())
         .any(|line| {
@@ -822,31 +823,149 @@ fn fork_candidate_has_provider_proof(
         })
 }
 
+#[derive(Clone)]
+struct ClaudeProjectsDirectory {
+    file: Arc<File>,
+    cwd: PathBuf,
+}
+
+impl ClaudeProjectsDirectory {
+    fn open(cwd: &Path, provider_home: Option<&Path>) -> Result<Self, DriverError> {
+        let path = claude_projects_dir_with_home(cwd, provider_home).ok_or_else(|| {
+            DriverError::Transport("Claude projects directory is unavailable".into())
+        })?;
+        let cwd = cwd
+            .canonicalize()
+            .map_err(|_| DriverError::Transport("Claude recovery cwd is unavailable".into()))?;
+        #[cfg(unix)]
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        options.custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC);
+        let file = options.open(&path).map_err(|err| {
+            DriverError::Transport(format!("open Claude projects directory: {err}"))
+        })?;
+        if !file.metadata().map(|meta| meta.is_dir()).unwrap_or(false) {
+            return Err(DriverError::Transport(
+                "Claude projects path is not a directory".into(),
+            ));
+        }
+        Ok(Self {
+            file: Arc::new(file),
+            cwd,
+        })
+    }
+
+    #[cfg(unix)]
+    fn names(&self) -> Result<std::collections::BTreeSet<String>, DriverError> {
+        use std::ffi::CStr;
+        use std::os::fd::AsRawFd;
+        // `dup` would share the directory stream offset with `self.file`.
+        // Discovery enumerates more than once to prove a stable unique fork,
+        // so each pass needs a fresh open file description rooted at the
+        // retained directory authority.
+        let dot = c".";
+        let directory_fd = unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                dot.as_ptr(),
+                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if directory_fd < 0 {
+            return Err(DriverError::Transport(format!(
+                "open retained Claude projects directory: {}",
+                std::io::Error::last_os_error()
+            )));
+        }
+        let dir = unsafe { libc::fdopendir(directory_fd) };
+        if dir.is_null() {
+            let error = std::io::Error::last_os_error();
+            unsafe { libc::close(directory_fd) };
+            return Err(DriverError::Transport(format!(
+                "enumerate retained Claude projects directory: {error}"
+            )));
+        }
+        let mut names = std::collections::BTreeSet::new();
+        loop {
+            let entry = unsafe { libc::readdir(dir) };
+            if entry.is_null() {
+                break;
+            }
+            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+            if let Ok(name) = name.to_str() {
+                if let Some(stem) = name.strip_suffix(".jsonl") {
+                    if validate_fork_session_stem(stem) {
+                        names.insert(stem.to_string());
+                    }
+                }
+            }
+        }
+        unsafe { libc::closedir(dir) };
+        Ok(names)
+    }
+
+    #[cfg(not(unix))]
+    fn names(&self) -> Result<std::collections::BTreeSet<String>, DriverError> {
+        Err(DriverError::Unsupported(
+            "retained Claude projects directory enumeration",
+        ))
+    }
+
+    #[cfg(unix)]
+    fn open_candidate(&self, stem: &str) -> Option<(File, std::fs::Metadata)> {
+        use std::os::fd::{AsRawFd, FromRawFd};
+        let name = std::ffi::CString::new(format!("{stem}.jsonl")).ok()?;
+        let fd = unsafe {
+            libc::openat(
+                self.file.as_raw_fd(),
+                name.as_ptr(),
+                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+            )
+        };
+        if fd < 0 {
+            return None;
+        }
+        let file = unsafe { File::from_raw_fd(fd) };
+        let metadata = file.metadata().ok()?;
+        metadata.is_file().then_some((file, metadata))
+    }
+
+    #[cfg(not(unix))]
+    fn open_candidate(&self, _stem: &str) -> Option<(File, std::fs::Metadata)> {
+        None
+    }
+
+    fn current_identity_matches(&self, stem: &str, expected: &std::fs::Metadata) -> bool {
+        let Some((_, current)) = self.open_candidate(stem) else {
+            return false;
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            current.dev() == expected.dev() && current.ino() == expected.ino()
+        }
+        #[cfg(not(unix))]
+        {
+            current.len() == expected.len() && current.modified().ok() == expected.modified().ok()
+        }
+    }
+}
+
 #[cfg(test)]
 fn claude_fork_candidate_names(cwd: &std::path::Path) -> std::collections::BTreeSet<String> {
     claude_fork_candidate_names_with_home(cwd, None)
 }
 
+#[cfg(test)]
 fn claude_fork_candidate_names_with_home(
     cwd: &std::path::Path,
     provider_home: Option<&std::path::Path>,
 ) -> std::collections::BTreeSet<String> {
-    let Some(dir) = claude_projects_dir_with_home(cwd, provider_home) else {
-        return Default::default();
-    };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Default::default();
-    };
-    entries
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            (path.extension().and_then(|ext| ext.to_str()) == Some("jsonl")
-                && fork_candidate_is_confined(&path, &dir))
-            .then(|| path.file_stem()?.to_str().map(str::to_string))
-            .flatten()
-        })
-        .collect()
+    ClaudeProjectsDirectory::open(cwd, provider_home)
+        .and_then(|directory| directory.names())
+        .unwrap_or_default()
 }
 
 fn validate_fork_session_stem(stem: &str) -> bool {
@@ -896,6 +1015,7 @@ fn discover_claude_fork_session_id_excluding(
     )
 }
 
+#[cfg(test)]
 fn discover_claude_fork_session_id_excluding_with_home(
     resumed_session_id: &str,
     cwd: &std::path::Path,
@@ -903,44 +1023,54 @@ fn discover_claude_fork_session_id_excluding_with_home(
     excluded: &std::collections::BTreeSet<String>,
     provider_home: Option<&std::path::Path>,
 ) -> ForkDiscoveryResult {
-    let Some(dir) = claude_projects_dir_with_home(cwd, provider_home) else {
+    let Ok(directory) = ClaudeProjectsDirectory::open(cwd, provider_home) else {
         return ForkDiscoveryResult::NotFound;
     };
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return ForkDiscoveryResult::NotFound;
-    };
+    discover_claude_fork_session_id_in_directory(resumed_session_id, since, excluded, &directory)
+}
+
+fn discover_claude_fork_session_id_in_directory(
+    resumed_session_id: &str,
+    since: std::time::SystemTime,
+    excluded: &std::collections::BTreeSet<String>,
+    directory: &ClaudeProjectsDirectory,
+) -> ForkDiscoveryResult {
     let launch_upper = since + FORK_DISCOVERY_MAX_AFTER_LAUNCH;
     let mut candidates = Vec::new();
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
-            continue;
-        }
-        if !fork_candidate_is_confined(&path, &dir) {
-            continue;
-        }
-        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-            continue;
-        };
+    let Ok(names) = directory.names() else {
+        return ForkDiscoveryResult::NotFound;
+    };
+    for stem in names {
         if stem == resumed_session_id
-            || excluded.contains(stem)
-            || !validate_fork_session_stem(stem)
+            || excluded.contains(&stem)
+            || !validate_fork_session_stem(&stem)
         {
             continue;
         }
-        let Ok(meta) = entry.metadata() else {
+        let Some((file, metadata)) = directory.open_candidate(&stem) else {
             continue;
         };
-        let Ok(modified) = meta.modified() else {
+        let Ok(modified) = metadata.modified() else {
             continue;
         };
         if !file_modified_not_before_launch(modified, since) || modified > launch_upper {
             continue;
         }
-        if !fork_candidate_has_provider_proof(&path, stem, cwd, resumed_session_id) {
+        if !fork_candidate_has_provider_proof(&file, &stem, &directory.cwd, resumed_session_id) {
             continue;
         }
-        candidates.push(stem.to_string());
+        #[cfg(test)]
+        if let Some(hook) = FORK_CANDIDATE_POST_READ_TEST_HOOK
+            .lock()
+            .expect("fork post-read hook lock")
+            .take()
+        {
+            hook(&stem);
+        }
+        if !directory.current_identity_matches(&stem, &metadata) {
+            continue;
+        }
+        candidates.push(stem);
     }
     match candidates.len() {
         0 => ForkDiscoveryResult::NotFound,
@@ -1138,6 +1268,7 @@ const TMUX_SESSION_ROWS: &str = "50";
 struct ClaudeForkLaunchObservation {
     since: std::time::SystemTime,
     excluded: std::collections::BTreeSet<String>,
+    directory: ClaudeProjectsDirectory,
 }
 
 fn execution_command(plan: &TmuxSpawnPlan) -> Result<(String, Vec<String>), DriverError> {
@@ -1148,6 +1279,21 @@ fn execution_command(plan: &TmuxSpawnPlan) -> Result<(String, Vec<String>), Driv
         return Err(DriverError::InvalidConfig(
             "pinned executable requires trusted provider identity".into(),
         ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = std::fs::symlink_metadata(&pin.exec_wrapper)
+            .map_err(|_| DriverError::InvalidConfig("pinned exec wrapper is unavailable".into()))?;
+        if !metadata.is_file()
+            || metadata.file_type().is_symlink()
+            || metadata.dev() != pin.exec_wrapper_dev
+            || metadata.ino() != pin.exec_wrapper_ino
+        {
+            return Err(DriverError::InvalidConfig(
+                "pinned exec wrapper identity mismatch".into(),
+            ));
+        }
     }
     let mut args = vec![
         "__exec-pinned".to_string(),
@@ -1229,11 +1375,27 @@ async fn spawn_tmux_session(
         )));
     }
     let launch_observation = if let Some(gate) = gate {
-        // The pane is blocked in the launch gate here. Sample the exact
-        // pre-exec candidate set and lower bound, then release the original
-        // pane. This closes the old baseline-to-spawn observation window.
-        let excluded =
-            claude_fork_candidate_names_with_home(&plan.cwd, plan.provider_home.as_deref());
+        // The pane is blocked in the launch gate here. Retain the exact
+        // provider directory, record the lower bound, release the pane, then
+        // snapshot exclusions. Anything created in the former
+        // snapshot-to-release gap is now excluded; only candidates absent
+        // after the ordered release boundary can be accepted.
+        let directory =
+            match ClaudeProjectsDirectory::open(&plan.cwd, plan.provider_home.as_deref()) {
+                Ok(directory) => directory,
+                Err(error) => {
+                    kill_tmux_session(session).await;
+                    return Err(error);
+                }
+            };
+        #[cfg(test)]
+        if let Some(hook) = CLAUDE_PRE_RELEASE_TEST_HOOK
+            .lock()
+            .expect("Claude pre-release hook lock")
+            .take()
+        {
+            hook();
+        }
         let since = std::time::SystemTime::now();
         if let Err(error) = std::fs::OpenOptions::new()
             .write(true)
@@ -1245,7 +1407,18 @@ async fn spawn_tmux_session(
                 "release Claude launch gate: {error}"
             )));
         }
-        Some(ClaudeForkLaunchObservation { since, excluded })
+        let excluded = match directory.names() {
+            Ok(excluded) => excluded,
+            Err(error) => {
+                kill_tmux_session(session).await;
+                return Err(error);
+            }
+        };
+        Some(ClaudeForkLaunchObservation {
+            since,
+            excluded,
+            directory,
+        })
     } else {
         None
     };
@@ -2015,7 +2188,7 @@ mod tests {
         session_id: &str,
         modified: std::time::SystemTime,
     ) -> std::path::PathBuf {
-        let dir = super::claude_projects_dir(cwd).expect("projects dir");
+        let dir = super::claude_projects_dir_with_home(cwd, Some(home)).expect("projects dir");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("{session_id}.jsonl"));
         std::fs::write(
@@ -2030,7 +2203,6 @@ mod tests {
         )
         .unwrap();
         filetime::set_file_mtime(&path, filetime::FileTime::from_system_time(modified)).unwrap();
-        let _ = home;
         path
     }
 
@@ -2174,6 +2346,92 @@ mod tests {
     }
 
     #[test]
+    fn fork_discovery_fails_closed_on_post_read_inode_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        with_home(tmp.path(), || {
+            let cwd = tmp.path().join("repo");
+            std::fs::create_dir_all(&cwd).unwrap();
+            let since = std::time::SystemTime::now() - Duration::from_millis(50);
+            let path = touch_claude_fork_jsonl(tmp.path(), &cwd, "fork-swap", since);
+            let displaced = path.with_extension("opened");
+            let replacement = path.clone();
+            let cwd_for_swap = cwd.clone();
+            *super::FORK_CANDIDATE_POST_READ_TEST_HOOK.lock().unwrap() =
+                Some(Box::new(move |_| {
+                    std::fs::rename(&replacement, &displaced).unwrap();
+                    std::fs::write(
+                        &replacement,
+                        serde_json::to_string(&json!({
+                            "sessionId": "fork-swap",
+                            "cwd": cwd_for_swap,
+                            "forkedFrom": {"sessionId": "origin-session"},
+                        }))
+                        .unwrap(),
+                    )
+                    .unwrap();
+                }));
+            let result = super::discover_claude_fork_session_id("origin-session", &cwd, since);
+            assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        });
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn gated_launch_excludes_candidate_inserted_before_release_boundary() {
+        let _live_guard = live_session_guard();
+        if !tmux_spawn_usable().await || !command_available("sleep") {
+            eprintln!("skipping gated launch gap regression: tmux/sleep unavailable");
+            return;
+        }
+        let _lock = FORK_DISCOVERY_TEST_LOCK
+            .lock()
+            .expect("fork discovery test lock");
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("repo");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let projects = super::claude_projects_dir_with_home(&cwd, Some(tmp.path())).unwrap();
+        std::fs::create_dir_all(&projects).unwrap();
+        let home = tmp.path().to_path_buf();
+        let cwd_for_hook = cwd.clone();
+        *super::CLAUDE_PRE_RELEASE_TEST_HOOK.lock().unwrap() = Some(Box::new(move || {
+            touch_claude_fork_jsonl(
+                &home,
+                &cwd_for_hook,
+                "fork-in-old-gap",
+                std::time::SystemTime::now(),
+            );
+        }));
+        let session = format!("orgasmic-fork-gap-{}", uuid::Uuid::new_v4().simple());
+        let _guard = SessionGuard(session.clone());
+        let plan = TmuxSpawnPlan {
+            command: "sleep".into(),
+            args: vec!["2".into()],
+            cwd,
+            initial_prompt: None,
+            eot_marker: tmux_eot_marker("run-fork-gap"),
+            native_runtime: None,
+            run_id: "run-fork-gap".into(),
+            native_resume_mode: true,
+            trusted_provider_identity: Some("claude".into()),
+            pinned_executable: None,
+            provider_home: Some(tmp.path().to_path_buf()),
+        };
+        let observation = spawn_tmux_session(&session, &plan)
+            .await
+            .unwrap()
+            .expect("gated observation");
+        assert!(observation.excluded.contains("fork-in-old-gap"));
+        let result = super::discover_claude_fork_session_id_in_directory(
+            "origin-session",
+            observation.since,
+            &observation.excluded,
+            &observation.directory,
+        );
+        assert_eq!(result, super::ForkDiscoveryResult::NotFound);
+        kill_tmux_session(&session).await;
+    }
+
+    #[test]
     fn fork_discovery_accepts_candidate_created_after_initial_wait() {
         let tmp = tempfile::tempdir().unwrap();
         with_home(tmp.path(), || {
@@ -2200,6 +2458,9 @@ mod tests {
         let _home_guard = HomeGuard::set(tmp.path());
         let cwd = tmp.path().join("repo");
         std::fs::create_dir_all(&cwd).unwrap();
+        let projects = super::claude_projects_dir(&cwd).unwrap();
+        std::fs::create_dir_all(&projects).unwrap();
+        let directory = super::ClaudeProjectsDirectory::open(&cwd, None).unwrap();
         let since = std::time::SystemTime::now();
         let delayed = since + Duration::from_millis(900);
         let cwd_for_delay = cwd.clone();
@@ -2210,10 +2471,9 @@ mod tests {
         });
         let result = super::wait_for_claude_fork_session_id(
             "origin-session",
-            &cwd,
             since,
             &Default::default(),
-            None,
+            &directory,
         )
         .await;
         assert_eq!(

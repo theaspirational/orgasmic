@@ -67,15 +67,18 @@ impl WorkerDriver for AcpWsDriver {
             .map_err(|e| crate::DriverError::InvalidConfig(format!("sandbox_permissions: {e}")))?;
         let (tx, rx) = mpsc::channel(64);
 
-        let control = match request {
+        let (control, producer) = match request {
             HarnessRequest::Simulated { events } => {
                 for event in events {
                     let _ = tx.send(event).await;
                 }
-                AcpWsControlMode::Simulated {
-                    adapter,
-                    events: tx,
-                }
+                (
+                    AcpWsControlMode::Simulated {
+                        adapter,
+                        events: tx,
+                    },
+                    None,
+                )
             }
             HarnessRequest::AcpWs {
                 endpoint,
@@ -101,7 +104,7 @@ impl WorkerDriver for AcpWsDriver {
                     request.headers_mut().insert(name, value);
                 }
                 let (commands, command_rx) = mpsc::channel(16);
-                if adapter.ws_connect_errors_emit_to_stream() {
+                let producer = if adapter.ws_connect_errors_emit_to_stream() {
                     let connect_endpoint = endpoint.clone();
                     tokio::spawn(async move {
                         match timeout(Duration::from_secs(5), connect_async(request)).await {
@@ -136,7 +139,7 @@ impl WorkerDriver for AcpWsDriver {
                                 .await;
                             }
                         }
-                    });
+                    })
                 } else {
                     let (ws, response) = timeout(Duration::from_secs(5), connect_async(request))
                         .await
@@ -159,9 +162,9 @@ impl WorkerDriver for AcpWsDriver {
                         events: tx,
                         command_rx,
                         adapter,
-                    }));
-                }
-                AcpWsControlMode::Real { commands }
+                    }))
+                };
+                (AcpWsControlMode::Real { commands }, Some(producer))
             }
             _ => return Err(DriverError::Unsupported("acp-ws request shape")),
         };
@@ -175,6 +178,7 @@ impl WorkerDriver for AcpWsDriver {
                 kind: ctx.run_kind,
                 released: false,
             }),
+            producer,
             native_runtime: None,
         })
     }

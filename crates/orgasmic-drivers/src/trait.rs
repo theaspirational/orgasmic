@@ -491,6 +491,10 @@ pub struct DriverSession {
     /// release. Implementations are usually a thin wrapper around the
     /// driver's command channel.
     pub control: Box<dyn DriverControl>,
+    /// Driver-owned event producer. The supervisor retains this handle so a
+    /// release that cannot complete gracefully can abort and join the
+    /// producer before it drains the receiver to closure.
+    pub producer: Option<tokio::task::JoinHandle<()>>,
     /// Harness-aware native runtime identity, when the driver knows it.
     /// `None` for drivers/harnesses without native session semantics.
     pub native_runtime: Option<NativeRuntimeMeta>,

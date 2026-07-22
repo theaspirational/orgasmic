@@ -195,6 +195,7 @@ pub struct RecoveryReattachPlan {
     pub stdout_path: Option<PathBuf>,
     pub native_runtime: Option<NativeRuntimeMeta>,
     pub prompt_draft: String,
+    pub session_file: Option<crate::recovery_claim::SessionFile>,
 }
 
 #[derive(Debug, Error)]
@@ -399,6 +400,7 @@ struct RunRecord {
     next_event_seq: u64,
     terminal_outcome: Option<ReleaseOutcome>,
     control: Box<dyn DriverControl>,
+    producer: Option<tokio::task::JoinHandle<()>>,
     event_drain: tokio::task::JoinHandle<()>,
     /// Babysitter coalescing buffer (None on implementer runs).
     babysitter_summary: Option<BabysitterSummaryBuffer>,
@@ -514,6 +516,7 @@ enum TerminalReleaseSource {
 
 struct TerminalRelease {
     control: Box<dyn DriverControl>,
+    producer: Option<tokio::task::JoinHandle<()>>,
 }
 
 struct RunTimeoutCandidate {
@@ -867,6 +870,9 @@ impl Supervisor {
                 run_id: run_id.clone(),
                 session_path: req.session_path.clone(),
                 identity: identity.clone(),
+                authority: recovery_plan
+                    .as_ref()
+                    .and_then(|plan| plan.session_file.clone()),
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&acquire_evt).map_err(into_anyhow)?,
             })
@@ -905,6 +911,11 @@ impl Supervisor {
                 &plan.claim,
                 &run_id,
                 &req.session_path,
+                plan.session_file.as_ref().ok_or_else(|| {
+                    SupervisorError::Session(anyhow::anyhow!(
+                        "recovery plan is missing retained session authority"
+                    ))
+                })?,
                 &identity,
                 &req.task_id,
                 req.kind,
@@ -927,6 +938,7 @@ impl Supervisor {
 
         let run_started_at = Instant::now();
         let control = session.control;
+        let producer = session.producer;
         let events = session.events;
         let kind = req.kind;
         // Insert the run record before the drain task starts so stream-end and
@@ -966,6 +978,7 @@ impl Supervisor {
                 next_event_seq: 0,
                 terminal_outcome: None,
                 control,
+                producer,
                 event_drain: tokio::spawn(async {}),
                 babysitter_summary: if kind == RunKind::Worker {
                     Some(BabysitterSummaryBuffer::default())
@@ -1018,6 +1031,7 @@ impl Supervisor {
                         run_id: run_id_for_drain.clone(),
                         session_path: session_path.clone(),
                         identity: identity_for_drain.clone(),
+                        authority: None,
                         kind: SessionEventKind::DriverEvent,
                         event: payload,
                     })
@@ -1074,6 +1088,7 @@ impl Supervisor {
                             run_id: summary.run_id,
                             session_path: summary.session_path,
                             identity: summary.identity,
+                            authority: None,
                             kind: SessionEventKind::BabysitterSummary,
                             event: serde_json::to_value(&summary.chunk)
                                 .unwrap_or(serde_json::Value::Null),
@@ -1138,6 +1153,7 @@ impl Supervisor {
                 run_id: run_id.to_string(),
                 session_path: session_path.to_path_buf(),
                 identity: identity.clone(),
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&evt).map_err(into_anyhow)?,
             })
@@ -1178,6 +1194,7 @@ impl Supervisor {
                 run_id: run_id.to_string(),
                 session_path: session_path.to_path_buf(),
                 identity: identity.clone(),
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&evt).map_err(into_anyhow)?,
             })
@@ -1197,6 +1214,7 @@ impl Supervisor {
         claim: &crate::recovery_claim::RecoveryClaim,
         run_id: &str,
         session_path: &Path,
+        session_file: &crate::recovery_claim::SessionFile,
         identity: &RuntimeIdentity,
         task_id: &str,
         kind: RunKind,
@@ -1214,8 +1232,11 @@ impl Supervisor {
         prompt_draft: Option<&str>,
         include_recovery_origin: bool,
     ) -> Result<(), SupervisorError> {
-        use orgasmic_core::session::read_session_file;
-        let envelopes = read_session_file(session_path).unwrap_or_default();
+        let envelopes = session_file.read_checked().map_err(|err| {
+            SupervisorError::Session(anyhow::anyhow!(
+                "recovery session authority failed: {err:?}"
+            ))
+        })?;
         if !crate::recovery_claim::pending_session_prefix_matches_claim(claim, &envelopes) {
             return Err(SupervisorError::Session(anyhow::anyhow!(
                 "recovery lifecycle prefix conflicts with immutable pending plan"
@@ -1271,6 +1292,7 @@ impl Supervisor {
                     run_id: run_id.to_string(),
                     session_path: session_path.to_path_buf(),
                     identity: identity.clone(),
+                    authority: Some(session_file.clone()),
                     kind: SessionEventKind::Lifecycle,
                     event: serde_json::to_value(&acquire_evt).map_err(into_anyhow)?,
                 })
@@ -1375,6 +1397,7 @@ impl Supervisor {
                 run_id: run_id.to_string(),
                 session_path: session_path.to_path_buf(),
                 identity: identity.clone(),
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&evt).map_err(into_anyhow)?,
             })
@@ -1407,6 +1430,7 @@ impl Supervisor {
                 run_id: run_id.to_string(),
                 session_path,
                 identity,
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&evt).map_err(into_anyhow)?,
             })
@@ -1433,6 +1457,7 @@ impl Supervisor {
                 run_id: run_id.to_string(),
                 session_path: session_path.to_path_buf(),
                 identity: identity.clone(),
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&evt).map_err(into_anyhow)?,
             })
@@ -1528,6 +1553,11 @@ impl Supervisor {
                 &plan.claim,
                 &run_id,
                 &session_path,
+                plan.session_file.as_ref().ok_or_else(|| {
+                    SupervisorError::Session(anyhow::anyhow!(
+                        "recovery plan is missing retained session authority"
+                    ))
+                })?,
                 &identity,
                 &task_id,
                 kind,
@@ -1560,6 +1590,7 @@ impl Supervisor {
                     run_id: run_id.clone(),
                     session_path: session_path.clone(),
                     identity: identity.clone(),
+                    authority: None,
                     kind: SessionEventKind::Lifecycle,
                     event: serde_json::to_value(&reattach_evt).map_err(into_anyhow)?,
                 })
@@ -1576,6 +1607,7 @@ impl Supervisor {
             .as_ref()
             .and_then(|plan| plan.stdout_path.clone());
         let control = session.control;
+        let producer = session.producer;
         let events = session.events;
         let record = RunRecord {
             task_id: task_id.clone(),
@@ -1610,6 +1642,7 @@ impl Supervisor {
             next_event_seq: 0,
             terminal_outcome: None,
             control,
+            producer,
             event_drain: tokio::spawn(async {}),
             babysitter_summary: if kind == RunKind::Worker {
                 Some(BabysitterSummaryBuffer::default())
@@ -1663,6 +1696,7 @@ impl Supervisor {
                         run_id: run_id_for_drain.clone(),
                         session_path: drain_path.clone(),
                         identity: identity_for_drain.clone(),
+                        authority: None,
                         kind: SessionEventKind::DriverEvent,
                         event: payload,
                     })
@@ -1755,6 +1789,7 @@ impl Supervisor {
                     run_id: target_run.into(),
                     session_path: target_rec.session_path.clone(),
                     identity: target_rec.identity.clone(),
+                    authority: None,
                     kind: SessionEventKind::Lifecycle,
                     event: serde_json::to_value(&evt).unwrap_or(serde_json::Value::Null),
                 })
@@ -1784,6 +1819,7 @@ impl Supervisor {
                 run_id: pending.run_id,
                 session_path: pending.session_path,
                 identity: pending.identity,
+                authority: None,
                 kind: SessionEventKind::BabysitterSummary,
                 event: serde_json::to_value(&pending.chunk).map_err(into_anyhow)?,
             })
@@ -1983,7 +2019,8 @@ impl Supervisor {
             babysitter_run_id,
             session_path,
             identity,
-            mut control,
+            control,
+            producer,
             mut drain,
             watcher,
         ) = {
@@ -2022,6 +2059,7 @@ impl Supervisor {
             // remains in the map; freeze classification only after quiescence.
             rec.explicit_release_in_progress = true;
             let control = std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl));
+            let producer = rec.producer.take();
             let drain = std::mem::replace(&mut rec.event_drain, tokio::spawn(async {}));
             let watcher = rec.early_exit_watcher.take();
             (
@@ -2031,6 +2069,7 @@ impl Supervisor {
                 rec.session_path.clone(),
                 rec.identity.clone(),
                 control,
+                producer,
                 drain,
                 watcher,
             )
@@ -2041,22 +2080,14 @@ impl Supervisor {
         // we freeze one terminal outcome. A legitimate terminal event racing
         // timeout/cancel therefore wins; no pre-stop snapshot can overwrite
         // an event that was durably drained during shutdown.
-        let _ = tokio::time::timeout(Duration::from_secs(5), control.release(reason)).await;
-        drop(control);
+        stop_and_join_driver_producer(control, producer, reason).await;
         if let Some(watcher) = watcher {
             watcher.abort();
             let _ = watcher.await;
         }
-        // Let the receiver reach closure and flush queued events. If a broken
-        // producer retains a sender, abort and join the drain before removing
-        // the RunRecord so no event can land after Lifecycle::Release.
-        if tokio::time::timeout(Duration::from_secs(5), &mut drain)
-            .await
-            .is_err()
-        {
-            drain.abort();
-            let _ = drain.await;
-        }
+        // Producer completion proves every sender is gone. Drain the receiver
+        // to closure; never abort the receiver while an event can still land.
+        let _ = (&mut drain).await;
         let (final_outcome, cleared_babysitter_backoff) = {
             let mut g = self.inner.lock().await;
             let rec = g
@@ -2097,6 +2128,7 @@ impl Supervisor {
                 run_id: run_id.into(),
                 session_path,
                 identity,
+                authority: None,
                 kind: SessionEventKind::Lifecycle,
                 event: serde_json::to_value(&evt).map_err(into_anyhow)?,
             })
@@ -2839,19 +2871,15 @@ fn spawn_early_exit_watcher(
                     } else {
                         rec.explicit_release_in_progress = true;
                         rec.pid_exit_shutdown_in_progress = true;
-                        Some(std::mem::replace(
-                            &mut rec.control,
-                            Box::new(DetachedDriverControl),
+                        Some((
+                            std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl)),
+                            rec.producer.take(),
                         ))
                     }
                 };
-                if let Some(mut control) = shutdown {
-                    let _ = tokio::time::timeout(
-                        Duration::from_secs(5),
-                        control.release("observed subprocess exit"),
-                    )
-                    .await;
-                    drop(control);
+                if let Some((control, producer)) = shutdown {
+                    stop_and_join_driver_producer(control, producer, "observed subprocess exit")
+                        .await;
                 }
                 return;
             }
@@ -3350,6 +3378,7 @@ fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<Termi
     rec.terminal_event_shutdown_in_progress = true;
     Some(TerminalRelease {
         control: std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl)),
+        producer: rec.producer.take(),
     })
 }
 
@@ -3399,6 +3428,7 @@ async fn append_terminal_release(
             run_id: rec.identity.run_id.clone(),
             session_path: rec.session_path,
             identity: rec.identity,
+            authority: None,
             kind: SessionEventKind::Lifecycle,
             event: serde_json::to_value(&evt).unwrap_or(serde_json::Value::Null),
         })
@@ -3425,16 +3455,29 @@ async fn write_terminal_release_from_record(
 }
 
 async fn finish_driver_terminal_release(_writer: &WriterHandle, release: TerminalRelease) {
-    let mut control = release.control;
-    let _ = tokio::time::timeout(
-        Duration::from_secs(5),
-        control.release("driver terminal event"),
-    )
-    .await;
-    drop(control);
+    stop_and_join_driver_producer(release.control, release.producer, "driver terminal event").await;
     // The receiver owns the terminal boundary. Dropping the producer closes
     // the channel; the drain then persists every queued event before it
     // removes the record and writes Lifecycle::Release.
+}
+
+async fn stop_and_join_driver_producer(
+    mut control: Box<dyn DriverControl>,
+    producer: Option<tokio::task::JoinHandle<()>>,
+    reason: &str,
+) {
+    let _ = tokio::time::timeout(Duration::from_secs(5), control.release(reason)).await;
+    drop(control);
+
+    if let Some(mut producer) = producer {
+        if tokio::time::timeout(Duration::from_secs(5), &mut producer)
+            .await
+            .is_err()
+        {
+            producer.abort();
+            let _ = producer.await;
+        }
+    }
 }
 
 fn take_babysitter_summary_locked(
@@ -3679,6 +3722,7 @@ mod tests {
                 // ever runs. Keeping it on the control ties its lifetime to
                 // the run's control handle instead.
                 control: Box::new(AcceptingInputControl { _events: tx }),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -3759,6 +3803,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(ProtocolEndAcpControl),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -3804,6 +3849,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(ProtocolEndAcpControl),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -3843,6 +3889,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(ProtocolEndAcpControl),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -3901,6 +3948,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(ProtocolEndAcpControl),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -3941,6 +3989,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(ProtocolEndAcpControl),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -3973,6 +4022,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(FinalizeThenProtocolEndControl { events: Some(tx) }),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -4043,6 +4093,7 @@ mod tests {
                     event_tx: std::sync::Arc::clone(&self.event_tx),
                     on_release: self.on_release.clone(),
                 }),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -4052,6 +4103,103 @@ mod tests {
         event_tx:
             std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
         on_release: Option<DriverEvent>,
+    }
+
+    struct HungProducerDriver {
+        dead_pid: bool,
+        producer_dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl HungProducerDriver {
+        fn new(dead_pid: bool) -> Self {
+            Self {
+                dead_pid,
+                producer_dropped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+    }
+
+    struct ProducerDropProbe(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for ProducerDropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    struct HungReleaseControl;
+
+    #[async_trait::async_trait]
+    impl DriverControl for HungReleaseControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Err(DriverError::Unsupported("transition_state"))
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            std::future::pending().await
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for HungProducerDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, DriverError> {
+            let pid = self.dead_pid.then(|| {
+                let mut child = Command::new("sh")
+                    .args(["-c", "exit 0"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn short-lived child");
+                let pid = child.id();
+                child.wait().expect("reap short-lived child");
+                pid
+            });
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(DriverEvent::Ready {
+                protocol_version: "hung-producer/1".into(),
+                capabilities: json!({"test": true}),
+            })
+            .await
+            .unwrap();
+            let dropped = Arc::clone(&self.producer_dropped);
+            let producer = tokio::spawn(async move {
+                let _drop_probe = ProducerDropProbe(dropped);
+                tokio::time::sleep(Duration::from_secs(6)).await;
+                let _ = tx
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("terminal event raced forced producer stop".into()),
+                    })
+                    .await;
+                std::future::pending::<()>().await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid,
+                events: rx,
+                control: Box::new(HungReleaseControl),
+                producer: Some(producer),
+                native_runtime: None,
+            })
+        }
     }
 
     #[async_trait::async_trait]
@@ -4168,6 +4316,7 @@ mod tests {
                     event_tx: std::sync::Arc::clone(&self.event_tx),
                     child: Some(child),
                 }),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -4252,6 +4401,7 @@ mod tests {
                 pid: None,
                 events: rx,
                 control: Box::new(ProtocolEndAcpControl),
+                producer: None,
                 native_runtime: None,
             })
         }
@@ -7765,6 +7915,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn timeout_aborts_joins_hung_producer_then_drains_racing_terminal() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = HungProducerDriver::new(false);
+        let mut req = dispatch_impl_req("TASK-TIMEOUT-HUNG", dir.path());
+        req.stall_timeout_secs = Some(1);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert!(driver.producer_dropped.load(Ordering::SeqCst));
+        assert_release(&session_path, "stall_timeout_exceeded", "completed");
+        assert_eq!(release_count(&session_path), 1);
+    }
+
+    #[tokio::test]
+    async fn dead_pid_aborts_joins_hung_producer_then_receiver_releases() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = HungProducerDriver::new(true);
+        let req = impl_req("TASK-DEAD-PID-HUNG", dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(12)).await;
+        assert!(driver.producer_dropped.load(Ordering::SeqCst));
+        assert_release(&session_path, "driver stream closed", "completed");
+        assert_eq!(release_count(&session_path), 1);
+    }
+
+    #[tokio::test]
     async fn delayed_queued_work_observed_before_stream_end_release() {
         let (sup, dir, _w) = make_supervisor();
         let driver = QueuedBeforeTimeoutDriver::new();
@@ -7838,6 +8018,7 @@ mod tests {
             next_event_seq: 0,
             terminal_outcome: None,
             control: Box::new(NoopControl),
+            producer: None,
             event_drain: tokio::spawn(async {}),
             babysitter_summary: None,
             early_exit_watcher_pid: None,

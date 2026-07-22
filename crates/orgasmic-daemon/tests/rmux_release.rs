@@ -74,6 +74,7 @@ impl WorkerDriver for MockDriver {
                 events: Some(control_events),
                 releases: self.releases.clone(),
             }),
+            producer: None,
             native_runtime: None,
         })
     }

@@ -141,7 +141,14 @@ pub struct PendingRecoveryPlan {
     pub planned_identity: RuntimeIdentity,
     /// When the replacement session already exists, reattach instead of acquire.
     pub reattach_existing: bool,
+    /// Retained no-follow authority for the replacement JSONL. Recovery uses
+    /// this exact handle for parsing and the first replacement append.
+    pub(crate) session_file: Option<SessionFile>,
 }
+
+#[cfg(test)]
+static PENDING_RECONCILE_AFTER_OPEN_HOOK: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
+    std::sync::Mutex::new(None);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedRecoveryClaim {
@@ -506,14 +513,25 @@ impl ClaimDirectory {
 }
 
 #[cfg(unix)]
-struct SessionDirectory {
-    file: File,
+#[derive(Clone, Debug)]
+pub(crate) struct SessionDirectory {
+    file: Arc<File>,
     canonical_path: PathBuf,
 }
 
 #[cfg(unix)]
+#[derive(Clone, Debug)]
+pub struct SessionFile {
+    directory: SessionDirectory,
+    name: String,
+    file: Arc<File>,
+    device: u64,
+    inode: u64,
+}
+
+#[cfg(unix)]
 impl SessionDirectory {
-    fn open(project_root: &Path) -> Result<Self, RecoveryClaimError> {
+    pub(crate) fn open(project_root: &Path) -> Result<Self, RecoveryClaimError> {
         use std::os::fd::{AsRawFd, FromRawFd};
 
         let canonical_root = project_root
@@ -543,13 +561,17 @@ impl SessionDirectory {
             }
         }
         Ok(Self {
-            file: current,
+            file: Arc::new(current),
             canonical_path: canonical_root.join(".orgasmic/tmp/sessions"),
         })
     }
 
     fn name_for_path(&self, path: &Path) -> Result<String, RecoveryClaimError> {
         let parent = path.parent().ok_or(RecoveryClaimError::CorruptClaim)?;
+        // The caller may hold a lexical macOS `/var/...` project path while
+        // the retained directory authority resolves to `/private/var/...`.
+        // Canonicalize only the parent for membership; the actual file is
+        // still opened relative to the retained directory fd with O_NOFOLLOW.
         if parent.canonicalize().map_err(RecoveryClaimError::Io)? != self.canonical_path {
             return Err(RecoveryClaimError::CorruptClaim);
         }
@@ -564,32 +586,104 @@ impl SessionDirectory {
     }
 
     fn read_path(&self, path: &Path) -> Result<Vec<SessionEnvelope>, RecoveryClaimError> {
-        let name = self.name_for_path(path)?;
-        self.read_name(&name)
+        self.open_path(path, false)?.read_checked()
     }
 
-    fn read_name(&self, name: &str) -> Result<Vec<SessionEnvelope>, RecoveryClaimError> {
+    pub(crate) fn open_path(
+        &self,
+        path: &Path,
+        writable: bool,
+    ) -> Result<SessionFile, RecoveryClaimError> {
+        let name = self.name_for_path(path)?;
+        self.open_name(&name, writable)
+    }
+
+    pub(crate) fn create_path(&self, path: &Path) -> Result<SessionFile, RecoveryClaimError> {
+        let name = self.name_for_path(path)?;
+        self.open_name_with_flags(
+            &name,
+            libc::O_RDWR | libc::O_APPEND | libc::O_CREAT | libc::O_EXCL,
+            0o600,
+        )
+    }
+
+    fn open_name(&self, name: &str, writable: bool) -> Result<SessionFile, RecoveryClaimError> {
+        let flags = if writable {
+            libc::O_RDWR | libc::O_APPEND
+        } else {
+            libc::O_RDONLY
+        };
+        self.open_name_with_flags(name, flags, 0)
+    }
+
+    fn open_name_with_flags(
+        &self,
+        name: &str,
+        flags: libc::c_int,
+        mode: libc::mode_t,
+    ) -> Result<SessionFile, RecoveryClaimError> {
         use std::os::fd::{AsRawFd, FromRawFd};
-        let name =
+        if !validate_safe_component(name) || !name.ends_with(".jsonl") {
+            return Err(RecoveryClaimError::InvalidIdentifier);
+        }
+        let c_name =
             std::ffi::CString::new(name).map_err(|_| RecoveryClaimError::InvalidIdentifier)?;
         let fd = unsafe {
             libc::openat(
                 self.file.as_raw_fd(),
-                name.as_ptr(),
-                libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                c_name.as_ptr(),
+                flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+                libc::c_uint::from(mode),
             )
         };
         if fd < 0 {
             return Err(RecoveryClaimError::Io(std::io::Error::last_os_error()));
         }
-        let mut file = unsafe { File::from_raw_fd(fd) };
-        if !file.metadata().map_err(RecoveryClaimError::Io)?.is_file() {
+        let file = unsafe { File::from_raw_fd(fd) };
+        let metadata = file.metadata().map_err(RecoveryClaimError::Io)?;
+        if !metadata.is_file() {
             return Err(RecoveryClaimError::CorruptClaim);
         }
+        use std::os::unix::fs::MetadataExt;
+        Ok(SessionFile {
+            directory: self.clone(),
+            name: name.to_string(),
+            file: Arc::new(file),
+            device: metadata.dev(),
+            inode: metadata.ino(),
+        })
+    }
+}
+
+#[cfg(unix)]
+impl SessionFile {
+    pub(crate) fn authorizes_path(&self, path: &Path) -> Result<bool, RecoveryClaimError> {
+        Ok(self.directory.name_for_path(path)? == self.name)
+    }
+
+    pub(crate) fn read_checked(&self) -> Result<Vec<SessionEnvelope>, RecoveryClaimError> {
+        self.validate_current()?;
+        use std::io::{Seek, SeekFrom};
+        let mut file = self.file.try_clone().map_err(RecoveryClaimError::Io)?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(RecoveryClaimError::Io)?;
         let mut raw = String::new();
         file.read_to_string(&mut raw)
             .map_err(RecoveryClaimError::Io)?;
         parse_session_raw(&raw)
+    }
+
+    pub(crate) fn validate_current(&self) -> Result<(), RecoveryClaimError> {
+        let current = self.directory.open_name(&self.name, false)?;
+        if current.device != self.device || current.inode != self.inode {
+            return Err(RecoveryClaimError::CorruptClaim);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn clone_file_for_append(&self) -> Result<File, RecoveryClaimError> {
+        self.validate_current()?;
+        self.file.try_clone().map_err(RecoveryClaimError::Io)
     }
 }
 
@@ -1326,6 +1420,7 @@ pub fn plan_pending_recovery_claim(
         claim,
         planned_identity,
         reattach_existing: false,
+        session_file: None,
     })
 }
 
@@ -1933,6 +2028,7 @@ pub fn pending_session_prefix_matches_claim(
 
 pub fn reconcile_pending_claim(
     home: &Home,
+    project_root: &Path,
     claim: &RecoveryClaim,
 ) -> Result<Option<PendingRecoveryPlan>, RecoveryClaimError> {
     if claim.status != RecoveryClaimStatus::Pending {
@@ -1949,18 +2045,39 @@ pub fn reconcile_pending_claim(
         .as_deref()
         .is_some_and(tmux_session_exists)
         || tmux_session_exists(&tmux_session_name(&planned_identity));
-    if !claim.replacement_session_path.exists() {
-        if claim.spawn_started && !tmux_live {
-            return Err(RecoveryClaimError::DeadPlannedHandle);
-        }
+    let session_dir = SessionDirectory::open(project_root)?;
+    let (session_file, created_for_pending_append) =
+        match session_dir.open_path(&claim.replacement_session_path, true) {
+            Ok(file) => (file, false),
+            Err(RecoveryClaimError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                if claim.spawn_started && !tmux_live {
+                    return Err(RecoveryClaimError::DeadPlannedHandle);
+                }
+                (
+                    session_dir.create_path(&claim.replacement_session_path)?,
+                    true,
+                )
+            }
+            Err(err) => return Err(err),
+        };
+    #[cfg(test)]
+    if let Some(hook) = PENDING_RECONCILE_AFTER_OPEN_HOOK
+        .lock()
+        .expect("pending reconcile hook lock")
+        .take()
+    {
+        hook();
+    }
+    if created_for_pending_append {
+        session_file.validate_current()?;
         return Ok(Some(PendingRecoveryPlan {
             claim: claim.clone(),
             planned_identity,
             reattach_existing: tmux_live,
+            session_file: Some(session_file),
         }));
     }
-    let envelopes = orgasmic_core::session::read_session_file(&claim.replacement_session_path)
-        .map_err(|_| RecoveryClaimError::CorruptClaim)?;
+    let envelopes = session_file.read_checked()?;
     if !pending_session_prefix_matches_claim(claim, &envelopes) {
         return Err(RecoveryClaimError::CorruptClaim);
     }
@@ -1999,6 +2116,7 @@ pub fn reconcile_pending_claim(
             claim: committed,
             planned_identity,
             reattach_existing: false,
+            session_file: Some(session_file),
         }));
     }
     let has_acquire = envelopes.iter().any(|envelope| {
@@ -2009,6 +2127,7 @@ pub fn reconcile_pending_claim(
         claim: claim.clone(),
         planned_identity,
         reattach_existing: has_acquire || tmux_live,
+        session_file: Some(session_file),
     }))
 }
 
@@ -2479,7 +2598,7 @@ mod tests {
             "written lifecycle prefix does not match claim: {written:#?}"
         );
 
-        let plan = reconcile_pending_claim(&home, &plan.claim)
+        let plan = reconcile_pending_claim(&home, &project_root, &plan.claim)
             .unwrap()
             .expect("pending with existing origin link reconciles");
         assert_eq!(plan.claim.status, RecoveryClaimStatus::Committed);
@@ -2501,10 +2620,87 @@ mod tests {
             false,
         );
         let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
-        let reconciled = reconcile_pending_claim(&home, &plan.claim)
+        let reconciled = reconcile_pending_claim(&home, &project_root, &plan.claim)
             .unwrap()
             .expect("pending plan");
         assert_eq!(reconciled.planned_identity.boot_id, "boot-persisted");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn reconcile_pending_rejects_symlink_replacement() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let (spec, replacement_path) = sample_spec(
+            &home,
+            &project_root,
+            "run-pending-symlink",
+            "req-pending-symlink",
+            "boot-pending-symlink",
+            false,
+        );
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let target = replacement_path.with_extension("target");
+        std::fs::write(&target, "").unwrap();
+        std::os::unix::fs::symlink(&target, &replacement_path).unwrap();
+
+        assert!(reconcile_pending_claim(&home, &project_root, &plan.claim).is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn reconcile_pending_rejects_rename_swap_after_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let (spec, replacement_path) = sample_spec(
+            &home,
+            &project_root,
+            "run-pending-rename",
+            "req-pending-rename",
+            "boot-pending-rename",
+            false,
+        );
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        std::fs::write(&replacement_path, "").unwrap();
+        let displaced = replacement_path.with_extension("opened");
+        let replacement_for_hook = replacement_path.clone();
+        *PENDING_RECONCILE_AFTER_OPEN_HOOK.lock().unwrap() = Some(Box::new(move || {
+            std::fs::rename(&replacement_for_hook, &displaced).unwrap();
+            std::fs::write(&replacement_for_hook, "").unwrap();
+        }));
+
+        assert!(reconcile_pending_claim(&home, &project_root, &plan.claim).is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn retained_pending_authority_rejects_stale_first_append() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let (spec, replacement_path) = sample_spec(
+            &home,
+            &project_root,
+            "run-pending-stale",
+            "req-pending-stale",
+            "boot-pending-stale",
+            false,
+        );
+        let plan = plan_pending_recovery_claim(&home, &spec).unwrap();
+        let reconciled = reconcile_pending_claim(&home, &project_root, &plan.claim)
+            .unwrap()
+            .expect("pending plan retains replacement authority");
+        let authority = reconciled.session_file.expect("retained session file");
+        let displaced = replacement_path.with_extension("opened");
+        std::fs::rename(&replacement_path, &displaced).unwrap();
+        std::fs::write(&replacement_path, "").unwrap();
+
+        assert!(authority.clone_file_for_append().is_err());
     }
 
     #[test]
