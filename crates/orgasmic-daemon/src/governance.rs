@@ -13,8 +13,8 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use orgasmic_core::{SandboxAllowlist, WorkerKind};
-use serde::Deserialize;
+use orgasmic_core::{resolve_context_budget_chars, SandboxAllowlist, WorkerKind};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Supervisor-floor timeouts mirrored as kind defaults when templates omit them.
 pub const DEFAULT_STALL_TIMEOUT_SECS: u32 = 600;
@@ -30,34 +30,104 @@ const REVIEWER_STATES: &[&str] = &[
     "requested_changes",
 ];
 
+/// Addressed babysitter launch configuration (kind is always babysitter).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BabysitterAddress {
+    pub mode: String,
+    pub harness: String,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
 /// Fully resolved governance values for a (kind[, harness]) lookup.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GovernanceDefaults {
     pub max_iterations: Option<u32>,
-    pub context_budget: Option<u32>,
+    pub context_budget_chars: Option<u32>,
     pub stall_timeout_secs: Option<u32>,
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Vec<String>,
     pub linked_skills: Vec<String>,
-    pub babysitter_worker: Option<String>,
+    pub babysitter: Option<BabysitterAddress>,
     pub sandbox_permissions: Option<SandboxAllowlist>,
 }
 
 /// Sparse patch applied over defaults (config overlay or per-dispatch override).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(default)]
 pub struct GovernancePatch {
     pub max_iterations: Option<u32>,
-    pub context_budget: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget_chars: Option<u32>,
     pub stall_timeout_secs: Option<u32>,
     pub max_run_duration_secs: Option<u32>,
     pub applicable_states: Option<Vec<String>>,
     pub linked_skills: Option<Vec<String>>,
-    pub babysitter_worker: Option<String>,
+    /// Tri-state babysitter attachment: absent = inherit, `Some(None)` = disable,
+    /// `Some(Some(addr))` = explicit address.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_babysitter_patch",
+        serialize_with = "serialize_babysitter_patch",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub babysitter: Option<Option<BabysitterAddress>>,
     pub sandbox_permissions: Option<SandboxPermissionsPatch>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+impl<'de> Deserialize<'de> for GovernancePatch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize, Default)]
+        #[serde(default)]
+        struct Raw {
+            max_iterations: Option<u32>,
+            context_budget: Option<u32>,
+            context_budget_chars: Option<u32>,
+            stall_timeout_secs: Option<u32>,
+            max_run_duration_secs: Option<u32>,
+            applicable_states: Option<Vec<String>>,
+            linked_skills: Option<Vec<String>>,
+            #[serde(default, deserialize_with = "deserialize_babysitter_patch")]
+            babysitter: Option<Option<BabysitterAddress>>,
+            sandbox_permissions: Option<SandboxPermissionsPatch>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        let context_budget_chars =
+            resolve_context_budget_chars(raw.context_budget, raw.context_budget_chars).map_err(
+                |err| {
+                    serde::de::Error::custom(match err {
+                        orgasmic_core::ContextBudgetCharsError::BothFieldsPresent => {
+                            "context_budget and context_budget_chars cannot both be set"
+                        }
+                        orgasmic_core::ContextBudgetCharsError::LegacyOverflow => {
+                            "context_budget token value overflows when migrated to characters"
+                        }
+                    })
+                },
+            )?;
+        Ok(Self {
+            max_iterations: raw.max_iterations,
+            context_budget_chars,
+            stall_timeout_secs: raw.stall_timeout_secs,
+            max_run_duration_secs: raw.max_run_duration_secs,
+            applicable_states: raw.applicable_states,
+            linked_skills: raw.linked_skills,
+            babysitter: raw.babysitter,
+            sandbox_permissions: raw.sandbox_permissions,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SandboxPermissionsPatch {
     #[serde(default)]
     pub allow_exec: Option<bool>,
@@ -70,18 +140,20 @@ pub struct SandboxPermissionsPatch {
 }
 
 impl SandboxPermissionsPatch {
+    /// Least-privilege merge: explicit `false` restricts; explicit `true` cannot
+    /// widen a prior `false` (monotonic across overlay layers).
     fn merge_into(&self, list: &mut SandboxAllowlist) {
         if let Some(v) = self.allow_exec {
-            list.allow_exec = v;
+            list.allow_exec = list.allow_exec && v;
         }
         if let Some(v) = self.allow_patch {
-            list.allow_patch = v;
+            list.allow_patch = list.allow_patch && v;
         }
         if let Some(v) = self.allow_network {
-            list.allow_network = v;
+            list.allow_network = list.allow_network && v;
         }
         if let Some(v) = self.allow_writes_outside_cwd {
-            list.allow_writes_outside_cwd = v;
+            list.allow_writes_outside_cwd = list.allow_writes_outside_cwd && v;
         }
     }
 }
@@ -124,13 +196,13 @@ pub fn kind_harness_key(kind: WorkerKind, harness: &str) -> String {
 /// pins remain template-owned until cutover).
 pub fn kind_defaults(kind: WorkerKind) -> GovernanceDefaults {
     match kind {
-        WorkerKind::Implementer => defaults(Some(20), Some(150_000), BASE_STATES),
-        WorkerKind::Reviewer => defaults(Some(10), Some(150_000), REVIEWER_STATES),
-        WorkerKind::Architector => defaults(Some(14), Some(140_000), BASE_STATES),
-        WorkerKind::Planner => defaults(Some(12), Some(120_000), BASE_STATES),
-        WorkerKind::Artifactor => defaults(Some(20), Some(150_000), BASE_STATES),
-        WorkerKind::Griller => defaults(Some(10), Some(100_000), BASE_STATES),
-        WorkerKind::Babysitter => defaults(None, Some(80_000), BASE_STATES),
+        WorkerKind::Implementer => defaults(Some(20), Some(600_000), BASE_STATES),
+        WorkerKind::Reviewer => defaults(Some(10), Some(600_000), REVIEWER_STATES),
+        WorkerKind::Architector => defaults(Some(14), Some(560_000), BASE_STATES),
+        WorkerKind::Planner => defaults(Some(12), Some(480_000), BASE_STATES),
+        WorkerKind::Artifactor => defaults(Some(20), Some(600_000), BASE_STATES),
+        WorkerKind::Griller => defaults(Some(10), Some(400_000), BASE_STATES),
+        WorkerKind::Babysitter => defaults(None, Some(320_000), BASE_STATES),
         // Not seeded by this task's kind list; keep a conservative floor.
         WorkerKind::Analyzer | WorkerKind::Glossarist | WorkerKind::Manager => {
             defaults(None, None, BASE_STATES)
@@ -140,17 +212,17 @@ pub fn kind_defaults(kind: WorkerKind) -> GovernanceDefaults {
 
 fn defaults(
     max_iterations: Option<u32>,
-    context_budget: Option<u32>,
+    context_budget_chars: Option<u32>,
     states: &[&str],
 ) -> GovernanceDefaults {
     GovernanceDefaults {
         max_iterations,
-        context_budget,
+        context_budget_chars,
         stall_timeout_secs: Some(DEFAULT_STALL_TIMEOUT_SECS),
         max_run_duration_secs: Some(DEFAULT_MAX_RUN_DURATION_SECS),
         applicable_states: states.iter().map(|s| (*s).to_string()).collect(),
         linked_skills: Vec::new(),
-        babysitter_worker: None,
+        babysitter: None,
         sandbox_permissions: None,
     }
 }
@@ -160,8 +232,8 @@ impl GovernanceDefaults {
         if let Some(v) = patch.max_iterations {
             self.max_iterations = Some(v);
         }
-        if let Some(v) = patch.context_budget {
-            self.context_budget = Some(v);
+        if let Some(v) = patch.context_budget_chars {
+            self.context_budget_chars = Some(v);
         }
         if let Some(v) = patch.stall_timeout_secs {
             self.stall_timeout_secs = Some(v);
@@ -175,8 +247,8 @@ impl GovernanceDefaults {
         if let Some(ref skills) = patch.linked_skills {
             self.linked_skills = skills.clone();
         }
-        if let Some(ref babysitter) = patch.babysitter_worker {
-            self.babysitter_worker = Some(babysitter.clone());
+        if let Some(babysitter) = &patch.babysitter {
+            self.babysitter = babysitter.clone();
         }
         if let Some(ref sandbox_patch) = patch.sandbox_permissions {
             let mut list = self.sandbox_permissions.clone().unwrap_or_default();
@@ -268,14 +340,46 @@ pub fn is_governance_overlay_key(key: &str) -> bool {
 pub fn known_governance_patch_keys() -> &'static [&'static str] {
     &[
         "max_iterations",
+        "context_budget_chars",
         "context_budget",
         "stall_timeout_secs",
         "max_run_duration_secs",
         "applicable_states",
         "linked_skills",
-        "babysitter_worker",
+        "babysitter",
         "sandbox_permissions",
     ]
+}
+
+/// Deserialize tri-state babysitter overlay: absent field = inherit (`None`),
+/// JSON/YAML null = disable (`Some(None)`), object = explicit address.
+fn deserialize_babysitter_patch<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<BabysitterAddress>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::Null => Ok(Some(None)),
+        other => BabysitterAddress::deserialize(other)
+            .map(|addr| Some(Some(addr)))
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+fn serialize_babysitter_patch<S>(
+    value: &Option<Option<BabysitterAddress>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        None => serializer.serialize_none(),
+        Some(None) => serializer.serialize_none(),
+        Some(Some(addr)) => addr.serialize(serializer),
+    }
 }
 
 pub fn known_sandbox_permission_keys() -> &'static [&'static str] {
@@ -302,7 +406,7 @@ mod tests {
     fn implementer_defaults_match_shipped_templates() {
         let d = kind_defaults(WorkerKind::Implementer);
         assert_eq!(d.max_iterations, Some(20));
-        assert_eq!(d.context_budget, Some(150_000));
+        assert_eq!(d.context_budget_chars, Some(600_000));
         assert_eq!(d.stall_timeout_secs, Some(600));
         assert_eq!(d.max_run_duration_secs, Some(14_400));
         assert_eq!(
@@ -310,7 +414,7 @@ mod tests {
             vec!["working", "done", "blocked", "cancelled"]
         );
         assert!(d.linked_skills.is_empty());
-        assert!(d.babysitter_worker.is_none());
+        assert!(d.babysitter.is_none());
         assert!(d.sandbox_permissions.is_none());
     }
 
@@ -325,7 +429,7 @@ mod tests {
     fn babysitter_defaults_omit_max_iterations() {
         let d = kind_defaults(WorkerKind::Babysitter);
         assert_eq!(d.max_iterations, None);
-        assert_eq!(d.context_budget, Some(80_000));
+        assert_eq!(d.context_budget_chars, Some(320_000));
     }
 
     #[test]
@@ -364,7 +468,7 @@ mod tests {
         let overlay = DispatchGovernanceOverlay::default();
         let resolved = resolve_governance(WorkerKind::Planner, Some("claude"), &overlay, None);
         assert_eq!(resolved.max_iterations, Some(12));
-        assert_eq!(resolved.context_budget, Some(120_000));
+        assert_eq!(resolved.context_budget_chars, Some(480_000));
     }
 
     #[test]
@@ -452,5 +556,153 @@ mod tests {
         assert!(!sandbox.allow_patch, "dispatch layer");
         assert!(!sandbox.allow_network, "kind layer must survive");
         assert!(sandbox.allow_writes_outside_cwd, "untouched default field");
+    }
+
+    #[test]
+    fn babysitter_patch_absent_field_inherits() {
+        let patch: GovernancePatch = serde_json::from_str(r#"{"max_iterations": 5}"#).unwrap();
+        assert_eq!(patch.babysitter, None);
+    }
+
+    #[test]
+    fn babysitter_patch_null_disables() {
+        let patch: GovernancePatch = serde_json::from_str(r#"{"babysitter": null}"#).unwrap();
+        assert_eq!(patch.babysitter, Some(None));
+    }
+
+    #[test]
+    fn babysitter_patch_object_sets_explicit_address() {
+        let patch: GovernancePatch = serde_json::from_str(
+            r#"{"babysitter": {"mode": "acp-stdio", "harness": "codex", "model": "gpt-5"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            patch.babysitter,
+            Some(Some(BabysitterAddress {
+                mode: "acp-stdio".into(),
+                harness: "codex".into(),
+                harness_args: Vec::new(),
+                model: Some("gpt-5".into()),
+                effort: None,
+            }))
+        );
+    }
+
+    #[test]
+    fn babysitter_patch_yaml_null_disables() {
+        let patch: GovernancePatch = serde_yaml::from_str(
+            r#"
+babysitter: null
+max_iterations: 7
+"#,
+        )
+        .unwrap();
+        assert_eq!(patch.babysitter, Some(None));
+        assert_eq!(patch.max_iterations, Some(7));
+    }
+
+    #[test]
+    fn babysitter_patch_disable_overrides_lower_layer_address() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                babysitter: Some(Some(BabysitterAddress {
+                    mode: "tmux".into(),
+                    harness: "codex".into(),
+                    ..BabysitterAddress::default()
+                })),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+        let dispatch_patch: GovernancePatch =
+            serde_json::from_str(r#"{"babysitter": null}"#).unwrap();
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &overlay,
+            Some(&dispatch_patch),
+        );
+        assert!(resolved.babysitter.is_none());
+    }
+
+    #[test]
+    fn context_budget_chars_patch_legacy_tokens_migrate() {
+        let patch: GovernancePatch = serde_json::from_str(r#"{"context_budget": 50000}"#).unwrap();
+        assert_eq!(patch.context_budget_chars, Some(200_000));
+    }
+
+    #[test]
+    fn context_budget_chars_patch_accepts_explicit_chars() {
+        let patch: GovernancePatch =
+            serde_json::from_str(r#"{"context_budget_chars": 200000}"#).unwrap();
+        assert_eq!(patch.context_budget_chars, Some(200_000));
+    }
+
+    #[test]
+    fn context_budget_chars_patch_rejects_both_fields() {
+        let err = serde_json::from_str::<GovernancePatch>(
+            r#"{"context_budget": 1, "context_budget_chars": 2}"#,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cannot both be set"));
+    }
+
+    #[test]
+    fn context_budget_chars_patch_absent_inherits_none() {
+        let patch: GovernancePatch = serde_json::from_str(r#"{"max_iterations": 3}"#).unwrap();
+        assert_eq!(patch.context_budget_chars, None);
+    }
+
+    #[test]
+    fn context_budget_chars_patch_legacy_yaml_migrates() {
+        let patch: GovernancePatch = serde_yaml::from_str(
+            r#"
+context_budget: 50000
+max_iterations: 7
+"#,
+        )
+        .unwrap();
+        assert_eq!(patch.context_budget_chars, Some(200_000));
+        assert_eq!(patch.max_iterations, Some(7));
+    }
+
+    #[test]
+    fn sandbox_overlay_cannot_widen_lower_layer_restriction() {
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: None,
+                    allow_patch: None,
+                    allow_network: Some(false),
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+        let dispatch_widen = GovernancePatch {
+            sandbox_permissions: Some(SandboxPermissionsPatch {
+                allow_exec: None,
+                allow_patch: None,
+                allow_network: Some(true),
+                allow_writes_outside_cwd: None,
+            }),
+            ..GovernancePatch::default()
+        };
+        let resolved = resolve_governance(
+            WorkerKind::Implementer,
+            Some("codex"),
+            &overlay,
+            Some(&dispatch_widen),
+        );
+        let sandbox = resolved.sandbox_permissions.expect("sandbox permissions");
+        assert!(
+            !sandbox.allow_network,
+            "dispatch true must not widen kind false"
+        );
     }
 }

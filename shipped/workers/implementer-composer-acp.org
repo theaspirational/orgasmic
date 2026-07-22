@@ -5,15 +5,11 @@
 :DRIVER:                      acp-stdio
 :HARNESS:                     cursor-agent
 :PROVIDERS:                   cursor openai anthropic
-:MODELS:                      composer-2.5-fast gpt-5.5 claude-sonnet-4-6
-:REASONING_EFFORTS:           high
 :DEFAULT_PROVIDER:            cursor
-:DEFAULT_MODEL:               composer-2.5-fast
-:DEFAULT_EFFORT:              high
 :LINKED_SKILLS:
 :APPLICABLE_STATES:           working, done, blocked, cancelled
 :MAX_ITERATIONS:              20
-:CONTEXT_BUDGET:              150000
+:CONTEXT_BUDGET_CHARS:        600000
 :SANDBOX_PERMISSIONS:         allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true
 :VERSION:                     1
 :END:

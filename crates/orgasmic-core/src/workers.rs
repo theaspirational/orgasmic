@@ -1,6 +1,6 @@
 // arch: arch_QXS5W.2
 // orgasmic:arch_A53QX, arch_QXS5W
-//! Worker schema: execution mode/harness plus provider/model capabilities.
+//! Worker schema: execution mode/harness plus provider capabilities.
 
 use std::str::FromStr;
 
@@ -68,6 +68,79 @@ pub enum WorkerError {
     CustomHarnessMissingArgs { file: String, heading: String },
 }
 
+/// Legacy `:CONTEXT_BUDGET:` stored approximate tokens; multiply by four for chars.
+pub const LEGACY_CONTEXT_BUDGET_TOKEN_MULTIPLIER: u32 = 4;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextBudgetCharsError {
+    BothFieldsPresent,
+    LegacyOverflow,
+}
+
+impl std::fmt::Display for ContextBudgetCharsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BothFieldsPresent => write!(
+                f,
+                "CONTEXT_BUDGET and CONTEXT_BUDGET_CHARS cannot both be set"
+            ),
+            Self::LegacyOverflow => write!(
+                f,
+                "CONTEXT_BUDGET token value overflows when migrated to characters"
+            ),
+        }
+    }
+}
+
+/// Resolve character budget from legacy token and/or explicit char properties.
+pub fn resolve_context_budget_chars(
+    legacy_tokens: Option<u32>,
+    chars: Option<u32>,
+) -> Result<Option<u32>, ContextBudgetCharsError> {
+    match (legacy_tokens, chars) {
+        (Some(_), Some(_)) => Err(ContextBudgetCharsError::BothFieldsPresent),
+        (Some(tokens), None) => tokens
+            .checked_mul(LEGACY_CONTEXT_BUDGET_TOKEN_MULTIPLIER)
+            .ok_or(ContextBudgetCharsError::LegacyOverflow)
+            .map(Some),
+        (None, Some(c)) => Ok(Some(c)),
+        (None, None) => Ok(None),
+    }
+}
+
+fn parse_context_budget_chars_from_heading(
+    heading: &crate::Heading,
+    display: &str,
+) -> Result<Option<u32>, WorkerError> {
+    let parse = |key: &str| -> Result<Option<u32>, WorkerError> {
+        heading
+            .property(key)
+            .map(|value| {
+                value.parse::<u32>().map_err(|err| {
+                    SchemaError::InvalidPropertyValue {
+                        file: display.into(),
+                        heading: heading.title.clone(),
+                        key: key.into(),
+                        detail: format!("expected an unsigned integer: {err}"),
+                    }
+                    .into()
+                })
+            })
+            .transpose()
+    };
+    let legacy = parse("CONTEXT_BUDGET")?;
+    let chars = parse("CONTEXT_BUDGET_CHARS")?;
+    resolve_context_budget_chars(legacy, chars).map_err(|err| {
+        SchemaError::InvalidPropertyValue {
+            file: display.into(),
+            heading: heading.title.clone(),
+            key: "CONTEXT_BUDGET".into(),
+            detail: err.to_string(),
+        }
+        .into()
+    })
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Worker<'a> {
     pub id: &'a str,
@@ -75,15 +148,11 @@ pub struct Worker<'a> {
     pub driver: &'a str,
     pub harness: &'a str,
     pub providers: Vec<String>,
-    pub models: Vec<String>,
-    pub reasoning_efforts: Vec<String>,
     pub default_provider: Option<String>,
-    pub default_model: Option<String>,
-    pub default_effort: Option<String>,
     pub linked_skills: Vec<&'a str>,
     pub applicable_states: Vec<String>,
     pub max_iterations: Option<u32>,
-    pub context_budget: Option<u32>,
+    pub context_budget_chars: Option<u32>,
     pub stall_timeout_secs: Option<u32>,
     pub max_run_duration_secs: Option<u32>,
     pub babysitter_worker: Option<&'a str>,
@@ -91,7 +160,7 @@ pub struct Worker<'a> {
     /// Extra argv passed verbatim to the harness CLI (`:HARNESS_ARGS:`,
     /// whitespace-separated). Lets a template pin harness-specific flags the
     /// schema has no dedicated property for; user args win over the driver's
-    /// guarded defaults (e.g. a `--model` here beats `:DEFAULT_MODEL:`).
+    /// Harness-specific flags with no dedicated schema property.
     pub harness_args: Vec<String>,
     pub version: Option<&'a str>,
     pub persona: Option<String>,
@@ -142,12 +211,7 @@ impl<'a> Worker<'a> {
         }
 
         let default_provider = normalize_optional(heading.property("DEFAULT_PROVIDER"));
-        let default_model = normalize_optional(heading.property("DEFAULT_MODEL"));
-        let default_effort = normalize_optional(heading.property("DEFAULT_EFFORT"));
         let providers = parse_or_default_list(heading.property("PROVIDERS"), &default_provider);
-        let models = parse_or_default_list(heading.property("MODELS"), &default_model);
-        let reasoning_efforts =
-            parse_or_default_list(heading.property("REASONING_EFFORTS"), &default_effort);
         let applicable_states = heading
             .property("APPLICABLE_STATES")
             .map(|v| {
@@ -209,19 +273,13 @@ impl<'a> Worker<'a> {
             driver,
             harness,
             providers,
-            models,
-            reasoning_efforts,
             default_provider,
-            default_model,
-            default_effort,
             linked_skills: tokenize(heading.property("LINKED_SKILLS")),
             applicable_states,
             max_iterations: heading
                 .property("MAX_ITERATIONS")
                 .and_then(|v| v.parse().ok()),
-            context_budget: heading
-                .property("CONTEXT_BUDGET")
-                .and_then(|v| v.parse().ok()),
+            context_budget_chars: parse_context_budget_chars_from_heading(heading, display)?,
             stall_timeout_secs: heading
                 .property("STALL_TIMEOUT_SECS")
                 .and_then(|v| v.parse().ok()),
@@ -364,15 +422,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_default_driver_uses_default_provider_and_model_lists() {
+    fn legacy_default_driver_ignores_stale_model_catalog_properties() {
         let file = parse(
-            "* AGENT-TEMPLATE old\n:PROPERTIES:\n:ID: old\n:KIND:             implementer\n:DEFAULT_DRIVER: cursor-agent\n:DEFAULT_PROVIDER: cursor\n:DEFAULT_MODEL: composer-2.5-fast\n:END:\n",
+            "* AGENT-TEMPLATE old\n:PROPERTIES:\n:ID: old\n:KIND:             implementer\n:DEFAULT_DRIVER: cursor-agent\n:DEFAULT_PROVIDER: cursor\n:DEFAULT_MODEL: composer-2.5-fast\n:MODELS: composer-2.5-fast\n:DEFAULT_EFFORT: high\n:REASONING_EFFORTS: high\n:END:\n",
         );
         let worker = Worker::from_org(&file, "inline.org").unwrap();
         assert_eq!(worker.driver, "subprocess-stream-json");
         assert_eq!(worker.harness, "cursor-agent");
         assert_eq!(worker.providers, vec!["cursor"]);
-        assert_eq!(worker.models, vec!["composer-2.5-fast"]);
     }
 
     #[test]
@@ -510,5 +567,90 @@ mod tests {
         fn enter(&self, _span: &Id) {}
 
         fn exit(&self, _span: &Id) {}
+    }
+
+    #[test]
+    fn context_budget_legacy_tokens_migrate_to_chars() {
+        let file = parse(
+            "* WORKER legacy\n:PROPERTIES:\n:ID: legacy\n:KIND:             implementer\n:DRIVER: tmux\n:HARNESS: codex\n:CONTEXT_BUDGET: 100\n:END:\n",
+        );
+        let worker = Worker::from_org(&file, "inline.org").unwrap();
+        assert_eq!(worker.context_budget_chars, Some(400));
+    }
+
+    #[test]
+    fn context_budget_chars_property_is_used_directly() {
+        let file = parse(
+            "* WORKER chars\n:PROPERTIES:\n:ID: chars\n:KIND:             implementer\n:DRIVER: tmux\n:HARNESS: codex\n:CONTEXT_BUDGET_CHARS: 500\n:END:\n",
+        );
+        let worker = Worker::from_org(&file, "inline.org").unwrap();
+        assert_eq!(worker.context_budget_chars, Some(500));
+    }
+
+    #[test]
+    fn context_budget_rejects_both_legacy_and_chars_properties() {
+        let file = parse(
+            "* WORKER both\n:PROPERTIES:\n:ID: both\n:KIND:             implementer\n:DRIVER: tmux\n:HARNESS: codex\n:CONTEXT_BUDGET: 100\n:CONTEXT_BUDGET_CHARS: 500\n:END:\n",
+        );
+        let err = Worker::from_org(&file, "inline.org").unwrap_err();
+        assert!(
+            matches!(err, WorkerError::Schema(SchemaError::InvalidPropertyValue { detail, .. }) if detail.contains("cannot both be set"))
+        );
+    }
+
+    #[test]
+    fn context_budget_absent_inherits_none() {
+        let file = parse(
+            "* WORKER plain\n:PROPERTIES:\n:ID: plain\n:KIND:             implementer\n:DRIVER: tmux\n:HARNESS: codex\n:END:\n",
+        );
+        let worker = Worker::from_org(&file, "inline.org").unwrap();
+        assert_eq!(worker.context_budget_chars, None);
+    }
+
+    #[test]
+    fn context_budget_legacy_migration_rejects_overflow() {
+        let file = parse(&format!(
+            "* WORKER overflow\n:PROPERTIES:\n:ID: overflow\n:KIND:             implementer\n:DRIVER: tmux\n:HARNESS: codex\n:CONTEXT_BUDGET: {}\n:END:\n",
+            u32::MAX
+        ));
+        let err = Worker::from_org(&file, "inline.org").unwrap_err();
+        assert!(
+            matches!(err, WorkerError::Schema(SchemaError::InvalidPropertyValue { detail, .. }) if detail.contains("overflow"))
+        );
+    }
+
+    #[test]
+    fn context_budget_rejects_malformed_values() {
+        for expected_key in ["CONTEXT_BUDGET", "CONTEXT_BUDGET_CHARS"] {
+            let file = parse(&format!(
+                "* WORKER malformed\n:PROPERTIES:\n:ID: malformed\n:KIND: implementer\n:DRIVER: tmux\n:HARNESS: codex\n:{expected_key}: many\n:END:\n"
+            ));
+            let err = Worker::from_org(&file, "inline.org").unwrap_err();
+            assert!(
+                matches!(err, WorkerError::Schema(SchemaError::InvalidPropertyValue { ref key, .. }) if key == expected_key),
+                "malformed {expected_key} must fail closed: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_context_budget_chars_unit_cases() {
+        assert_eq!(
+            resolve_context_budget_chars(Some(25), None).unwrap(),
+            Some(100)
+        );
+        assert_eq!(
+            resolve_context_budget_chars(None, Some(500)).unwrap(),
+            Some(500)
+        );
+        assert_eq!(resolve_context_budget_chars(None, None).unwrap(), None);
+        assert_eq!(
+            resolve_context_budget_chars(Some(u32::MAX), None),
+            Err(ContextBudgetCharsError::LegacyOverflow)
+        );
+        assert_eq!(
+            resolve_context_budget_chars(Some(1), Some(1)),
+            Err(ContextBudgetCharsError::BothFieldsPresent)
+        );
     }
 }

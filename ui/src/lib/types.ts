@@ -491,6 +491,7 @@ export type RuntimeProviderOption = {
 export type RuntimeOptionsCatalog = {
   source: string;
   provider_switching: boolean;
+  live_switching?: boolean;
   current: RuntimeOptionsState;
   providers: RuntimeProviderOption[];
   models: RuntimeModelOption[];
@@ -563,6 +564,11 @@ export type ArtifactSummary = {
   version: number;
   state: string;
   open_comment_count: number;
+  launch_mode?: string | null;
+  launch_harness?: string | null;
+  launch_harness_args?: string[] | null;
+  launch_model?: string | null;
+  launch_effort?: string | null;
 };
 
 export type CommentRecord = {
@@ -626,9 +632,37 @@ export type Me = {
   projects: MeProject[];
 };
 
+export type GovernancePatch = {
+  sandbox_permissions?: {
+    allow_exec?: boolean | null;
+    allow_patch?: boolean | null;
+    allow_network?: boolean | null;
+    allow_writes_outside_cwd?: boolean | null;
+  } | null;
+  babysitter?: {
+    mode?: string;
+    harness?: string;
+    harness_args?: string[];
+    model?: string | null;
+    effort?: string | null;
+  } | null;
+  max_iterations?: number | null;
+  context_budget_chars?: number | null;
+  linked_skills?: string[] | null;
+  applicable_states?: string[] | null;
+  stall_timeout_secs?: number | null;
+  max_run_duration_secs?: number | null;
+};
+
 export type ArtifactGenerateRequest = {
   nodes: string[];
   prompt: string;
+  mode: string;
+  harness: string;
+  harness_args?: string[];
+  model?: string | null;
+  effort?: string | null;
+  governance?: GovernancePatch | null;
 };
 
 export type ArtifactGenerateResponse = {
@@ -638,6 +672,12 @@ export type ArtifactGenerateResponse = {
 
 export type ArtifactRegenerateRequest = {
   extraPrompt?: string;
+  mode?: string;
+  harness?: string;
+  harness_args?: string[];
+  model?: string | null;
+  effort?: string | null;
+  governance?: GovernancePatch | null;
 };
 
 export type DaemonEvent = {

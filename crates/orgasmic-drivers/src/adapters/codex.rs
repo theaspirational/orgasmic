@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use tokio::sync::mpsc;
 
 use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
@@ -22,8 +22,8 @@ use crate::r#trait::{
     UserInputRequest, WireMessage,
 };
 use crate::runtime_options::{
-    all_reasoning_efforts, dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog,
-    RuntimeOptionsCatalogRpc, RuntimeOptionsRequest, RuntimeOptionsState, RuntimeSpeed,
+    dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
+    RuntimeOptionsRequest, RuntimeOptionsState, RuntimeSpeed,
 };
 use crate::sandbox::ApprovalResponse;
 
@@ -437,7 +437,9 @@ impl HarnessEventAdapter for CodexAdapter {
     }
 
     async fn runtime_options_catalog(&mut self) -> Result<RuntimeOptionsCatalog, DriverError> {
-        Ok(codex_fallback_catalog(self.cfg.as_ref()))
+        Err(DriverError::Unsupported(
+            "codex runtime catalog unavailable without model/list RPC",
+        ))
     }
 
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
@@ -514,6 +516,7 @@ struct EventSeqs {
     stderr: u64,
     system: u64,
     tool: u64,
+    turn: u64,
 }
 
 impl EventSeqs {
@@ -533,6 +536,12 @@ impl EventSeqs {
     fn next_tool(&mut self) -> u64 {
         let seq = self.tool;
         self.tool += 1;
+        seq
+    }
+
+    fn next_turn(&mut self) -> u64 {
+        let seq = self.turn;
+        self.turn += 1;
         seq
     }
 }
@@ -591,7 +600,7 @@ async fn dispatch_notification(
             }
         }
         "turn/completed" => {
-            emit_turn_completion(params, events).await;
+            emit_turn_completion(params, events, seqs).await;
             return Ok(true);
         }
         "thread/closed" => {
@@ -644,7 +653,13 @@ async fn send_driver_error(events: &mpsc::Sender<DriverEvent>, fatal: bool, mess
         .await;
 }
 
-async fn emit_turn_completion(params: &Value, events: &mpsc::Sender<DriverEvent>) {
+async fn emit_turn_completion(
+    params: &Value,
+    events: &mpsc::Sender<DriverEvent>,
+    seqs: &mut EventSeqs,
+) {
+    let seq = seqs.next_turn();
+    let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
     let turn = params.get("turn").unwrap_or(params);
     match turn.get("status").and_then(Value::as_str) {
         Some("failed") => {
@@ -817,17 +832,22 @@ fn thread_start_params(
     cfg: &CodexAppserverConfig,
 ) -> Result<Value, DriverError> {
     let cwd = effective_cwd(ctx)?;
-    Ok(json!({
-        "model": cfg.model,
-        "cwd": cwd,
-        "runtimeWorkspaceRoots": [cwd],
-        "baseInstructions": format!(
+    let mut params = Map::new();
+    if let Some(model) = cfg.model.clone() {
+        params.insert("model".to_string(), json!(model));
+    }
+    params.insert("cwd".to_string(), json!(cwd));
+    params.insert("runtimeWorkspaceRoots".to_string(), json!([cwd]));
+    params.insert(
+        "baseInstructions".to_string(),
+        json!(format!(
             "You are running under orgasmic for task {} using worker {}.",
             ctx.task_id, ctx.worker_id
-        ),
-        "experimentalRawEvents": true,
-        "persistExtendedHistory": false,
-    }))
+        )),
+    );
+    params.insert("experimentalRawEvents".to_string(), json!(true));
+    params.insert("persistExtendedHistory".to_string(), json!(false));
+    Ok(Value::Object(params))
 }
 
 fn initialize_params() -> Value {
@@ -849,16 +869,19 @@ fn turn_start_params(thread_id: &str, ctx: &DriverContext, cfg: &CodexAppserverC
 }
 
 fn turn_start_input_params(thread_id: &str, input: String, cfg: &CodexAppserverConfig) -> Value {
-    let mut params = json!({
-        "threadId": thread_id,
-        "input": [text_input(input)],
-        "model": cfg.model,
-        "effort": cfg.reasoning_effort,
-    });
-    if let Some(speed) = cfg.speed {
-        params["serviceTier"] = json!(codex_service_tier(speed));
+    let mut params = Map::new();
+    params.insert("threadId".to_string(), json!(thread_id));
+    params.insert("input".to_string(), json!([text_input(input)]));
+    if let Some(model) = cfg.model.clone() {
+        params.insert("model".to_string(), json!(model));
     }
-    params
+    if let Some(effort) = cfg.reasoning_effort.clone() {
+        params.insert("effort".to_string(), json!(effort));
+    }
+    if let Some(speed) = cfg.speed {
+        params.insert("serviceTier".to_string(), json!(codex_service_tier(speed)));
+    }
+    Value::Object(params)
 }
 
 fn codex_service_tier(speed: RuntimeSpeed) -> &'static str {
@@ -885,48 +908,12 @@ fn codex_catalog_from_model_list(
     RuntimeOptionsCatalog {
         source: source.into(),
         provider_switching: false,
+        live_switching: true,
         current: codex_current_state(cfg),
         providers: Vec::new(),
         models,
         efforts,
         speeds,
-    }
-}
-
-fn codex_fallback_catalog(cfg: Option<&CodexAppserverConfig>) -> RuntimeOptionsCatalog {
-    let current = codex_current_state(cfg);
-    let models = current
-        .model
-        .as_ref()
-        .map(|model| {
-            let mut speeds = vec![RuntimeSpeed::Normal];
-            if current.speed == Some(RuntimeSpeed::Fast) {
-                speeds.push(RuntimeSpeed::Fast);
-            }
-            RuntimeModelOption {
-                id: model.clone(),
-                label: model.clone(),
-                provider: None,
-                current: true,
-                reasoning_efforts: current
-                    .reasoning_effort
-                    .clone()
-                    .map(|effort| vec![effort])
-                    .unwrap_or_else(all_reasoning_efforts),
-                speeds,
-                default_reasoning_effort: current.reasoning_effort.clone(),
-            }
-        })
-        .into_iter()
-        .collect::<Vec<_>>();
-    RuntimeOptionsCatalog {
-        source: "codex:fallback".into(),
-        provider_switching: false,
-        current,
-        providers: Vec::new(),
-        efforts: aggregate_model_efforts(&models),
-        speeds: aggregate_model_speeds(&models),
-        models,
     }
 }
 
@@ -957,9 +944,6 @@ fn codex_model_option(
         if let Some(default_effort) = default_reasoning_effort.clone() {
             efforts.push(default_effort);
         }
-    }
-    if efforts.is_empty() {
-        efforts = all_reasoning_efforts();
     }
     efforts = dedupe_non_empty(efforts);
     let mut speeds = vec![RuntimeSpeed::Normal];
@@ -1004,16 +988,11 @@ fn codex_model_supports_fast(value: &Value) -> bool {
 }
 
 fn aggregate_model_efforts(models: &[RuntimeModelOption]) -> Vec<String> {
-    let efforts = dedupe_non_empty(
+    dedupe_non_empty(
         models
             .iter()
             .flat_map(|model| model.reasoning_efforts.iter().cloned()),
-    );
-    if efforts.is_empty() {
-        all_reasoning_efforts()
-    } else {
-        efforts
-    }
+    )
 }
 
 fn aggregate_model_speeds(models: &[RuntimeModelOption]) -> Vec<RuntimeSpeed> {
@@ -1430,6 +1409,8 @@ mod tests {
             } if call_id == "call-1" && name == "transition_state" && args["to"] == "done"
         ));
 
+        let turn = session.events.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let complete = session.events.recv().await.unwrap();
         assert!(matches!(complete, DriverEvent::RunComplete { .. }));
         server.await.unwrap();
@@ -1455,6 +1436,8 @@ mod tests {
         .await
         .unwrap();
         assert!(terminal);
+        let turn = rx.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let event = rx.recv().await.unwrap();
         assert!(
             matches!(event, DriverEvent::RunComplete { summary: None }),
@@ -1482,6 +1465,10 @@ mod tests {
             matches!(event, DriverEvent::RunComplete { summary: None }),
             "expected RunComplete with no fabricated summary, got {event:?}"
         );
+        assert!(
+            rx.try_recv().is_err(),
+            "thread closure is not a native turn boundary"
+        );
     }
 
     #[tokio::test]
@@ -1499,6 +1486,8 @@ mod tests {
         .await
         .unwrap();
         assert!(terminal);
+        let turn = rx.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let event = rx.recv().await.unwrap();
         assert!(
             matches!(

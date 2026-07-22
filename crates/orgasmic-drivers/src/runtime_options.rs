@@ -3,8 +3,6 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const REASONING_EFFORTS: &[&str] = &["none", "minimal", "low", "medium", "high", "xhigh"];
-
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeOptionsRequest {
     #[serde(default)]
@@ -18,19 +16,9 @@ pub struct RuntimeOptionsRequest {
 }
 
 impl RuntimeOptionsRequest {
+    /// Trim whitespace only; preserve explicit model/effort strings verbatim.
     pub fn normalized(self) -> Result<Self, String> {
-        let provider = trim_non_empty(self.provider);
-        let model = trim_non_empty(self.model);
-        let reasoning_effort = trim_non_empty(self.reasoning_effort)
-            .map(|effort| effort.to_ascii_lowercase())
-            .map(validate_reasoning_effort)
-            .transpose()?;
-        Ok(Self {
-            provider,
-            model,
-            reasoning_effort,
-            speed: self.speed,
-        })
+        Ok(self)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -102,10 +90,13 @@ pub struct RuntimeOptionsState {
     pub speed: Option<RuntimeSpeed>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeOptionsCatalog {
     pub source: String,
     pub provider_switching: bool,
+    /// Whether the active adapter can switch model/effort on a live run.
+    #[serde(default)]
+    pub live_switching: bool,
     pub current: RuntimeOptionsState,
     #[serde(default)]
     pub providers: Vec<RuntimeProviderOption>,
@@ -150,13 +141,6 @@ pub struct RuntimeOptionsCatalogRpc {
     pub params: Value,
 }
 
-pub fn all_reasoning_efforts() -> Vec<String> {
-    REASONING_EFFORTS
-        .iter()
-        .map(|effort| (*effort).to_string())
-        .collect()
-}
-
 pub fn dedupe_non_empty(values: impl IntoIterator<Item = String>) -> Vec<String> {
     let mut out = Vec::new();
     for value in values {
@@ -168,29 +152,12 @@ pub fn dedupe_non_empty(values: impl IntoIterator<Item = String>) -> Vec<String>
     out
 }
 
-fn trim_non_empty(value: Option<String>) -> Option<String> {
-    value
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn validate_reasoning_effort(effort: String) -> Result<String, String> {
-    if REASONING_EFFORTS.contains(&effort.as_str()) {
-        Ok(effort)
-    } else {
-        Err(format!(
-            "reasoning_effort must be one of {}",
-            REASONING_EFFORTS.join(", ")
-        ))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn normalizes_empty_strings_and_effort_alias() {
+    fn preserves_verbatim_strings_and_effort_alias() {
         let req: RuntimeOptionsRequest = serde_json::from_value(serde_json::json!({
             "provider": "  ",
             "model": " gpt-fixture ",
@@ -200,18 +167,21 @@ mod tests {
         .unwrap();
 
         let req = req.normalized().unwrap();
-        assert_eq!(req.provider, None);
-        assert_eq!(req.model.as_deref(), Some("gpt-fixture"));
-        assert_eq!(req.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(req.provider.as_deref(), Some("  "));
+        assert_eq!(req.model.as_deref(), Some(" gpt-fixture "));
+        assert_eq!(req.reasoning_effort.as_deref(), Some(" HIGH "));
         assert_eq!(req.speed, Some(RuntimeSpeed::Fast));
     }
 
     #[test]
-    fn rejects_unknown_effort() {
+    fn preserves_arbitrary_mixed_case_effort() {
         let req = RuntimeOptionsRequest {
-            reasoning_effort: Some("maximum".into()),
+            reasoning_effort: Some("CustomEffort".into()),
             ..RuntimeOptionsRequest::default()
         };
-        assert!(req.normalized().is_err());
+        assert_eq!(
+            req.normalized().unwrap().reasoning_effort.as_deref(),
+            Some("CustomEffort")
+        );
     }
 }

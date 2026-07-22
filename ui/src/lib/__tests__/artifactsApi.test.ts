@@ -51,17 +51,35 @@ describe('artifacts api', () => {
 
   it('generateArtifact posts nodes+prompt to the project-scoped generate route', async () => {
     post.mockResolvedValueOnce({ artifact_id: 'ART-1', run_id: 'run-1' });
-    await generateArtifact({ nodes: ['dec_ABC12'], prompt: 'Summarize the decision' }, 'orgasmic');
+    await generateArtifact(
+      {
+        nodes: ['dec_ABC12'],
+        prompt: 'Summarize the decision',
+        mode: 'rmux',
+        harness: 'claude',
+      },
+      'orgasmic',
+    );
     expect(post).toHaveBeenCalledWith('/artifacts/generate?project=orgasmic', {
       nodes: ['dec_ABC12'],
       prompt: 'Summarize the decision',
+      mode: 'rmux',
+      harness: 'claude',
     });
   });
 
   it('generateArtifact allows an empty node set (prompt-only artifact)', async () => {
     post.mockResolvedValueOnce({ artifact_id: 'ART-2', run_id: 'run-2' });
-    await generateArtifact({ nodes: [], prompt: 'Prompt only' }, 'orgasmic');
-    expect(post).toHaveBeenCalledWith('/artifacts/generate?project=orgasmic', { nodes: [], prompt: 'Prompt only' });
+    await generateArtifact(
+      { nodes: [], prompt: 'Prompt only', mode: 'rmux', harness: 'claude' },
+      'orgasmic',
+    );
+    expect(post).toHaveBeenCalledWith('/artifacts/generate?project=orgasmic', {
+      nodes: [],
+      prompt: 'Prompt only',
+      mode: 'rmux',
+      harness: 'claude',
+    });
   });
 
   it('regenerateArtifact posts to the artifact-scoped regenerate route', async () => {

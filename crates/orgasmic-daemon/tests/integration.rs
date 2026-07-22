@@ -614,7 +614,7 @@ async fn worker_validate_routes_return_structured_diagnostics() {
     symlink_repo_source(&home);
     write(
         &home.user().join("workers/validator-ok.org"),
-        "* WORKER validator-ok\n:PROPERTIES:\n:ID: validator-ok\n:KIND: implementer\n:DRIVER: acp-stdio\n:HARNESS: claude\n:PROVIDERS: anthropic\n:MODELS: claude-sonnet-4-6\n:REASONING_EFFORTS: high\n:DEFAULT_PROVIDER: anthropic\n:DEFAULT_MODEL: claude-sonnet-4-6\n:DEFAULT_EFFORT: high\n:LINKED_SKILLS:\n:END:\n",
+        "* WORKER validator-ok\n:PROPERTIES:\n:ID: validator-ok\n:KIND: implementer\n:DRIVER: acp-stdio\n:HARNESS: claude\n:PROVIDERS: anthropic\n:DEFAULT_PROVIDER: anthropic\n:LINKED_SKILLS:\n:END:\n",
     );
     write(
         &home.user().join("workers/validator-missing-skill.org"),
@@ -954,6 +954,8 @@ async fn stage_acquire_blocked_sessions_is_path_free() {
         .bearer_auth(&ctx.token)
         .json(&serde_json::json!({
             "project": ctx.project_id,
+            "mode": "acp-stdio",
+            "harness": "codex",
             "reason": "path-free acquire error test",
         }))
         .send()
@@ -2855,7 +2857,7 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
     let project_root = tmp.path().join("proj");
     write(
         &home.user().join("workers/implementer-codex-appserver.org"),
-        "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n",
+        "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n",
     );
     write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
@@ -2886,6 +2888,8 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
         .bearer_auth(&token)
         .json(&serde_json::json!({
             "kind": "implementer",
+            "mode": "acp-ws",
+            "harness": "codex",
             "brief_path": brief,
             "worktree_path": worktree,
             "last_path": last,

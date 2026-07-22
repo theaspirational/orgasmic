@@ -710,6 +710,8 @@ impl AcpTranslator {
             .get("result")
             .and_then(Value::as_str)
             .map(ToString::to_string);
+        let seq = self.next_seq();
+        let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
         if value
             .get("is_error")
             .and_then(Value::as_bool)

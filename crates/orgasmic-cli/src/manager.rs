@@ -15,7 +15,7 @@ use clap::{ArgAction, Args, ValueEnum};
 use orgasmic_core::{
     dotorg_tasks_dir, goal_file_path, iter_task_file_paths, parse_tx_file, project_dispatch_dir,
     projects, read_session_file, Lifecycle, LifecycleStage, OrgFile, ProjectFile, RuntimeIdentity,
-    SessionEventKind, TaskHeading, TxEntry, WorkerKind,
+    SessionEventKind, TaskHeading, TxEntry,
 };
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -38,14 +38,6 @@ impl DispatchKind {
             Self::Architector => "architector",
         }
     }
-
-    fn worker_kind(self) -> WorkerKind {
-        match self {
-            Self::Implementer => WorkerKind::Implementer,
-            Self::Reviewer => WorkerKind::Reviewer,
-            Self::Architector => WorkerKind::Architector,
-        }
-    }
 }
 
 impl fmt::Display for DispatchKind {
@@ -58,10 +50,11 @@ impl fmt::Display for DispatchKind {
 #[command(after_help = "\
 Examples:
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --worker implementer-cursor
+    --brief /path/to/brief.md --mode acp-stdio --harness cursor-agent
 
   orgasmic manager dispatch --task TASK-053 --kind implementer \\
-    --brief /path/to/brief.md --worker implementer-cursor --dry-run")]
+    --brief /path/to/brief.md --mode rmux --harness custom \\
+    --harness-arg opencode --harness-arg --print-logs --dry-run")]
 pub struct DispatchArgs {
     #[arg(long = "task", action = ArgAction::Append, required = true)]
     pub task: Vec<String>,
@@ -69,6 +62,18 @@ pub struct DispatchArgs {
     pub kind: DispatchKind,
     #[arg(long)]
     pub brief: PathBuf,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED`.
+    #[arg(long)]
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED`.
+    #[arg(long)]
+    pub harness: String,
+    /// Raw argv token for custom harnesses (repeatable; preserved losslessly).
+    #[arg(long = "harness-arg", action = ArgAction::Append, allow_hyphen_values = true)]
+    pub harness_args: Vec<String>,
+    /// Optional JSON array of argv tokens (alternative to repeated --harness-arg).
+    #[arg(long = "harness-args-json")]
+    pub harness_args_json: Option<String>,
     #[arg(long = "from")]
     pub from: Option<String>,
     #[arg(long)]
@@ -83,8 +88,12 @@ pub struct DispatchArgs {
     pub reason: Option<String>,
     #[arg(long)]
     pub dry_run: bool,
+    /// Compatibility label only — not routing authority.
     #[arg(long)]
     pub worker: Option<String>,
+    /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
+    #[arg(long = "governance-json")]
+    pub governance_json: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
@@ -229,6 +238,9 @@ pub(crate) struct DispatchPlan {
     pub(crate) project_id: String,
     pub(crate) tasks: Vec<String>,
     pub(crate) kind: DispatchKind,
+    pub(crate) mode: String,
+    pub(crate) harness: String,
+    pub(crate) harness_args: Vec<String>,
     pub(crate) brief_path: PathBuf,
     pub(crate) brief_content: String,
     pub(crate) from_sha: String,
@@ -242,7 +254,9 @@ pub(crate) struct DispatchPlan {
     pub(crate) goal_id: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
+    /// Compatibility label only.
     pub(crate) worker_override: Option<String>,
+    pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
 }
 
 impl DispatchPlan {
@@ -1571,14 +1585,24 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let brief_path = canonical_existing_file(&args.brief)?;
     let brief_content = std::fs::read_to_string(&brief_path)
         .with_context(|| format!("read brief {}", brief_path.display()))?;
+    let mode = args.mode.trim().to_string();
+    let harness = args.harness.trim().to_string();
+    if mode.is_empty() || harness.is_empty() {
+        bail!("--mode and --harness are required");
+    }
+    orgasmic_daemon::addressing::validate_supported_pair(&mode, &harness)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let mut harness_args = args.harness_args;
+    if let Some(json) = args.harness_args_json.as_deref() {
+        let parsed: Vec<String> = serde_json::from_str(json)
+            .with_context(|| format!("parse --harness-args-json: {json}"))?;
+        harness_args.extend(parsed);
+    }
     let worker_override = args
         .worker
         .as_deref()
         .map(sanitize_tx_value)
         .filter(|s| !s.is_empty());
-    let Some(worker_override) = worker_override else {
-        bail!("{}", missing_dispatch_worker_message(home, args.kind)?);
-    };
     let from_ref = args.from.as_deref().unwrap_or("HEAD");
     let from_sha = resolve_commit(&project_root, from_ref)?;
     let worktree_path = normalize_path(&match args.worktree {
@@ -1589,24 +1613,32 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         .branch
         .unwrap_or_else(|| default_branch(first_task(&tasks), args.kind));
     let goal_id = read_active_goal_id(&project_root)?;
+    let governance = match args.governance_json.as_deref() {
+        None => None,
+        Some(json) => Some(
+            serde_json::from_str(json)
+                .with_context(|| format!("parse --governance-json: {json}"))?,
+        ),
+    };
+    let _ = home;
     Ok(DispatchPlan {
         project_root,
         project_id,
         tasks,
         kind: args.kind,
+        mode,
+        harness,
+        harness_args,
         brief_path,
         brief_content,
         from_sha,
         worktree_path,
         branch,
-        model_override: args
-            .model
-            .map(|s| sanitize_tx_value(&s))
-            .filter(|s| !s.is_empty()),
-        effort_override: args
-            .effort
-            .map(|s| sanitize_tx_value(&s))
-            .filter(|s| !s.is_empty()),
+        // Model and effort are opaque provider-owned identifiers. Preserve
+        // explicit CLI bytes (including case and surrounding whitespace)
+        // through the HTTP boundary; provider adapters decide how to use them.
+        model_override: args.model,
+        effort_override: args.effort,
         last_path: PathBuf::new(),
         stdout_path: PathBuf::new(),
         dispatch_attempt_token: String::new(),
@@ -1616,43 +1648,9 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .map(|s| sanitize_tx_value(&s))
             .filter(|s| !s.is_empty()),
         dry_run: args.dry_run,
-        worker_override: Some(worker_override),
+        worker_override,
+        governance,
     })
-}
-
-fn missing_dispatch_worker_message(home: &Home, kind: DispatchKind) -> Result<String> {
-    let mut candidates = orgasmic_daemon::content::list_workers(home)
-        .context("load workers")?
-        .into_iter()
-        .filter(|worker| worker.kind == kind.worker_kind())
-        .map(|worker| worker.id)
-        .collect::<Vec<_>>();
-    candidates.sort();
-    let available = if candidates.is_empty() {
-        "none".to_string()
-    } else {
-        candidates.join(", ")
-    };
-    Ok(format!(
-        "no worker specified; pass --worker. available {}: {}",
-        worker_kind_plural(kind.worker_kind()),
-        available
-    ))
-}
-
-fn worker_kind_plural(kind: WorkerKind) -> &'static str {
-    match kind {
-        WorkerKind::Implementer => "implementers",
-        WorkerKind::Reviewer => "reviewers",
-        WorkerKind::Planner => "planners",
-        WorkerKind::Analyzer => "analyzers",
-        WorkerKind::Architector => "architectors",
-        WorkerKind::Griller => "grillers",
-        WorkerKind::Glossarist => "glossarists",
-        WorkerKind::Babysitter => "babysitters",
-        WorkerKind::Manager => "managers",
-        WorkerKind::Artifactor => "artifactors",
-    }
 }
 
 fn print_dispatch_plan(plan: &DispatchPlan) {
@@ -1667,19 +1665,19 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     println!("  last:     {}", plan.last_path.display());
     println!("  stdout:   {}", plan.stdout_path.display());
     println!("  tx:       manager.dispatch_started on daemon dispatch");
-    println!(
-        "  worker:   {}{}",
-        plan.worker_override.as_deref().unwrap_or("-"),
-        plan.model_override
-            .as_deref()
-            .map(|model| format!(" --model {model}"))
-            .unwrap_or_default(),
-    );
-    if plan.effort_override.is_some() {
-        println!(
-            "  effort:   {}",
-            plan.effort_override.as_deref().unwrap_or("-")
-        );
+    println!("  mode:     {}", plan.mode);
+    println!("  harness:  {}", plan.harness);
+    if !plan.harness_args.is_empty() {
+        println!("  argv:     {:?}", plan.harness_args);
+    }
+    if let Some(label) = plan.worker_override.as_deref() {
+        println!("  label:    {label} (compatibility only)");
+    }
+    if let Some(model) = plan.model_override.as_deref() {
+        println!("  model:    {model}");
+    }
+    if let Some(effort) = plan.effort_override.as_deref() {
+        println!("  effort:   {effort}");
     }
 }
 

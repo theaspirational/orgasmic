@@ -114,11 +114,11 @@ fn seed_project(home: &Home, project_root: &Path) {
     symlink_repo_source(home);
     write(
         &home.user().join("workers/implementer-codex-appserver.org"),
-        "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high xhigh\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+        "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
     );
     write(
         &home.user().join("workers/reviewer-codex-acp.org"),
-        "* WORKER reviewer-codex-acp\n:PROPERTIES:\n:ID:                          reviewer-codex-acp\n:KIND:             reviewer\n:DRIVER:                      acp-stdio\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-6\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-6\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           reviewing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest reviewer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+        "* WORKER reviewer-codex-acp\n:PROPERTIES:\n:ID:                          reviewer-codex-acp\n:KIND:             reviewer\n:DRIVER:                      acp-stdio\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           reviewing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest reviewer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
     );
     write(
         &project_root.join(".orgasmic/project.org"),
@@ -496,8 +496,10 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -528,8 +530,10 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -632,8 +636,10 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "TASK-REVIEW",
             "--kind",
             "reviewer",
-            "--worker",
-            "reviewer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             review_brief.to_str().unwrap(),
             "--from",
@@ -663,8 +669,10 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "TASK-REVIEW",
             "--kind",
             "reviewer",
-            "--worker",
-            "reviewer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             review_brief.to_str().unwrap(),
             "--from",
@@ -730,8 +738,10 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "TASK-NO-MERGE",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             second_brief.to_str().unwrap(),
             "--from",
@@ -807,8 +817,10 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "TASK-FIX",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             fix_brief.to_str().unwrap(),
             "--from",
@@ -855,8 +867,10 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "TASK-FIX-DECL",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             fix_decl_brief.to_str().unwrap(),
             "--from",
@@ -903,8 +917,10 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "TASK-ABORT",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             abort_brief.to_str().unwrap(),
             "--from",
@@ -974,8 +990,10 @@ async fn dispatch_rejects_any_overlapping_open_task() {
             "TASK-BUNDLE-A",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             first_brief.to_str().unwrap(),
             "--from",
@@ -1004,8 +1022,10 @@ async fn dispatch_rejects_any_overlapping_open_task() {
             "TASK-BUNDLE-B",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             second_brief.to_str().unwrap(),
             "--from",
@@ -1062,8 +1082,10 @@ async fn dispatch_endpoint_failure_restores_bundled_lifecycle() {
             "TASK-BUNDLE-B",
             "--kind",
             "implementer",
-            "--worker",
-            "missing-worker",
+            "--mode",
+            "tmux",
+            "--harness",
+            "custom",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1075,7 +1097,7 @@ async fn dispatch_endpoint_failure_restores_bundled_lifecycle() {
         ],
     );
     assert!(
-        stderr.contains("daemon dispatch failed"),
+        stderr.contains("daemon dispatch failed") || stderr.contains("unsupported mode/harness"),
         "unexpected stderr: {stderr}"
     );
     assert_task_stage(&project_root, "TASK-BUNDLE-A", "BACKLOG", "backlog");
@@ -1137,8 +1159,10 @@ async fn reviewer_close_with_recommended_subtasks_stays_in_review() {
             "TASK-REVIEW-ISSUES",
             "--kind",
             "reviewer",
-            "--worker",
-            "reviewer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1214,8 +1238,10 @@ async fn reviewer_close_verdict_ship_closes_done() {
             "TASK-SHIP-CLEAN",
             "--kind",
             "reviewer",
-            "--worker",
-            "reviewer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1286,8 +1312,10 @@ async fn reviewer_close_verdict_has_issues_stays_in_progress() {
             "TASK-HAS-ISSUES",
             "--kind",
             "reviewer",
-            "--worker",
-            "reviewer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1363,8 +1391,10 @@ async fn multi_task_dispatch_writes_one_start_and_per_task_closes() {
             "TASK-BUNDLE-B",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1489,8 +1519,10 @@ async fn bundled_partial_close_retry_is_idempotent_and_visible() {
             "TASK-BUNDLE-B",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1643,8 +1675,10 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
             "TASK-CLEANUP",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -1825,13 +1859,16 @@ async fn dispatch_worker_flag_shows_in_dry_run_plan() {
             "implementer",
             "--brief",
             brief.to_str().unwrap(),
-            "--worker",
-            "implementer-codex-stdio",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--dry-run",
         ],
     );
     assert!(stdout.contains("dispatch plan:"));
-    assert!(stdout.contains("worker:   implementer-codex-stdio"));
+    assert!(stdout.contains("mode:     acp-stdio"));
+    assert!(stdout.contains("harness:  codex"));
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -1904,10 +1941,10 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
     ];
 
     for (task, kind, worktree, expected) in cases {
-        let worker = match *kind {
-            "reviewer" => "reviewer-codex-acp",
-            "architector" => "architector-test",
-            _ => "implementer-codex-appserver",
+        let (mode, harness) = match *kind {
+            "reviewer" => ("acp-stdio", "codex"),
+            "architector" => ("acp-stdio", "codex"),
+            _ => ("acp-ws", "codex"),
         };
         let stderr = run_orgasmic_failure(
             &home,
@@ -1921,8 +1958,10 @@ async fn dispatch_rejects_cross_kind_default_worktree_reuse() {
                 task,
                 "--kind",
                 kind,
-                "--worker",
-                worker,
+                "--mode",
+                mode,
+                "--harness",
+                harness,
                 "--brief",
                 brief.to_str().unwrap(),
                 "--worktree",
@@ -1999,8 +2038,10 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -2089,8 +2130,10 @@ async fn dispatch_default_worktree_lives_under_project_dispatch_dir() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -2142,8 +2185,10 @@ async fn dispatch_default_worktree_keeps_parent_git_status_clean() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -2207,8 +2252,10 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -2400,8 +2447,10 @@ async fn dispatch_sleeping_implementer(
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -2694,8 +2743,10 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
             "TASK-REVIEW",
             "--kind",
             "reviewer",
-            "--worker",
-            "reviewer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             review_brief.to_str().unwrap(),
             "--from",
@@ -3080,8 +3131,10 @@ async fn dispatch_finalize_commit_binds_to_worktree_when_orgasmic_is_uncommitted
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-appserver",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -3291,7 +3344,7 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
     seed_project(&home, &project_root);
     write(
         &home.user().join("workers/implementer-codex-acp.org"),
-        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
     );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
@@ -3316,8 +3369,10 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -3386,7 +3441,7 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
     seed_project(&home, &project_root);
     write(
         &home.user().join("workers/implementer-cursor.org"),
-        "* WORKER implementer-cursor\n:PROPERTIES:\n:ID:                          implementer-cursor\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   cursor\n:MODELS:                      composer-2.5-fast\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            cursor\n:DEFAULT_MODEL:               composer-2.5-fast\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest subprocess-stream-json implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+        "* WORKER implementer-cursor\n:PROPERTIES:\n:ID:                          implementer-cursor\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   cursor\n:DEFAULT_PROVIDER:            cursor\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest subprocess-stream-json implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
     );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
@@ -3410,8 +3465,10 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-cursor",
+            "--mode",
+            "subprocess-stream-json",
+            "--harness",
+            "cursor-agent",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -3478,7 +3535,7 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     seed_project(&home, &project_root);
     write(
         &home.user().join("workers/implementer-codex-acp.org"),
-        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
     );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
@@ -3503,8 +3560,10 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
             "TASK-DISPATCH",
             "--kind",
             "implementer",
-            "--worker",
-            "implementer-codex-acp",
+            "--mode",
+            "acp-stdio",
+            "--harness",
+            "codex",
             "--brief",
             brief.to_str().unwrap(),
             "--from",
@@ -3723,7 +3782,7 @@ fn seed_stage_workers(home: &Home) {
         write(
             &home.user().join(format!("workers/{id}.org")),
             format!(
-                "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:             {kind}\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest {kind}.\n"
+                "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:             {kind}\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest {kind}.\n"
             ),
         );
     }
@@ -3760,20 +3819,24 @@ async fn start_stage_on_main(
     stage: &str,
     task_id: &str,
 ) -> (String, PathBuf) {
-    let resp: serde_json::Value = http
+    let response = http
         .post(format!("http://{addr}/api/{stage}"))
         .header(AUTHORIZATION, format!("Bearer {token}"))
         .json(&serde_json::json!({
             "project": "orgasmic",
             "task_id": task_id,
+            "mode": "acp-stdio",
+            "harness": "codex",
             "reason": "stage finalize smoke",
         }))
         .send()
         .await
-        .expect("start stage")
-        .json()
-        .await
-        .expect("decode stage response");
+        .expect("start stage");
+    let status = response.status();
+    let body = response.text().await.expect("stage body");
+    assert!(status.is_success(), "stage HTTP {status}: {body}");
+    let resp: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|err| panic!("decode stage response ({err}): {body}"));
     assert_eq!(resp["status"], "acquired");
     let run_id = resp["run_id"].as_str().expect("run_id").to_string();
     let live = live_run_for_id(http, addr, token, &run_id).await;
@@ -4073,4 +4136,433 @@ fn state_has_live_run(runs: &serde_json::Value, run_id: &str) -> bool {
                 .any(|run| run["run_id"].as_str() == Some(run_id))
         })
         .unwrap_or(false)
+}
+
+fn tx_extra_property(project_root: &Path, ty: &str, task: &str, key: &str) -> Option<String> {
+    tx_property_raw_bytes(project_root, ty, task, key)
+}
+
+/// Read a tx property value from disk without org whitespace normalization.
+fn tx_property_raw_bytes(project_root: &Path, ty: &str, task: &str, key: &str) -> Option<String> {
+    let raw = tx_log(project_root);
+    for block in raw.split("\n\n* TX ") {
+        if block.contains(&format!(":TYPE:         {ty}"))
+            && block.contains(&format!(":TASK:         {task}"))
+        {
+            for line in block.lines() {
+                let trimmed = line.trim_start();
+                if let Some(rest) = trimmed.strip_prefix(&format!(":{key}:")) {
+                    let prefix_len = 2 + key.len();
+                    let pad = if prefix_len < 15 { 15 - prefix_len } else { 1 };
+                    return Some(rest.get(pad..)?.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+fn run_id_from_dispatch_stdout(stdout: &str) -> String {
+    stdout
+        .split("run_id=")
+        .nth(1)
+        .and_then(|tail| tail.split_whitespace().next())
+        .expect("run_id in dispatch stdout")
+        .to_string()
+}
+
+fn session_driver_config_field(project_root: &Path, run_id: &str, field: &str) -> Option<String> {
+    let sessions_dir = project_root.join(".orgasmic/tmp/sessions");
+    let entries = std::fs::read_dir(&sessions_dir).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let body = std::fs::read_to_string(&path).ok()?;
+        if !body.contains(run_id) {
+            continue;
+        }
+        for line in body.lines() {
+            let envelope: serde_json::Value = serde_json::from_str(line).ok()?;
+            if envelope["run_id"].as_str() != Some(run_id) {
+                continue;
+            }
+            if envelope["event"]["phase"].as_str() == Some("run_meta") {
+                return envelope["event"]["driver_config"][field]
+                    .as_str()
+                    .map(str::to_string);
+            }
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_dispatch_with_model_effort(
+    home: &Home,
+    running: &RunningDaemon,
+    project_root: &Path,
+    path_env: &std::ffi::OsString,
+    head: &str,
+    task: &str,
+    worktree: &Path,
+    branch: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> String {
+    run_dispatch_with_model_effort_output(
+        home,
+        running,
+        project_root,
+        path_env,
+        head,
+        task,
+        worktree,
+        branch,
+        model,
+        effort,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_dispatch_with_model_effort_output(
+    home: &Home,
+    running: &RunningDaemon,
+    project_root: &Path,
+    path_env: &std::ffi::OsString,
+    head: &str,
+    task: &str,
+    worktree: &Path,
+    branch: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> String {
+    let brief = worktree.with_file_name(format!("{task}-brief.md"));
+    write(&brief, format!("wire test brief for {task}"));
+    let mut args = vec![
+        "manager",
+        "dispatch",
+        "--task",
+        task,
+        "--kind",
+        "implementer",
+        "--mode",
+        "acp-ws",
+        "--harness",
+        "codex",
+        "--brief",
+        brief.to_str().unwrap(),
+        "--from",
+        head,
+        "--worktree",
+        worktree.to_str().unwrap(),
+        "--branch",
+        branch,
+        "--reason",
+        "model/effort wire test",
+    ];
+    if let Some(model) = model {
+        args.push("--model");
+        args.push(model);
+    }
+    if let Some(effort) = effort {
+        args.push("--effort");
+        args.push(effort);
+    }
+    run_orgasmic(home, running, project_root, path_env, &args)
+}
+
+/// TASK-VQNZ9 P4: CLI subprocess → HTTP/API preserves mixed-case/whitespace model/effort bytes in tx.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cli_wire_mixed_case_whitespace_model_effort_verbatim_in_tx() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-wire-mixed");
+    let model = "  Composer-2.5-FAST  ";
+    let effort = " XHIGH ";
+
+    let running = boot(home.clone()).await;
+    run_dispatch_with_model_effort(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        "TASK-DISPATCH",
+        &worktree,
+        "task-wire-mixed-impl",
+        Some(model),
+        Some(effort),
+    );
+
+    assert_eq!(
+        tx_property_raw_bytes(
+            &project_root,
+            "manager.dispatch_started",
+            "TASK-DISPATCH",
+            "MODEL"
+        )
+        .as_deref(),
+        Some(model)
+    );
+    assert_eq!(
+        tx_property_raw_bytes(
+            &project_root,
+            "manager.dispatch_started",
+            "TASK-DISPATCH",
+            "EFFORT"
+        )
+        .as_deref(),
+        Some(effort)
+    );
+    assert_eq!(
+        tx_property_raw_bytes(
+            &project_root,
+            "run.created",
+            "TASK-DISPATCH",
+            "MODEL_OVERRIDE"
+        )
+        .as_deref(),
+        Some(model)
+    );
+    assert_eq!(
+        tx_property_raw_bytes(
+            &project_root,
+            "run.created",
+            "TASK-DISPATCH",
+            "EFFORT_OVERRIDE"
+        )
+        .as_deref(),
+        Some(effort)
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-VQNZ9 P4: unknown off-list model values pass through verbatim (no worker catalog gate).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cli_wire_unknown_model_passes_through() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-wire-unknown");
+
+    let running = boot(home.clone()).await;
+    run_dispatch_with_model_effort(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        "TASK-ABORT",
+        &worktree,
+        "task-wire-unknown-impl",
+        Some("gpt-99"),
+        None,
+    );
+
+    assert_eq!(
+        tx_extra_property(
+            &project_root,
+            "manager.dispatch_started",
+            "TASK-ABORT",
+            "MODEL"
+        )
+        .as_deref(),
+        Some("gpt-99")
+    );
+    assert_eq!(
+        tx_extra_property(&project_root, "run.created", "TASK-ABORT", "MODEL_OVERRIDE").as_deref(),
+        Some("gpt-99")
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-VQNZ9 P4: omitted model/effort flags do not synthesize tx properties from worker files.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cli_wire_omitted_model_effort_absent_from_tx() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-wire-omit");
+
+    let running = boot(home.clone()).await;
+    run_dispatch_with_model_effort(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        "TASK-FIX",
+        &worktree,
+        "task-wire-omit-impl",
+        None,
+        None,
+    );
+
+    let raw = tx_log(&project_root);
+    for block in raw.split("\n\n* TX ") {
+        if block.contains(":TASK:         TASK-FIX") {
+            assert!(
+                !block.contains(":MODEL:") && !block.contains(":EFFORT:"),
+                "omitted overrides must not appear in tx: {block}"
+            );
+            assert!(
+                !block.contains(":MODEL_OVERRIDE:") && !block.contains(":EFFORT_OVERRIDE:"),
+                "omitted overrides must not appear in run.created: {block}"
+            );
+        }
+    }
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-VQNZ9 P4: whitespace-only model/effort strings are preserved verbatim, not trimmed away.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cli_wire_whitespace_only_model_effort_preserved() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-wire-blank");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_dispatch_with_model_effort_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        "TASK-NO-MERGE",
+        &worktree,
+        "task-wire-blank-impl",
+        Some("   "),
+        Some("\t"),
+    );
+    let run_id = run_id_from_dispatch_stdout(&dispatch_stdout);
+
+    assert!(
+        tx_log(&project_root).contains(":MODEL:"),
+        "whitespace-only model must still emit a MODEL tx property"
+    );
+    assert_eq!(
+        session_driver_config_field(&project_root, &run_id, "model").as_deref(),
+        Some("   ")
+    );
+    assert_eq!(
+        session_driver_config_field(&project_root, &run_id, "effort").as_deref(),
+        Some("\t")
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-VQNZ9 P4: CLI → API → session driver_config preserves verbatim model bytes.
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cli_subprocess_wire_preserves_verbatim_model_in_session() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    write(
+        &home.user().join("workers/implementer-cursor.org"),
+        "* WORKER implementer-cursor\n:PROPERTIES:\n:ID:                          implementer-cursor\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   cursor\n:DEFAULT_PROVIDER:            cursor\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest subprocess-stream-json implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
+    );
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_git_proxy(&bin_dir);
+    let path_env = path_only(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-wire-argv");
+    let model = "  Composer-2.5-FAST  ";
+
+    let running = boot(home.clone()).await;
+    let brief = tmp.path().join("task-cleanup-brief.md");
+    write(&brief, "session driver_config wire test");
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-CLEANUP",
+            "--kind",
+            "implementer",
+            "--mode",
+            "subprocess-stream-json",
+            "--harness",
+            "cursor-agent",
+            "--worker",
+            "implementer-cursor",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-wire-argv-impl",
+            "--model",
+            model,
+            "--reason",
+            "session driver_config wire test",
+        ],
+    );
+    let run_id = run_id_from_dispatch_stdout(&dispatch_stdout);
+    assert_eq!(
+        session_driver_config_field(&project_root, &run_id, "model").as_deref(),
+        Some(model)
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
 }

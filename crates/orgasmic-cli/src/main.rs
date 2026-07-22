@@ -314,27 +314,48 @@ Examples:
         #[arg(long, default_value = "orgasmic")]
         project: String,
         #[arg(long)]
+        mode: String,
+        #[arg(long)]
+        harness: String,
+        #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
         wait: bool,
+        /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
+        #[arg(long = "governance-json")]
+        governance_json: Option<String>,
     },
     /// Manager architecture stage.
     Architect {
         #[arg(long, default_value = "orgasmic")]
         project: String,
         #[arg(long)]
+        mode: String,
+        #[arg(long)]
+        harness: String,
+        #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
         wait: bool,
+        /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
+        #[arg(long = "governance-json")]
+        governance_json: Option<String>,
     },
     /// Manager planning stage.
     Plan {
         #[arg(long, default_value = "orgasmic")]
         project: String,
         #[arg(long)]
+        mode: String,
+        #[arg(long)]
+        harness: String,
+        #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
         wait: bool,
+        /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
+        #[arg(long = "governance-json")]
+        governance_json: Option<String>,
     },
 }
 
@@ -990,19 +1011,55 @@ fn main() -> Result<()> {
         Cmd::Member { cmd } => cmd_member(&home, cmd),
         Cmd::Grill {
             project,
+            mode,
+            harness,
             reason,
             wait,
-        } => cmd_stage(&home, "grill", project, reason, wait),
+            governance_json,
+        } => cmd_stage(
+            &home,
+            "grill",
+            project,
+            mode,
+            harness,
+            reason,
+            wait,
+            governance_json,
+        ),
         Cmd::Architect {
             project,
+            mode,
+            harness,
             reason,
             wait,
-        } => cmd_stage(&home, "architect", project, reason, wait),
+            governance_json,
+        } => cmd_stage(
+            &home,
+            "architect",
+            project,
+            mode,
+            harness,
+            reason,
+            wait,
+            governance_json,
+        ),
         Cmd::Plan {
             project,
+            mode,
+            harness,
             reason,
             wait,
-        } => cmd_stage(&home, "plan", project, reason, wait),
+            governance_json,
+        } => cmd_stage(
+            &home,
+            "plan",
+            project,
+            mode,
+            harness,
+            reason,
+            wait,
+            governance_json,
+        ),
         Cmd::ExecPinned { .. } => unreachable!("handled before home/tracing initialization"),
     }
 }
@@ -2832,25 +2889,41 @@ fn cmd_question(home: &Home, cmd: QuestionCmd) -> Result<()> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_stage(
     home: &Home,
     stage: &str,
     project: String,
+    mode: String,
+    harness: String,
     reason: Option<String>,
     wait: bool,
+    governance_json: Option<String>,
 ) -> Result<()> {
+    if let Err(message) = orgasmic_daemon::addressing::validate_supported_pair(&mode, &harness) {
+        anyhow::bail!("{message}");
+    }
+    let governance: Option<orgasmic_daemon::governance::GovernancePatch> =
+        match governance_json.as_deref() {
+            None => None,
+            Some(json) => Some(
+                serde_json::from_str(json)
+                    .with_context(|| format!("parse --governance-json: {json}"))?,
+            ),
+        };
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
         let client = DaemonClient::from_home_autostart_async(home).await?;
-        let value: serde_json::Value = client
-            .post_json(
-                &format!("/{stage}"),
-                &serde_json::json!({
-                    "project": project,
-                    "reason": reason,
-                }),
-            )
-            .await?;
+        let mut body = serde_json::json!({
+            "project": project,
+            "mode": mode,
+            "harness": harness,
+            "reason": reason,
+        });
+        if let Some(governance) = governance {
+            body["governance"] = serde_json::to_value(governance)?;
+        }
+        let value: serde_json::Value = client.post_json(&format!("/{stage}"), &body).await?;
         if wait {
             if let Some(run_id) = value.get("run_id").and_then(serde_json::Value::as_str) {
                 let _ = wait_for_run_terminal(&client, run_id).await?;

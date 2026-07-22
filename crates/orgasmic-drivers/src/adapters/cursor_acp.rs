@@ -23,10 +23,13 @@ use crate::r#trait::{
     HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn,
     TransitionRequest, UserInputRequest, WireMessage,
 };
+use crate::runtime_options::{
+    RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsRequest, RuntimeOptionsState,
+};
 use crate::sandbox::ApprovalResponse;
 
 const HARNESS: &str = "cursor-agent";
-const DEFAULT_MODEL: &str = "composer-2.5-fast";
+// orgasmic:TASK-SZEWA, dec_WDR5K — no orgasmic-owned model default.
 
 pub struct CursorAcpAdapter {
     ctx: Option<DriverContext>,
@@ -35,6 +38,8 @@ pub struct CursorAcpAdapter {
     session_id: Option<String>,
     terminal_emitted: bool,
     active_tools: HashSet<String>,
+    /// Structured model catalog from the live `session/new` JSON-RPC result.
+    runtime_catalog: Option<RuntimeOptionsCatalog>,
 }
 
 impl CursorAcpAdapter {
@@ -46,6 +51,7 @@ impl CursorAcpAdapter {
             session_id: None,
             terminal_emitted: false,
             active_tools: HashSet::new(),
+            runtime_catalog: None,
         }
     }
 
@@ -68,13 +74,7 @@ impl CursorAcpAdapter {
     }
 
     fn cfg_model(&self) -> Option<String> {
-        Some(
-            self.cfg
-                .as_ref()
-                .and_then(|cfg| cfg.model.clone())
-                .filter(|model| !model.is_empty())
-                .unwrap_or_else(|| DEFAULT_MODEL.into()),
-        )
+        self.cfg.as_ref().and_then(|cfg| cfg.model.clone())
     }
 
     fn worktree(&self) -> Option<PathBuf> {
@@ -123,7 +123,15 @@ impl HarnessEventAdapter for CursorAcpAdapter {
     }
 
     fn clone_box(&self) -> Box<dyn HarnessEventAdapter> {
-        Box::new(CursorAcpAdapter::new())
+        Box::new(CursorAcpAdapter {
+            ctx: self.ctx.clone(),
+            cfg: self.cfg.clone(),
+            seq: self.seq,
+            session_id: self.session_id.clone(),
+            terminal_emitted: self.terminal_emitted,
+            active_tools: self.active_tools.clone(),
+            runtime_catalog: self.runtime_catalog.clone(),
+        })
     }
 
     fn validate_config(&self, config: &DriverConfig) -> Result<(), DriverError> {
@@ -162,9 +170,21 @@ impl HarnessEventAdapter for CursorAcpAdapter {
         self.validate_config(config)?;
         self.ctx = Some(ctx.clone());
         self.cfg = Some(cfg.clone());
+        let mut post_session = Vec::new();
+        // Explicit model override only — never invent a default (dec_WDR5K item 9).
+        if let Some(model) = cfg.model.clone() {
+            post_session.push(json!({
+                "method": "session/set_config_option",
+                "params": {
+                    "configId": "model",
+                    "value": model,
+                }
+            }));
+        }
         Ok(json!({
             "initialize": initialize_params(),
             "thread_start": session_new_params(ctx),
+            "post_session": post_session,
             "auto_turn": cfg.auto_start_turn,
         }))
     }
@@ -223,6 +243,10 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             .ok_or_else(|| DriverError::Transport("session/new response missing sessionId".into()))?
             .to_string();
         self.session_id = Some(session_id.clone());
+        // Live cursor-agent ACP returns a structured models block on session/new
+        // (not documented as a discovery method; verified against the binary).
+        self.runtime_catalog =
+            catalog_from_session_new(thread_response, self.cfg_model().as_deref());
         let ctx = self
             .ctx
             .as_ref()
@@ -236,6 +260,7 @@ impl HarnessEventAdapter for CursorAcpAdapter {
                 "endpoint": endpoint,
                 "session_id": session_id,
                 "model": self.cfg_model(),
+                "catalog_source": self.runtime_catalog.as_ref().map(|c| c.source.clone()),
             }),
         }])
     }
@@ -344,7 +369,62 @@ impl HarnessEventAdapter for CursorAcpAdapter {
         })
     }
 
+    async fn switch_runtime_options(
+        &mut self,
+        req: RuntimeOptionsRequest,
+    ) -> Result<HarnessControlOutcome, DriverError> {
+        let session_id = self
+            .session_id
+            .clone()
+            .ok_or_else(|| DriverError::Transport("cursor ACP session missing".into()))?;
+        let model = req.model.clone().ok_or(DriverError::Unsupported(
+            "cursor ACP runtime options require model",
+        ))?;
+        if model.is_empty() {
+            return Err(DriverError::Unsupported(
+                "cursor ACP runtime options require model",
+            ));
+        }
+        if let Some(cfg) = self.cfg.as_mut() {
+            cfg.model = Some(model.clone());
+        }
+        if let Some(catalog) = self.runtime_catalog.as_mut() {
+            catalog.current.model = Some(model.clone());
+            for entry in &mut catalog.models {
+                entry.current = entry.id == model;
+            }
+        }
+        Ok(HarnessControlOutcome {
+            events: vec![DriverEvent::TextChunk {
+                stream: TextStream::System,
+                chunk: format!("runtime options updated for cursor ACP session: model={model}"),
+                seq: self.next_seq(),
+            }],
+            wire_messages: vec![WireMessage::JsonRpc {
+                method: "session/set_config_option".into(),
+                params: json!({
+                    "sessionId": session_id,
+                    "configId": "model",
+                    "value": model,
+                }),
+            }],
+            ..HarnessControlOutcome::default()
+        })
+    }
+
+    async fn runtime_options_catalog(&mut self) -> Result<RuntimeOptionsCatalog, DriverError> {
+        self.runtime_catalog.clone().ok_or_else(|| {
+            DriverError::Unsupported("cursor ACP runtime catalog unavailable before session/new")
+        })
+    }
+
     async fn release(&mut self, reason: String) -> Result<HarnessControlOutcome, DriverError> {
+        if self.terminal_emitted {
+            return Ok(HarnessControlOutcome {
+                close: true,
+                ..HarnessControlOutcome::default()
+            });
+        }
         self.terminal_emitted = true;
         let mut wire_messages = Vec::new();
         if let Some(session_id) = self.session_id.as_deref() {
@@ -519,21 +599,22 @@ impl CursorAcpAdapter {
             .or_else(|| response.get("stop_reason"))
             .and_then(Value::as_str)
             .unwrap_or("end_turn");
-        match reason {
+        let seq = self.next_seq();
+        let terminal = match reason {
             "end_turn" | "max_tokens" => {
                 self.terminal_emitted = true;
-                vec![DriverEvent::RunComplete {
+                DriverEvent::RunComplete {
                     summary: response
                         .get("summary")
                         .and_then(Value::as_str)
                         .map(ToString::to_string),
-                }]
+                }
             }
             "cancelled" => {
                 self.terminal_emitted = true;
-                vec![DriverEvent::RunComplete {
+                DriverEvent::RunComplete {
                     summary: Some("cursor ACP turn cancelled".into()),
-                }]
+                }
             }
             "refusal" | "max_turn_requests" => {
                 self.terminal_emitted = true;
@@ -541,17 +622,24 @@ impl CursorAcpAdapter {
                 // non-success outcomes for an orgasmic worker run: map them to
                 // RunFail with a typed code so supervisors do not treat a model
                 // refusal or turn-budget exhaustion as accepted completion.
-                vec![DriverEvent::RunFail {
+                DriverEvent::RunFail {
                     error_code: format!("cursor_acp_stop_reason_{reason}"),
                     error_markdown: format!(
                         "cursor ACP stopped with StopReason::{reason}: {response}"
                     ),
-                }]
+                }
             }
-            other => vec![DriverEvent::DriverError {
-                fatal: false,
-                message: format!("cursor ACP unknown stopReason {other}: {response}"),
-            }],
+            other => {
+                return vec![DriverEvent::DriverError {
+                    fatal: false,
+                    message: format!("cursor ACP unknown stopReason {other}: {response}"),
+                }];
+            }
+        };
+        if reason == "cancelled" {
+            vec![terminal]
+        } else {
+            crate::r#trait::turn_boundary_events(seq, terminal)
         }
     }
 
@@ -753,6 +841,74 @@ fn session_new_params(ctx: &DriverContext) -> Value {
     json!({
         "cwd": ctx.worktree.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| ".".into()),
         "mcpServers": [],
+    })
+}
+
+/// Parse the structured `models` / `configOptions` block from a live
+/// `session/new` result. Never scrapes CLI text.
+fn catalog_from_session_new(
+    thread_response: &Value,
+    override_model: Option<&str>,
+) -> Option<RuntimeOptionsCatalog> {
+    let models_block = thread_response.get("models")?;
+    let available = models_block
+        .get("availableModels")
+        .and_then(Value::as_array)?;
+    let current_from_session = models_block
+        .get("currentModelId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let current_model = override_model
+        .map(str::to_string)
+        .or(current_from_session.clone());
+    let mut models = Vec::new();
+    for entry in available {
+        let Some(id) = entry
+            .get("modelId")
+            .or_else(|| entry.get("id"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
+            continue;
+        };
+        let label = entry
+            .get("name")
+            .or_else(|| entry.get("label"))
+            .and_then(Value::as_str)
+            .unwrap_or(id)
+            .to_string();
+        let current = current_model
+            .as_deref()
+            .map(|cur| cur == id)
+            .unwrap_or(false);
+        models.push(RuntimeModelOption {
+            id: id.to_string(),
+            label,
+            provider: None,
+            current,
+            reasoning_efforts: Vec::new(),
+            speeds: Vec::new(),
+            default_reasoning_effort: None,
+        });
+    }
+    if models.is_empty() {
+        return None;
+    }
+    Some(RuntimeOptionsCatalog {
+        source: "cursor-acp:session/new".into(),
+        provider_switching: false,
+        live_switching: true,
+        current: RuntimeOptionsState {
+            provider: None,
+            model: current_model,
+            reasoning_effort: None,
+            speed: None,
+        },
+        providers: Vec::new(),
+        models,
+        efforts: Vec::new(),
+        speeds: Vec::new(),
     })
 }
 
@@ -1066,8 +1222,103 @@ mod tests {
         assert_eq!(init["initialize"]["protocolVersion"], 1);
         assert_eq!(init["initialize"]["clientCapabilities"]["terminal"], true);
         assert_eq!(init["thread_start"]["mcpServers"], json!([]));
+        assert_eq!(init["post_session"], json!([]));
         assert_eq!(adapter.jsonrpc_session_start_method(), "session/new");
         assert_eq!(adapter.jsonrpc_turn_start_method(), "session/prompt");
+    }
+
+    #[test]
+    fn session_init_posts_set_config_only_for_explicit_model() {
+        let mut adapter = CursorAcpAdapter::new();
+        let init = adapter
+            .stdio_session_init(
+                &ctx(),
+                &DriverConfig::from_value(json!({ "model": "fixture-model" })),
+            )
+            .unwrap();
+        assert_eq!(
+            init["post_session"],
+            json!([{
+                "method": "session/set_config_option",
+                "params": { "configId": "model", "value": "fixture-model" }
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_options_switch_emits_set_config_option() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter
+            .stdio_session_init(
+                &ctx(),
+                &DriverConfig::from_value(json!({ "model": "fixture-a" })),
+            )
+            .unwrap();
+        adapter
+            .on_ws_thread_started(
+                "stdio",
+                &json!({
+                    "sessionId": "sess-fixture",
+                    "models": {
+                        "currentModelId": "fixture-a",
+                        "availableModels": [
+                            { "modelId": "fixture-a", "name": "Fixture A" },
+                            { "modelId": "fixture-b", "name": "Fixture B" }
+                        ]
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+
+        let outcome = adapter
+            .switch_runtime_options(RuntimeOptionsRequest {
+                model: Some("fixture-b".into()),
+                ..RuntimeOptionsRequest::default()
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(outcome.wire_messages.len(), 1);
+        match &outcome.wire_messages[0] {
+            WireMessage::JsonRpc { method, params } => {
+                assert_eq!(method, "session/set_config_option");
+                assert_eq!(params["sessionId"], "sess-fixture");
+                assert_eq!(params["configId"], "model");
+                assert_eq!(params["value"], "fixture-b");
+            }
+            other => panic!("expected JSON-RPC set_config_option, got {other:?}"),
+        }
+        let catalog = adapter.runtime_options_catalog().await.unwrap();
+        assert_eq!(catalog.current.model.as_deref(), Some("fixture-b"));
+        assert!(catalog.live_switching);
+    }
+
+    #[tokio::test]
+    async fn session_new_models_block_becomes_runtime_catalog() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter.ctx = Some(ctx());
+        let events = adapter
+            .on_ws_thread_started(
+                "stdio",
+                &json!({
+                    "sessionId": "sess-1",
+                    "models": {
+                        "currentModelId": "fixture-a",
+                        "availableModels": [
+                            { "modelId": "fixture-a", "name": "A" },
+                            { "modelId": "fixture-b", "name": "B" }
+                        ]
+                    }
+                }),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(events[0], DriverEvent::Ready { .. }));
+        let catalog = adapter.runtime_options_catalog().await.unwrap();
+        assert_eq!(catalog.source, "cursor-acp:session/new");
+        assert_eq!(catalog.models.len(), 2);
+        assert_eq!(catalog.current.model.as_deref(), Some("fixture-a"));
     }
 
     #[tokio::test]
@@ -1197,10 +1448,22 @@ mod tests {
                 .on_ws_response("session/prompt", json!({"stopReason": reason}))
                 .await
                 .unwrap();
+            assert!(matches!(&events[0], DriverEvent::AgentTurnComplete { .. }));
             assert!(
-                matches!(&events[0], DriverEvent::RunFail { error_code, .. } if error_code == &format!("cursor_acp_stop_reason_{reason}"))
+                matches!(&events[1], DriverEvent::RunFail { error_code, .. } if error_code == &format!("cursor_acp_stop_reason_{reason}"))
             );
             adapter.terminal_emitted = false;
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_stop_is_terminal_without_fabricated_turn() {
+        let mut adapter = CursorAcpAdapter::new();
+        let events = adapter
+            .on_ws_response("session/prompt", json!({"stopReason": "cancelled"}))
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], DriverEvent::RunComplete { .. }));
     }
 }

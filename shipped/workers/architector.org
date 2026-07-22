@@ -5,15 +5,11 @@
 :DRIVER:                      tmux
 :HARNESS:                     claude
 :PROVIDERS:                   anthropic
-:MODELS:                      claude-sonnet-4-6
-:REASONING_EFFORTS:           low medium high xhigh
 :DEFAULT_PROVIDER:            anthropic
-:DEFAULT_MODEL:               claude-sonnet-4-6
-:DEFAULT_EFFORT:              high
 :LINKED_SKILLS:
 :APPLICABLE_STATES:           working, done, blocked, cancelled
 :MAX_ITERATIONS:              14
-:CONTEXT_BUDGET:              140000
+:CONTEXT_BUDGET_CHARS:        560000
 :VERSION:                     1
 :END:
 

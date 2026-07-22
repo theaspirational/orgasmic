@@ -85,6 +85,7 @@ pub use slots::{
 };
 pub use tx::{parse_tx_file, TxEntry, TxError, TxWriter};
 pub use workers::{
-    is_supported_worker_pair, parse_string_list, Worker, WorkerError,
+    is_supported_worker_pair, parse_string_list, resolve_context_budget_chars,
+    ContextBudgetCharsError, Worker, WorkerError, LEGACY_CONTEXT_BUDGET_TOKEN_MULTIPLIER,
     SUPPORTED_WORKER_DRIVER_HARNESSES,
 };

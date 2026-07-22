@@ -30,7 +30,8 @@ use crate::r#trait::{
 };
 
 const TRANSPORT: &str = "cursor-agent";
-const DEFAULT_MODEL: &str = "composer-2.5-fast";
+// orgasmic:TASK-SZEWA, dec_WDR5K — no orgasmic-owned model default; omit --model
+// when dispatch does not pass an explicit override (harness default applies).
 const DEFAULT_SANDBOX: &str = "enabled";
 /// Trailing system chunks kept for synthetic subprocess-exit summaries.
 pub(crate) const SUBPROCESS_EXIT_SYSTEM_TAIL_CHUNKS: usize = 8;
@@ -133,11 +134,10 @@ impl CursorAgentConfig {
         self.endpoint.as_deref().filter(|value| !value.is_empty())
     }
 
-    fn model(&self) -> &str {
+    fn model(&self) -> Option<&str> {
         self.model
             .as_deref()
-            .filter(|value| !value.is_empty())
-            .unwrap_or(DEFAULT_MODEL)
+            .filter(|value| !value.trim().is_empty())
     }
 
     fn sandbox(&self) -> &str {
@@ -149,6 +149,20 @@ impl CursorAgentConfig {
 
     fn force(&self) -> bool {
         self.force.unwrap_or(true)
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::CursorAgentConfig;
+
+    #[test]
+    fn model_accessor_preserves_exact_nonblank_bytes() {
+        let cfg = CursorAgentConfig {
+            model: Some("  Composer-2.5-FAST  ".into()),
+            ..CursorAgentConfig::default()
+        };
+        assert_eq!(cfg.model(), Some("  Composer-2.5-FAST  "));
     }
 }
 
@@ -252,11 +266,13 @@ impl HarnessEventAdapter for CursorAdapter {
             "--output-format".to_string(),
             "stream-json".to_string(),
             "--stream-partial-output".to_string(),
-            "--model".to_string(),
-            cfg.model().to_string(),
             "--sandbox".to_string(),
             cfg.sandbox().to_string(),
         ];
+        if let Some(model) = cfg.model() {
+            args.push("--model".to_string());
+            args.push(model.to_string());
+        }
         if cfg.force() {
             args.push("--force".to_string());
         }
@@ -381,6 +397,7 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &CursorAgentConfig) -> Vec<D
         chunk: "cursor-agent simulated response".into(),
         seq: 2,
     });
+    events.push(DriverEvent::AgentTurnComplete { seq: 3 });
     events.push(DriverEvent::RunComplete {
         summary: Some("cursor-agent simulated complete".into()),
     });
@@ -1205,7 +1222,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(8);
         let cfg = CursorAgentConfig {
             endpoint: Some("stdio".into()),
-            model: Some(DEFAULT_MODEL.into()),
+            model: Some("fixture-model".into()),
             sandbox: Some(DEFAULT_SANDBOX.into()),
             force: Some(true),
             ..CursorAgentConfig::default()

@@ -71,7 +71,7 @@ fn seed_implementer_worker(home: &Home, worker_id: &str) {
     write(
         &home.user().join(format!("workers/{worker_id}.org")),
         format!(
-            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:MODELS:                      gpt-5.5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            openai\n:DEFAULT_MODEL:               gpt-5.5\n:DEFAULT_EFFORT:              high\n:APPLICABLE_STATES:           backlog\n:MAX_ITERATIONS:              1\n:END:\n\n** Persona\nTest worker.\n",
+            "* WORKER {worker_id}\n:PROPERTIES:\n:ID:                          {worker_id}\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:APPLICABLE_STATES:           backlog\n:MAX_ITERATIONS:              1\n:END:\n\n** Persona\nTest worker.\n",
         ),
     );
 }

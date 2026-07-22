@@ -5,15 +5,11 @@
 :DRIVER:                      rmux
 :HARNESS:                     claude
 :PROVIDERS:                   anthropic
-:MODELS:                      claude-sonnet-5 claude-opus-4-8 claude-haiku-4-5
-:REASONING_EFFORTS:           low medium high xhigh
 :DEFAULT_PROVIDER:            anthropic
-:DEFAULT_MODEL:               claude-opus-4-8
-:DEFAULT_EFFORT:              xhigh
 :LINKED_SKILLS:
 :APPLICABLE_STATES:           working, done, blocked, cancelled, approved, requested_changes
 :MAX_ITERATIONS:              10
-:CONTEXT_BUDGET:              150000
+:CONTEXT_BUDGET_CHARS:        600000
 :VERSION:                     1
 :END:
 
@@ -33,9 +29,7 @@ Authored [2026-06-10] for goal-20260610-drain-small-backlog (operator-directed
 rmux+claude dispatch batch). Same rmux provisioning caveat as
 implementer-claude-rmux: verify the capabilities event on first dispatch.
 
-Model/effort selection: =:DEFAULT_MODEL:= / =:DEFAULT_EFFORT:= pin the model
-and reasoning effort for dispatches that pass no explicit override; a custom
-template only needs to set those two. For harness-specific flags the schema
-has no property for, set =:HARNESS_ARGS:= (whitespace-separated argv passed
-verbatim to the harness CLI, e.g. =--model claude-haiku-4-5 --betas
-context-1m=); flags there win over the defaults.
+Model/effort selection: pass explicit =--model= and effort flags on each
+dispatch via =orgasmic manager dispatch --model … --effort …=, or set
+=:HARNESS_ARGS:= (whitespace-separated argv passed verbatim to the harness
+CLI, e.g. =--model claude-haiku-4-5 --betas context-1m=).

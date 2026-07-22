@@ -98,6 +98,10 @@ struct RmuxConfig {
     harness: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+    #[serde(default)]
+    reasoning_effort: Option<String>,
     /// Extra argv appended verbatim to the harness CLI (worker
     /// `:HARNESS_ARGS:` / launch request). Appended before the guarded flag
     /// pushes below, so an explicit `--model` here wins over `model`.
@@ -294,14 +298,16 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         {
             args.push("--dangerously-skip-permissions".to_string());
         }
-        if let Some(model) = cfg
-            .model
-            .as_deref()
-            .filter(|model| !model.trim().is_empty())
-        {
+        if let Some(model) = cfg.model.as_ref() {
             if !args.iter().any(|arg| arg == "--model") {
                 args.push("--model".to_string());
-                args.push(model.to_string());
+                args.push(model.clone());
+            }
+        }
+        if let Some(effort) = cfg.effort.as_ref().or(cfg.reasoning_effort.as_ref()) {
+            if !args.iter().any(|arg| arg == "--effort") {
+                args.push("--effort".to_string());
+                args.push(effort.clone());
             }
         }
         // Deterministic native Claude session identity (mirrors tmux): pin
@@ -310,6 +316,14 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         if !args.iter().any(|arg| arg == "--session-id") {
             args.push("--session-id".to_string());
             args.push(session_id);
+        }
+    }
+    if matches!(harness, "codex" | "cursor-agent" | "hermes") {
+        if let Some(model) = cfg.model.as_ref() {
+            if !args.iter().any(|arg| arg == "--model" || arg == "-m") {
+                args.push("--model".to_string());
+                args.push(model.clone());
+            }
         }
     }
 
@@ -988,20 +1002,35 @@ async fn enable_rmux_mouse(bin: &str, session: &str) -> Result<(), DriverError> 
 }
 
 async fn rmux_capture_pane(bin: &str, session: &str) -> Result<String, DriverError> {
-    let output = tokio::process::Command::new(bin)
-        .args(["capture-pane", "-p", "-t", session])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("rmux capture-pane: {e}")))?;
-    if !output.status.success() {
-        return Err(DriverError::Transport(format!(
-            "rmux capture-pane failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
+    let mut last_error = None;
+    // Cursor renders its startup/trust UI in the alternate screen. Probe that
+    // first, then fall back to the normal history buffer for plain CLIs.
+    for alternate in [true, false] {
+        let mut command = tokio::process::Command::new(bin);
+        command.arg("capture-pane");
+        if alternate {
+            command.arg("-a");
+        }
+        let output = command
+            .args(["-p", "-t", session])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .map_err(|e| DriverError::Transport(format!("rmux capture-pane: {e}")))?;
+        if output.status.success() {
+            let pane = String::from_utf8_lossy(&output.stdout).into_owned();
+            if !pane.trim().is_empty() || !alternate {
+                return Ok(pane);
+            }
+        } else {
+            last_error = Some(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    Err(DriverError::Transport(format!(
+        "rmux capture-pane failed: {}",
+        last_error.unwrap_or_else(|| "no screen buffer available".into())
+    )))
 }
 
 async fn rmux_capture_pane_bounded(
@@ -1888,10 +1917,28 @@ mod tests {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
+        let git_init = StdCommand::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(tmp.path())
+            .status()
+            .expect("initialize fresh probe worktree");
+        assert!(git_init.success(), "fresh probe worktree must initialize");
         let session = format!("orgasmic-rmux-trust-probe-{}", std::process::id());
         let rmux_bin = std::env::var_os("RMUX_SDK_DAEMON_BINARY")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("rmux"));
+        let cursor_binary = StdCommand::new("which")
+            .arg("cursor-agent")
+            .output()
+            .expect("resolve cursor-agent for trust probe");
+        assert!(
+            cursor_binary.status.success(),
+            "cursor-agent must be on PATH"
+        );
+        let cursor_binary = String::from_utf8(cursor_binary.stdout)
+            .expect("cursor-agent path is UTF-8")
+            .trim()
+            .to_string();
         let rmux = rmux_sdk::Rmux::builder()
             .default_timeout(Duration::from_secs(5))
             .connect_or_start()
@@ -1899,23 +1946,34 @@ mod tests {
             .expect("connect rmux for trust probe");
         let session_name =
             rmux_sdk::SessionName::new(session.clone()).expect("valid rmux probe session name");
+        let mut cursor_process = rmux_sdk::ProcessSpec::argv([cursor_binary]);
+        cursor_process.environment = Some(vec!["TERM=xterm-256color".into()]);
         let session_handle = rmux
             .ensure_session(
                 rmux_sdk::EnsureSession::named(session_name)
                     .policy(rmux_sdk::EnsureSessionPolicy::CreateOrReuse)
                     .detached(true)
                     .working_directory(tmp.path().to_string_lossy().into_owned())
-                    .process(rmux_sdk::ProcessSpec::argv(["cursor-agent"])),
+                    .size(rmux_sdk::TerminalSizeSpec::new(200, 50))
+                    .process(cursor_process),
             )
             .await
             .expect("ensure rmux probe session");
-        tokio::time::sleep(Duration::from_secs(2)).await;
-        let pane = rmux_capture_pane(rmux_bin.to_str().expect("rmux bin path"), &session)
-            .await
-            .expect("capture rmux probe pane");
-        let _ = session_handle.kill().await;
         let workspace = tmp.path().display().to_string();
-        let frame = classify_cursor_startup_frame(&pane, &workspace);
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let (pane, frame) = loop {
+            let pane = rmux_capture_pane(rmux_bin.to_str().expect("rmux bin path"), &session)
+                .await
+                .expect("capture rmux probe pane");
+            let frame = classify_cursor_startup_frame(&pane, &workspace);
+            if !matches!(frame, CursorStartupFrame::BlankOrLoading)
+                || std::time::Instant::now() >= deadline
+            {
+                break (pane, frame);
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        };
+        let _ = session_handle.kill().await;
         assert!(
             matches!(
                 frame,
@@ -1983,6 +2041,25 @@ mod tests {
         let native = plan.native_runtime.expect("claude native runtime");
         assert_eq!(native.provider, "claude");
         assert!(!native.resume_argv.is_empty());
+    }
+
+    #[test]
+    fn pty_model_and_effort_preserve_exact_option_bytes() {
+        let cfg = RmuxConfig {
+            harness: Some("claude".into()),
+            model: Some("  custom-model  ".into()),
+            effort: Some(" XHIGH ".into()),
+            ..RmuxConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-verbatim", RunKind::Worker), "claude");
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--model", "  custom-model  "]));
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--effort", " XHIGH "]));
     }
 
     #[test]
@@ -2566,6 +2643,7 @@ mod tests {
                 .expect("timed out waiting for rmux exit event")
                 .expect("event stream closed");
             match ev {
+                DriverEvent::AgentTurnComplete { .. } => {}
                 DriverEvent::RunComplete { summary } => {
                     saw_complete = true;
                     assert_eq!(

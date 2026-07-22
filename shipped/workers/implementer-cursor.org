@@ -5,15 +5,11 @@
 :DRIVER:                      subprocess-stream-json
 :HARNESS:                     cursor-agent
 :PROVIDERS:                   cursor openai anthropic
-:MODELS:                      composer-2.5-fast gpt-5.5 claude-sonnet-4-6
-:REASONING_EFFORTS:           high
 :DEFAULT_PROVIDER:            cursor
-:DEFAULT_MODEL:               composer-2.5-fast
-:DEFAULT_EFFORT:              high
 :LINKED_SKILLS:
 :APPLICABLE_STATES:           working, done, blocked, cancelled
 :MAX_ITERATIONS:              20
-:CONTEXT_BUDGET:              150000
+:CONTEXT_BUDGET_CHARS:        600000
 :VERSION:                     1
 :END:
 

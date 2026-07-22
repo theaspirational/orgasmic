@@ -243,6 +243,14 @@ pub enum DriverEvent {
     },
     /// Driver-internal error (process died, transport broke, etc.).
     DriverError { fatal: bool, message: String },
+    /// Protocol signal that one agent/model turn finished at a native harness
+    /// boundary (for example codex `turn/completed`, ACP `session/prompt`
+    /// stop, or a synthesized single-turn subprocess completion).
+    ///
+    /// Carries no content. The supervisor counts only this variant toward
+    /// `max_iterations`; substantive events within the same turn (text chunks,
+    /// tool calls, heartbeats) do not advance the iteration counter.
+    AgentTurnComplete { seq: u64 },
     /// Lightweight liveness signal emitted while a session is active but the
     /// underlying harness has produced no substantive output for a while (for
     /// example codex `app-server` buffering a long `cargo test` subprocess).

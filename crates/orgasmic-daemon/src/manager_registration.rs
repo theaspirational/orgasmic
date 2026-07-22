@@ -266,6 +266,8 @@ impl ManagerRegistry {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -437,6 +439,8 @@ mod tests {
             max_run_duration_secs: Some(0),
             idle_timeout_secs: None,
             babysitter: None,
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         }
     }
@@ -530,6 +534,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -588,6 +594,8 @@ mod tests {
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
                 babysitter: None,
+                applicable_states: Vec::new(),
+                max_iterations: None,
                 planned_identity: None,
             },
         )

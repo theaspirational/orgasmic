@@ -20,15 +20,11 @@ pub struct WorkerView {
     pub driver: String,
     pub harness: String,
     pub providers: Vec<String>,
-    pub models: Vec<String>,
-    pub reasoning_efforts: Vec<String>,
     pub default_provider: Option<String>,
-    pub default_model: Option<String>,
-    pub default_effort: Option<String>,
     pub linked_skills: Vec<String>,
     pub applicable_states: Vec<String>,
     pub max_iterations: Option<u32>,
-    pub context_budget: Option<u32>,
+    pub context_budget_chars: Option<u32>,
     pub stall_timeout_secs: Option<u32>,
     pub max_run_duration_secs: Option<u32>,
     pub babysitter_worker: Option<String>,
@@ -393,11 +389,7 @@ fn worker_view_from_worker(
         driver: worker.driver.to_string(),
         harness: worker.harness.to_string(),
         providers: worker.providers,
-        models: worker.models,
-        reasoning_efforts: worker.reasoning_efforts,
         default_provider: worker.default_provider,
-        default_model: worker.default_model,
-        default_effort: worker.default_effort,
         linked_skills: worker
             .linked_skills
             .iter()
@@ -405,7 +397,7 @@ fn worker_view_from_worker(
             .collect(),
         applicable_states: worker.applicable_states,
         max_iterations: worker.max_iterations,
-        context_budget: worker.context_budget,
+        context_budget_chars: worker.context_budget_chars,
         stall_timeout_secs: worker.stall_timeout_secs,
         max_run_duration_secs: worker.max_run_duration_secs,
         babysitter_worker: worker.babysitter_worker.map(str::to_string),
@@ -887,7 +879,7 @@ mod tests {
             ":LINKED_SKILLS:\n"
         };
         format!(
-            "* WORKER {id}\n:PROPERTIES:\n:ID: {id}\n:KIND: implementer\n{driver}{harness}:PROVIDERS: anthropic\n:MODELS: claude-sonnet-4-6\n:REASONING_EFFORTS: high\n:DEFAULT_PROVIDER: anthropic\n:DEFAULT_MODEL: claude-sonnet-4-6\n:DEFAULT_EFFORT: high\n{linked_skills}{override_props}:END:\n\n** Persona\nTest.\n"
+            "* WORKER {id}\n:PROPERTIES:\n:ID: {id}\n:KIND: implementer\n{driver}{harness}:PROVIDERS: anthropic\n:DEFAULT_PROVIDER: anthropic\n{linked_skills}{override_props}:END:\n\n** Persona\nTest.\n"
         )
     }
 }

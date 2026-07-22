@@ -29,8 +29,7 @@ If the tier is unclear, ask the user before spending the run. Include the
 suggested tier and the reason for it so the user can approve, downgrade, or
 upgrade deliberately.
 
-Use per-dispatch `--model` and `--effort` overrides when a task needs a model or
-reasoning tier different from the worker default. Check `orgasmic worker list`
-first and choose only models and efforts the selected worker advertises. Worker
-files keep `DEFAULT_MODEL` and `DEFAULT_EFFORT` as the machine fallback; do not
-edit those defaults just to steer one dispatch.
+Use per-dispatch `--model` and `--effort` overrides when a task needs explicit
+transport options. Choose `--mode` and `--harness` from `orgasmic manager drivers`
+(or project config). Omit model/effort to use harness defaults; explicit values
+pass through unvalidated.

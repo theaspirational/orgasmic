@@ -50,6 +50,19 @@ pub const BLOCK_TYPES: &[&str] = &[
     "EntityRelationship",
 ];
 
+/// Whole artifactor launch address persisted atomically on artifact.org.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ArtifactLaunchAddress {
+    pub mode: String,
+    pub harness: String,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
 /// Index-level summary written into `ProjectIndex.artifacts`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ArtifactSummary {
@@ -59,6 +72,19 @@ pub struct ArtifactSummary {
     pub version: u32,
     pub state: String,
     pub open_comment_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_address: Option<ArtifactLaunchAddress>,
+    /// Legacy fields — populated when reading old artifact.org files.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_harness: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launch_harness_args: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_effort: Option<String>,
 }
 
 /// Full artifact detail including MDX content, returned by GET /artifacts/:id.
@@ -347,6 +373,67 @@ pub fn update_artifact_org(current: &str, new_version: u32, new_state: &str) -> 
     Ok(rw.finish().into_bytes())
 }
 
+/// Persist the artifactor launch address on an existing artifact.org heading.
+/// Replaces the whole `:LAUNCH_ADDRESS:` record atomically; clears legacy
+/// per-field properties and omits optional model/effort when not supplied.
+pub fn persist_artifact_launch_address(
+    current: &str,
+    address: &ArtifactLaunchAddress,
+) -> Result<Vec<u8>> {
+    let file = OrgFile::parse(current, "artifact.org").context("parse artifact.org")?;
+    let Some(id) = file.headings.first().and_then(|h| h.property("ID")) else {
+        bail!("artifact.org has no heading with an :ID:");
+    };
+    let id = id.to_string();
+    let mut rw = OrgRewriter::new(&file, "artifact.org");
+    let json = serde_json::to_string(address).context("serialize launch address")?;
+    rw.upsert_property(&id, "LAUNCH_ADDRESS", &json)
+        .context("update :LAUNCH_ADDRESS:")?;
+    for legacy in [
+        "LAUNCH_MODE",
+        "LAUNCH_HARNESS",
+        "LAUNCH_HARNESS_ARGS",
+        "LAUNCH_MODEL",
+        "LAUNCH_EFFORT",
+    ] {
+        if file
+            .headings
+            .first()
+            .and_then(|h| h.property(legacy))
+            .is_some()
+        {
+            rw.remove_property(&id, legacy)
+                .context("clear legacy launch property")?;
+        }
+    }
+    Ok(rw.finish().into_bytes())
+}
+
+fn parse_launch_harness_args(raw: Option<&str>) -> Option<Vec<String>> {
+    let raw = raw.map(str::trim).filter(|s| !s.is_empty())?;
+    serde_json::from_str(raw).ok()
+}
+
+pub fn parse_artifact_launch_address(
+    heading: &orgasmic_core::Heading,
+) -> Option<ArtifactLaunchAddress> {
+    if let Some(raw) = heading.property("LAUNCH_ADDRESS") {
+        if let Ok(address) = serde_json::from_str::<ArtifactLaunchAddress>(raw.trim()) {
+            return Some(address);
+        }
+    }
+    let mode = heading.property("LAUNCH_MODE")?;
+    let harness = heading.property("LAUNCH_HARNESS")?;
+    Some(ArtifactLaunchAddress {
+        mode: mode.to_string(),
+        harness: harness.to_string(),
+        harness_args: parse_launch_harness_args(heading.property("LAUNCH_HARNESS_ARGS"))
+            .unwrap_or_default(),
+        model: heading.property("LAUNCH_MODEL").map(str::to_string),
+        effort: heading.property("LAUNCH_EFFORT").map(str::to_string),
+    })
+}
+
 // ── reviews.org read/write ───────────────────────────────────────────────────
 
 /// Initial content for a new reviews.org file (created before first comment).
@@ -566,6 +653,7 @@ pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
         }
     };
 
+    let launch_address = parse_artifact_launch_address(heading);
     Some(ArtifactSummary {
         id,
         title,
@@ -573,6 +661,15 @@ pub fn load_artifact(art_dir: &Path) -> Option<ArtifactSummary> {
         version,
         state,
         open_comment_count,
+        launch_address: launch_address.clone(),
+        launch_mode: launch_address.as_ref().map(|a| a.mode.clone()),
+        launch_harness: launch_address.as_ref().map(|a| a.harness.clone()),
+        launch_harness_args: launch_address
+            .as_ref()
+            .map(|a| a.harness_args.clone())
+            .filter(|args| !args.is_empty()),
+        launch_model: launch_address.as_ref().and_then(|a| a.model.clone()),
+        launch_effort: launch_address.as_ref().and_then(|a| a.effort.clone()),
     })
 }
 
@@ -1367,5 +1464,57 @@ mod tests {
         let live = load_artifact_detail(&art_dir, None, false).unwrap();
         assert_eq!(live.comments.len(), 1);
         assert_eq!(live.comments[0].cid, "CID-v2open");
+    }
+
+    #[test]
+    fn persist_launch_address_replaces_whole_record_atomically() {
+        let org = r#"#+title: artifact
+#+orgasmic_version: 1
+
+* ARTIFACT ART-ADDR1 Launch address fixture
+:PROPERTIES:
+:ID:               ART-ADDR1
+:STATE:            submitted
+:VERSION:          1
+:LAUNCH_MODE:      rmux
+:LAUNCH_HARNESS:   claude
+:LAUNCH_MODEL:     old-model
+:LAUNCH_EFFORT:     high
+:END:
+"#;
+        let first = ArtifactLaunchAddress {
+            mode: "acp-ws".into(),
+            harness: "codex".into(),
+            harness_args: vec!["--flag".into(), " spaced ".into()],
+            model: Some(" gpt-custom ".into()),
+            effort: Some(" HIGH ".into()),
+        };
+        let updated = String::from_utf8(persist_artifact_launch_address(org, &first).unwrap())
+            .expect("persist first address");
+        assert!(updated.contains(":LAUNCH_ADDRESS:"));
+        assert!(!updated.contains(":LAUNCH_MODE:"));
+        assert!(!updated.contains(":LAUNCH_MODEL:"));
+
+        let file = OrgFile::parse(&updated, "artifact.org").unwrap();
+        let heading = file.headings.first().expect("heading");
+        let parsed = parse_artifact_launch_address(heading).expect("parsed address");
+        assert_eq!(parsed, first);
+
+        let second = ArtifactLaunchAddress {
+            mode: "rmux".into(),
+            harness: "custom".into(),
+            harness_args: vec![],
+            model: None,
+            effort: None,
+        };
+        let updated2 =
+            String::from_utf8(persist_artifact_launch_address(&updated, &second).unwrap())
+                .expect("persist second address");
+        let file2 = OrgFile::parse(&updated2, "artifact.org").unwrap();
+        let parsed2 = parse_artifact_launch_address(file2.headings.first().unwrap())
+            .expect("parsed second address");
+        assert_eq!(parsed2, second);
+        assert!(!updated2.contains("gpt-custom"));
+        assert!(!updated2.contains(":LAUNCH_EFFORT:"));
     }
 }

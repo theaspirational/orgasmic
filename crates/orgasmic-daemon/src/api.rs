@@ -12,6 +12,7 @@
 //! in over TASK-006..TASK-010.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::path::{Component, Path as FsPath, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
@@ -46,16 +47,24 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::addressing::{
+    compatibility_worker_id, resolve_address_governance, validate_address_harness_args,
+    validate_supported_pair,
+};
 use crate::artifacts::{
     self, append_comment, artifact_dir, artifact_org_content, load_artifact, load_artifact_detail,
-    new_cid, reviews_org_header, update_artifact_org, validate_art_id, validate_art_id_readable,
-    validate_mdx, versions_dir, ArtifactDetail, ArtifactLoadError, ArtifactSummary, NewComment,
+    new_cid, persist_artifact_launch_address, reviews_org_header, update_artifact_org,
+    validate_art_id, validate_art_id_readable, validate_mdx, versions_dir, ArtifactDetail,
+    ArtifactLaunchAddress, ArtifactLoadError, ArtifactSummary, NewComment,
 };
 use crate::auth::AuthState;
 use crate::authz::{self, Action, Identity};
 use crate::config::DriverDefaults;
 use crate::content::{self, ContentLoadError};
 use crate::events::{EventBus, EventPayload, Topic};
+#[cfg(test)]
+use crate::governance::SandboxPermissionsPatch;
+use crate::governance::{BabysitterAddress, DispatchGovernanceOverlay, GovernancePatch};
 use crate::index::{BoardEntry, Index, IndexSnapshot, ProjectIndex, TaskOwner};
 use crate::recovery_claim::{
     commit_recovery_claim, index_recovery_origins_in_session, load_committed_recovery_claim,
@@ -93,6 +102,8 @@ pub struct ApiState {
     pub manager_actor: Option<String>,
     pub auto_commit_signal: bool,
     pub driver_defaults: DriverDefaults,
+    /// Sparse `dispatch:` governance overlay from config.yaml (dec_WDR5K item 3).
+    pub dispatch_governance: DispatchGovernanceOverlay,
     pub actor: String,
     pub machine: String,
     pub bind_host: String,
@@ -1034,6 +1045,72 @@ fn non_empty_field(value: Option<String>) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Pass explicit model/effort strings through without trim or case mutation.
+fn verbatim_optional(value: Option<String>) -> Option<String> {
+    value
+}
+
+fn enforce_context_budget_chars(
+    compiled_chars: usize,
+    budget: Option<u32>,
+    context: &str,
+) -> Result<(), ApiError> {
+    let Some(budget) = budget else {
+        return Ok(());
+    };
+    if compiled_chars > budget as usize {
+        return Err(ApiError::bad_request(format!(
+            "{context} compiled prompt exceeds context_budget_chars ({compiled_chars} characters > {budget} character limit)"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_custom_harness_args(harness: &str, harness_args: &[String]) -> Result<(), ApiError> {
+    validate_address_harness_args(harness, harness_args).map_err(ApiError::bad_request)
+}
+
+fn resolve_artifact_launch_address(
+    override_address: Option<ArtifactLaunchAddress>,
+    saved: Option<ArtifactLaunchAddress>,
+) -> Result<ArtifactLaunchAddress, ApiError> {
+    override_address.or(saved).ok_or_else(|| {
+        ApiError::bad_request(
+            "artifact launch address unavailable; supply mode+harness or persist a launch first",
+        )
+    })
+}
+
+fn artifact_address_from_generate_body(body: &ArtifactGenerateRequest) -> ArtifactLaunchAddress {
+    ArtifactLaunchAddress {
+        mode: body.mode.clone(),
+        harness: body.harness.clone(),
+        harness_args: body.harness_args.clone(),
+        model: verbatim_optional(body.model.clone()),
+        effort: verbatim_optional(body.effort.clone()),
+    }
+}
+
+fn artifact_address_override_from_regenerate(
+    body: &ArtifactRegenerateRequest,
+) -> Option<ArtifactLaunchAddress> {
+    let has_override = body.mode.is_some()
+        || body.harness.is_some()
+        || !body.harness_args.is_empty()
+        || body.model.is_some()
+        || body.effort.is_some();
+    if !has_override {
+        return None;
+    }
+    Some(ArtifactLaunchAddress {
+        mode: body.mode.clone().unwrap_or_default(),
+        harness: body.harness.clone().unwrap_or_default(),
+        harness_args: body.harness_args.clone(),
+        model: verbatim_optional(body.model.clone()),
+        effort: verbatim_optional(body.effort.clone()),
+    })
+}
+
 fn read_artifact(path: &FsPath, artifact: &'static str) -> Result<String, ApiError> {
     std::fs::read_to_string(path).map_err(|e| file_read_error(path, artifact, e))
 }
@@ -1133,9 +1210,22 @@ fn supervisor_release_error(run_id: &str, error: impl std::fmt::Display) -> ApiE
     ApiError::internal("failed to release run")
 }
 
-fn supervisor_control_error(context: &str, error: impl std::fmt::Display) -> ApiError {
-    tracing::error!(context = context, error = %error, "supervisor control failed");
-    ApiError::internal("failed to control run")
+fn supervisor_control_error(context: &str, error: crate::supervisor::SupervisorError) -> ApiError {
+    use crate::supervisor::SupervisorError;
+    match error {
+        SupervisorError::Driver(orgasmic_drivers::DriverError::Unsupported(reason)) => {
+            tracing::warn!(context = context, reason = %reason, "supervisor control unsupported");
+            ApiError::conflict_json(json!({
+                "error": "capability_unsupported",
+                "message": reason,
+                "accepted": false,
+            }))
+        }
+        other => {
+            tracing::error!(context = context, error = %other, "supervisor control failed");
+            ApiError::internal("failed to control run")
+        }
+    }
 }
 
 fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiError {
@@ -1378,24 +1468,6 @@ fn apply_task_owners(
     project
 }
 
-/// Resolve a run's role — the worker kind name shown as "who is working" —
-/// from its recorded worker id. Babysitters and the manager are not registry
-/// workers; unknown/deleted workers fall back to the bare run surface.
-fn resolve_run_role(home: &Home, worker_id: &str, kind: RunKind) -> String {
-    match kind {
-        RunKind::Babysitter => "babysitter".to_string(),
-        RunKind::Worker => {
-            if worker_id == "manager" {
-                "manager".to_string()
-            } else {
-                load_stage_worker(home, worker_id)
-                    .map(|worker| worker_kind_name(worker.kind).to_string())
-                    .unwrap_or_else(|_| "worker".to_string())
-            }
-        }
-    }
-}
-
 /// Shared persisted terminal contract for boot auto-reattach AND every manual
 /// recovery entry (recover / resume_native_fork / start_recovery_run).
 /// orgasmic:TASK-ARZGD
@@ -1408,6 +1480,17 @@ struct PersistedTerminalContract {
     harness: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PersistedContractError {
+    message: String,
+}
+
+impl fmt::Display for PersistedContractError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 /// Restore role/requires_worker_finalize from persisted RunMeta, deriving from
 /// harness for pre-upgrade records. Unknown non-terminal historical agent
 /// roles fail closed; the only exemption is a custom bare terminal proved
@@ -1415,7 +1498,7 @@ struct PersistedTerminalContract {
 // orgasmic:TASK-ARZGD,dec_WDR5K
 #[allow(clippy::too_many_arguments)]
 fn resolve_persisted_terminal_contract(
-    home: &Home,
+    _home: &Home,
     worker_id: &str,
     kind: RunKind,
     harness: Option<&str>,
@@ -1423,19 +1506,28 @@ fn resolve_persisted_terminal_contract(
     stdout_path: Option<PathBuf>,
     meta_role: Option<String>,
     meta_requires: Option<bool>,
-) -> PersistedTerminalContract {
+) -> Result<PersistedTerminalContract, PersistedContractError> {
     let custom_terminal = harness.map(manager_terminal_harness).unwrap_or(false);
-    let role = meta_role.unwrap_or_else(|| {
-        if worker_id == "manager" {
-            if custom_terminal {
-                "terminal".into()
+    let role = match meta_role {
+        Some(role) => role,
+        None => {
+            if worker_id == "manager" {
+                if custom_terminal {
+                    "terminal".into()
+                } else {
+                    "manager".into()
+                }
+            } else if kind == RunKind::Babysitter {
+                "babysitter".into()
             } else {
-                "manager".into()
+                return Err(PersistedContractError {
+                    message: format!(
+                        "recovery requires persisted run_meta.role; worker_id={worker_id} has none and worker templates are not consulted"
+                    ),
+                });
             }
-        } else {
-            resolve_run_role(home, worker_id, kind)
         }
-    });
+    };
     let persisted_bare_terminal = custom_terminal && role == "terminal";
     let persisted_babysitter = kind == RunKind::Babysitter && role == "babysitter";
     let requires_worker_finalize = match meta_requires {
@@ -1449,13 +1541,13 @@ fn resolve_persisted_terminal_contract(
         None if persisted_bare_terminal || persisted_babysitter => false,
         None => crate::supervisor::run_requires_worker_finalize(&last_path, &role),
     };
-    PersistedTerminalContract {
+    Ok(PersistedTerminalContract {
         role,
         requires_worker_finalize,
         last_path,
         stdout_path,
         harness: harness.map(str::to_string),
-    }
+    })
 }
 
 /// Compatibility wrapper used by boot reattach call sites / unit tests.
@@ -1467,7 +1559,7 @@ fn boot_reattach_terminal_contract(
     last_path: &Option<PathBuf>,
     meta_role: Option<String>,
     meta_requires: Option<bool>,
-) -> (String, bool) {
+) -> Result<(String, bool), PersistedContractError> {
     let contract = resolve_persisted_terminal_contract(
         home,
         worker_id,
@@ -1477,15 +1569,15 @@ fn boot_reattach_terminal_contract(
         None,
         meta_role,
         meta_requires,
-    );
-    (contract.role, contract.requires_worker_finalize)
+    )?;
+    Ok((contract.role, contract.requires_worker_finalize))
 }
 
 /// Parse the shared terminal contract from a recovered session's envelopes.
 fn persisted_terminal_contract_from_session(
     home: &Home,
     envelopes: &[SessionEnvelope],
-) -> PersistedTerminalContract {
+) -> Result<PersistedTerminalContract, PersistedContractError> {
     let meta = session_acquire_meta(envelopes);
     let worker_id = meta
         .as_ref()
@@ -2297,6 +2389,9 @@ async fn post_manager_launch(
         .ok_or_else(|| ApiError::not_found(format!("project {}", req.project_id)))?;
     drop(snap);
 
+    validate_address_harness_args(&req.harness, &req.harness_args)
+        .map_err(ApiError::bad_request)?;
+
     let driver = driver_for_mode_harness(&req.mode, &req.harness).ok_or_else(|| {
         ApiError::bad_request(format!(
             "unsupported manager driver {}/{}",
@@ -2359,6 +2454,8 @@ async fn post_manager_launch(
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
                 babysitter: None,
+                applicable_states: Vec::new(),
+                max_iterations: None,
                 planned_identity: None,
             },
         )
@@ -2729,6 +2826,17 @@ pub struct StageRequest {
     pub project: Option<String>,
     #[serde(default)]
     pub task_id: Option<String>,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED`.
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED`.
+    pub harness: String,
+    /// Extra argv for custom harnesses; preserved as an array (dec_WDR5K item 4).
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -2739,13 +2847,16 @@ pub struct StageRequest {
     pub request_id: Option<String>,
     #[serde(default)]
     pub values: BTreeMap<String, String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct StageSpec {
     stage: &'static str,
     requested_tx: &'static str,
-    worker_id: &'static str,
+    /// Prompt-studio kind / role; not a worker-template id.
+    kind: WorkerKind,
     prompt_kind: &'static str,
     target: &'static str,
     default_reason: &'static str,
@@ -2777,7 +2888,7 @@ fn stage_spec(stage: &str) -> StageSpec {
         "grill" => StageSpec {
             stage: "grill",
             requested_tx: "grill.requested",
-            worker_id: "griller",
+            kind: WorkerKind::Griller,
             prompt_kind: "griller",
             target: DEFAULT_TASK_FILE_REL,
             default_reason: "grill stage requested",
@@ -2785,7 +2896,7 @@ fn stage_spec(stage: &str) -> StageSpec {
         "architect" => StageSpec {
             stage: "architect",
             requested_tx: "architect.requested",
-            worker_id: "architector",
+            kind: WorkerKind::Architector,
             prompt_kind: "architector",
             target: ".orgasmic/architecture.org",
             default_reason: "architect stage requested",
@@ -2793,7 +2904,7 @@ fn stage_spec(stage: &str) -> StageSpec {
         "plan" => StageSpec {
             stage: "plan",
             requested_tx: "plan.requested",
-            worker_id: "planner",
+            kind: WorkerKind::Planner,
             prompt_kind: "planner",
             target: DEFAULT_TASK_FILE_REL,
             default_reason: "plan stage requested",
@@ -2821,7 +2932,15 @@ async fn post_stage(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     drop(snap);
 
-    let worker = load_stage_worker(&state.home, spec.worker_id)?;
+    let worker = resolve_addressed_stage_worker(
+        &state.home,
+        spec.kind,
+        &req.mode,
+        &req.harness,
+        req.harness_args.clone(),
+        &state.dispatch_governance,
+        req.governance.as_ref(),
+    )?;
     if let Some(skill) = worker.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
@@ -2845,6 +2964,11 @@ async fn post_stage(
     )?;
 
     let prompt = compile_stage_prompt(&state.home, spec, &mut values)?;
+    enforce_context_budget_chars(
+        prompt.compiled.chars().count(),
+        worker.context_budget_chars,
+        &format!("{} stage", spec.stage),
+    )?;
     let bundle = stage_prompt_bundle(spec, &worker, &prompt.id, &prompt.compiled);
     let driver = driver_for_mode_harness(&worker.driver, &worker.harness).ok_or_else(|| {
         ApiError::internal(format!(
@@ -2852,11 +2976,18 @@ async fn post_stage(
             worker.driver, worker.harness
         ))
     })?;
-    let driver_config = stage_driver_config(
+    let overrides = DriverOverrides {
+        provider: None,
+        model: verbatim_optional(req.model.clone()),
+        effort: verbatim_optional(req.effort.clone()),
+    };
+    let driver_config = stage_driver_config_with_overrides(
         &worker,
         &project.root,
         &project.root,
         &bundle,
+        overrides,
+        None,
         &state.driver_defaults,
         state.tmux_input_ready_timeout_secs,
     );
@@ -2906,6 +3037,8 @@ async fn post_stage(
                 max_run_duration_secs: worker.max_run_duration_secs,
                 idle_timeout_secs: None,
                 babysitter: None,
+                applicable_states: worker.applicable_states.clone(),
+                max_iterations: worker.max_iterations,
                 planned_identity: None,
             },
         )
@@ -2992,16 +3125,15 @@ struct StageWorker {
     kind: WorkerKind,
     driver: String,
     harness: String,
-    models: Vec<String>,
-    reasoning_efforts: Vec<String>,
     default_provider: Option<String>,
-    default_model: Option<String>,
-    default_effort: Option<String>,
     linked_skills: Vec<String>,
     persona: Option<String>,
     operating_rules: Option<String>,
     missing_skills: Vec<String>,
-    babysitter_worker: Option<String>,
+    babysitter: Option<BabysitterAddress>,
+    max_iterations: Option<u32>,
+    context_budget_chars: Option<u32>,
+    applicable_states: Vec<String>,
     stall_timeout_secs: Option<u32>,
     max_run_duration_secs: Option<u32>,
     sandbox_permissions: Option<SandboxAllowlist>,
@@ -3020,6 +3152,51 @@ struct DriverOverrides {
 struct CompiledStagePrompt {
     id: String,
     compiled: String,
+}
+
+/// Build a spawn-time worker view from `(kind, mode, harness)` + governance.
+/// Prompt persona comes from Prompt Studio by kind; worker templates are not
+/// routing authority (dec_WDR5K / TASK-SZEWA).
+fn resolve_addressed_stage_worker(
+    home: &Home,
+    kind: WorkerKind,
+    mode: &str,
+    harness: &str,
+    harness_args: Vec<String>,
+    overlay: &DispatchGovernanceOverlay,
+    dispatch_override: Option<&GovernancePatch>,
+) -> Result<StageWorker, ApiError> {
+    validate_supported_pair(mode, harness).map_err(ApiError::bad_request)?;
+    validate_address_harness_args(harness, &harness_args).map_err(ApiError::bad_request)?;
+    let gov = resolve_address_governance(kind, harness, overlay, dispatch_override);
+    let missing_skills = gov
+        .linked_skills
+        .iter()
+        .filter(|skill| {
+            resolve_stage_content_path(home, &PathBuf::from("skills").join(format!("{skill}.org")))
+                .is_none()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    Ok(StageWorker {
+        id: compatibility_worker_id(kind, mode, harness),
+        kind,
+        driver: mode.trim().to_string(),
+        harness: harness.trim().to_string(),
+        default_provider: None,
+        linked_skills: gov.linked_skills,
+        persona: None,
+        operating_rules: None,
+        missing_skills,
+        babysitter: gov.babysitter,
+        max_iterations: gov.max_iterations,
+        context_budget_chars: gov.context_budget_chars,
+        applicable_states: gov.applicable_states,
+        stall_timeout_secs: gov.stall_timeout_secs,
+        max_run_duration_secs: gov.max_run_duration_secs,
+        sandbox_permissions: gov.sandbox_permissions,
+        harness_args,
+    })
 }
 
 fn load_stage_worker(home: &Home, id: &str) -> Result<StageWorker, ApiError> {
@@ -3043,16 +3220,15 @@ fn stage_worker_from_view(worker: crate::content::WorkerView) -> StageWorker {
         kind: worker.kind,
         driver: worker.driver,
         harness: worker.harness,
-        models: worker.models,
-        reasoning_efforts: worker.reasoning_efforts,
         default_provider: worker.default_provider,
-        default_model: worker.default_model,
-        default_effort: worker.default_effort,
         linked_skills: worker.linked_skills,
         persona: worker.persona,
         operating_rules: worker.operating_rules,
         missing_skills: worker.missing_skills,
-        babysitter_worker: worker.babysitter_worker,
+        babysitter: None,
+        max_iterations: worker.max_iterations,
+        context_budget_chars: worker.context_budget_chars,
+        applicable_states: worker.applicable_states,
         stall_timeout_secs: worker.stall_timeout_secs,
         max_run_duration_secs: worker.max_run_duration_secs,
         sandbox_permissions: worker.sandbox_permissions,
@@ -3139,16 +3315,15 @@ fn load_stage_worker_path(home: &Home, path: &FsPath, id: &str) -> Result<StageW
         kind: worker.kind,
         driver: worker.driver.to_string(),
         harness: worker.harness.to_string(),
-        models: worker.models,
-        reasoning_efforts: worker.reasoning_efforts,
         default_provider: worker.default_provider,
-        default_model: worker.default_model,
-        default_effort: worker.default_effort,
         linked_skills,
         persona: worker.persona,
         operating_rules: worker.operating_rules,
         missing_skills,
-        babysitter_worker: worker.babysitter_worker.map(str::to_string),
+        babysitter: None,
+        max_iterations: worker.max_iterations,
+        context_budget_chars: worker.context_budget_chars,
+        applicable_states: worker.applicable_states,
         harness_args: worker.harness_args.clone(),
         stall_timeout_secs: worker.stall_timeout_secs,
         max_run_duration_secs: worker.max_run_duration_secs,
@@ -3254,9 +3429,19 @@ fn fill_stage_slot_values(
     insert_slot(values, "run.id", "pending".to_string());
     insert_slot(values, "run.iteration_count", "0".to_string());
     insert_slot(values, "run.previous_state", "none".to_string());
+    if let Some(max_iterations) = worker.max_iterations {
+        insert_slot(values, "run.max_iterations", max_iterations.to_string());
+    }
+    if let Some(context_budget_chars) = worker.context_budget_chars {
+        insert_slot(
+            values,
+            "run.context_budget_chars",
+            context_budget_chars.to_string(),
+        );
+    }
     insert_slot(values, "evidence.so_far", graph_evidence(project));
     insert_slot(values, "worklog.tail", String::new());
-    hydrate_skill_slots(state, worker, values)?;
+    hydrate_skill_slots(&state.home, worker, values)?;
     Ok(())
 }
 
@@ -3496,13 +3681,13 @@ fn graph_evidence(project: &crate::index::ProjectIndex) -> String {
 }
 
 fn hydrate_skill_slots(
-    state: &ApiState,
+    home: &Home,
     worker: &StageWorker,
     values: &mut SlotValues,
 ) -> Result<(), ApiError> {
     for skill in &worker.linked_skills {
-        fill_skill_slot(&state.home, &format!("skills.{skill}"), values)?;
-        fill_skill_slot(&state.home, &format!("skill_path.{skill}"), values)?;
+        fill_skill_slot(home, &format!("skills.{skill}"), values)?;
+        fill_skill_slot(home, &format!("skill_path.{skill}"), values)?;
     }
     Ok(())
 }
@@ -3571,6 +3756,7 @@ fn sandbox_allowlist_to_csv(list: &SandboxAllowlist) -> String {
     )
 }
 
+#[allow(dead_code)] // kept as the zero-override convenience wrapper
 fn stage_driver_config(
     worker: &StageWorker,
     project_root: &FsPath,
@@ -3610,8 +3796,8 @@ fn stage_driver_config_with_overrides(
     let provider = overrides
         .provider
         .or_else(|| worker.default_provider.clone());
-    let model = overrides.model.or_else(|| worker.default_model.clone());
-    let effort = overrides.effort.or_else(|| worker.default_effort.clone());
+    let model = overrides.model;
+    let effort = overrides.effort;
     let reasoning_effort = effort.clone();
     let resolved_sandbox = SandboxAllowlist::resolve(
         task_sandbox_permissions,
@@ -3691,80 +3877,171 @@ fn apply_driver_defaults(
 /// Compose a self-contained prompt from a worker's persona and operating rules,
 /// for workers (like the babysitter) that are spawned without compiling a
 /// prompt-spec.
-fn compose_worker_prompt(worker: &StageWorker) -> String {
-    let mut out = String::new();
-    if let Some(persona) = worker
-        .persona
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        out.push_str(persona);
-    }
-    if let Some(rules) = worker
-        .operating_rules
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        if !out.is_empty() {
-            out.push_str("\n\n");
-        }
-        out.push_str("Operating rules:\n");
-        out.push_str(rules);
-    }
-    out
-}
-
+#[allow(clippy::too_many_arguments)]
 fn build_babysitter_auto_spawn(
     home: &Home,
+    overlay: &DispatchGovernanceOverlay,
+    dispatch_override: Option<&GovernancePatch>,
+    task_id: &str,
     implementer: &StageWorker,
     worktree: &FsPath,
+    task_sandbox_permissions: Option<&SandboxAllowlist>,
     driver_defaults: &DriverDefaults,
 ) -> Result<Option<BabysitterAutoSpawn>, ApiError> {
-    let Some(babysitter_id) = implementer.babysitter_worker.as_deref() else {
+    let Some(address) = implementer.babysitter.as_ref() else {
         return Ok(None);
     };
-    let babysitter = load_stage_worker(home, babysitter_id)?;
-    if let Some(skill) = babysitter.missing_skills.first() {
+    validate_supported_pair(&address.mode, &address.harness).map_err(ApiError::bad_request)?;
+    validate_address_harness_args(&address.harness, &address.harness_args)
+        .map_err(ApiError::bad_request)?;
+    let gov = resolve_address_governance(
+        WorkerKind::Babysitter,
+        &address.harness,
+        overlay,
+        dispatch_override,
+    );
+    let missing_skills = gov
+        .linked_skills
+        .iter()
+        .filter(|skill| {
+            resolve_stage_content_path(home, &PathBuf::from("skills").join(format!("{skill}.org")))
+                .is_none()
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if let Some(skill) = missing_skills.first() {
         return Err(ApiError::bad_request(format!(
-            "unresolved slot skills.{skill} on babysitter worker {babysitter_id}"
+            "unresolved slot skills.{skill} on babysitter address"
         )));
     }
+    let worker_id =
+        compatibility_worker_id(WorkerKind::Babysitter, &address.mode, &address.harness);
+    let resolved_sandbox =
+        SandboxAllowlist::resolve(task_sandbox_permissions, gov.sandbox_permissions.as_ref());
+    let babysitter = StageWorker {
+        id: worker_id.clone(),
+        kind: WorkerKind::Babysitter,
+        driver: address.mode.trim().to_string(),
+        harness: address.harness.trim().to_string(),
+        default_provider: None,
+        linked_skills: gov.linked_skills,
+        persona: None,
+        operating_rules: None,
+        missing_skills,
+        babysitter: None,
+        max_iterations: gov.max_iterations,
+        context_budget_chars: gov.context_budget_chars,
+        applicable_states: gov.applicable_states,
+        stall_timeout_secs: gov.stall_timeout_secs,
+        max_run_duration_secs: gov.max_run_duration_secs,
+        sandbox_permissions: Some(resolved_sandbox.clone()),
+        harness_args: address.harness_args.clone(),
+    };
     let Some(_driver) = driver_for_mode_harness(&babysitter.driver, &babysitter.harness) else {
         return Err(ApiError::bad_request(format!(
             "unsupported babysitter driver/harness pair {}/{}",
             babysitter.driver, babysitter.harness
         )));
     };
-    let bundle = compose_worker_prompt(&babysitter);
+    let mut values = SlotValues::new();
+    values.insert("task.id".to_string(), task_id.to_string());
+    values.insert("worker.id".to_string(), worker_id.clone());
+    values.insert("worker.kind".to_string(), "babysitter".to_string());
+    values.insert("run.id".to_string(), "pending".to_string());
+    values.insert("run.iteration_count".to_string(), "0".to_string());
+    values.insert("run.previous_state".to_string(), "none".to_string());
+    if let Some(max_iterations) = babysitter.max_iterations {
+        values.insert("run.max_iterations".to_string(), max_iterations.to_string());
+    }
+    if let Some(context_budget_chars) = babysitter.context_budget_chars {
+        values.insert(
+            "run.context_budget_chars".to_string(),
+            context_budget_chars.to_string(),
+        );
+    }
+    values.insert("skills.all".to_string(), skills_manifest(home)?);
+    hydrate_skill_slots(home, &babysitter, &mut values)?;
+    let req = crate::prompt_compiler::PromptCompileRequest {
+        project: None,
+        mode: Some("babysitter".to_string()),
+        worker: Some(worker_id.clone()),
+        harness: Some(babysitter.harness.clone()),
+        renderer: None,
+        reason: Some(format!("babysitter for {task_id}")),
+        context_overrides: BTreeMap::new(),
+        values,
+    };
+    let compiled = crate::prompt_compiler::compile_prompt_spec(home, "babysitter", req)
+        .map_err(|e| content_list_error(e, "babysitter prompt spec"))?;
+    if crate::prompt_compiler::has_error(&compiled.diagnostics) {
+        let messages = compiled
+            .diagnostics
+            .iter()
+            .filter(|diag| diag.level == "error")
+            .map(|diag| diag.message.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(ApiError::bad_request(format!(
+            "babysitter prompt compile failed: {messages}"
+        )));
+    }
+    enforce_context_budget_chars(
+        compiled.text.chars().count(),
+        babysitter.context_budget_chars,
+        "babysitter spawn",
+    )?;
+    let bundle = format!(
+        "orgasmic compiled prompt\nbabysitter: {}\ntask: {}\nprompt_spec: {}\n\n{}\n",
+        worker_id,
+        task_id,
+        compiled.spec.id,
+        compiled.text.trim()
+    );
     let driver_config = stage_driver_config_with_overrides(
         &babysitter,
         worktree,
         worktree,
         &bundle,
-        DriverOverrides::default(),
-        None,
+        DriverOverrides {
+            provider: None,
+            model: address.model.clone(),
+            effort: address.effort.clone(),
+        },
+        task_sandbox_permissions,
         driver_defaults,
         None,
     );
     Ok(Some(BabysitterAutoSpawn {
-        worker_id: babysitter.id,
+        worker_id,
         mode: babysitter.driver,
         harness: babysitter.harness,
         driver_config,
         stall_timeout_secs: babysitter.stall_timeout_secs,
         max_run_duration_secs: babysitter.max_run_duration_secs,
+        applicable_states: babysitter.applicable_states,
+        linked_skills: babysitter.linked_skills,
+        sandbox_permissions: Some(resolved_sandbox),
+        max_iterations: babysitter.max_iterations,
+        context_budget_chars: babysitter.context_budget_chars,
+        harness_args: babysitter.harness_args,
     }))
 }
 
 #[derive(Debug, Deserialize)]
 struct DispatchRequest {
     pub kind: String,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED` (routing authority).
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED` (routing authority).
+    pub harness: String,
+    /// Raw argv for custom harnesses; logged verbatim in tx (dec_WDR5K item 4).
+    #[serde(default)]
+    pub harness_args: Vec<String>,
     pub brief_path: PathBuf,
     pub worktree_path: PathBuf,
     pub last_path: PathBuf,
     pub stdout_path: PathBuf,
+    /// Compatibility label only — not routing authority. Prefer omitting.
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
     #[serde(default)]
@@ -3783,6 +4060,8 @@ struct DispatchRequest {
     pub liveness: Option<String>,
     #[serde(default)]
     pub goal_id: Option<String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -3867,6 +4146,8 @@ struct SpawnWorkerRequest<'a> {
     preloaded_worker: Option<StageWorker>,
     /// Task-heading sandbox override, when known for this spawn.
     task_sandbox_permissions: Option<SandboxAllowlist>,
+    /// Per-dispatch governance override (babysitter resolution + limits).
+    dispatch_governance: Option<GovernancePatch>,
 }
 
 struct SpawnWorkerResult {
@@ -3937,8 +4218,12 @@ async fn spawn_worker_run(
     let babysitter = if req.run_kind == RunKind::Worker {
         match build_babysitter_auto_spawn(
             &state.home,
+            &state.dispatch_governance,
+            req.dispatch_governance.as_ref(),
+            req.task_id,
             &worker,
             req.worktree_path,
+            req.task_sandbox_permissions.as_ref(),
             &state.driver_defaults,
         ) {
             Ok(babysitter) => babysitter,
@@ -3984,6 +4269,8 @@ async fn spawn_worker_run(
                     && worker.driver == "rmux")
                     .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
                 babysitter,
+                applicable_states: worker.applicable_states.clone(),
+                max_iterations: worker.max_iterations,
                 planned_identity: None,
             },
         )
@@ -4043,8 +4330,8 @@ async fn spawn_worker_run(
 /// Dispatch a manager-driven implementer/reviewer run through the supervisor.
 ///
 /// `--model` / `--effort` / `--provider` overrides in [`DispatchRequest`] are
-/// trusted manager input: they bypass worker eligibility checks and are applied
-/// directly to the staged driver config after schema validation only.
+/// trusted manager input: passed through verbatim with no orgasmic catalog
+/// validation (dec_WDR5K item 9). Transport is addressed by `(mode, harness)`.
 async fn post_task_dispatch(
     State(state): State<ApiState>,
     Path((project_id, task_id)): Path<(String, String)>,
@@ -4066,12 +4353,32 @@ async fn post_task_dispatch(
     let task_sandbox_permissions = task_summary.and_then(|task| task.sandbox_permissions.clone());
     drop(snap);
 
-    let worker_id = resolve_dispatch_worker_id(&state.home, kind, req.worker_id.as_deref())?;
-    let worker_for_bundle = load_stage_worker(&state.home, &worker_id)?;
+    let worker_for_bundle = resolve_addressed_stage_worker(
+        &state.home,
+        kind.worker_kind(),
+        &req.mode,
+        &req.harness,
+        req.harness_args.clone(),
+        &state.dispatch_governance,
+        req.governance.as_ref(),
+    )?;
+    // Optional compatibility label from the client; never used for routing.
+    let worker_id = req
+        .worker_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| worker_for_bundle.id.clone());
+    let mut worker_for_bundle = worker_for_bundle;
+    worker_for_bundle.id = worker_id.clone();
     if let Some(skill) = worker_for_bundle.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
         )));
+    }
+    if let Some(task_summary) = task_summary {
+        validate_dispatch_applicable_states(&worker_for_bundle, task_summary)?;
     }
     let brief = read_artifact(&req.brief_path, "dispatch brief")?;
     let bundle = compile_dispatch_prompt_bundle(
@@ -4083,11 +4390,10 @@ async fn post_task_dispatch(
         &brief,
     )?;
     let overrides = DriverOverrides {
-        provider: non_empty_field(req.provider_override.clone()),
-        model: non_empty_field(req.model_override.clone()),
-        effort: non_empty_field(req.effort_override.clone()),
+        provider: verbatim_optional(req.provider_override.clone()),
+        model: verbatim_optional(req.model_override.clone()),
+        effort: verbatim_optional(req.effort_override.clone()),
     };
-    warn_dispatch_overrides(&worker_for_bundle, &overrides);
     let spawn = spawn_worker_run(
         &state,
         SpawnWorkerRequest {
@@ -4106,6 +4412,7 @@ async fn post_task_dispatch(
             dispatch_kind: Some(kind.as_str()),
             preloaded_worker: Some(worker_for_bundle),
             task_sandbox_permissions,
+            dispatch_governance: req.governance.clone(),
         },
     )
     .await
@@ -4495,79 +4802,29 @@ fn validate_dispatch_worktree_dir(path: &FsPath) -> Result<(), ApiError> {
     }
 }
 
-fn warn_dispatch_overrides(worker: &StageWorker, overrides: &DriverOverrides) {
-    if let Some(model) = overrides.model.as_deref() {
-        if !worker.models.iter().any(|allowed| allowed == model) {
-            tracing::warn!(
-                worker_id = %worker.id,
-                model = %model,
-                allowed_models = ?worker.models,
-                "dispatch model override is not listed in worker :MODELS:"
-            );
-        }
+fn validate_dispatch_applicable_states(
+    worker: &StageWorker,
+    task: &crate::index::TaskSummary,
+) -> Result<(), ApiError> {
+    if worker.applicable_states.is_empty() {
+        return Ok(());
     }
-    if let Some(effort) = overrides.effort.as_deref() {
-        if !worker
-            .reasoning_efforts
-            .iter()
-            .any(|allowed| allowed == effort)
-        {
-            tracing::warn!(
-                worker_id = %worker.id,
-                effort = %effort,
-                allowed_efforts = ?worker.reasoning_efforts,
-                "dispatch effort override is not listed in worker :REASONING_EFFORTS:"
-            );
-        }
-    }
-}
-
-fn resolve_dispatch_worker_id(
-    home: &Home,
-    kind: DispatchEndpointKind,
-    explicit: Option<&str>,
-) -> Result<String, ApiError> {
-    if let Some(worker) = explicit.map(str::trim).filter(|worker| !worker.is_empty()) {
-        return Ok(worker.to_string());
-    }
-    let worker_kind = kind.worker_kind();
-    let candidates = candidate_worker_ids_for_kind(home, worker_kind)?;
-    let available = if candidates.is_empty() {
-        "none".to_string()
-    } else {
-        candidates.join(", ")
+    let state = match task.lifecycle_stage {
+        LifecycleStage::Done => "done",
+        LifecycleStage::Cancelled => "cancelled",
+        _ => "working",
     };
-    Err(ApiError::bad_request(format!(
-        "no worker specified; pass --worker. available {}: {}",
-        worker_kind_plural(worker_kind),
-        available
-    )))
-}
-
-fn candidate_worker_ids_for_kind(home: &Home, kind: WorkerKind) -> Result<Vec<String>, ApiError> {
-    let mut ids = content::list_workers(home)
-        .map_err(|e| content_list_error(e, "workers"))?
-        .into_iter()
-        .filter(|worker| worker.kind == kind)
-        .map(|worker| worker.id)
-        .collect::<Vec<_>>();
-    ids.sort();
-    Ok(ids)
-}
-
-fn worker_kind_plural(kind: WorkerKind) -> &'static str {
-    match kind {
-        WorkerKind::Implementer => "implementers",
-        WorkerKind::Reviewer => "reviewers",
-        WorkerKind::Planner => "planners",
-        WorkerKind::Analyzer => "analyzers",
-        WorkerKind::Architector => "architectors",
-        WorkerKind::Griller => "grillers",
-        WorkerKind::Glossarist => "glossarists",
-        WorkerKind::Babysitter => "babysitters",
-        WorkerKind::Manager => "managers",
-        WorkerKind::Artifactor => "artifactors",
+    if !worker
+        .applicable_states
+        .iter()
+        .any(|allowed| allowed == state)
+    {
+        return Err(ApiError::bad_request(format!(
+            "task lifecycle state {} (run state {state}) is not in worker applicable_states",
+            task.lifecycle_stage
+        )));
     }
+    Ok(())
 }
 
 fn compile_dispatch_prompt_bundle(
@@ -4584,6 +4841,17 @@ fn compile_dispatch_prompt_bundle(
     hydrate_dispatch_task_slots(&mut values, project, task_id)?;
     hydrate_dispatch_project_slots(&mut values, project);
     hydrate_dispatch_worker_slots(&mut values, worker, kind);
+    values.insert("skills.all".to_string(), skills_manifest(home)?);
+    if let Some(max_iterations) = worker.max_iterations {
+        values.insert("run.max_iterations".to_string(), max_iterations.to_string());
+    }
+    if let Some(context_budget_chars) = worker.context_budget_chars {
+        values.insert(
+            "run.context_budget_chars".to_string(),
+            context_budget_chars.to_string(),
+        );
+    }
+    hydrate_skill_slots(home, worker, &mut values)?;
     let req = crate::prompt_compiler::PromptCompileRequest {
         project: Some(project.project_id.clone()),
         mode: Some("dispatch".to_string()),
@@ -4608,6 +4876,11 @@ fn compile_dispatch_prompt_bundle(
             "dispatch prompt compile failed: {messages}"
         )));
     }
+    enforce_context_budget_chars(
+        compiled.char_count,
+        worker.context_budget_chars,
+        "dispatch prompt",
+    )?;
     Ok(format!(
         "orgasmic compiled prompt\ndispatch_kind: {}\ntask: {}\nworker: {}\nprompt_spec: {}\n\n{}\n",
         kind.as_str(),
@@ -4659,6 +4932,8 @@ async fn record_dispatch_started(
     let started_at = Utc::now().format("[%Y-%m-%d %a %H:%M:%S]").to_string();
     let mut extra = vec![
         ("KIND".to_string(), record.kind.as_str().to_string()),
+        ("MODE".to_string(), record.req.mode.clone()),
+        ("HARNESS".to_string(), record.req.harness.clone()),
         (
             "WORKTREE".to_string(),
             record.req.worktree_path.display().to_string(),
@@ -4685,10 +4960,17 @@ async fn record_dispatch_started(
             dispatch_expected_next(record.kind).to_string(),
         ),
     ];
-    if let Some(model) = non_empty_field(record.req.model_override.clone()) {
+    // Raw argv preserved as a JSON array string — never shell-joined (dec_WDR5K item 4).
+    if !record.req.harness_args.is_empty() {
+        extra.push((
+            "HARNESS_ARGS".to_string(),
+            serde_json::to_string(&record.req.harness_args).unwrap_or_else(|_| "[]".into()),
+        ));
+    }
+    if let Some(model) = verbatim_optional(record.req.model_override.clone()) {
         extra.push(("MODEL".to_string(), model));
     }
-    if let Some(effort) = non_empty_field(record.req.effort_override.clone()) {
+    if let Some(effort) = verbatim_optional(record.req.effort_override.clone()) {
         extra.push(("EFFORT".to_string(), effort));
     }
     if let Some(goal_id) = non_empty_field(record.req.goal_id.clone()) {
@@ -4772,10 +5054,10 @@ async fn record_dispatch_created(
         extra.push(("PID".to_string(), pid.to_string()));
     }
     extra.push(("DISPATCH_TX".to_string(), record.dispatch_tx_id.to_string()));
-    if let Some(model) = non_empty_field(record.req.model_override.clone()) {
+    if let Some(model) = verbatim_optional(record.req.model_override.clone()) {
         extra.push(("MODEL_OVERRIDE".to_string(), model));
     }
-    if let Some(effort) = non_empty_field(record.req.effort_override.clone()) {
+    if let Some(effort) = verbatim_optional(record.req.effort_override.clone()) {
         extra.push(("EFFORT_OVERRIDE".to_string(), effort));
     }
     if let Some(provider) = non_empty_field(record.req.provider_override.clone()) {
@@ -6136,6 +6418,10 @@ pub struct RunRecoverRequest {
     pub request_id: Option<String>,
     #[serde(default)]
     pub force_inert: Option<bool>,
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub harness: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -6163,12 +6449,30 @@ fn recovery_driver(
     Some((driver, meta))
 }
 
+/// Resolve persisted `(mode, harness)` from session RunMeta events.
+fn persisted_run_address_from_session(envelopes: &[SessionEnvelope]) -> Option<(String, String)> {
+    for env in envelopes {
+        if env.kind != SessionEventKind::Lifecycle {
+            continue;
+        }
+        if let Ok(Lifecycle::RunMeta {
+            transport, harness, ..
+        }) = serde_json::from_value::<Lifecycle>(env.event.clone())
+        {
+            let harness = harness.filter(|h| !h.trim().is_empty())?;
+            if transport.trim().is_empty() {
+                continue;
+            }
+            return Some((transport, harness));
+        }
+    }
+    None
+}
+
 /// Best-effort harness name for a recorded worker id (e.g. `claude` for
-/// `implementer-claude-tmux`). Returns `None` when the worker cannot be loaded.
-fn recovery_harness_for_worker(home: &Home, worker_id: &str) -> Option<String> {
-    load_stage_worker(home, worker_id)
-        .ok()
-        .map(|worker| worker.harness)
+/// `implementer-claude-tmux`). Returns `None` when address truth is absent.
+fn recovery_harness_for_worker(_home: &Home, envelopes: &[SessionEnvelope]) -> Option<String> {
+    persisted_run_address_from_session(envelopes).map(|(_, harness)| harness)
 }
 
 fn pinned_claude_execution_config(
@@ -6296,9 +6600,9 @@ fn recovery_planned_driver_fields(
     origin_worktree: &FsPath,
     force_inert: bool,
 ) -> Result<(DriverConfig, Option<String>, String), ApiError> {
-    let terminal_contract = persisted_terminal_contract_from_session(&state.home, origin_envelopes);
+    let terminal_contract = persisted_terminal_contract_from_session(&state.home, origin_envelopes)
+        .map_err(|err| ApiError::bad_request(err.to_string()))?;
     let native = session_native_runtime(origin_envelopes);
-    let meta = session_acquire_meta(origin_envelopes);
     if action == "resume_native_fork" {
         let native = native.ok_or_else(|| {
             ApiError::bad_request("resume_native_fork requires recorded native metadata")
@@ -6346,10 +6650,7 @@ fn recovery_planned_driver_fields(
         .harness
         .clone()
         .or_else(|| native.as_ref().map(|n| n.provider.clone()))
-        .or_else(|| {
-            meta.as_ref()
-                .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
-        })
+        .or_else(|| recovery_harness_for_worker(&state.home, origin_envelopes))
         .unwrap_or_else(|| "claude".to_string());
     let cfg = if harness == "claude" {
         let pin = state
@@ -6732,7 +7033,8 @@ async fn post_run_recover(
         let origin_envelopes = origin_authority.envelopes()?;
         let meta = session_acquire_meta(origin_envelopes);
         let terminal_contract =
-            persisted_terminal_contract_from_session(&state.home, origin_envelopes);
+            persisted_terminal_contract_from_session(&state.home, origin_envelopes)
+                .map_err(|err| ApiError::bad_request(err.to_string()))?;
         let native = session_native_runtime(origin_envelopes);
         let force_inert = req.force_inert.unwrap_or(false);
         let worktree = Some(origin_authority.worktree.clone());
@@ -6980,6 +7282,7 @@ async fn execute_run_recover_action(
         }
     } else {
         persisted_terminal_contract_from_session(&state.home, envelopes)
+            .map_err(|err| ApiError::bad_request(err.to_string()))?
     };
 
     match action {
@@ -7210,18 +7513,33 @@ async fn execute_run_recover_action(
                 let harness = terminal_contract
                     .harness
                     .clone()
+                    .or_else(|| terminal_contract.harness.clone())
                     .or_else(|| native.as_ref().map(|n| n.provider.clone()))
                     .or_else(|| {
                         meta.as_ref()
-                            .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
+                            .and_then(|_| recovery_harness_for_worker(&state.home, envelopes))
                     })
-                    .unwrap_or_else(|| "claude".to_string());
-                let driver = driver_for_mode_harness("tmux", &harness)
-                    .or_else(|| driver_for_mode_harness("tmux", "claude"))
                     .ok_or_else(|| {
-                        ApiError::internal("tmux driver unavailable for recovery run")
+                        ApiError::bad_request(
+                            "recovery address unavailable; supply mode+harness/start fresh",
+                        )
                     })?;
+                let mode = req
+                    .mode
+                    .clone()
+                    .or_else(|| persisted_run_address_from_session(envelopes).map(|(mode, _)| mode))
+                    .ok_or_else(|| {
+                        ApiError::bad_request(
+                            "recovery address unavailable; supply mode+harness/start fresh",
+                        )
+                    })?;
+                let driver = driver_for_mode_harness(&mode, &harness).ok_or_else(|| {
+                    ApiError::bad_request(format!(
+                        "unsupported recovery mode/harness pair {mode}/{harness}"
+                    ))
+                })?;
                 let cfg = DriverConfig::from_value(json!({
+                    "transport": mode,
                     "harness": harness,
                     "cwd": &worktree,
                     "force_inert": force_inert,
@@ -7330,6 +7648,8 @@ async fn execute_run_recover_action(
                     max_run_duration_secs: recovery_run_options.max_run_duration_secs,
                     idle_timeout_secs: recovery_run_options.idle_timeout_secs,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity,
                 };
                 if let Some(plan) = pending_plan {
@@ -7623,6 +7943,25 @@ fn latest_run_segment(envelopes: &[SessionEnvelope]) -> &[SessionEnvelope] {
     &envelopes[start..]
 }
 
+fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Result<(), String> {
+    let persisted_harness_args = candidate
+        .driver_config
+        .get("harness_args")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    validate_address_harness_args(
+        candidate.harness.as_deref().unwrap_or_default(),
+        &persisted_harness_args,
+    )
+}
+
 /// Boot auto-reattach: rehydrate still-live runs into the freshly built
 /// supervisor so a daemon restart/rebuild is transparent to the operator. For
 /// each project's session JSONL that is non-terminal and carries reattach
@@ -7684,6 +8023,15 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             );
             continue;
         }
+        if let Err(error) = validate_boot_reattach_harness_args(&c) {
+            skipped += 1;
+            tracing::info!(
+                run_id = %c.run_id,
+                error = %error,
+                "boot reattach: persisted harness argv rejected"
+            );
+            continue;
+        }
         let Some(driver) =
             driver_for_mode_harness(&c.transport, c.harness.as_deref().unwrap_or_default())
         else {
@@ -7700,7 +8048,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             runtime_id: c.runtime_id.clone(),
             boot_id: c.boot_id.clone(),
         };
-        let (role, requires_worker_finalize) = boot_reattach_terminal_contract(
+        let (role, requires_worker_finalize) = match boot_reattach_terminal_contract(
             home,
             &c.worker_id,
             c.kind,
@@ -7708,7 +8056,19 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             &c.last_path,
             c.role.clone(),
             c.requires_worker_finalize,
-        );
+        ) {
+            Ok(contract) => contract,
+            Err(error) => {
+                skipped += 1;
+                tracing::info!(
+                    run_id = %c.run_id,
+                    worker_id = %c.worker_id,
+                    error = %error,
+                    "boot reattach: missing persisted role; skipped"
+                );
+                continue;
+            }
+        };
         match supervisor
             .reattach(
                 driver.as_ref(),
@@ -8600,13 +8960,13 @@ fn run_kind_from_lifecycle(kind: &str) -> Option<RunKind> {
 }
 
 fn session_driver(
-    home: &Home,
+    _home: &Home,
     envelopes: &[SessionEnvelope],
-    meta: &SessionAcquireMeta,
+    _meta: &SessionAcquireMeta,
 ) -> Option<(Box<dyn WorkerDriver>, String)> {
-    if let Ok(worker) = load_stage_worker(home, &meta.worker_id) {
-        let driver = driver_for_mode_harness(&worker.driver, &worker.harness)?;
-        let driver_id = format!("{}/{}", worker.driver, worker.harness);
+    if let Some((mode, harness)) = persisted_run_address_from_session(envelopes) {
+        let driver = driver_for_mode_harness(&mode, &harness)?;
+        let driver_id = format!("{mode}/{harness}");
         return Some((driver, driver_id));
     }
     let driver_id = session_driver_id_from_ready(envelopes)?;
@@ -12573,16 +12933,45 @@ async fn post_artifact_comment_resolve(
 
 // ---- artifact generation launch (arch_045Q0 / dec_JBWB9 / dec_V44E4) -------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ArtifactGenerateRequest {
+    #[serde(default)]
     nodes: Vec<String>,
+    #[serde(default)]
     prompt: String,
+    /// Transport mode from `orgasmic_drivers::SUPPORTED`.
+    #[serde(default)]
+    pub mode: String,
+    /// Harness from `orgasmic_drivers::SUPPORTED`.
+    #[serde(default)]
+    pub harness: String,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct ArtifactRegenerateRequest {
     #[serde(default, rename = "extraPrompt")]
     extra_prompt: Option<String>,
+    /// Required on the cold path (no live artifactor). Hot-path followups ignore it.
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub harness: Option<String>,
+    #[serde(default)]
+    pub harness_args: Vec<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub governance: Option<GovernancePatch>,
 }
 
 #[derive(Debug, Serialize)]
@@ -12767,6 +13156,40 @@ fn compile_artifact_generate_prompt_bundle(
     ))
 }
 
+/// Release the acquired run when launch aborts after `spawn_worker_run` succeeds
+/// but before the launch-address transaction commits.
+struct ArtifactLaunchCleanupGuard<'a> {
+    state: &'a ApiState,
+    run_id: String,
+    armed: bool,
+}
+
+impl<'a> ArtifactLaunchCleanupGuard<'a> {
+    fn new(state: &'a ApiState, run_id: String) -> Self {
+        Self {
+            state,
+            run_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+
+    async fn release_on_error(&mut self, reason: &str) {
+        if !self.armed {
+            return;
+        }
+        self.armed = false;
+        let _ = self
+            .state
+            .supervisor
+            .release_with_finalization(&self.run_id, reason, ReleaseOutcome::Failed, false, None)
+            .await;
+    }
+}
+
 /// Acquire the per-artifact lease `artifact.generate:{art_id}` and launch the
 /// artifactor worker, modeled on `post_manager_launch`'s direct
 /// `supervisor.acquire` pattern (synthetic task_id, `RunKind::Worker`, no
@@ -12787,6 +13210,7 @@ fn compile_artifact_generate_prompt_bundle(
 /// opposite ordering appending a spurious `artifact.regenerated` tx entry —
 /// and silently consuming real comments — for a regenerate call that the
 /// lease went on to refuse.
+#[allow(clippy::too_many_arguments)]
 async fn launch_artifact_generation(
     state: &ApiState,
     entry: &BoardEntry,
@@ -12795,19 +13219,42 @@ async fn launch_artifact_generation(
     restore_state: &'static str,
     restore_version: u32,
     bundle: String,
+    address: &ArtifactLaunchAddress,
+    governance: Option<&GovernancePatch>,
 ) -> Result<String, ApiError> {
-    let worker = load_stage_worker(&state.home, "artifactor")?;
+    validate_custom_harness_args(&address.harness, &address.harness_args)?;
+    let worker = resolve_addressed_stage_worker(
+        &state.home,
+        WorkerKind::Artifactor,
+        &address.mode,
+        &address.harness,
+        address.harness_args.clone(),
+        &state.dispatch_governance,
+        governance,
+    )?;
+    enforce_context_budget_chars(
+        bundle.chars().count(),
+        worker.context_budget_chars,
+        "artifact prompt",
+    )?;
+    let worker_id = worker.id.clone();
 
     let task_id = format!("artifact.generate:{art_id}");
+    let launch_model = verbatim_optional(address.model.clone());
+    let launch_effort = verbatim_optional(address.effort.clone());
     let spawn = spawn_worker_run(
         state,
         SpawnWorkerRequest {
             project_id: &entry.id,
             task_id: &task_id,
-            worker_id: "artifactor",
+            worker_id: &worker_id,
             run_kind: RunKind::Worker,
             bundle: &bundle,
-            overrides: DriverOverrides::default(),
+            overrides: DriverOverrides {
+                provider: None,
+                model: launch_model.clone(),
+                effort: launch_effort.clone(),
+            },
             project_root_path: &entry.path,
             worktree_path: &entry.path,
             last_path: None,
@@ -12817,24 +13264,108 @@ async fn launch_artifact_generation(
             dispatch_kind: Some("artifactor"),
             preloaded_worker: Some(worker),
             task_sandbox_permissions: None,
+            dispatch_governance: governance.cloned(),
         },
     )
     .await
     .map_err(|failure| failure.error)?;
 
+    let run_id = spawn.acquire.run_id.clone();
+    let mut cleanup = ArtifactLaunchCleanupGuard::new(state, run_id.clone());
+
     spawn_artifact_release_watcher(
         state.clone(),
         ArtifactReleaseWatch {
             entry: entry.clone(),
-            task_id,
+            task_id: task_id.clone(),
             art_dir: art_dir.to_path_buf(),
             art_id: art_id.to_string(),
-            run_id: spawn.acquire.run_id.clone(),
+            run_id: run_id.clone(),
             restore_state,
             restore_version,
         },
     );
-    Ok(spawn.acquire.run_id)
+
+    let org_path = art_dir.join("artifact.org");
+    let current_org = match std::fs::read_to_string(&org_path) {
+        Ok(content) => content,
+        Err(e) => {
+            cleanup.release_on_error("read_artifact_org_failed").await;
+            return Err(ApiError::internal(format!("read artifact.org: {e}")));
+        }
+    };
+    let persisted_address = ArtifactLaunchAddress {
+        mode: address.mode.clone(),
+        harness: address.harness.clone(),
+        harness_args: address.harness_args.clone(),
+        model: launch_model,
+        effort: launch_effort,
+    };
+    let new_org = match persist_artifact_launch_address(&current_org, &persisted_address) {
+        Ok(org) => org,
+        Err(e) => {
+            cleanup
+                .release_on_error("persist_launch_address_failed")
+                .await;
+            return Err(ApiError::internal(format!(
+                "persist artifact launch address: {e}"
+            )));
+        }
+    };
+    let now = Utc::now();
+    let time_str = now.format("[%Y-%m-%d %a %H:%M:%S]").to_string();
+    let project_date = now.format("%Y%m%d").to_string();
+    let month_str = now.format("%Y-%m").to_string();
+    let tx_path = entry
+        .path
+        .join(".orgasmic")
+        .join("tx")
+        .join(format!("{month_str}.org"));
+    let mut tx_entry = orgasmic_core::tx::TxEntry::new(
+        "pending",
+        "artifact.launch_address",
+        &time_str,
+        &state.actor,
+        &state.machine,
+    );
+    tx_entry.project = Some(entry.id.clone());
+    tx_entry.extra = vec![
+        ("ARTIFACT_ID".into(), art_id.to_string()),
+        ("RUN_ID".into(), run_id.clone()),
+        ("MODE".into(), persisted_address.mode.clone()),
+        ("HARNESS".into(), persisted_address.harness.clone()),
+    ];
+    if let Err(e) = state
+        .writer
+        .transaction(
+            vec![FileRewrite {
+                path: org_path,
+                new_contents: new_org,
+            }],
+            TxAppend {
+                tx_path,
+                entry: tx_entry,
+                project_id: Some(entry.id.clone()),
+                tx_id_policy: TxIdPolicy::ProjectSequence {
+                    project_id: entry.id.clone(),
+                    date: project_date,
+                },
+                request_id: Some(format!("artifact-launch-{}-{art_id}-{}", entry.id, run_id)),
+            },
+        )
+        .await
+    {
+        cleanup
+            .release_on_error("launch_address_persist_failed")
+            .await;
+        return Err(ApiError::internal(format!(
+            "persist artifact launch address: {e}"
+        )));
+    }
+    cleanup.disarm();
+    let _ = state.index.refresh_project(&entry.id).await;
+
+    Ok(run_id)
 }
 
 /// Best-effort recovery: restore the artifact out of `regenerating` when a
@@ -13114,6 +13645,8 @@ async fn post_artifact_generate(
     Query(q): Query<ArtifactQuery>,
     Json(body): Json<ArtifactGenerateRequest>,
 ) -> Result<Json<ArtifactGenerateResponse>, ApiError> {
+    let address = artifact_address_from_generate_body(&body);
+    validate_custom_harness_args(&address.harness, &address.harness_args)?;
     let nodes: Vec<String> = body
         .nodes
         .into_iter()
@@ -13123,6 +13656,9 @@ async fn post_artifact_generate(
     let prompt = body.prompt.trim().to_string();
     if prompt.is_empty() {
         return Err(ApiError::bad_request("prompt is required"));
+    }
+    if address.mode.trim().is_empty() || address.harness.trim().is_empty() {
+        return Err(ApiError::bad_request("mode and harness are required"));
     }
 
     let snap = state.index.snapshot().await;
@@ -13215,28 +13751,37 @@ async fn post_artifact_generate(
     // caller can reference this freshly minted id, so any launch failure
     // here (there is no 409 case: the lease key is brand new) must revert it
     // — unlike regenerate, which mutates only after a successful launch.
-    let run_id =
-        match launch_artifact_generation(&state, &entry, &art_id, &art_dir, "failed", 0, bundle)
-            .await
-        {
-            Ok(run_id) => run_id,
-            Err(error) => {
-                revert_artifact_generation_state(
-                    &state,
-                    RevertArtifactState {
-                        entry: &entry,
-                        art_dir: &art_dir,
-                        art_id: &art_id,
-                        run_id: "no-run",
-                        reason: "worker launch failed",
-                        restore_state: "failed",
-                        restore_version: 0,
-                    },
-                )
-                .await;
-                return Err(error);
-            }
-        };
+    let run_id = match launch_artifact_generation(
+        &state,
+        &entry,
+        &art_id,
+        &art_dir,
+        "failed",
+        0,
+        bundle,
+        &address,
+        body.governance.as_ref(),
+    )
+    .await
+    {
+        Ok(run_id) => run_id,
+        Err(error) => {
+            revert_artifact_generation_state(
+                &state,
+                RevertArtifactState {
+                    entry: &entry,
+                    art_dir: &art_dir,
+                    art_id: &art_id,
+                    run_id: "no-run",
+                    reason: "worker launch failed",
+                    restore_state: "failed",
+                    restore_version: 0,
+                },
+            )
+            .await;
+            return Err(error);
+        }
+    };
 
     Ok(Json(ArtifactGenerateResponse {
         artifact_id: art_id,
@@ -13262,17 +13807,17 @@ async fn post_artifact_regenerate(
         return Err(ApiError::not_found("artifact not found"));
     }
 
-    let extra_prompt = body.extra_prompt.unwrap_or_default();
-
-    // Read-only: feeds the launch/followup prompt. This is NOT yet the final
-    // "what gets closed out" comment set — that is re-read and applied only
-    // after the round is committed (lease acquire or accepted send_input).
     let detail = load_artifact_detail(&art_dir, None, false).map_err(|e| match e {
         ArtifactLoadError::NotFound => ApiError::not_found("artifact not found"),
         ArtifactLoadError::VersionNotFound(v) => {
             ApiError::not_found(format!("artifact {art_id} has no version {v}"))
         }
     })?;
+    let address = resolve_artifact_launch_address(
+        artifact_address_override_from_regenerate(&body),
+        detail.summary.launch_address.clone(),
+    )?;
+    let extra_prompt = body.extra_prompt.unwrap_or_default();
     let version = detail.summary.version;
     let nodes = detail.summary.subject_nodes.clone();
 
@@ -13391,6 +13936,8 @@ async fn post_artifact_regenerate(
         "submitted",
         version,
         bundle,
+        &address,
+        body.governance.as_ref(),
     )
     .await?;
 
@@ -13501,6 +14048,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::{SinkExt as _, StreamExt as _};
+    use orgasmic_drivers::HarnessEventAdapter;
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::Message;
 
@@ -13648,16 +14196,15 @@ mod tests {
             kind,
             driver: "subprocess-stream-json".to_string(),
             harness: renderer.to_string(),
-            models: Vec::new(),
-            reasoning_efforts: Vec::new(),
             default_provider: None,
-            default_model: None,
-            default_effort: None,
             linked_skills: Vec::new(),
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
@@ -14454,6 +15001,7 @@ mod tests {
             manager_actor: None,
             auto_commit_signal: true,
             driver_defaults: DriverDefaults::default(),
+            dispatch_governance: DispatchGovernanceOverlay::default(),
             actor: "test".to_string(),
             machine: "test-machine".to_string(),
             bind_host: "127.0.0.1".to_string(),
@@ -14540,7 +15088,8 @@ mod tests {
             &None,
             Some("terminal".into()),
             Some(false),
-        );
+        )
+        .unwrap();
         assert_eq!(role, "terminal");
         assert!(!requires);
 
@@ -14555,13 +15104,14 @@ mod tests {
                 &None,
                 Some(historical_role.into()),
                 Some(false),
-            );
+            )
+            .unwrap();
             assert_eq!(role, historical_role);
             assert!(requires, "historical {historical_role} must fail closed");
         }
 
         let last = Some(PathBuf::from("/tmp/stage.last.txt"));
-        let (role, requires) = boot_reattach_terminal_contract(
+        let err = boot_reattach_terminal_contract(
             &home,
             "griller",
             RunKind::Worker,
@@ -14569,12 +15119,11 @@ mod tests {
             &last,
             None,
             None,
-        );
-        assert_eq!(role, "griller");
-        assert!(requires);
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("persisted run_meta.role"));
 
-        // Fail closed for unknown historical agent roles (TASK-ARZGD).
-        let (role, requires) = boot_reattach_terminal_contract(
+        let err = boot_reattach_terminal_contract(
             &home,
             "removed-historical-worker",
             RunKind::Worker,
@@ -14582,11 +15131,10 @@ mod tests {
             &None,
             None,
             None,
-        );
-        assert_eq!(role, "worker");
-        assert!(requires, "unknown agent roles must require finalize");
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("persisted run_meta.role"));
 
-        // Custom bare terminal proved from harness remains exempt.
         let (role, requires) = boot_reattach_terminal_contract(
             &home,
             "manager",
@@ -14595,7 +15143,8 @@ mod tests {
             &None,
             None,
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(role, "terminal");
         assert!(!requires);
     }
@@ -14606,7 +15155,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        let contract = resolve_persisted_terminal_contract(
+        let err = resolve_persisted_terminal_contract(
             &home,
             "gone-worker",
             RunKind::Worker,
@@ -14615,8 +15164,9 @@ mod tests {
             None,
             None,
             None,
-        );
-        assert!(contract.requires_worker_finalize);
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("persisted run_meta.role"));
         let custom = resolve_persisted_terminal_contract(
             &home,
             "manager",
@@ -14626,9 +15176,78 @@ mod tests {
             None,
             None,
             None,
-        );
+        )
+        .unwrap();
         assert_eq!(custom.role, "terminal");
         assert!(!custom.requires_worker_finalize);
+    }
+
+    #[test]
+    fn recovery_without_worker_files_requires_persisted_role() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+
+        let envelopes = vec![
+            SessionEnvelope {
+                seq: 0,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "acquire",
+                    "task_id": "TASK-ABSENT",
+                    "kind": "worker",
+                    "worker_id": "implementer-claude-rmux",
+                }),
+            },
+            SessionEnvelope {
+                seq: 1,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "run_meta",
+                    "transport": "rmux",
+                    "harness": "claude",
+                    "requires_worker_finalize": false,
+                    "last_path": null,
+                    "stdout_path": null,
+                    "driver_config": {},
+                }),
+            },
+        ];
+        let err = persisted_terminal_contract_from_session(&home, &envelopes).unwrap_err();
+        assert!(err.to_string().contains("persisted run_meta.role"));
+
+        let with_role = vec![
+            envelopes[0].clone(),
+            SessionEnvelope {
+                seq: 1,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "run_meta",
+                    "transport": "rmux",
+                    "harness": "claude",
+                    "role": "implementer",
+                    "requires_worker_finalize": true,
+                    "last_path": null,
+                    "stdout_path": null,
+                    "driver_config": {},
+                }),
+            },
+        ];
+        let contract = persisted_terminal_contract_from_session(&home, &with_role).unwrap();
+        assert_eq!(contract.role, "implementer");
+        assert!(contract.requires_worker_finalize);
     }
 
     #[test]
@@ -14674,7 +15293,7 @@ mod tests {
                     }),
                 },
             ];
-            let contract = persisted_terminal_contract_from_session(&home, &envelopes);
+            let contract = persisted_terminal_contract_from_session(&home, &envelopes).unwrap();
             assert_eq!(contract.role, role);
             assert!(
                 contract.requires_worker_finalize,
@@ -14845,6 +15464,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -14906,6 +15527,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -14987,6 +15610,8 @@ mod tests {
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
                         babysitter: None,
+                        applicable_states: Vec::new(),
+                        max_iterations: None,
                         planned_identity: None,
                     },
                 )
@@ -15018,6 +15643,9 @@ mod tests {
                 Query(artifact_query("proj")),
                 Json(ArtifactRegenerateRequest {
                     extra_prompt: Some("must not overlap".into()),
+                    mode: Some("rmux".into()),
+                    harness: Some("claude".into()),
+                    ..Default::default()
                 }),
             )
             .await
@@ -15126,7 +15754,8 @@ mod tests {
                 None,
                 Some((*role).into()),
                 Some(false),
-            );
+            )
+            .unwrap();
             assert_eq!(
                 contract.requires_worker_finalize, *expect_fail_closed,
                 "contract for {role}"
@@ -15163,6 +15792,8 @@ mod tests {
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
                         babysitter: None,
+                        applicable_states: Vec::new(),
+                        max_iterations: None,
                         planned_identity: None,
                     },
                 )
@@ -15224,6 +15855,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15384,6 +16017,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15552,6 +16187,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15563,6 +16200,292 @@ mod tests {
         assert!(source.contains("\"kind\":\"lifecycle\""));
         assert!(source.contains("\"task_id\":\"manager.launch:orgasmic\""));
         assert_eq!(detail["run"]["driver"], "tmux-tui");
+    }
+
+    /// Cursor ACP fixture driver: session/new catalog + live runtime switch wired
+    /// through supervisor handlers (not a raw adapter unit test).
+    struct CursorAcpFixtureDriver;
+
+    thread_local! {
+        static CURSOR_ACP_FIXTURE_WIRE: std::cell::RefCell<Vec<orgasmic_drivers::WireMessage>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn clear_cursor_acp_fixture_wire() {
+        CURSOR_ACP_FIXTURE_WIRE.with(|wire| wire.borrow_mut().clear());
+    }
+
+    fn take_cursor_acp_fixture_wire() -> Vec<orgasmic_drivers::WireMessage> {
+        CURSOR_ACP_FIXTURE_WIRE.with(|wire| std::mem::take(&mut *wire.borrow_mut()))
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for CursorAcpFixtureDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        fn harness(&self) -> Option<&'static str> {
+            Some("cursor-agent")
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            use orgasmic_drivers::adapters::CursorAcpAdapter;
+
+            let mut adapter = CursorAcpAdapter::new();
+            adapter.stdio_session_init(&ctx, &config)?;
+            let init_events = adapter
+                .on_ws_thread_started(
+                    "fixture",
+                    &json!({
+                        "sessionId": "sess-api-fixture",
+                        "models": {
+                            "currentModelId": "fixture-a",
+                            "availableModels": [
+                                { "modelId": "fixture-a", "name": "Fixture A" },
+                                { "modelId": "fixture-b", "name": "Fixture B" }
+                            ]
+                        }
+                    }),
+                )
+                .await?;
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            for event in init_events {
+                tx.send(event).await.map_err(|_| {
+                    orgasmic_drivers::DriverError::Transport(
+                        "cursor ACP fixture event channel closed".into(),
+                    )
+                })?;
+            }
+            Ok(orgasmic_drivers::DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(CursorAcpFixtureControl {
+                    adapter,
+                    events: tx,
+                }),
+                native_runtime: None,
+                producer: None,
+            })
+        }
+    }
+
+    struct CursorAcpFixtureControl {
+        adapter: orgasmic_drivers::adapters::CursorAcpAdapter,
+        events: tokio::sync::mpsc::Sender<DriverEvent>,
+    }
+
+    #[async_trait::async_trait]
+    impl orgasmic_drivers::DriverControl for CursorAcpFixtureControl {
+        async fn transition_state(
+            &mut self,
+            req: orgasmic_drivers::TransitionRequest,
+        ) -> Result<orgasmic_drivers::TransitionAck, orgasmic_drivers::DriverError> {
+            let outcome = self.adapter.transition_state(req).await?;
+            orgasmic_drivers::modes::jsonrpc::emit_events(&self.events, outcome.events).await;
+            Ok(orgasmic_drivers::TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: orgasmic_drivers::BabysitterRequest,
+        ) -> Result<orgasmic_drivers::BabysitterAck, orgasmic_drivers::DriverError> {
+            Err(orgasmic_drivers::DriverError::Unsupported(
+                "babysitter_action",
+            ))
+        }
+
+        async fn send_input(
+            &mut self,
+            req: orgasmic_drivers::UserInputRequest,
+        ) -> Result<orgasmic_drivers::UserInputAck, orgasmic_drivers::DriverError> {
+            let outcome = self.adapter.send_input(req).await?;
+            orgasmic_drivers::modes::jsonrpc::emit_events(&self.events, outcome.events).await;
+            Ok(orgasmic_drivers::UserInputAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn switch_runtime_options(
+            &mut self,
+            req: RuntimeOptionsRequest,
+        ) -> Result<orgasmic_drivers::RuntimeOptionsAck, orgasmic_drivers::DriverError> {
+            let outcome = self.adapter.switch_runtime_options(req).await?;
+            CURSOR_ACP_FIXTURE_WIRE
+                .with(|wire| wire.borrow_mut().extend(outcome.wire_messages.clone()));
+            orgasmic_drivers::modes::jsonrpc::emit_events(&self.events, outcome.events).await;
+            Ok(orgasmic_drivers::RuntimeOptionsAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn runtime_options_catalog(
+            &mut self,
+        ) -> Result<RuntimeOptionsCatalog, orgasmic_drivers::DriverError> {
+            self.adapter.runtime_options_catalog().await
+        }
+
+        async fn release(&mut self, reason: &str) -> Result<(), orgasmic_drivers::DriverError> {
+            let outcome = self.adapter.release(reason.to_string()).await?;
+            orgasmic_drivers::modes::jsonrpc::emit_events(&self.events, outcome.events).await;
+            Ok(())
+        }
+    }
+
+    async fn cursor_acp_fixture_acquire(
+        state: &ApiState,
+        session_path: PathBuf,
+    ) -> AcquireResponse {
+        let driver = CursorAcpFixtureDriver;
+        state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: "TASK-CURSOR-RUNTIME".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "implementer-composer-acp".into(),
+                    role: "implementer".into(),
+                    project_id: Some("orgasmic".into()),
+                    worktree: None,
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path,
+                    driver_config: orgasmic_drivers::adapters::cursor_acp::simulated_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: None,
+                    max_run_duration_secs: None,
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .expect("cursor ACP fixture acquire")
+    }
+
+    #[tokio::test]
+    async fn cursor_acp_runtime_options_catalog_and_switch_through_supervisor_api() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let state = direct_stage_test_state(home).await;
+        let session_path = tmp.path().join("TASK-CURSOR-RUNTIME.jsonl");
+        clear_cursor_acp_fixture_wire();
+        let acquire = cursor_acp_fixture_acquire(&state, session_path).await;
+
+        let Json(catalog_resp) =
+            get_run_runtime_options(State(state.clone()), Path(acquire.run_id.clone()))
+                .await
+                .expect("runtime options catalog");
+        assert_eq!(catalog_resp.run_id, acquire.run_id);
+        assert_eq!(catalog_resp.catalog.source, "cursor-acp:session/new");
+        assert!(catalog_resp.catalog.live_switching);
+        assert_eq!(
+            catalog_resp.catalog.current.model.as_deref(),
+            Some("fixture-a")
+        );
+
+        let Json(switch_resp) = post_run_runtime_options(
+            State(state.clone()),
+            Path(acquire.run_id.clone()),
+            Json(RuntimeOptionsRequest {
+                model: Some("fixture-b".into()),
+                ..RuntimeOptionsRequest::default()
+            }),
+        )
+        .await
+        .expect("runtime options switch");
+        assert!(switch_resp.accepted);
+
+        let wire = take_cursor_acp_fixture_wire();
+        assert_eq!(wire.len(), 1, "switch must capture outbound wire message");
+        match &wire[0] {
+            orgasmic_drivers::WireMessage::JsonRpc { method, params } => {
+                assert_eq!(method, "session/set_config_option");
+                assert_eq!(params["configId"], "model");
+                assert_eq!(params["value"], "fixture-b");
+                assert_eq!(params["sessionId"], "sess-api-fixture");
+            }
+            other => panic!("expected JsonRpc wire message, got {other:?}"),
+        }
+
+        let Json(after) = get_run_runtime_options(State(state), Path(acquire.run_id))
+            .await
+            .expect("runtime options catalog after switch");
+        assert_eq!(after.catalog.current.model.as_deref(), Some("fixture-b"));
+    }
+
+    #[tokio::test]
+    async fn unsupported_runtime_options_post_returns_structured_409() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let state = direct_stage_test_state(home.clone()).await;
+        let driver = orgasmic_drivers::TmuxTuiDriver;
+        let acquire = state
+            .supervisor
+            .acquire(
+                &driver,
+                AcquireRequest {
+                    task_id: "TASK-UNSUPPORTED-RUNTIME".into(),
+                    kind: RunKind::Worker,
+                    worker_id: "implementer-claude".into(),
+                    role: "implementer".into(),
+                    project_id: Some("orgasmic".into()),
+                    worktree: None,
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    session_path: home.sessions().join("unsupported-runtime.jsonl"),
+                    driver_config: orgasmic_drivers::modes::tmux::inert_config(),
+                    babysitter_target: None,
+                    stall_timeout_secs: None,
+                    max_run_duration_secs: None,
+                    idle_timeout_secs: None,
+                    babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
+                    planned_identity: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let err = post_run_runtime_options(
+            State(state),
+            Path(acquire.run_id),
+            Json(RuntimeOptionsRequest {
+                model: Some("any-model".into()),
+                ..RuntimeOptionsRequest::default()
+            }),
+        )
+        .await
+        .expect_err("tmux driver must refuse runtime options");
+        assert_eq!(err.status, StatusCode::CONFLICT);
+        let body = err.body.expect("structured conflict body");
+        assert_eq!(body["error"], "capability_unsupported");
+        assert_eq!(body["accepted"], false);
+        assert!(
+            body["message"]
+                .as_str()
+                .unwrap()
+                .contains("switch_runtime_options"),
+            "{body}"
+        );
     }
 
     #[tokio::test]
@@ -15742,6 +16665,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15783,6 +16708,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15884,6 +16811,29 @@ mod tests {
         // reattach must still succeed, just without a completion watcher.
         assert!(candidate.last_path.is_none());
         assert!(candidate.stdout_path.is_none());
+
+        let invalid_argv_meta = env(
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::RunMeta {
+                transport: "rmux".into(),
+                harness: Some("claude".into()),
+                project_id: Some("orgasmic".into()),
+                worktree: Some(PathBuf::from("/tmp/orgasmic")),
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                role: Some("terminal".into()),
+                requires_worker_finalize: Some(false),
+                driver_config: json!({"harness_args": ["--smuggle"]}),
+            })
+            .unwrap(),
+        );
+        let invalid_argv = boot_reattach_candidate(&[acquire.clone(), invalid_argv_meta], &path)
+            .expect("invalid argv candidate");
+        assert!(
+            validate_boot_reattach_harness_args(&invalid_argv).is_err(),
+            "boot reattach must use the shared custom-only argv validator"
+        );
 
         // Terminal release → not a candidate.
         assert!(
@@ -16082,8 +17032,8 @@ mod tests {
                     last_path: Some(last_path.clone()),
                     stdout_path: Some(stdout_path.clone()),
                     dispatch_attempt_token: None,
-                    role: None,
-                    requires_worker_finalize: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -17075,75 +18025,455 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_worker_resolution_requires_explicit_worker_and_lists_candidates() {
+    fn dispatch_address_uses_supported_mode_harness_and_governance() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        write(
-            home.user().join("workers/implementer-a.org"),
-            "* WORKER implementer-a
-:PROPERTIES:
-:ID: implementer-a
-:KIND: implementer
-:DRIVER: acp-ws
-:HARNESS: codex
-:DEFAULT_PROVIDER: openai
-:DEFAULT_MODEL: gpt-5.5
-:LINKED_SKILLS:
-:END:
-",
-        );
-        write(
-            home.user().join("workers/implementer-b.org"),
-            "* WORKER implementer-b\n:PROPERTIES:\n:ID: implementer-b\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
-        );
-        write(
-            home.user().join("workers/reviewer-a.org"),
-            "* WORKER reviewer-a\n:PROPERTIES:\n:ID: reviewer-a\n:KIND: reviewer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
-        );
-
-        let err =
-            resolve_dispatch_worker_id(&home, DispatchEndpointKind::Implementer, None).unwrap_err();
-        assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        let message = err.message;
-
-        assert!(message.contains("no worker specified; pass --worker"));
-        assert!(message.contains("available implementers: implementer-a, implementer-b"));
-        assert!(!message.contains("reviewer-a"));
+        let overlay = DispatchGovernanceOverlay::default();
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "acp-stdio",
+            "codex",
+            Vec::new(),
+            &overlay,
+            None,
+        )
+        .unwrap();
+        assert_eq!(worker.driver, "acp-stdio");
+        assert_eq!(worker.harness, "codex");
+        assert_eq!(worker.stall_timeout_secs, Some(600));
     }
 
     #[test]
-    fn dispatch_worker_resolution_accepts_explicit_worker() {
+    fn dispatch_address_rejects_unsupported_mode_harness() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-
-        let worker = resolve_dispatch_worker_id(
+        let err = resolve_addressed_stage_worker(
             &home,
+            WorkerKind::Implementer,
+            "tmux",
+            "custom",
+            Vec::new(),
+            &DispatchGovernanceOverlay::default(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("unsupported mode/harness"));
+    }
+
+    #[test]
+    fn dispatch_address_preserves_raw_harness_args() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let args = vec!["opencode".into(), "--print-logs".into()];
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "rmux",
+            "custom",
+            args.clone(),
+            &DispatchGovernanceOverlay::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(worker.harness_args, args);
+    }
+
+    #[test]
+    fn context_budget_chars_enforces_character_limit_not_token_estimate() {
+        let err = enforce_context_budget_chars(101, Some(100), "dispatch").unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("101 characters"));
+        assert!(err.message.contains("100 character limit"));
+        assert!(err.message.contains("context_budget_chars"));
+        assert!(!err.message.contains("token"));
+        enforce_context_budget_chars(100, Some(100), "dispatch").unwrap();
+        enforce_context_budget_chars(10_000, None, "dispatch").unwrap();
+    }
+
+    #[test]
+    fn context_budget_chars_counts_unicode_scalars_not_bytes() {
+        // "añ": ñ is one scalar but two UTF-8 bytes.
+        let text = "a".repeat(99) + "ñ";
+        assert_eq!(text.len(), 101);
+        assert_eq!(text.chars().count(), 100);
+        enforce_context_budget_chars(text.chars().count(), Some(100), "stage").unwrap();
+        let err =
+            enforce_context_budget_chars(text.chars().count(), Some(99), "stage").unwrap_err();
+        assert!(err.message.contains("100 characters"));
+    }
+
+    #[test]
+    fn dispatch_address_rejects_harness_args_on_builtin_harness() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let err = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "acp-stdio",
+            "codex",
+            vec!["--smuggle".into()],
+            &DispatchGovernanceOverlay::default(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err
+            .message
+            .contains("harness_args are only valid for custom harness"));
+    }
+
+    #[test]
+    fn addressed_kinds_resolve_without_worker_templates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let overlay = DispatchGovernanceOverlay::default();
+        for kind in [
+            WorkerKind::Implementer,
+            WorkerKind::Reviewer,
+            WorkerKind::Architector,
+            WorkerKind::Griller,
+            WorkerKind::Planner,
+            WorkerKind::Artifactor,
+            WorkerKind::Babysitter,
+        ] {
+            resolve_addressed_stage_worker(
+                &home,
+                kind,
+                "acp-stdio",
+                "codex",
+                Vec::new(),
+                &overlay,
+                None,
+            )
+            .unwrap_or_else(|err| {
+                panic!(
+                    "{kind:?} should resolve without worker templates: {}",
+                    err.message
+                )
+            });
+        }
+    }
+
+    #[test]
+    fn compile_launch_boot_recovery_without_worker_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj-no-workers");
+        let overlay = DispatchGovernanceOverlay::default();
+
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "subprocess-stream-json",
+            "cursor-agent",
+            Vec::new(),
+            &overlay,
+            None,
+        )
+        .unwrap();
+        let brief = tmp.path().join("brief.md");
+        std::fs::write(&brief, "no-worker compile smoke").unwrap();
+        let mut project = test_project(&project_root, &[], &[], &[]);
+        project.project_id = "proj-no-workers".into();
+        project.tasks.push(crate::index::TaskSummary {
+            id: "TASK-NO-WORKERS".into(),
+            title: "no workers".into(),
+            lifecycle_stage: orgasmic_core::LifecycleStage::Backlog,
+            parent_task: None,
+            depends_on: Vec::new(),
+            implements: Vec::new(),
+            produces: Vec::new(),
+            read_scope: Vec::new(),
+            write_scope: Vec::new(),
+            owner: crate::index::TaskOwner::Human,
+            run_id: None,
+            priority: None,
+            worker: None,
+            provider: None,
+            model: None,
+            reasoning_effort: None,
+            test_cmd: None,
+            tags: Vec::new(),
+            source_file: project_root.join(".orgasmic/tasks/backlog.org"),
+            sandbox_permissions: None,
+        });
+        compile_dispatch_prompt_bundle(
+            &home,
+            &project,
             DispatchEndpointKind::Implementer,
-            Some("explicit-implementer"),
+            "TASK-NO-WORKERS",
+            &worker,
+            "brief body",
         )
         .unwrap();
 
-        assert_eq!(worker, "explicit-implementer");
+        for spec in [
+            stage_spec("grill"),
+            stage_spec("plan"),
+            stage_spec("architect"),
+        ] {
+            let mut values = orgasmic_core::SlotValues::new();
+            values.insert("worker.id".into(), worker.id.clone());
+            compile_stage_prompt(&home, spec, &mut values).unwrap();
+        }
+
+        let envelopes = vec![
+            SessionEnvelope {
+                seq: 0,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "acquire",
+                    "task_id": "TASK-NO-WORKERS",
+                    "kind": "worker",
+                    "worker_id": "implementer-cursor-agent-subprocess-stream-json",
+                }),
+            },
+            SessionEnvelope {
+                seq: 1,
+                time: Utc::now(),
+                run_id: "run-no-workers".into(),
+                runtime_id: "rt-no-workers".into(),
+                boot_id: "boot-no-workers".into(),
+                kind: SessionEventKind::Lifecycle,
+                event: json!({
+                    "phase": "run_meta",
+                    "transport": "subprocess-stream-json",
+                    "harness": "cursor-agent",
+                    "role": "implementer",
+                    "requires_worker_finalize": true,
+                    "last_path": null,
+                    "stdout_path": null,
+                    "driver_config": {},
+                }),
+            },
+        ];
+        let contract = persisted_terminal_contract_from_session(&home, &envelopes).unwrap();
+        assert_eq!(contract.role, "implementer");
+        assert!(contract.requires_worker_finalize);
     }
 
-    #[test]
-    fn dispatch_worker_resolution_ignores_task_worker_without_explicit_request() {
+    #[tokio::test]
+    async fn manager_launch_rejects_harness_args_on_builtin_harness() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        write(
-            home.user().join("workers/task-implementer.org"),
-            "* WORKER task-implementer\n:PROPERTIES:\n:ID: task-implementer\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: codex\n:END:\n",
-        );
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj-manager");
+        let state = direct_stage_test_state(home).await;
 
-        let err =
-            resolve_dispatch_worker_id(&home, DispatchEndpointKind::Implementer, None).unwrap_err();
+        let err = post_manager_launch(
+            State(state),
+            Json(ManagerLaunchRequest {
+                project_id: "proj-manager".into(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                model: None,
+                effort: None,
+                harness_args: vec!["--smuggle".into()],
+                system_wide: false,
+            }),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(err.status, StatusCode::BAD_REQUEST);
-        let message = err.message;
+        assert!(err
+            .message
+            .contains("harness_args are only valid for custom harness"));
+    }
 
-        assert!(message.contains("available implementers: task-implementer"));
+    #[test]
+    fn dispatch_tx_preserves_verbatim_model_and_effort_bytes() {
+        let model = "  Composer-2.5-FAST  ".to_string();
+        let effort = " XHIGH ".to_string();
+        assert_eq!(
+            verbatim_optional(Some(model.clone())),
+            Some("  Composer-2.5-FAST  ".to_string())
+        );
+        assert_eq!(
+            verbatim_optional(Some(effort.clone())),
+            Some(" XHIGH ".to_string())
+        );
+        assert_eq!(
+            verbatim_optional(Some("   ".to_string())),
+            Some("   ".to_string())
+        );
+        assert_eq!(verbatim_optional(None), None);
+    }
+
+    #[test]
+    fn dispatch_driver_config_forwards_verbatim_model_and_effort() {
+        let worker = StageWorker {
+            id: "implementer-cursor-agent-subprocess-stream-json".to_string(),
+            kind: WorkerKind::Implementer,
+            driver: "subprocess-stream-json".to_string(),
+            harness: "cursor-agent".to_string(),
+            default_provider: None,
+            linked_skills: Vec::new(),
+            persona: None,
+            operating_rules: None,
+            missing_skills: Vec::new(),
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            FsPath::new("/tmp/project"),
+            FsPath::new("/tmp/worktree"),
+            "brief",
+            DriverOverrides {
+                provider: None,
+                model: Some("  Composer-2.5-FAST  ".to_string()),
+                effort: Some(" XHIGH ".to_string()),
+            },
+            None,
+            &DriverDefaults::default(),
+            None,
+        );
+        assert_eq!(cfg.0["model"], "  Composer-2.5-FAST  ");
+        assert_eq!(cfg.0["effort"], " XHIGH ");
+        assert_eq!(cfg.0["reasoning_effort"], " XHIGH ");
+        assert!(cfg.0.get("provider").is_none() || cfg.0["provider"].is_null());
+    }
+
+    #[test]
+    fn subprocess_compose_request_preserves_verbatim_model_bytes() {
+        use orgasmic_drivers::adapters::cursor::CursorAdapter;
+        use orgasmic_drivers::HarnessEventAdapter;
+        use orgasmic_drivers::HarnessRequest;
+
+        use orgasmic_core::RuntimeIdentity;
+        use orgasmic_drivers::RunKind;
+
+        let mut adapter = CursorAdapter::new();
+        let ctx = orgasmic_drivers::DriverContext {
+            identity: RuntimeIdentity {
+                run_id: "run-wire".into(),
+                runtime_id: "rt-wire".into(),
+                boot_id: "boot-wire".into(),
+            },
+            run_kind: RunKind::Worker,
+            task_id: "TASK-WIRE".into(),
+            worker_id: "implementer-cursor-agent-subprocess-stream-json".into(),
+            project_id: Some("proj".into()),
+            worktree: Some(PathBuf::from("/tmp/worktree")),
+            babysitter_target: None,
+        };
+        let config = DriverConfig::from_value(json!({
+            "model": "  Composer-2.5-FAST  ",
+            "effort": " XHIGH ",
+            "sandbox": "disabled",
+        }));
+        match adapter.compose_request(&ctx, &config).unwrap() {
+            HarnessRequest::Subprocess { args, .. } => {
+                let model_idx = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "--model")
+                    .map(|pair| pair[1].clone())
+                    .expect("--model in argv");
+                assert_eq!(model_idx, "  Composer-2.5-FAST  ");
+            }
+            HarnessRequest::Simulated { .. }
+            | HarnessRequest::AcpWs { .. }
+            | HarnessRequest::Tmux { .. } => {
+                // Simulated when cursor-agent absent — config still validated above.
+            }
+        }
+    }
+
+    #[test]
+    fn sandbox_governance_and_task_intersection_blocks_widening() {
+        use orgasmic_drivers::allowlist_from_driver_config;
+
+        let mut map = BTreeMap::new();
+        map.insert(
+            "implementer".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: None,
+                    allow_patch: None,
+                    allow_network: Some(false),
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        map.insert(
+            "implementer,codex".into(),
+            GovernancePatch {
+                sandbox_permissions: Some(SandboxPermissionsPatch {
+                    allow_exec: Some(false),
+                    allow_patch: None,
+                    allow_network: None,
+                    allow_writes_outside_cwd: None,
+                }),
+                ..GovernancePatch::default()
+            },
+        );
+        let overlay = DispatchGovernanceOverlay::from_map(map);
+        let dispatch_patch = GovernancePatch {
+            sandbox_permissions: Some(SandboxPermissionsPatch {
+                allow_exec: None,
+                allow_patch: Some(false),
+                allow_network: None,
+                allow_writes_outside_cwd: None,
+            }),
+            ..GovernancePatch::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let worker = resolve_addressed_stage_worker(
+            &home,
+            WorkerKind::Implementer,
+            "acp-stdio",
+            "codex",
+            Vec::new(),
+            &overlay,
+            Some(&dispatch_patch),
+        )
+        .unwrap();
+        let task_override = SandboxAllowlist {
+            allow_exec: true,
+            allow_patch: true,
+            allow_network: true,
+            allow_writes_outside_cwd: true,
+        };
+        let cfg = stage_driver_config_with_overrides(
+            &worker,
+            FsPath::new("/tmp/project"),
+            FsPath::new("/tmp/worktree"),
+            "brief",
+            DriverOverrides::default(),
+            Some(&task_override),
+            &DriverDefaults::default(),
+            None,
+        );
+        let allowlist = allowlist_from_driver_config(&cfg).expect("resolved sandbox csv");
+        assert!(!allowlist.allow_exec);
+        assert!(!allowlist.allow_patch);
+        assert!(
+            !allowlist.allow_network,
+            "task must not widen governance network=false"
+        );
     }
 
     #[test]
@@ -17226,35 +18556,26 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_override_warns_off_list_model_without_blocking() {
+    fn dispatch_override_passes_unlisted_model_through() {
         let worker = StageWorker {
             id: "worker-a".to_string(),
             kind: WorkerKind::Implementer,
             driver: "acp-ws".to_string(),
             harness: "codex".to_string(),
-            models: vec!["gpt-5.5".to_string()],
-            reasoning_efforts: vec!["high".to_string()],
             default_provider: None,
-            default_model: None,
-            default_effort: None,
             linked_skills: Vec::new(),
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
             harness_args: Vec::new(),
         };
-        warn_dispatch_overrides(
-            &worker,
-            &DriverOverrides {
-                provider: None,
-                model: Some("gpt-99".to_string()),
-                effort: Some("xhigh".to_string()),
-            },
-        );
         let cfg = stage_driver_config_with_overrides(
             &worker,
             FsPath::new("/tmp/project"),
@@ -17279,16 +18600,15 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "subprocess-stream-json".to_string(),
             harness: "cursor-agent".to_string(),
-            models: vec!["composer-2.5-fast".to_string()],
-            reasoning_efforts: vec!["high".to_string()],
             default_provider: Some("cursor".to_string()),
-            default_model: Some("composer-2.5-fast".to_string()),
-            default_effort: Some("high".to_string()),
             linked_skills: Vec::new(),
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
@@ -17326,16 +18646,15 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "acp-ws".to_string(),
             harness: "hermes".to_string(),
-            models: Vec::new(),
-            reasoning_efforts: Vec::new(),
             default_provider: None,
-            default_model: None,
-            default_effort: None,
             linked_skills: Vec::new(),
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: None,
@@ -17415,16 +18734,15 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "acp-stdio".to_string(),
             harness: "codex".to_string(),
-            models: vec!["gpt-5.5".to_string()],
-            reasoning_efforts: vec!["high".to_string()],
             default_provider: None,
-            default_model: None,
-            default_effort: None,
             linked_skills: Vec::new(),
             persona: None,
             operating_rules: None,
             missing_skills: Vec::new(),
-            babysitter_worker: None,
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
             stall_timeout_secs: None,
             max_run_duration_secs: None,
             sandbox_permissions: Some(SandboxAllowlist {
@@ -19194,6 +20512,8 @@ mod tests {
             .json(&serde_json::json!({
                 "project": "orgasmic",
                 "task_id": "TASK-036-GRILL",
+                "mode": "acp-stdio",
+                "harness": "codex",
                 "request_id": "stage-requested-event-test",
                 "reason": "test stage event"
             }))
@@ -21527,7 +22847,12 @@ mod tests {
             Extension(Identity::Admin),
             Path(evil.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest { extra_prompt: None }),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: None,
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
+            }),
         )
         .await
         .expect_err("traversal regenerate must be rejected");
@@ -22618,7 +23943,7 @@ mod tests {
         }
         let harness_path = harness.display();
         let worker_org = format!(
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:REASONING_EFFORTS:           high\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-5\n:DEFAULT_EFFORT:              high\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-RH4M5 hot-session).\n"
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-RH4M5 hot-session).\n"
         );
         write(home.user().join("workers/artifactor.org"), &worker_org);
     }
@@ -22644,20 +23969,9 @@ mod tests {
         }
         let harness_path = harness.display();
         let worker_org = format!(
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:VERSION:                     1\n:END:\n"
+            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:VERSION:                     1\n:END:\n"
         );
         write(home.user().join("workers/artifactor.org"), &worker_org);
-    }
-
-    /// A worker record with an explicitly unsupported driver/harness pair —
-    /// `Worker::from_org` rejects it at load time, so `load_stage_worker`
-    /// fails before any run is ever acquired. Used to exercise the
-    /// launch-never-happened revert path deterministically.
-    fn seed_broken_test_artifactor_worker(home: &Home) {
-        write(
-            home.user().join("workers/artifactor.org"),
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      acp-ws\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-5\n:VERSION:                     1\n:END:\n",
-        );
     }
 
     #[test]
@@ -22796,6 +24110,130 @@ mod tests {
         assert!(out.contains("[CID-def67890] other@test.com (anchor: {}; resolves: -; reply-to: CID-abc12345; resolved: true): already addressed"));
     }
 
+    fn launch_address_from_artifact_org(art_dir: &FsPath) -> ArtifactLaunchAddress {
+        let org = std::fs::read_to_string(art_dir.join("artifact.org")).unwrap();
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        artifacts::parse_artifact_launch_address(file.headings.first().unwrap())
+            .expect("artifact.org must carry a launch address")
+    }
+
+    #[test]
+    fn resolve_artifact_launch_address_reuses_saved_when_regenerate_override_absent() {
+        let saved = ArtifactLaunchAddress {
+            mode: "rmux".into(),
+            harness: "claude".into(),
+            harness_args: vec!["--flag".into()],
+            model: Some("saved-model".into()),
+            effort: Some("high".into()),
+        };
+        let resolved =
+            resolve_artifact_launch_address(None, Some(saved.clone())).expect("saved address");
+        assert_eq!(resolved, saved);
+
+        let body = ArtifactRegenerateRequest::default();
+        assert!(artifact_address_override_from_regenerate(&body).is_none());
+        let resolved = resolve_artifact_launch_address(
+            artifact_address_override_from_regenerate(&body),
+            Some(saved.clone()),
+        )
+        .expect("empty regenerate request must reuse saved address");
+        assert_eq!(resolved, saved);
+    }
+
+    #[test]
+    fn artifact_address_override_from_regenerate_replaces_whole_record() {
+        let body = ArtifactRegenerateRequest {
+            mode: Some("acp-ws".into()),
+            harness: Some("codex".into()),
+            harness_args: vec!["--new".into()],
+            model: Some("gpt-custom".into()),
+            effort: Some("medium".into()),
+            ..Default::default()
+        };
+        let override_addr = artifact_address_override_from_regenerate(&body)
+            .expect("any override field must produce a whole address");
+        assert_eq!(
+            override_addr,
+            ArtifactLaunchAddress {
+                mode: "acp-ws".into(),
+                harness: "codex".into(),
+                harness_args: vec!["--new".into()],
+                model: Some("gpt-custom".into()),
+                effort: Some("medium".into()),
+            }
+        );
+
+        let saved = ArtifactLaunchAddress {
+            mode: "rmux".into(),
+            harness: "claude".into(),
+            harness_args: vec![],
+            model: Some("old-model".into()),
+            effort: Some("high".into()),
+        };
+        let resolved =
+            resolve_artifact_launch_address(Some(override_addr.clone()), Some(saved)).unwrap();
+        assert_eq!(resolved, override_addr);
+    }
+
+    #[test]
+    fn artifact_address_override_from_regenerate_clear_default_fields() {
+        let body = ArtifactRegenerateRequest {
+            mode: Some("rmux".into()),
+            ..Default::default()
+        };
+        let override_addr = artifact_address_override_from_regenerate(&body).unwrap();
+        assert_eq!(override_addr.mode, "rmux");
+        assert_eq!(override_addr.harness, "");
+        assert!(override_addr.harness_args.is_empty());
+        assert_eq!(override_addr.model, None);
+        assert_eq!(override_addr.effort, None);
+
+        let saved = ArtifactLaunchAddress {
+            mode: "acp-ws".into(),
+            harness: "codex".into(),
+            harness_args: vec!["--keep".into()],
+            model: Some("old-model".into()),
+            effort: Some("high".into()),
+        };
+        let resolved = resolve_artifact_launch_address(Some(override_addr), Some(saved)).unwrap();
+        assert_eq!(resolved.mode, "rmux");
+        assert_eq!(resolved.harness, "");
+        assert!(resolved.harness_args.is_empty());
+        assert_eq!(resolved.model, None);
+        assert_eq!(resolved.effort, None);
+    }
+
+    #[test]
+    fn resolve_artifact_launch_address_legacy_per_field_metadata() {
+        let org = r#"#+title: artifact
+#+orgasmic_version: 1
+
+* ARTIFACT ART-LEG1 Legacy launch metadata
+:PROPERTIES:
+:ID:               ART-LEG1
+:STATE:            submitted
+:VERSION:          1
+:LAUNCH_MODE:      rmux
+:LAUNCH_HARNESS:   claude
+:LAUNCH_HARNESS_ARGS: ["--legacy"]
+:LAUNCH_MODEL:     legacy-model
+:LAUNCH_EFFORT:     high
+:END:
+"#;
+        let file = OrgFile::parse(org, "artifact.org").unwrap();
+        let legacy = artifacts::parse_artifact_launch_address(file.headings.first().unwrap())
+            .expect("legacy per-field metadata must parse");
+        let resolved = resolve_artifact_launch_address(None, Some(legacy.clone())).unwrap();
+        assert_eq!(resolved, legacy);
+    }
+
+    #[test]
+    fn resolve_artifact_launch_address_errors_when_metadata_missing() {
+        let err = resolve_artifact_launch_address(None, None).unwrap_err();
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("launch address unavailable"));
+    }
+
     #[tokio::test]
     async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
         let tmp = tempfile::tempdir().unwrap();
@@ -22813,6 +24251,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "Draft a wireframe for the login flow".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await
@@ -22867,6 +24308,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
                 prompt: "Grill this idea before any decision exists".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await
@@ -22970,6 +24414,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec![],
                 prompt: "Prompt-only artifact".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await
@@ -23042,6 +24489,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("tighten the prose".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23113,6 +24563,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first pass".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23169,6 +24622,9 @@ mod tests {
                     Query(artifact_query("test-proj")),
                     Json(ArtifactRegenerateRequest {
                         extra_prompt: Some("second pass".into()),
+                        mode: Some("rmux".into()),
+                        harness: Some("claude".into()),
+                        ..Default::default()
                     }),
                 )
                 .await
@@ -23307,6 +24763,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first pass".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23355,6 +24814,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("too soon".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23458,21 +24920,25 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first round".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
         .expect("first regenerate should cold-spawn");
         let first_run_id = first.0.run_id.clone();
 
-        // Simulate daemon restart: release drops the run from the supervisor.
+        // Simulate daemon restart: drop the first supervisor and boot fresh state.
         state
             .supervisor
             .release(&first_run_id, "simulate restart", ReleaseOutcome::Completed)
             .await
             .unwrap();
+        let cold_state = direct_stage_test_state(home.clone()).await;
 
         let _ = post_artifact_submit(
-            State(state.clone()),
+            State(cold_state.clone()),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactSubmitRequest {
@@ -23486,7 +24952,7 @@ mod tests {
         .expect("submit v2 after restart");
 
         let _ = post_artifact_add_comment(
-            State(state.clone()),
+            State(cold_state.clone()),
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
@@ -23502,12 +24968,15 @@ mod tests {
         .expect("feedback should succeed");
 
         let resp = post_artifact_regenerate(
-            State(state.clone()),
+            State(cold_state.clone()),
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("post-restart".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23524,10 +24993,344 @@ mod tests {
             "regenerating"
         );
 
-        let _ = state
+        let _ = cold_state
             .supervisor
             .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
             .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address() {
+        let _live_guard = live_session_guard();
+        if !rmux_available_for_test() {
+            eprintln!(
+                "skipping post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address: rmux binary not found"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RE2S1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Saved address".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "needs another pass".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let saved = ArtifactLaunchAddress {
+            mode: "rmux".into(),
+            harness: "claude".into(),
+            harness_args: vec![],
+            model: Some("saved-model".into()),
+            effort: Some("high".into()),
+        };
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first round".into()),
+                mode: Some(saved.mode.clone()),
+                harness: Some(saved.harness.clone()),
+                model: saved.model.clone(),
+                effort: saved.effort.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should persist launch address");
+        let art_dir = artifact_dir(&project_root, art_id);
+        assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
+
+        state
+            .supervisor
+            .release(
+                &first.0.run_id,
+                "simulate restart",
+                ReleaseOutcome::Completed,
+            )
+            .await
+            .unwrap();
+        let cold_state = direct_stage_test_state(home.clone()).await;
+
+        let resp = post_artifact_regenerate(
+            State(cold_state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("cold reuse".into()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("cold regenerate with empty address must reuse saved launch address");
+        assert!(!resp.0.run_id.is_empty());
+        assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
+
+        let _ = cold_state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record() {
+        let _live_guard = live_session_guard();
+        if !rmux_available_for_test() {
+            eprintln!(
+                "skipping post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record: rmux binary not found"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-RE2P1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Replace address".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "change transport".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let first = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("first round".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                model: Some("old-model".into()),
+                effort: Some("high".into()),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("first regenerate should succeed");
+        let art_dir = artifact_dir(&project_root, art_id);
+
+        state
+            .supervisor
+            .release(
+                &first.0.run_id,
+                "simulate restart",
+                ReleaseOutcome::Completed,
+            )
+            .await
+            .unwrap();
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = state.supervisor.snapshot().await;
+            if !snapshot
+                .runs
+                .iter()
+                .any(|run| run.task_id == format!("artifact.generate:{art_id}"))
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "released run must leave supervisor before cold relaunch"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        let cold_state = direct_stage_test_state(home.clone()).await;
+        assert!(
+            cold_state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .all(|run| run.task_id != format!("artifact.generate:{art_id}")),
+            "fresh ApiState must not inherit live artifact runs from prior boot"
+        );
+
+        let replacement = ArtifactLaunchAddress {
+            mode: "rmux".into(),
+            harness: "claude".into(),
+            harness_args: vec![],
+            model: Some("new-model".into()),
+            effort: None,
+        };
+        let resp = post_artifact_regenerate(
+            State(cold_state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("replace whole launch record".into()),
+                mode: Some(replacement.mode.clone()),
+                harness: Some(replacement.harness.clone()),
+                model: replacement.model.clone(),
+                effort: replacement.effort.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("cold regenerate with override must replace launch address");
+        assert!(!resp.0.run_id.is_empty());
+        assert_ne!(
+            resp.0.run_id, first.0.run_id,
+            "post-release regenerate must cold-spawn a fresh run"
+        );
+        let persisted = launch_address_from_artifact_org(&art_dir);
+        assert_eq!(persisted, replacement);
+        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
+            .unwrap()
+            .contains("old-model"));
+        assert!(!std::fs::read_to_string(art_dir.join("artifact.org"))
+            .unwrap()
+            .contains(":LAUNCH_EFFORT:"));
+
+        let _ = cold_state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn launch_artifact_generation_persistence_failure_releases_run() {
+        let _live_guard = live_session_guard();
+        if !rmux_available_for_test() {
+            eprintln!(
+                "skipping launch_artifact_generation_persistence_failure_releases_run: rmux binary not found"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        seed_test_artifactor_worker(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let art_id = "ART-FA1M1";
+        let _ = post_artifact_submit(
+            State(state.clone()),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactSubmitRequest {
+                content: "<RichText>v1</RichText>\n".into(),
+                title: Some("Launch cleanup".into()),
+                subject_nodes: Some(vec![]),
+                prompt: Some("Initial".into()),
+            }),
+        )
+        .await
+        .expect("submit should succeed");
+
+        let _ = post_artifact_add_comment(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactCommentRequest {
+                message: "trigger cold launch".into(),
+                anchor: None,
+                resolution_target: None,
+                reply_to: None,
+                author: None,
+            }),
+        )
+        .await
+        .expect("feedback should succeed");
+
+        let tx_path = project_root
+            .join(".orgasmic")
+            .join("tx")
+            .join(format!("{}.org", Utc::now().format("%Y-%m")));
+        std::fs::remove_file(&tx_path).ok();
+        std::fs::create_dir(&tx_path).unwrap();
+
+        let result = post_artifact_regenerate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Path(art_id.to_string()),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: Some("should fail to persist".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
+            }),
+        )
+        .await;
+        assert!(result.is_err(), "tx sabotage must fail launch persistence");
+
+        let snapshot = state.supervisor.snapshot().await;
+        assert!(
+            !snapshot
+                .runs
+                .iter()
+                .any(|run| run.task_id == format!("artifact.generate:{art_id}")),
+            "persistence failure must release the acquired run: {snapshot:?}"
+        );
     }
 
     #[tokio::test]
@@ -23585,6 +25388,9 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("round 2".into()),
+                mode: Some("rmux".into()),
+                harness: Some("claude".into()),
+                ..Default::default()
             }),
         )
         .await
@@ -23621,13 +25427,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_artifact_generate_reverts_to_failed_when_worker_record_is_invalid() {
+    async fn post_artifact_generate_reverts_to_failed_when_transport_is_unsupported() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_broken_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let result = post_artifact_generate(
@@ -23637,11 +25442,15 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "test".to_string(),
+                mode: "tmux".into(),
+                harness: "custom".into(),
+                ..Default::default()
             }),
         )
         .await;
-        let err = result.expect_err("generate must fail when the worker record is invalid");
+        let err = result.expect_err("generate must fail for unsupported transport");
         assert_ne!(err.status, StatusCode::CONFLICT);
+        assert!(err.message.contains("unsupported mode/harness"));
 
         let summaries = artifacts::load_project_artifacts(&project_root);
         assert_eq!(summaries.len(), 1, "{summaries:?}");
@@ -23650,13 +25459,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_artifact_regenerate_reverts_to_submitted_when_worker_record_is_invalid() {
+    async fn post_artifact_regenerate_reverts_to_submitted_when_transport_is_unsupported() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_broken_test_artifactor_worker(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-BDWK1";
@@ -23666,7 +25474,7 @@ mod tests {
             Query(artifact_query("test-proj")),
             Json(ArtifactSubmitRequest {
                 content: "<RichText>v1</RichText>\n".into(),
-                title: Some("Broken worker regen".into()),
+                title: Some("Unsupported transport regen".into()),
                 subject_nodes: None,
                 prompt: None,
             }),
@@ -23679,11 +25487,17 @@ mod tests {
             Extension(Identity::Admin),
             Path(art_id.to_string()),
             Query(artifact_query("test-proj")),
-            Json(ArtifactRegenerateRequest { extra_prompt: None }),
+            Json(ArtifactRegenerateRequest {
+                extra_prompt: None,
+                mode: Some("tmux".into()),
+                harness: Some("custom".into()),
+                ..Default::default()
+            }),
         )
         .await;
-        let err = result.expect_err("regenerate must fail when the worker record is invalid");
+        let err = result.expect_err("regenerate must fail for unsupported transport");
         assert_ne!(err.status, StatusCode::CONFLICT);
+        assert!(err.message.contains("unsupported mode/harness"));
 
         let art_dir = artifact_dir(&project_root, art_id);
         let summary = load_artifact(&art_dir).unwrap();
@@ -23708,6 +25522,9 @@ mod tests {
             Json(ArtifactGenerateRequest {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "test".to_string(),
+                mode: "rmux".into(),
+                harness: "claude".into(),
+                ..Default::default()
             }),
         )
         .await

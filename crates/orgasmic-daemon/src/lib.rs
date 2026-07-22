@@ -10,6 +10,7 @@
 //! - [`ApiState`] is exposed so integration tests can spin up the router
 //!   without a real listener.
 
+pub mod addressing;
 pub mod api;
 pub mod artifacts;
 pub mod auth;
@@ -313,6 +314,7 @@ impl Daemon {
             manager_actor: cfg.manager_actor.clone(),
             auto_commit_signal: cfg.auto_commit_signal,
             driver_defaults: cfg.driver_defaults.clone(),
+            dispatch_governance: cfg.dispatch_governance.clone(),
             actor: opts.actor.clone(),
             machine: opts.machine.clone(),
             bind_host: cfg.bind.to_string(),
