@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260721-finish-qpkcd-through
-:LIVENESS:         fad959e
+:LIVENESS:         d28a11a
 :LIVENESS_AT:      [2026-07-22 Wed]
 :UPDATED_AT:       [2026-07-22 Wed]
 :END:
@@ -74,14 +74,15 @@ Manager-owned snapshot focused on goal-20260721-finish-qpkcd-through. TASK-TMM5H
 - [2026-07-22 Wed] Reconciled operator span e0e8b0e..7794fc1 (17 commits): dec_WDR5K wave 1 landed governance rehoming (TASK-AYXPB + TASK-63MPH), harness-native transcript finders (TASK-0SADP + TASK-WTPYT), universal dispatch finalize (TASK-P4MGK + TASK-8PXDP), and the all-run worker-declared terminal contract (TASK-S52X9 through TASK-Y5K2C), with main at 7794fc1. Closed seven stale pre-flight dispatches: TASK-ARZGD as done/landed; TASK-6ZTFM, TASK-NW4WV, TASK-3TEDA, TASK-TMM5H, TASK-83WS2, and TASK-0SVR3 as aborted, preserving every surviving worktree and returning the three interrupted active tasks to TODO.
 - [2026-07-22 Wed] Operator selected QPKCD/TASK-TMM5H as the next goal. Set goal-20260721-finish-qpkcd-through: finish the preserved recovery-authority continuation, require the full gate matrix and independent SHIP review, and keep AFE5Q/SZEWA paused.
 - [2026-07-22 Wed] TASK-TMM5H implementer finalized cleanly at 453defd (run-20260721T220753-835fdd65f1a44aeea858a1da2e1b0844): +2517/-633 across six final-round files, including the 15-boundary recovery restart matrix. Manager independently reran fmt, diff-check, focused recovery restart, and cargo test --workspace: green. Changed-crate clippy -D is green; workspace clippy reds are proven unchanged CLI baseline lines.
+- [2026-07-22 Wed] Independent reviewer run-20260722T061109-4f2a295a340b48de82c9d0a8f7d637ec finalized NEEDS-CHANGES on 7794fc1..453defd: seven HIGH blockers across dead-PID convergence, stop/drain ordering, true crash/lifecycle reattach, origin-worktree scoping, claim authority/TOCTOU, real Claude versioned-target identity, and fork correlation; plus one MEDIUM CLI --project mismatch. Candidate is not merged. Filed one-round fix TASK-HQR91.
 
 ** Next likely actions
-1. Dispatch reviewer-codex-acp over the complete QPKCD chain 7794fc1..453defd with gpt-5.6-sol xhigh and require an explicit SHIP or blocking findings verdict.
-2. If SHIP, merge the reviewed branch, rerun final gates, record task evidence, close TASK-TMM5H and parent TASK-QPKCD, and clear the goal. If findings block, file and execute the narrow fix round first.
-3. Preserve the original task-tmm5h-impl worktree and paused AFE5Q/SZEWA worktrees untouched until reconciliation completes.
+1. Monitor TASK-HQR91 run-20260722T063313-f001018601c74ef1a4bc852fd0c9ce98 through finalize; independently inspect and rerun the eight-finding fix gates.
+2. Return the complete corrected QPKCD chain to an independent reviewer; merge only on explicit SHIP.
+3. After SHIP, merge, rerun final gates, record evidence, close TASK-HQR91, TASK-TMM5H, and parent TASK-QPKCD, clear the goal, and preserve paused worktrees until reconciliation is complete.
 
 ** In flight
-TASK-TMM5H is in independent review. reviewer-codex-acp is reviewing the complete QPKCD chain 7794fc1..453defd with gpt-5.6-sol xhigh as run-20260722T061109-4f2a295a340b48de82c9d0a8f7d637ec in task-qpkcd-review6c. Implementation and manager gate matrix are complete; merge is forbidden until an explicit SHIP verdict. The original dirty task-tmm5h-impl worktree remains untouched. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with clean worktrees untouched; task-kkftm-review remains stale/clean and untouched.
+TASK-HQR91 is the sole active implementation stream, fixing all seven HIGH plus one MEDIUM findings from TASK-TMM5H review6c. implementer-codex-acp is running gpt-5.6-sol xhigh as run-20260722T063313-f001018601c74ef1a4bc852fd0c9ce98 from reviewed candidate 453defd in task-hqr91-fix. TASK-TMM5H remains IN_REVIEW and unmerged. The original dirty task-tmm5h-impl, paused AFE5Q/SZEWA worktrees, and stale clean task-kkftm-review remain untouched.
 
 ** Divergence / Risks
 - QPKCD is security- and crash-consistency-sensitive; existing WIP is partial and must be treated as untrusted until independently verified.

@@ -19354,3 +19354,145 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-22 Wed 06:31:38 reviewer.done TASK-TMM5H
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2328
+:TIME:         [2026-07-22 Wed 06:31:38]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TMM5H
+:RUN_ID:       run-20260722T061109-4f2a295a340b48de82c9d0a8f7d637ec
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-qpkcd-review6c/worktree
+:END:
+
+* TX 2026-07-22 Wed 06:32:26 task.created TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2329
+:TIME:         [2026-07-22 Wed 06:32:26]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Independent QPKCD review returned NEEDS-CHANGES with seven HIGH recovery-authority findings and one MEDIUM CLI contract mismatch.
+:END:
+
+* TX 2026-07-22 Wed 06:33:12 task.state_transitioned TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2330
+:TIME:         [2026-07-22 Wed 06:33:12]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-HQR91 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-22 Wed 06:33:13 manager.dispatch_started TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2331
+:TIME:         [2026-07-22 Wed 06:33:13]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-hqr91-fix/worktree
+:BRANCH:       task-hqr91-fix
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-hqr91-fix/task-hqr91-fix.md
+:STARTED_AT:   [2026-07-22 Wed 06:33:13]
+:LIVENESS:     453defdaa36917e1429f782b75f8397f0e6cfda4
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: One-round fix for the seven HIGH and one MEDIUM findings from independent TASK-TMM5H full-chain review.
+:END:
+
+* TX 2026-07-22 Wed 06:33:13 run.created TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2332
+:TIME:         [2026-07-22 Wed 06:33:13]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-HQR91-implementer-20260722T063313.jsonl
+:REASON:       One-round fix for the seven HIGH and one MEDIUM findings from independent TASK-TMM5H full-chain review.
+:RUN_ID:       run-20260722T063313-f001018601c74ef1a4bc852fd0c9ce98
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-hqr91-fix/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-hqr91-fix/task-hqr91-fix.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-hqr91-fix/task-hqr91-fix-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-hqr91-fix/task-hqr91-fix-stdout.log
+:PID:          26663
+:DISPATCH_TX:  tx-20260722-orgasmic-2331
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-07-22 Wed 06:33:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2333
+:TIME:         [2026-07-22 Wed 06:33:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 06:33:32 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2334
+:TIME:         [2026-07-22 Wed 06:33:32]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 06:33:33 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2335
+:TIME:         [2026-07-22 Wed 06:33:33]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-22 Wed 06:33:33 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2336
+:TIME:         [2026-07-22 Wed 06:33:33]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
