@@ -6,7 +6,7 @@
 :DEFAULT_RENDERER:   markdown
 :OUTPUT_CONTRACT:    structured-markdown
 :EXTENDS:            base_worker
-:USES_PARTS:         source_of_truth_inputs implementation_scope_policy verification_policy
+:USES_PARTS:         source_of_truth_inputs implementation_scope_policy verification_policy command_session_policy
 :END:
 
 ** Role

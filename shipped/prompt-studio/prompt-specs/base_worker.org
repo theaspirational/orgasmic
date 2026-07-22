@@ -5,7 +5,7 @@
 :VERSION:            1
 :DEFAULT_RENDERER:   markdown
 :OUTPUT_CONTRACT:    structured-markdown
-:USES_PARTS:         source_of_truth_inputs verification_policy
+:USES_PARTS:         source_of_truth_inputs verification_policy command_session_policy
 :END:
 
 ** Role

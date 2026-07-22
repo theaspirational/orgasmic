@@ -70,7 +70,25 @@ The contract:
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
    The CLI atomically: creates the per-task git worktree at =/tmp/orgasmic-worktrees/task-NNN= on branch =task-NNN-impl= based on HEAD (defaults; override the branch via =--branch=, the worktree path via =--worktree=, the base commit via =--from=); writes the =manager.dispatch_started= pre-flight tx; spawns the worker via the daemon's =/dispatch= endpoint; emits a =run.created= tx with the run_id, pid, brief path, last path, stdout path, session jsonl target. The worker runs as a =codex app-server= process talking ACP (JSON-RPC 2.0) over stdio to the daemon. Use =--dry-run= to print the resolved plan without launching anything; useful before non-trivial dispatches.
-3. *Wait.* Install a single watcher Bash that polls =[ -s <project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt ] || ! ps -p <worker_pid> > /dev/null= in a loop with =sleep 30=, then exits with a summary. Run that watcher with =run_in_background=; the harness notifies on completion. Do NOT sleep-poll from the main agent — one watcher is enough for the whole batch.
+3. *Wait.* Prefer the harness completion notification. If a shell watcher is
+   needed, install exactly one watcher for the dispatch and declare a finite
+   observation deadline before starting it. The watcher may observe the
+   terminal =last.txt=, dispatch log/status artifacts, worktree evidence, and
+   the exact worker PID/process group. It exits with one of three summaries:
+   terminal evidence found, owned worker exited, or attention required because
+   the deadline passed without observable progress. A live PID alone is not
+   proof of progress, and heartbeat-only/session-token activity must not reset
+   the deadline. Let the harness deliver the watcher's one completion notice;
+   do not run periodic status checks from the manager conversation.
+
+   On =attention required=, inspect the preserved log/status artifacts and the
+   concrete owned process/session once. Apply the shared
+   =command_session_policy= from the worker prompt: do not launch duplicate
+   verification, stop only a duplicate proven to be manager-owned, permit at
+   most one non-restarting detached retry after a vanished subprocess, and
+   close blocked with evidence after a second interruption. Escalation is a
+   manager decision; it does not redefine supervisor heartbeat or stall-timeout
+   semantics.
 4. *Integrate.* Read =<project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt= for the worker summary, then from your base branch — the branch HEAD was on at dispatch (=git branch --show-current=): =main= in the default upstream flow, or your feature branch when developing a feature via parallel worktrees for a PR — run =git merge --no-ff task-NNN-impl=, resolve any same-file conflicts (usually only =use= statements when two tasks added imports to the same crate), run =cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings=, record evidence in the sprint task's =** Evidence= section, then =git worktree remove <path> --force && git branch -D task-NNN-impl=. The =implementer.done= close tx is normally emitted by the worker itself, as its terminal action, via =orgasmic dispatch finalize --summary-file <path> [--commit]= (dec_3M7M0) — the PRIMARY completion signal: it writes the report verbatim, optionally commits the worktree, emits the terminal tx, and releases the lease in one call over the same worker→daemon channel used for every other write. Every worker persona's contract ends with this call. The daemon's scrollback-scrape / stall-timeout path is a FALLBACK only, for a worker that dies or hangs before finalizing; a stall with no finalize is flagged =manager.dispatch_orphaned= rather than silently marked done. If neither the worker's finalize nor the fallback fired (manager-rescued merge, aborted dispatch), record the close yourself via =orgasmic tx record= or =orgasmic manager dispatch-close=. Never leave orphan pre-flight tx — see the exit checklist.
 5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer --worker reviewer-codex-acp=. Reviewer findings → fix subtasks with =:PARENT_TASK:= pointing at the reviewed task and =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
 6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").

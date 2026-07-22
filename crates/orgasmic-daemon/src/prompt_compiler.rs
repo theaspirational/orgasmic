@@ -1418,4 +1418,52 @@ mod tests {
             "rescue-policy must not appear as an included prompt part"
         );
     }
+
+    #[test]
+    fn implementer_and_reviewer_include_command_session_policy_once() {
+        // orgasmic:TASK-2D0EJ — both dispatch roles share one bounded polling
+        // contract even though their leaf specs declare prompt parts directly.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let root = repo_root();
+        std::os::unix::fs::symlink(&root, home.source()).unwrap();
+
+        for spec_id in ["implementer", "reviewer"] {
+            let compiled =
+                compile_prompt_spec(&home, spec_id, PromptCompileRequest::default()).unwrap();
+            assert!(
+                !has_error(&compiled.diagnostics),
+                "{spec_id} diagnostics: {:?}",
+                compiled.diagnostics
+            );
+            assert_eq!(
+                compiled
+                    .included_parts
+                    .iter()
+                    .filter(|part| part.as_str() == "command_session_policy")
+                    .count(),
+                1,
+                "{spec_id} must include the shared command-session policy exactly once"
+            );
+            assert_eq!(
+                compiled
+                    .text
+                    .matches("Command-session polling policy:")
+                    .count(),
+                1,
+                "{spec_id} must render the command-session policy exactly once"
+            );
+            assert!(
+                compiled
+                    .text
+                    .contains("After two consecutive empty results"),
+                "{spec_id} must render the bounded polling rule"
+            );
+            assert!(
+                compiled.text.contains("Retry at most once"),
+                "{spec_id} must render the one-retry rule"
+            );
+        }
+    }
 }

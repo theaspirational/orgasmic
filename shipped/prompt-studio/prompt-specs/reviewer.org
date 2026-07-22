@@ -6,7 +6,7 @@
 :DEFAULT_RENDERER:   markdown
 :OUTPUT_CONTRACT:    findings-markdown
 :EXTENDS:            base_worker
-:USES_PARTS:         source_of_truth_inputs verification_policy code_marker_policy
+:USES_PARTS:         source_of_truth_inputs verification_policy code_marker_policy command_session_policy
 :END:
 
 ** Role

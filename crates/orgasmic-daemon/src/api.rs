@@ -13531,10 +13531,10 @@ mod tests {
         assert_eq!(api_shape_response.status(), StatusCode::NOT_FOUND);
     }
 
-    fn dispatch_prompt_test_worker(renderer: &str) -> StageWorker {
+    fn dispatch_prompt_test_worker(renderer: &str, kind: WorkerKind) -> StageWorker {
         StageWorker {
-            id: format!("implementer-{renderer}"),
-            kind: WorkerKind::Implementer,
+            id: format!("{}-{renderer}", kind.as_str()),
+            kind,
             driver: "subprocess-stream-json".to_string(),
             harness: renderer.to_string(),
             models: Vec::new(),
@@ -13668,7 +13668,7 @@ mod tests {
         );
 
         for renderer in ["markdown", "xml"] {
-            let worker = dispatch_prompt_test_worker(renderer);
+            let worker = dispatch_prompt_test_worker(renderer, WorkerKind::Implementer);
             let compiled = compile_dispatch_prompt_bundle(
                 &home,
                 &project,
@@ -13720,6 +13720,74 @@ mod tests {
                 !compiled.contains(task_description) || !compiled.contains("The task brief is"),
                 "{renderer} prompt goal must not embed task.description"
             );
+        }
+    }
+
+    #[test]
+    fn dispatch_bundles_render_bounded_command_session_policy_once() {
+        // orgasmic:TASK-2D0EJ — test the production dispatch-bundle path, not
+        // only the lower-level prompt compiler.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        symlink_repo_source(&home);
+        let mut project = test_project(tmp.path(), &[], &[], &[]);
+        project.tasks.push(crate::index::TaskSummary {
+            id: "TASK-FIX".to_string(),
+            title: "Command-session policy fixture".to_string(),
+            lifecycle_stage: LifecycleStage::InProgress,
+            parent_task: None,
+            depends_on: Vec::new(),
+            implements: Vec::new(),
+            produces: Vec::new(),
+            read_scope: Vec::new(),
+            write_scope: Vec::new(),
+            owner: TaskOwner::Human,
+            run_id: None,
+            priority: None,
+            worker: None,
+            provider: None,
+            model: None,
+            reasoning_effort: None,
+            test_cmd: None,
+            tags: Vec::new(),
+            source_file: tmp.path().join(".orgasmic/tasks/in_progress.org"),
+            sandbox_permissions: None,
+        });
+
+        for renderer in ["markdown", "xml"] {
+            for (kind, worker_kind) in [
+                (DispatchEndpointKind::Implementer, WorkerKind::Implementer),
+                (DispatchEndpointKind::Reviewer, WorkerKind::Reviewer),
+            ] {
+                let worker = dispatch_prompt_test_worker(renderer, worker_kind);
+                let compiled = compile_dispatch_prompt_bundle(
+                    &home,
+                    &project,
+                    kind,
+                    "TASK-FIX",
+                    &worker,
+                    "Check the bounded command-session contract.",
+                )
+                .unwrap();
+
+                assert_eq!(
+                    count_occurrences(&compiled, "Command-session polling policy:"),
+                    1,
+                    "{} {renderer} bundle must render the policy exactly once",
+                    kind.as_str()
+                );
+                assert!(
+                    compiled.contains("After two consecutive empty results"),
+                    "{} {renderer} bundle must bound stale polling",
+                    kind.as_str()
+                );
+                assert!(
+                    compiled.contains("Retry at most once"),
+                    "{} {renderer} bundle must bound retries",
+                    kind.as_str()
+                );
+            }
         }
     }
 

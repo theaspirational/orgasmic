@@ -1,0 +1,32 @@
+* PROMPT-PART command_session_policy
+:PROPERTIES:
+:ID:                 command_session_policy
+:TARGET_SECTION:     Policies
+:VERSION:            1
+:END:
+
+Command-session polling policy:
+- For a command expected to outlive one tool response, redirect output to a
+  durable log outside tracked source and, when practical, arrange for the
+  command wrapper to write its exit status through a temporary file followed
+  by an atomic rename. Record the concrete PID or process group that owns the
+  attempt.
+- Exactly one agent or watcher owns each yielded command session. Do not start
+  another copy merely because a poll is empty or the session token still says
+  running.
+- Polling is bounded. After two consecutive empty results, or two observations
+  with no log/status progress, stop polling the token and inspect the recorded
+  OS process or session directly. A live token is not process evidence.
+- If the recorded process is gone while the token reports running, preserve
+  the log, classify the attempt as interrupted, and stop polling that token.
+  Retry at most once, using one detached, non-restarting wrapper with its own
+  log, PID/process-group record, and atomic exit-status file.
+- Before the initial attempt and the one allowed retry, enumerate matching
+  command ownership. Reuse an already-owned active attempt instead of launching
+  duplicate verification. When the role permits process control, stop a
+  duplicate only when its PID/process group is proven to belong to this
+  dispatch; never kill an unrelated process by name. A read-only role reports
+  the owned overlap and blocks instead of stopping it.
+- If the retry is also interrupted, do not loop or launch a third attempt.
+  Finalize blocked with the preserved logs, status observations, and concrete
+  process evidence.
