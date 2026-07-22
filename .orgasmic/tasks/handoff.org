@@ -6,7 +6,7 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260721-finish-qpkcd-through
-:LIVENESS:         a7b5917
+:LIVENESS:         fad959e
 :LIVENESS_AT:      [2026-07-22 Wed]
 :UPDATED_AT:       [2026-07-22 Wed]
 :END:
@@ -81,7 +81,7 @@ Manager-owned snapshot focused on goal-20260721-finish-qpkcd-through. TASK-TMM5H
 3. Preserve the original task-tmm5h-impl worktree and paused AFE5Q/SZEWA worktrees untouched until reconciliation completes.
 
 ** In flight
-No implementation process remains. TASK-TMM5H implementation finalized at 453defd in clean task-qpkcd-fix6c; manager verification is green modulo proven unchanged CLI clippy baseline. Independent review is the active stage. The original dirty task-tmm5h-impl worktree remains untouched. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with clean worktrees untouched; task-kkftm-review remains stale/clean and untouched.
+TASK-TMM5H is in independent review. reviewer-codex-acp is reviewing the complete QPKCD chain 7794fc1..453defd with gpt-5.6-sol xhigh as run-20260722T061109-4f2a295a340b48de82c9d0a8f7d637ec in task-qpkcd-review6c. Implementation and manager gate matrix are complete; merge is forbidden until an explicit SHIP verdict. The original dirty task-tmm5h-impl worktree remains untouched. TASK-83WS2/TASK-AFE5Q and TASK-0SVR3/TASK-SZEWA remain paused with clean worktrees untouched; task-kkftm-review remains stale/clean and untouched.
 
 ** Divergence / Risks
 - QPKCD is security- and crash-consistency-sensitive; existing WIP is partial and must be treated as untrusted until independently verified.
