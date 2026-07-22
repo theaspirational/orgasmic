@@ -2,12 +2,15 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Close AFE5Q and SZEWA, then remove worker content :goal:
+* CLEARED Close AFE5Q and SZEWA, then remove worker content :goal:
 :PROPERTIES:
 :ID:               goal-20260722-close-afe5q-and
 :SET_AT:           [2026-07-22 Wed]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-22 Wed]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
 :END:
 
 ** Statement
