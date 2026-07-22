@@ -33,8 +33,6 @@
 
 *** worker.*
 - worker.id, worker.kind
-- worker.persona            (** Persona section of the agent template)
-- worker.operating_rules    (** Operating Rules section)
 
 *** skills.*
 - skills.all                (manifest of all linked skills: id, description, triggers, abs path)

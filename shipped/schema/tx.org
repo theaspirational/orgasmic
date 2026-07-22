@@ -52,7 +52,7 @@ Properties:
 Auto-spawn success records reuse =run.created= with extras:
 - :RUN_ID:         supervisor-assigned run id
 - :ORIGIN:         =auto_spawn=
-- :WORKER:         worker id from the project stage map (or eligibility-selected)
+- :WORKER:         historical execution label derived from the addressed kind/mode/harness
 - :STAGE:          lifecycle stage that triggered the spawn
 - :AGENT_KIND:     =implementer= | =reviewer=
 - :DRIVER:         driver mode resolved for the worker (e.g. =acp-stdio=, =acp-ws=, =subprocess-stream-json=, =tmux=)
@@ -63,7 +63,7 @@ Auto-spawn success records reuse =run.created= with extras:
 
 Emitted when the auto-spawn consumer cannot complete the worker → driver → supervisor chain for an =AutoSpawnRequested= event. Extras:
 - :ORIGIN:         =auto_spawn=
-- :WORKER:         requested or selected worker id (may be the stage-map default if matching failed before selection)
+- :WORKER:         historical execution label derived from the attempted address
 - :STAGE:          lifecycle stage that triggered the spawn
 - :AGENT_KIND:     =implementer= | =reviewer=
 - :ERROR:          escaped, single-line failure cause (filesystem paths are sanitised at emission)

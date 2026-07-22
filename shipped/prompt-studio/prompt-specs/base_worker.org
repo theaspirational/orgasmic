@@ -24,10 +24,8 @@ Complete the assigned work for {{task.id}}.
 
 ** Inputs
 - Project: {{project.name}} at {{project.path}}.
-- Worker: {{worker.id}} (kind {{worker.kind}}). The role voice is defined by
-  this prompt spec; worker-specific notes, if any, follow.
-{{worker.persona}}
-{{worker.operating_rules}}
+- Worker: {{worker.id}} (kind {{worker.kind}}). The role voice and operating
+  rules are defined entirely by this prompt spec and its inherited parts.
 
 - Task: {{task.id}}, {{task.title}}.
 - Assignment:

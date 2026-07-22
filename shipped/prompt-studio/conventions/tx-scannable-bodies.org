@@ -26,7 +26,7 @@ body that says "the reviewer subtask" instead of =TASK-HCFBT.1= loses that link.
 
 ** Plain prose only — no org emphasis markup
 Do not wrap text in =/slashes/=, =*asterisks*=, or ===equals===; the feed
-renders bodies literally, and file paths (=shipped/workers/foo.org=), ratios
+renders bodies literally, and file paths (=shipped/prompt-studio/foo.org=), ratios
 (=0H/1M/1L=, =28/28=), and run ids render correctly as-is precisely because they
 are left untouched.
 

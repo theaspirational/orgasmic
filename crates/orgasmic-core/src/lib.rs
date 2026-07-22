@@ -9,7 +9,6 @@
 //! (arch_002, arch_003, arch_011) for the design contract.
 
 // arch: arch_004 — see decisions dec_016
-pub mod eligibility;
 pub mod id;
 pub mod id_repair;
 pub mod identity_lint;
@@ -27,11 +26,6 @@ pub mod schema_examples;
 pub mod session;
 pub mod slots;
 pub mod tx;
-pub mod workers;
-
-pub use eligibility::{
-    compute_all, compute_eligibility, list_allows, TaskConstraints, WorkerEligibility,
-};
 pub use home::{resolve_loader, Home, HomeError};
 pub use id::{
     is_arch_id, is_dec_id, is_legacy_sequential_create_id, is_minted_stem,
@@ -84,8 +78,3 @@ pub use slots::{
     scan as scan_slots, DryRunReport, SlotError, SlotRef, SlotValues,
 };
 pub use tx::{parse_tx_file, TxEntry, TxError, TxWriter};
-pub use workers::{
-    is_supported_worker_pair, parse_string_list, resolve_context_budget_chars,
-    ContextBudgetCharsError, Worker, WorkerError, LEGACY_CONTEXT_BUDGET_TOKEN_MULTIPLIER,
-    SUPPORTED_WORKER_DRIVER_HARNESSES,
-};

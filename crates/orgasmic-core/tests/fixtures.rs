@@ -10,9 +10,8 @@ use std::sync::{
 };
 
 use orgasmic_core::{
-    is_supported_worker_pair, org::OrgRewriter, parse_tx_file, ArchEdgeKind, ArchEdgeTarget,
-    ArchitectureNode, ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, OrgFile,
-    ProjectFile, TaskHeading, Worker,
+    org::OrgRewriter, parse_tx_file, ArchEdgeKind, ArchEdgeTarget, ArchitectureNode,
+    ArtifactScheme, DecisionNode, GlossaryTerm, LifecycleStage, OrgFile, ProjectFile, TaskHeading,
 };
 use tracing::span::{Attributes, Id, Record};
 use tracing::{Event, Metadata, Subscriber};
@@ -57,7 +56,6 @@ fn parses_real_done_tasks() {
         .expect("TASK-VWBDJ present in done.org");
     let view = TaskHeading::from_heading(&f, task_003, path).unwrap();
     assert_eq!(view.id, "TASK-VWBDJ");
-    assert_eq!(view.worker, Some("implementer-claude"));
     assert!(view
         .write_scope
         .iter()
@@ -83,7 +81,7 @@ fn parses_real_done_tasks() {
 }
 
 #[test]
-fn live_state_files_parse_without_legacy_worker_warnings() {
+fn live_state_files_parse_without_retired_property_warnings() {
     let mut parsed_tasks = 0;
     let warnings = count_warnings(|| {
         for rel in [".orgasmic/tasks/backlog.org", ".orgasmic/tasks/done.org"] {
@@ -467,7 +465,6 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
         .iter()
         .find(|t| t.id == "TASK-C9V29")
         .expect("TASK-C9V29");
-    assert_eq!(parent.worker, Some("griller"));
     assert_eq!(parent.lifecycle_stage, LifecycleStage::Backlog);
     assert!(parent.parent_task.is_none());
 
@@ -479,10 +476,9 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
         assert_eq!(sub.parent_task.as_deref(), Some("TASK-C9V29"));
         assert_eq!(sub.lifecycle_stage, LifecycleStage::Backlog);
     }
-    // infer-architecture is the architector; it depends on infer-decisions,
-    // which depends on infer-project — so .orgasmic/ fills in a sound order.
+    // infer-architecture depends on infer-decisions, which depends on
+    // infer-project — so .orgasmic/ fills in a sound order.
     let arch = tasks.iter().find(|t| t.id == "TASK-C9V29.3").unwrap();
-    assert_eq!(arch.worker, Some("architector"));
     assert!(arch
         .write_scope
         .iter()
@@ -490,30 +486,6 @@ fn shipped_scaffold_seeds_bootstrap_task_tree() {
     assert!(arch.depends_on.contains(&"TASK-C9V29.2"));
     let decisions = tasks.iter().find(|t| t.id == "TASK-C9V29.2").unwrap();
     assert!(decisions.depends_on.contains(&"TASK-C9V29.1"));
-}
-
-#[test]
-fn parses_every_shipped_worker() {
-    let root = repo_root().join("shipped/workers");
-    let mut count = 0;
-    for entry in std::fs::read_dir(&root).unwrap() {
-        let path = entry.unwrap().path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("org") {
-            continue;
-        }
-        let rel = path.strip_prefix(repo_root()).unwrap().to_string_lossy();
-        let file = parse_or_panic(&rel);
-        let worker = Worker::from_org(&file, &rel).unwrap();
-        assert!(
-            is_supported_worker_pair(worker.driver, worker.harness),
-            "{} declares unsupported pair {}/{}",
-            rel,
-            worker.driver,
-            worker.harness
-        );
-        count += 1;
-    }
-    assert_eq!(count, 20);
 }
 
 #[test]

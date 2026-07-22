@@ -1,9 +1,7 @@
 // orgasmic:TASK-AYXPB, dec_WDR5K
 //! Per-kind governance defaults and sparse config/dispatch overlays.
 //!
-//! Parallel source of truth for governance values (dec_WDR5K item 3). Worker
-//! templates remain authoritative at spawn until TASK-DZ5NM cutover; this module
-//! builds the resolve path and config overlay without changing runtime winners.
+//! Source of truth for governance values (dec_WDR5K item 3).
 //!
 //! Precedence (lowest → highest):
 //! code kind default < config kind < config (kind,harness) < per-dispatch override.
@@ -13,7 +11,7 @@
 use std::collections::BTreeMap;
 use std::str::FromStr;
 
-use orgasmic_core::{resolve_context_budget_chars, SandboxAllowlist, WorkerKind};
+use orgasmic_core::{SandboxAllowlist, WorkerKind};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Supervisor-floor timeouts mirrored as kind defaults when templates omit them.
@@ -100,19 +98,19 @@ impl<'de> Deserialize<'de> for GovernancePatch {
             sandbox_permissions: Option<SandboxPermissionsPatch>,
         }
         let raw = Raw::deserialize(deserializer)?;
-        let context_budget_chars =
-            resolve_context_budget_chars(raw.context_budget, raw.context_budget_chars).map_err(
-                |err| {
-                    serde::de::Error::custom(match err {
-                        orgasmic_core::ContextBudgetCharsError::BothFieldsPresent => {
-                            "context_budget and context_budget_chars cannot both be set"
-                        }
-                        orgasmic_core::ContextBudgetCharsError::LegacyOverflow => {
-                            "context_budget token value overflows when migrated to characters"
-                        }
-                    })
-                },
-            )?;
+        let context_budget_chars = match (raw.context_budget, raw.context_budget_chars) {
+            (Some(_), Some(_)) => {
+                return Err(serde::de::Error::custom(
+                    "context_budget and context_budget_chars cannot both be set",
+                ));
+            }
+            (Some(tokens), None) => Some(tokens.checked_mul(4).ok_or_else(|| {
+                serde::de::Error::custom(
+                    "context_budget token value overflows when migrated to characters",
+                )
+            })?),
+            (None, chars) => chars,
+        };
         Ok(Self {
             max_iterations: raw.max_iterations,
             context_budget_chars,

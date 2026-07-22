@@ -54,8 +54,6 @@ pub fn default_registry() -> BTreeSet<&'static str> {
         "project.default_branch",
         "worker.id",
         "worker.kind",
-        "worker.persona",
-        "worker.operating_rules",
         "skills.all",
         "run.id",
         "run.iteration_count",

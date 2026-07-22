@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
-use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream, SUPPORTED_WORKER_DRIVER_HARNESSES};
+use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
 use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
     CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
@@ -130,17 +130,8 @@ fn registry_matrix_matches_supported_const() {
 }
 
 #[test]
-fn core_and_drivers_supported_matrices_agree() {
-    // Every registry pair is also a dispatchable worker pair — including
-    // `custom`, whose worker templates wrap an arbitrary CLI via
-    // `:HARNESS_ARGS:` (core enforces that property at parse time).
-    assert_eq!(SUPPORTED_WORKER_DRIVER_HARNESSES, SUPPORTED);
-}
-
-#[test]
 fn supported_matrix_includes_acp_stdio_codex() {
     assert!(SUPPORTED.contains(&("acp-stdio", "codex")));
-    assert!(SUPPORTED_WORKER_DRIVER_HARNESSES.contains(&("acp-stdio", "codex")));
 }
 
 #[test]

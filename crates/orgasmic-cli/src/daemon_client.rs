@@ -175,7 +175,6 @@ pub(crate) struct DispatchRequest {
     last_path: PathBuf,
     stdout_path: PathBuf,
     dispatch_attempt_token: String,
-    worker_id: Option<String>,
     model_override: Option<String>,
     effort_override: Option<String>,
     provider_override: Option<String>,
@@ -197,7 +196,6 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         last_path: plan.last_path.clone(),
         stdout_path: plan.stdout_path.clone(),
         dispatch_attempt_token: plan.dispatch_attempt_token.clone(),
-        worker_id: plan.worker_override.clone(),
         model_override: plan.model_override.clone(),
         effort_override: plan.effort_override.clone(),
         provider_override: None,
@@ -377,7 +375,7 @@ mod tests {
     use crate::test_support::{env_guard, ScopedEnv};
     use orgasmic_core::Home;
 
-    fn sample_plan(worker_override: Option<String>) -> DispatchPlan {
+    fn sample_plan() -> DispatchPlan {
         DispatchPlan {
             project_root: PathBuf::from("/tmp/project"),
             project_id: "orgasmic".into(),
@@ -399,21 +397,19 @@ mod tests {
             goal_id: None,
             reason: None,
             dry_run: false,
-            worker_override,
             governance: None,
         }
     }
 
     #[test]
     fn dispatch_request_carries_mode_harness_and_raw_argv() {
-        let request = build_dispatch_request(&sample_plan(Some("compat-label".into())));
+        let request = build_dispatch_request(&sample_plan());
         assert_eq!(request.mode, "acp-stdio");
         assert_eq!(request.harness, "cursor-agent");
         assert_eq!(
             request.harness_args,
             vec!["--betas".to_string(), "context-1m".to_string()]
         );
-        assert_eq!(request.worker_id.as_deref(), Some("compat-label"));
         assert_eq!(request.branch, "task-1-impl");
         assert_eq!(request.liveness, "abc123");
     }

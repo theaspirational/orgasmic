@@ -1,15 +1,6 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-DZ5NM Remove worker templates and the workers content family (hard cutover)
-:PROPERTIES:
-:DEPENDS_ON: TASK-AFE5Q TASK-QPKCD TASK-SZEWA
-:ID: TASK-DZ5NM
-:IMPLEMENTS: dec_WDR5K
-:END:
-
-Delete shipped/workers, user/workers loading, the workers content-lifecycle family, /content/workers list+validate endpoints, worker CLI inspection paths, and legacy worker aliases. No alias table: old tx records render historical worker ids as plain strings. Daemon warns-and-ignores a leftover user/workers/ directory at startup. Trim term_5SV2N shipped-content definition; retire the worker.persona / worker.operating_rules slots from slots.org. The ~/.orgasmic/user/workers/{implementer,reviewer}-codex-acp.org overrides (gpt-5.6-sol bump, 2026-07-16) simply die with the concept — nothing migrates anywhere: per dec_WDR5K item 9 the codex harness's own config owns the default model.
-
 * BACKLOG TASK-41B0T Design semantic progress detection for worker runs    :design:
 :PROPERTIES:
 :ID: TASK-41B0T

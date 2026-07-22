@@ -34,7 +34,7 @@ use orgasmic_core::{
     project_sessions_dir, read_session_file, resolve_loader, task_file_path, task_file_rel,
     DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
     ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind,
-    SlotValues, Worker, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -234,12 +234,6 @@ pub fn router(state: ApiState) -> Router {
             get(get_run_runtime_options).post(post_run_runtime_options),
         )
         .route("/runs/:id/release", post(post_run_release))
-        .route("/workers", get(get_workers))
-        .route(
-            "/workers/validate",
-            get(get_workers_validate).post(post_workers_validate),
-        )
-        .route("/workers/:id", get(get_worker))
         .route("/prompt-specs", get(get_prompt_specs))
         .route("/prompt-specs/parts", get(get_prompt_parts))
         .route(
@@ -1712,10 +1706,6 @@ async fn get_task_activity(
 #[derive(Debug, Deserialize)]
 pub struct CreateSubtaskRequest {
     pub title: String,
-    /// Worker id to perform the subtask (`:WORKER:`). Omitted → routed to
-    /// the pipeline implementer like any worker-less task.
-    #[serde(default)]
-    pub worker: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -1748,15 +1738,6 @@ async fn post_task_subtask(
         .projects
         .get(&located.project_id)
         .ok_or_else(|| ApiError::not_found(format!("project {}", located.project_id)))?;
-    let worker = req
-        .worker
-        .as_deref()
-        .map(str::trim)
-        .filter(|worker| !worker.is_empty());
-    if let Some(worker) = worker {
-        load_stage_worker(&state.home, worker)
-            .map_err(|_| ApiError::bad_request(format!("unknown worker {worker}")))?;
-    }
     if !project.tasks.iter().any(|task| task.id == parent_id) {
         return Err(ApiError::not_found(format!("parent task {parent_id}")));
     }
@@ -1765,7 +1746,6 @@ async fn post_task_subtask(
         &subtask_id,
         &parent_id,
         &req.title,
-        worker,
         req.description.as_deref(),
     );
     // New subtasks are born BACKLOG, and file membership is canonical state
@@ -1790,13 +1770,7 @@ async fn post_task_subtask(
             target: Some(target_rel.clone()),
             reason: format!("created subtask {subtask_id} under {parent_id}"),
             request_id: req.request_id.clone().map(|id| format!("{id}/tx")),
-            extra: {
-                let mut extra = Vec::new();
-                if let Some(worker) = worker {
-                    extra.push(("WORKER".to_string(), worker.to_string()));
-                }
-                extra
-            },
+            extra: Vec::new(),
         },
     )
     .await?;
@@ -1867,20 +1841,14 @@ fn render_subtask_heading(
     id: &str,
     _parent_id: &str,
     title: &str,
-    worker: Option<&str>,
     description: Option<&str>,
 ) -> String {
     let clean_title = title
         .chars()
         .map(|ch| if ch == '\n' || ch == '\r' { ' ' } else { ch })
         .collect::<String>();
-    let worker_line = worker
-        .map(str::trim)
-        .filter(|worker| !worker.is_empty())
-        .map(|worker| format!(":WORKER:           {worker}\n"))
-        .unwrap_or_default();
     let mut heading = format!(
-        "* BACKLOG {id} {}\n:PROPERTIES:\n:ID:               {id}\n{worker_line}:END:\n",
+        "* BACKLOG {id} {}\n:PROPERTIES:\n:ID:               {id}\n:END:\n",
         clean_title.trim(),
     );
     if let Some(description) = description {
@@ -2075,60 +2043,6 @@ async fn post_tx(
         tx_path: res.tx_path,
         time: time_str,
     }))
-}
-
-async fn get_workers(
-    State(state): State<ApiState>,
-) -> Result<Json<Vec<crate::content::WorkerView>>, ApiError> {
-    content::list_workers(&state.home)
-        .map(Json)
-        .map_err(|e| content_list_error(e, "workers"))
-}
-
-async fn get_worker(
-    State(state): State<ApiState>,
-    Path(id): Path<String>,
-) -> Result<Json<crate::content::WorkerView>, ApiError> {
-    content::load_worker(&state.home, &id)
-        .map(Json)
-        .map_err(|e| content_load_error(e, "worker"))
-}
-
-async fn get_workers_validate(
-    State(state): State<ApiState>,
-) -> Result<Json<Vec<crate::content::WorkerValidationResult>>, ApiError> {
-    let mut results =
-        content::validate_workers(&state.home).map_err(|e| content_list_error(e, "workers"))?;
-    for result in &mut results {
-        validate_worker_driver_config(&state, result);
-    }
-    Ok(Json(results))
-}
-
-#[derive(Debug, Deserialize)]
-struct WorkerValidateRequest {
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    source: Option<String>,
-}
-
-async fn post_workers_validate(
-    State(state): State<ApiState>,
-    Json(req): Json<WorkerValidateRequest>,
-) -> Result<Json<crate::content::WorkerValidationResult>, ApiError> {
-    let id = req.id.as_deref().map(str::trim).filter(|id| !id.is_empty());
-    let mut result = if let Some(source) = req.source {
-        content::validate_worker_source(&state.home, id, source)
-    } else if let Some(id) = id {
-        content::validate_worker_by_id(&state.home, id)
-    } else {
-        return Err(ApiError::bad_request(
-            "worker validation needs id or source",
-        ));
-    };
-    validate_worker_driver_config(&state, &mut result);
-    Ok(Json(result))
 }
 
 async fn get_prompt_specs(
@@ -3125,10 +3039,7 @@ struct StageWorker {
     kind: WorkerKind,
     driver: String,
     harness: String,
-    default_provider: Option<String>,
     linked_skills: Vec<String>,
-    persona: Option<String>,
-    operating_rules: Option<String>,
     missing_skills: Vec<String>,
     babysitter: Option<BabysitterAddress>,
     max_iterations: Option<u32>,
@@ -3155,8 +3066,7 @@ struct CompiledStagePrompt {
 }
 
 /// Build a spawn-time worker view from `(kind, mode, harness)` + governance.
-/// Prompt persona comes from Prompt Studio by kind; worker templates are not
-/// routing authority (dec_WDR5K / TASK-SZEWA).
+/// Prompt content comes from Prompt Studio by kind (dec_WDR5K).
 fn resolve_addressed_stage_worker(
     home: &Home,
     kind: WorkerKind,
@@ -3183,10 +3093,7 @@ fn resolve_addressed_stage_worker(
         kind,
         driver: mode.trim().to_string(),
         harness: harness.trim().to_string(),
-        default_provider: None,
         linked_skills: gov.linked_skills,
-        persona: None,
-        operating_rules: None,
         missing_skills,
         babysitter: gov.babysitter,
         max_iterations: gov.max_iterations,
@@ -3196,138 +3103,6 @@ fn resolve_addressed_stage_worker(
         max_run_duration_secs: gov.max_run_duration_secs,
         sandbox_permissions: gov.sandbox_permissions,
         harness_args,
-    })
-}
-
-fn load_stage_worker(home: &Home, id: &str) -> Result<StageWorker, ApiError> {
-    match content::load_worker(home, id) {
-        Ok(worker) => Ok(stage_worker_from_view(worker)),
-        Err(ContentLoadError::NotFoundByRule { .. }) => {
-            let rel = PathBuf::from("workers").join(format!("{id}.org"));
-            let Some(path) = resolve_stage_content_path(home, &rel) else {
-                tracing::warn!(worker_id = %id, "worker not found");
-                return Err(ApiError::not_found("worker not found"));
-            };
-            load_stage_worker_path(home, &path, id)
-        }
-        Err(loader_error) => Err(content_load_error(loader_error, "worker")),
-    }
-}
-
-fn stage_worker_from_view(worker: crate::content::WorkerView) -> StageWorker {
-    StageWorker {
-        id: worker.id,
-        kind: worker.kind,
-        driver: worker.driver,
-        harness: worker.harness,
-        default_provider: worker.default_provider,
-        linked_skills: worker.linked_skills,
-        persona: worker.persona,
-        operating_rules: worker.operating_rules,
-        missing_skills: worker.missing_skills,
-        babysitter: None,
-        max_iterations: worker.max_iterations,
-        context_budget_chars: worker.context_budget_chars,
-        applicable_states: worker.applicable_states,
-        stall_timeout_secs: worker.stall_timeout_secs,
-        max_run_duration_secs: worker.max_run_duration_secs,
-        sandbox_permissions: worker.sandbox_permissions,
-        harness_args: worker.harness_args,
-    }
-}
-
-fn validate_worker_driver_config(
-    state: &ApiState,
-    result: &mut crate::content::WorkerValidationResult,
-) {
-    if !result.errors.is_empty() {
-        result.ok = false;
-        return;
-    }
-    let Some(worker_view) = result.worker.clone() else {
-        result.ok = false;
-        return;
-    };
-    let worker = stage_worker_from_view(worker_view);
-    let Some(driver) = driver_for_mode_harness(&worker.driver, &worker.harness) else {
-        result
-            .errors
-            .push(crate::content::WorkerValidationDiagnostic {
-                code: "unsupported_driver_harness".to_string(),
-                message: format!(
-                    "unsupported driver/harness pair {}/{}",
-                    worker.driver, worker.harness
-                ),
-            });
-        result.ok = false;
-        return;
-    };
-    let source = state.home.source();
-    let worktree = if source.exists() {
-        source
-    } else {
-        state.home.root.clone()
-    };
-    let driver_config = stage_driver_config_with_overrides(
-        &worker,
-        &worktree,
-        &worktree,
-        "",
-        DriverOverrides::default(),
-        None,
-        &state.driver_defaults,
-        state.tmux_input_ready_timeout_secs,
-    );
-    if let Err(error) = driver.validate(&driver_config) {
-        result
-            .errors
-            .push(crate::content::WorkerValidationDiagnostic {
-                code: "driver_config".to_string(),
-                message: format!("driver configuration is invalid: {error}"),
-            });
-        result.ok = false;
-    }
-}
-
-fn load_stage_worker_path(home: &Home, path: &FsPath, id: &str) -> Result<StageWorker, ApiError> {
-    let source = read_artifact(path, "worker")?;
-    let file = OrgFile::parse(source, path.to_string_lossy())
-        .map_err(|e| org_parse_internal(path, "worker", e))?;
-    let worker = Worker::from_org(&file, path.to_string_lossy().as_ref()).map_err(|e| {
-        tracing::error!(path = %path.display(), error = %e, worker_id = %id, "worker schema validation failed");
-        ApiError::internal("failed to parse worker")
-    })?;
-    let linked_skills = worker
-        .linked_skills
-        .iter()
-        .map(|skill| (*skill).to_string())
-        .collect::<Vec<_>>();
-    let missing_skills = linked_skills
-        .iter()
-        .filter(|skill| {
-            resolve_stage_content_path(home, &PathBuf::from("skills").join(format!("{skill}.org")))
-                .is_none()
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    Ok(StageWorker {
-        id: worker.id.to_string(),
-        kind: worker.kind,
-        driver: worker.driver.to_string(),
-        harness: worker.harness.to_string(),
-        default_provider: worker.default_provider,
-        linked_skills,
-        persona: worker.persona,
-        operating_rules: worker.operating_rules,
-        missing_skills,
-        babysitter: None,
-        max_iterations: worker.max_iterations,
-        context_budget_chars: worker.context_budget_chars,
-        applicable_states: worker.applicable_states,
-        harness_args: worker.harness_args.clone(),
-        stall_timeout_secs: worker.stall_timeout_secs,
-        max_run_duration_secs: worker.max_run_duration_secs,
-        sandbox_permissions: worker.sandbox_permissions.clone(),
     })
 }
 
@@ -3415,16 +3190,6 @@ fn fill_stage_slot_values(
     );
     insert_slot(values, "worker.id", worker.id.clone());
     insert_slot(values, "worker.kind", spec.prompt_kind.to_string());
-    insert_slot(
-        values,
-        "worker.persona",
-        worker.persona.clone().unwrap_or_default(),
-    );
-    insert_slot(
-        values,
-        "worker.operating_rules",
-        worker.operating_rules.clone().unwrap_or_default(),
-    );
     insert_slot(values, "skills.all", skills_manifest(&state.home)?);
     insert_slot(values, "run.id", "pending".to_string());
     insert_slot(values, "run.iteration_count", "0".to_string());
@@ -3610,14 +3375,6 @@ fn hydrate_dispatch_worker_slots(
 ) {
     values.insert("worker.id".to_string(), worker.id.clone());
     values.insert("worker.kind".to_string(), kind.as_str().to_string());
-    values.insert(
-        "worker.persona".to_string(),
-        worker.persona.clone().unwrap_or_default(),
-    );
-    values.insert(
-        "worker.operating_rules".to_string(),
-        worker.operating_rules.clone().unwrap_or_default(),
-    );
 }
 
 #[derive(Default)]
@@ -3793,9 +3550,7 @@ fn stage_driver_config_with_overrides(
     } else {
         ""
     };
-    let provider = overrides
-        .provider
-        .or_else(|| worker.default_provider.clone());
+    let provider = overrides.provider;
     let model = overrides.model;
     let effort = overrides.effort;
     let reasoning_effort = effort.clone();
@@ -3874,9 +3629,7 @@ fn apply_driver_defaults(
     config
 }
 
-/// Compose a self-contained prompt from a worker's persona and operating rules,
-/// for workers (like the babysitter) that are spawned without compiling a
-/// prompt-spec.
+/// Compile the babysitter prompt fully from Prompt Studio.
 #[allow(clippy::too_many_arguments)]
 fn build_babysitter_auto_spawn(
     home: &Home,
@@ -3923,10 +3676,7 @@ fn build_babysitter_auto_spawn(
         kind: WorkerKind::Babysitter,
         driver: address.mode.trim().to_string(),
         harness: address.harness.trim().to_string(),
-        default_provider: None,
         linked_skills: gov.linked_skills,
-        persona: None,
-        operating_rules: None,
         missing_skills,
         babysitter: None,
         max_iterations: gov.max_iterations,
@@ -4041,11 +3791,8 @@ struct DispatchRequest {
     pub worktree_path: PathBuf,
     pub last_path: PathBuf,
     pub stdout_path: PathBuf,
-    /// Compatibility label only — not routing authority. Prefer omitting.
     #[serde(default)]
     pub dispatch_attempt_token: Option<String>,
-    #[serde(default)]
-    pub worker_id: Option<String>,
     #[serde(default)]
     pub model_override: Option<String>,
     #[serde(default)]
@@ -4127,7 +3874,7 @@ impl FromStr for DispatchEndpointKind {
 struct SpawnWorkerRequest<'a> {
     project_id: &'a str,
     task_id: &'a str,
-    worker_id: &'a str,
+    worker: StageWorker,
     run_kind: RunKind,
     bundle: &'a str,
     overrides: DriverOverrides,
@@ -4142,8 +3889,6 @@ struct SpawnWorkerRequest<'a> {
     origin: &'static str,
     /// Session-path fragment for CLI dispatch (`implementer` / `reviewer`).
     dispatch_kind: Option<&'a str>,
-    /// When set, skips a second org read for the same worker id in one request.
-    preloaded_worker: Option<StageWorker>,
     /// Task-heading sandbox override, when known for this spawn.
     task_sandbox_permissions: Option<SandboxAllowlist>,
     /// Per-dispatch governance override (babysitter resolution + limits).
@@ -4166,15 +3911,7 @@ async fn spawn_worker_run(
     req: SpawnWorkerRequest<'_>,
 ) -> Result<SpawnWorkerResult, SpawnWorkerFailure> {
     crate::supervisor::record_spawn_pipeline_poll();
-    let worker = match req.preloaded_worker {
-        Some(worker) => worker,
-        None => match load_stage_worker(&state.home, req.worker_id) {
-            Ok(worker) => worker,
-            Err(error) => {
-                return Err(SpawnWorkerFailure { error });
-            }
-        },
-    };
+    let worker = req.worker;
     if let Some(skill) = worker.missing_skills.first() {
         return Err(SpawnWorkerFailure {
             error: ApiError::bad_request(format!("unresolved slot skills.{skill}")),
@@ -4362,16 +4099,6 @@ async fn post_task_dispatch(
         &state.dispatch_governance,
         req.governance.as_ref(),
     )?;
-    // Optional compatibility label from the client; never used for routing.
-    let worker_id = req
-        .worker_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| worker_for_bundle.id.clone());
-    let mut worker_for_bundle = worker_for_bundle;
-    worker_for_bundle.id = worker_id.clone();
     if let Some(skill) = worker_for_bundle.missing_skills.first() {
         return Err(ApiError::bad_request(format!(
             "unresolved slot skills.{skill}"
@@ -4399,7 +4126,7 @@ async fn post_task_dispatch(
         SpawnWorkerRequest {
             project_id: &project_id,
             task_id: &task_id,
-            worker_id: &worker_id,
+            worker: worker_for_bundle,
             run_kind: kind.run_kind(),
             bundle: &bundle,
             overrides,
@@ -4410,7 +4137,6 @@ async fn post_task_dispatch(
             dispatch_attempt_token: req.dispatch_attempt_token.as_deref(),
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
-            preloaded_worker: Some(worker_for_bundle),
             task_sandbox_permissions,
             dispatch_governance: req.governance.clone(),
         },
@@ -13237,8 +12963,6 @@ async fn launch_artifact_generation(
         worker.context_budget_chars,
         "artifact prompt",
     )?;
-    let worker_id = worker.id.clone();
-
     let task_id = format!("artifact.generate:{art_id}");
     let launch_model = verbatim_optional(address.model.clone());
     let launch_effort = verbatim_optional(address.effort.clone());
@@ -13247,7 +12971,7 @@ async fn launch_artifact_generation(
         SpawnWorkerRequest {
             project_id: &entry.id,
             task_id: &task_id,
-            worker_id: &worker_id,
+            worker,
             run_kind: RunKind::Worker,
             bundle: &bundle,
             overrides: DriverOverrides {
@@ -13262,7 +12986,6 @@ async fn launch_artifact_generation(
             dispatch_attempt_token: None,
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
-            preloaded_worker: Some(worker),
             task_sandbox_permissions: None,
             dispatch_governance: governance.cloned(),
         },
@@ -14196,10 +13919,7 @@ mod tests {
             kind,
             driver: "subprocess-stream-json".to_string(),
             harness: renderer.to_string(),
-            default_provider: None,
             linked_skills: Vec::new(),
-            persona: None,
-            operating_rules: None,
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
@@ -14289,7 +14009,6 @@ mod tests {
             owner: TaskOwner::Human,
             run_id: None,
             priority: Some("P1".to_string()),
-            worker: None,
             provider: None,
             model: None,
             reasoning_effort: None,
@@ -14403,7 +14122,6 @@ mod tests {
             owner: TaskOwner::Human,
             run_id: None,
             priority: None,
-            worker: None,
             provider: None,
             model: None,
             reasoning_effort: None,
@@ -14541,16 +14259,16 @@ mod tests {
 
     #[test]
     fn content_load_not_found_on_disk_maps_to_404() {
-        let path = PathBuf::from("/tmp/orgasmic-race/workers/racy.org");
+        let path = PathBuf::from("/tmp/orgasmic-race/skills/racy.org");
         let error = ContentLoadError::NotFoundOnDisk {
             path,
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "gone"),
         };
 
-        let api_error = content_load_error(error, "worker");
+        let api_error = content_load_error(error, "skill");
 
         assert_eq!(api_error.status, StatusCode::NOT_FOUND);
-        assert_eq!(api_error.message, "worker not found");
+        assert_eq!(api_error.message, "skill not found");
     }
 
     #[test]
@@ -18197,7 +17915,6 @@ mod tests {
             owner: crate::index::TaskOwner::Human,
             run_id: None,
             priority: None,
-            worker: None,
             provider: None,
             model: None,
             reasoning_effort: None,
@@ -18320,10 +18037,7 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "subprocess-stream-json".to_string(),
             harness: "cursor-agent".to_string(),
-            default_provider: None,
             linked_skills: Vec::new(),
-            persona: None,
-            operating_rules: None,
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
@@ -18494,7 +18208,6 @@ mod tests {
             owner: TaskOwner::Human,
             run_id: None,
             priority: None,
-            worker: None,
             provider: None,
             model: None,
             reasoning_effort: None,
@@ -18516,7 +18229,6 @@ mod tests {
             owner: TaskOwner::Human,
             run_id: None,
             priority: None,
-            worker: None,
             provider: None,
             model: None,
             reasoning_effort: None,
@@ -18562,10 +18274,7 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "acp-ws".to_string(),
             harness: "codex".to_string(),
-            default_provider: None,
             linked_skills: Vec::new(),
-            persona: None,
-            operating_rules: None,
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
@@ -18600,10 +18309,7 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "subprocess-stream-json".to_string(),
             harness: "cursor-agent".to_string(),
-            default_provider: Some("cursor".to_string()),
             linked_skills: Vec::new(),
-            persona: None,
-            operating_rules: None,
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
@@ -18646,10 +18352,7 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "acp-ws".to_string(),
             harness: "hermes".to_string(),
-            default_provider: None,
             linked_skills: Vec::new(),
-            persona: None,
-            operating_rules: None,
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
@@ -18734,10 +18437,7 @@ mod tests {
             kind: WorkerKind::Implementer,
             driver: "acp-stdio".to_string(),
             harness: "codex".to_string(),
-            default_provider: None,
             linked_skills: Vec::new(),
-            persona: None,
-            operating_rules: None,
             missing_skills: Vec::new(),
             babysitter: None,
             max_iterations: None,
@@ -22315,10 +22015,6 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
         std::fs::remove_file(home.bin().join("claude")).ok();
-        write(
-            home.user().join("workers/implementer-claude-acp.org"),
-            "* WORKER implementer-claude-acp\n:PROPERTIES:\n:ID:                          implementer-claude-acp\n:KIND:                        implementer\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-20250514\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-20250514\n:DEFAULT_EFFORT:              high\n:VERSION:                     1\n:END:\n\n** Persona\nTest worker.\n",
-        );
         write_failed_recoverable_session(
             &project_root,
             "run-path-shim-recover",
@@ -22427,10 +22123,6 @@ mod tests {
         let argv_log = tmp.path().join("chain-argv.log");
         let counter = tmp.path().join("chain-counter");
         seed_two_recovery_claude(&user_home, &argv_log, &counter, &projects_dir, &cwd);
-        write(
-            home.user().join("workers/implementer-claude-acp.org"),
-            "* WORKER implementer-claude-acp\n:PROPERTIES:\n:ID:                          implementer-claude-acp\n:KIND:                        implementer\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-20250514\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-20250514\n:DEFAULT_EFFORT:              high\n:VERSION:                     1\n:END:\n\n** Persona\nTest worker.\n",
-        );
         write_failed_recoverable_session(
             &project_root,
             "run-chain-origin",
@@ -22525,10 +22217,6 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
-        write(
-            home.user().join("workers/implementer-claude-acp.org"),
-            "* WORKER implementer-claude-acp\n:PROPERTIES:\n:ID:                          implementer-claude-acp\n:KIND:                        implementer\n:DRIVER:                      tmux\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:MODELS:                      claude-sonnet-4-20250514\n:DEFAULT_PROVIDER:            anthropic\n:DEFAULT_MODEL:               claude-sonnet-4-20250514\n:DEFAULT_EFFORT:              high\n:VERSION:                     1\n:END:\n\n** Persona\nTest worker.\n",
-        );
         write_failed_recoverable_session(
             &project_root,
             "run-native-resume-idle",
@@ -23923,12 +23611,11 @@ mod tests {
 
     // ── artifact generation launch (TASK-2ZQSB acceptance) ───────────────────
 
-    /// Overrides the shipped `artifactor` worker with an rmux/custom pairing
-    /// for tests: a minimal interactive harness script that stays live and
-    /// accepts `send_input` followups (hot-session regenerate path). Skips
-    /// when rmux is unavailable — same pattern as orgasmic-drivers rmux live
-    /// tests.
-    fn seed_test_artifactor_worker(home: &Home) {
+    /// Creates the explicit custom-harness address used by artifact tests: a
+    /// minimal interactive script that stays live and accepts `send_input`
+    /// followups (hot-session regenerate path). Skips when rmux is unavailable
+    /// — same pattern as orgasmic-drivers rmux live tests.
+    fn seed_test_artifactor_harness(home: &Home) -> Vec<String> {
         let harness = home.user().join("artifactor-test-harness.sh");
         write(
             harness.clone(),
@@ -23941,20 +23628,16 @@ mod tests {
             perms.set_mode(0o755);
             std::fs::set_permissions(&harness, perms).unwrap();
         }
-        let harness_path = harness.display();
-        let worker_org = format!(
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Notes\nTest override (TASK-RH4M5 hot-session).\n"
-        );
-        write(home.user().join("workers/artifactor.org"), &worker_org);
+        vec![harness.display().to_string()]
     }
 
     fn rmux_available_for_test() -> bool {
         orgasmic_drivers::modes::rmux::probe_rmux_binary().found
     }
 
-    /// Like `seed_test_artifactor_worker` but the harness sleeps before showing
+    /// Like `seed_test_artifactor_harness` but the harness sleeps before showing
     /// its composer prompt so an immediate followup hits the busy gate.
-    fn seed_busy_harness_artifactor_worker(home: &Home) {
+    fn seed_busy_artifactor_harness(home: &Home) -> Vec<String> {
         let harness = home.user().join("artifactor-busy-harness.sh");
         write(
             harness.clone(),
@@ -23967,11 +23650,7 @@ mod tests {
             perms.set_mode(0o755);
             std::fs::set_permissions(&harness, perms).unwrap();
         }
-        let harness_path = harness.display();
-        let worker_org = format!(
-            "* WORKER artifactor\n:PROPERTIES:\n:ID:                          artifactor\n:KIND:                        artifactor\n:DRIVER:                      rmux\n:HARNESS:                     custom\n:HARNESS_ARGS:                {harness_path}\n:PROVIDERS:                   anthropic\n:VERSION:                     1\n:END:\n"
-        );
-        write(home.user().join("workers/artifactor.org"), &worker_org);
+        vec![harness.display().to_string()]
     }
 
     #[test]
@@ -24241,7 +23920,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let resp = post_artifact_generate(
@@ -24252,7 +23931,8 @@ mod tests {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "Draft a wireframe for the login flow".to_string(),
                 mode: "rmux".into(),
-                harness: "claude".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24298,7 +23978,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let resp = post_artifact_generate(
@@ -24309,7 +23989,8 @@ mod tests {
                 nodes: vec![],
                 prompt: "Grill this idea before any decision exists".to_string(),
                 mode: "rmux".into(),
-                harness: "claude".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24360,7 +24041,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let attached_id = "ART-ATTCH";
@@ -24415,7 +24096,8 @@ mod tests {
                 nodes: vec![],
                 prompt: "Prompt-only artifact".to_string(),
                 mode: "rmux".into(),
-                harness: "claude".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24461,7 +24143,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-NDES0";
@@ -24490,7 +24172,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("tighten the prose".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24521,7 +24204,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-HTSS1";
@@ -24564,7 +24247,13 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first pass".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
+                governance: Some(GovernancePatch {
+                    stall_timeout_secs: Some(120),
+                    max_run_duration_secs: Some(120),
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
         )
@@ -24623,7 +24312,8 @@ mod tests {
                     Json(ArtifactRegenerateRequest {
                         extra_prompt: Some("second pass".into()),
                         mode: Some("rmux".into()),
-                        harness: Some("claude".into()),
+                        harness: Some("custom".into()),
+                        harness_args: harness_args.clone(),
                         ..Default::default()
                     }),
                 )
@@ -24722,7 +24412,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_busy_harness_artifactor_worker(&home);
+        let harness_args = seed_busy_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-BSYH1";
@@ -24764,7 +24454,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first pass".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24815,7 +24506,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("too soon".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24879,7 +24571,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-CDRS1";
@@ -24921,7 +24613,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first round".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -24975,7 +24668,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("post-restart".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -25013,7 +24707,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-RE2S1";
@@ -25049,8 +24743,8 @@ mod tests {
 
         let saved = ArtifactLaunchAddress {
             mode: "rmux".into(),
-            harness: "claude".into(),
-            harness_args: vec![],
+            harness: "custom".into(),
+            harness_args: harness_args.clone(),
             model: Some("saved-model".into()),
             effort: Some("high".into()),
         };
@@ -25063,6 +24757,7 @@ mod tests {
                 extra_prompt: Some("first round".into()),
                 mode: Some(saved.mode.clone()),
                 harness: Some(saved.harness.clone()),
+                harness_args: saved.harness_args.clone(),
                 model: saved.model.clone(),
                 effort: saved.effort.clone(),
                 ..Default::default()
@@ -25119,7 +24814,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-RE2P1";
@@ -25161,7 +24856,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("first round".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 model: Some("old-model".into()),
                 effort: Some("high".into()),
                 ..Default::default()
@@ -25212,8 +24908,8 @@ mod tests {
 
         let replacement = ArtifactLaunchAddress {
             mode: "rmux".into(),
-            harness: "claude".into(),
-            harness_args: vec![],
+            harness: "custom".into(),
+            harness_args: harness_args.clone(),
             model: Some("new-model".into()),
             effort: None,
         };
@@ -25226,6 +24922,7 @@ mod tests {
                 extra_prompt: Some("replace whole launch record".into()),
                 mode: Some(replacement.mode.clone()),
                 harness: Some(replacement.harness.clone()),
+                harness_args: replacement.harness_args.clone(),
                 model: replacement.model.clone(),
                 effort: replacement.effort.clone(),
                 ..Default::default()
@@ -25267,7 +24964,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-FA1M1";
@@ -25316,7 +25013,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("should fail to persist".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -25347,7 +25045,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let art_id = "ART-RVRT2";
@@ -25389,7 +25087,8 @@ mod tests {
             Json(ArtifactRegenerateRequest {
                 extra_prompt: Some("round 2".into()),
                 mode: Some("rmux".into()),
-                harness: Some("claude".into()),
+                harness: Some("custom".into()),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )
@@ -25512,7 +25211,7 @@ mod tests {
         home.ensure().unwrap();
         let project_root = tmp.path().join("myproject");
         seed_project(&home, &project_root, "test-proj");
-        seed_test_artifactor_worker(&home);
+        let harness_args = seed_test_artifactor_harness(&home);
         let state = direct_stage_test_state(home.clone()).await;
 
         let resp = post_artifact_generate(
@@ -25523,7 +25222,8 @@ mod tests {
                 nodes: vec!["TASK-PRE".to_string()],
                 prompt: "test".to_string(),
                 mode: "rmux".into(),
-                harness: "claude".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
                 ..Default::default()
             }),
         )

@@ -439,7 +439,7 @@
 :PROPERTIES:
 :AVOID: templates, assets
 :CANONICAL: shipped content
-:DEFINITION: The read-only instruction and schema tree distributed with the runtime (shipped/): prompt specs, conventions, workers, schemas, scaffold templates. Loaded by loader rules; never edited per-project.
+:DEFINITION: The read-only instruction and schema tree distributed with the runtime (shipped/): prompt specs, conventions, schemas, and scaffold templates. Loaded by loader rules; never edited per-project.
 :ID: term_5SV2N
 :RELATES_TO: term_WQMJJ term_DVSS2
 :END:
@@ -448,7 +448,7 @@
 :PROPERTIES:
 :AVOID: settings, config (config.yaml is daemon config, not content)
 :CANONICAL: user overrides
-:DEFINITION: Per-user content under the orgasmic home (user/) that loader rules prefer over shipped content, letting an operator customize prompts, workers, or conventions without forking the runtime tree.
+:DEFINITION: Per-user content under the orgasmic home (user/) that loader rules prefer over shipped content, letting an operator customize prompts, skills, or conventions without forking the runtime tree.
 :ID: term_W0T9S
 :RELATES_TO: term_WQMJJ term_CJ2R4
 :END:

@@ -458,10 +458,6 @@ fn compile_values(view: &PromptSpecView, req: &PromptCompileRequest) -> SlotValu
     values
         .entry("worker.kind".to_string())
         .or_insert_with(|| view.kind.clone());
-    values.entry("worker.persona".to_string()).or_default();
-    values
-        .entry("worker.operating_rules".to_string())
-        .or_default();
     values.entry("project.id".to_string()).or_insert_with(|| {
         req.project
             .clone()
@@ -688,41 +684,8 @@ fn render_prompt_template(
     out
 }
 
-fn render_context_pack(home: &Home, pack: &LoadedContextPack, values: &SlotValues) -> String {
+fn render_context_pack(_home: &Home, pack: &LoadedContextPack, values: &SlotValues) -> String {
     let render_policy = pack.view.render_policy.as_deref().unwrap_or("reference");
-    if pack.view.id == "skills_workers" {
-        if !matches!(render_policy, "include-full" | "include-truncated") {
-            let worker_count = content::list_workers(home)
-                .map(|workers| workers.len())
-                .unwrap_or_default();
-            let skill_count = content::list_skills(home)
-                .map(|skills| skills.len())
-                .unwrap_or_default();
-            return format!(
-                "{}\n\nWorkers: {worker_count} available.\nSkills: {skill_count} available.\nLookup: use worker/skill APIs or loader files only when the selected role needs a specific entry.",
-                pack.body.trim()
-            );
-        }
-        let workers = content::list_workers(home)
-            .map(|workers| {
-                workers
-                    .into_iter()
-                    .map(|w| format!("- {} ({:?}, {}/{})", w.id, w.kind, w.driver, w.harness))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_else(|error| format!("worker catalog unavailable: {error}"));
-        let skills = content::list_skills(home)
-            .map(|skills| {
-                skills
-                    .into_iter()
-                    .map(|s| format!("- {}: {}", s.id, s.description.unwrap_or_default()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_else(|error| format!("skill catalog unavailable: {error}"));
-        return format!("Workers:\n{workers}\n\nSkills:\n{skills}");
-    }
 
     if pack.view.id == "tx_session_telemetry" {
         let project_path = values.get("project.path").map(String::as_str).unwrap_or("");
@@ -829,12 +792,6 @@ fn hydrate_dynamic_slots(
 ) -> PromptResult<()> {
     if !values.contains_key("skills.all") {
         values.insert("skills.all".to_string(), build_skill_manifest(home)?);
-    }
-    if !values.contains_key("worker.persona") {
-        values.insert("worker.persona".to_string(), String::new());
-    }
-    if !values.contains_key("worker.operating_rules") {
-        values.insert("worker.operating_rules".to_string(), String::new());
     }
     if values
         .get("project.path")

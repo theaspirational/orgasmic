@@ -20231,3 +20231,119 @@
 :FROM_STATE:   todo
 :TO_STATE:     in_progress
 :END:
+
+* TX 2026-07-22 Wed 12:56:50 task.state_transitioned TASK-K05MX
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2385
+:TIME:         [2026-07-22 Wed 12:56:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-K05MX
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged SZEWA stack verified; code gates green; local real-rmux probe blocked by cursor-agent exit 139 (SecItemCopyMatching -50)
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 12:56:51 task.state_transitioned TASK-VQNZ9
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2386
+:TIME:         [2026-07-22 Wed 12:56:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VQNZ9
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged SZEWA stack verified; code gates green; local real-rmux probe blocked by cursor-agent exit 139 (SecItemCopyMatching -50)
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 12:56:52 task.state_transitioned TASK-0SVR3
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2387
+:TIME:         [2026-07-22 Wed 12:56:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0SVR3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged SZEWA stack verified; code gates green; local real-rmux probe blocked by cursor-agent exit 139 (SecItemCopyMatching -50)
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 12:56:52 task.state_transitioned TASK-SZEWA
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2388
+:TIME:         [2026-07-22 Wed 12:56:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SZEWA
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged SZEWA stack verified; code gates green; local real-rmux probe blocked by cursor-agent exit 139 (SecItemCopyMatching -50)
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-22 Wed 12:57:19 task.state_transitioned TASK-DZ5NM
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2389
+:TIME:         [2026-07-22 Wed 12:57:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DZ5NM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       SZEWA merged and reconciled; begin worker-content hard cutover solo
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-22 Wed 13:11:33 graph.glossary.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2390
+:TIME:         [2026-07-22 Wed 13:11:33]
+:TYPE:         graph.glossary.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/glossary.org
+:REASON:       edited glossary node term_5SV2N
+:NODE_ID:      term_5SV2N
+:END:
+
+* TX 2026-07-22 Wed 13:11:33 graph.glossary.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2391
+:TIME:         [2026-07-22 Wed 13:11:33]
+:TYPE:         graph.glossary.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/glossary.org
+:REASON:       edited glossary node term_W0T9S
+:NODE_ID:      term_W0T9S
+:END:
+
+* TX 2026-07-22 Wed 13:37:21 task.state_transitioned TASK-DZ5NM
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2392
+:TIME:         [2026-07-22 Wed 13:37:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DZ5NM
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Hard cutover complete: deleted worker templates/content APIs/CLI aliases and retired persona/rules slots; dispatch now uses explicit kind+mode+harness addresses, leftover user/workers is warned-and-ignored. Verified core 127+26, CLI package, daemon integration 59, daemon lib 472/474 plus both load-sensitive cases individually after hardening, workspace check, strict clippy, UI tests/build.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:

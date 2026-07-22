@@ -6,26 +6,6 @@ export type BoardEntry = {
   status: string;
 };
 
-export type WorkerSummary = {
-  id: string;
-  kind: string;
-  driver: string;
-  harness: string;
-};
-
-export type WorkerValidationDiagnostic = {
-  code: string;
-  message: string;
-};
-
-export type WorkerValidationResult = {
-  id?: string | null;
-  source_path?: string | null;
-  ok: boolean;
-  errors: WorkerValidationDiagnostic[];
-  worker?: WorkerSummary | null;
-};
-
 export type SkillSummary = {
   id: string;
   title: string;
@@ -150,7 +130,6 @@ export type TaskSummary = {
   owner: TaskOwner;
   run_id?: string | null;
   priority?: string | null;
-  worker?: string | null;
   blocked_by?: string[] | string | null;
   tags: string[];
   last_updated?: string | null;
@@ -199,7 +178,6 @@ export type TaskCommentRequest = {
 
 export type TaskSubtaskRequest = {
   title: string;
-  worker?: string | null;
   description?: string | null;
 };
 

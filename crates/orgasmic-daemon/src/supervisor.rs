@@ -34,9 +34,8 @@ use std::time::Duration;
 
 use chrono::Utc;
 use orgasmic_core::{
-    compute_all, compute_eligibility, read_session_file, BabysitterSummaryChunk, BabysitterTool,
-    DriverEvent, Lifecycle, ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
-    TaskConstraints, Worker, WorkerEligibility,
+    read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,
+    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
 };
 use orgasmic_drivers::{
     driver_for_mode_harness, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
@@ -644,22 +643,6 @@ impl GitDiffSummarizer {
             _ => String::new(),
         }
     }
-}
-
-pub fn find_eligible_workers(
-    task: &TaskConstraints<'_>,
-    workers: &[Worker<'_>],
-) -> Vec<WorkerEligibility> {
-    compute_all(task, workers)
-}
-
-pub fn auto_select_worker<'a>(
-    task: &TaskConstraints<'_>,
-    workers: &'a [Worker<'a>],
-) -> Option<&'a Worker<'a>> {
-    workers
-        .iter()
-        .find(|worker| compute_eligibility(task, worker).eligible)
 }
 
 impl Supervisor {
@@ -4110,7 +4093,7 @@ mod tests {
     use crate::events::EventBus;
     use crate::writer::spawn as spawn_writer;
     use orgasmic_core::session::TextStream;
-    use orgasmic_core::{read_session_file, SessionEnvelope, WorkerKind};
+    use orgasmic_core::{read_session_file, SessionEnvelope};
     use orgasmic_drivers::{
         modes::tmux, BabysitterAck, BabysitterRequest, DriverError, DriverSession, TmuxTuiDriver,
         TransitionAck, UserInputAck,
@@ -6080,36 +6063,6 @@ mod tests {
         read_session_file(path).unwrap_or_default()
     }
 
-    fn eligibility_task() -> TaskConstraints<'static> {
-        TaskConstraints {
-            kind: WorkerKind::Implementer,
-            provider: None,
-        }
-    }
-
-    fn eligibility_worker(id: &'static str) -> Worker<'static> {
-        Worker {
-            id,
-            kind: WorkerKind::Implementer,
-            driver: "tmux",
-            harness: "codex",
-            providers: vec!["openai".to_string()],
-            default_provider: Some("openai".to_string()),
-            linked_skills: Vec::new(),
-            applicable_states: Vec::new(),
-            max_iterations: None,
-            context_budget_chars: None,
-            stall_timeout_secs: None,
-            max_run_duration_secs: None,
-            babysitter_worker: None,
-            sandbox_permissions: None,
-            harness_args: Vec::new(),
-            version: None,
-            persona: None,
-            operating_rules: None,
-        }
-    }
-
     fn assert_ownership_mismatch(
         err: SupervisorError,
         field: &'static str,
@@ -6191,26 +6144,6 @@ mod tests {
         ];
 
         assert!(session_is_early_exit_no_work(&envelopes));
-    }
-
-    #[test]
-    fn auto_select_worker_returns_none_when_no_eligible() {
-        let mut task = eligibility_task();
-        task.provider = Some("anthropic");
-        let workers = vec![eligibility_worker("w1")];
-
-        let selected = auto_select_worker(&task, &workers);
-
-        assert!(selected.is_none());
-    }
-
-    #[test]
-    fn auto_select_worker_picks_first_eligible_in_input_order() {
-        let workers = vec![eligibility_worker("w1"), eligibility_worker("w2")];
-
-        let selected = auto_select_worker(&eligibility_task(), &workers).unwrap();
-
-        assert_eq!(selected.id, "w1");
     }
 
     #[tokio::test]
@@ -8355,18 +8288,14 @@ mod tests {
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let agent = bin.join("cursor-agent");
-        let script = "#!/bin/bash\nsleep 300 &\nexec -a worker-server sleep 300 &\nsleep 3600\n";
+        let ready = tmp.path().join("children-ready");
+        let script = format!(
+            "#!/bin/bash\nsleep 300 &\nexec -a worker-server sleep 300 &\ntouch {}\nsleep 3600\n",
+            ready.display()
+        );
         std::fs::write(&agent, script).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let previous_path = std::env::var_os("PATH");
-        let bin_str = bin.display().to_string();
-        let new_path = match previous_path.as_ref() {
-            Some(path) => format!("{bin_str}:{}", path.to_string_lossy()),
-            None => bin_str,
-        };
-        std::env::set_var("PATH", &new_path);
-
         // Put the wrapper in its own process group and null its stdio so the
         // backgrounded `sleep` children it spawns neither inherit the test
         // runner's stdout/stderr (which would hold a piped `cargo test | tail`
@@ -8381,7 +8310,14 @@ mod tests {
             .spawn()
             .expect("spawn fake cursor-agent");
         let wrapper_pid = wrapper.id();
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        let ready_deadline = Instant::now() + Duration::from_secs(30);
+        while !ready.exists() {
+            assert!(
+                Instant::now() < ready_deadline,
+                "fake cursor-agent did not start children"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
 
         let resolved = resolve_dispatch_watch_pid(Some(wrapper_pid))
             .await
@@ -8405,10 +8341,6 @@ mod tests {
             .status();
         let _ = wrapper.kill();
         let _ = wrapper.wait();
-        match previous_path {
-            Some(path) => std::env::set_var("PATH", path),
-            None => std::env::remove_var("PATH"),
-        }
     }
 
     #[cfg(unix)]

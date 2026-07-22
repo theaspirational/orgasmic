@@ -6,7 +6,6 @@
 :ID:               TASK-C9V29
 :STATE:            backlog
 :PRIORITY:         P1
-:WORKER:           griller
 :WRITE_SCOPE:      .orgasmic/tx/**
 :READ_SCOPE:       .orgasmic/**
 :DEPENDS_ON:
@@ -50,7 +49,6 @@ is complete.
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WORKER:           griller
 :WRITE_SCOPE:      .orgasmic/project.org .orgasmic/tx/**
 :READ_SCOPE:       README* readme* docs/** Cargo.toml package.json pyproject.toml go.mod .orgasmic/project.org
 :DEPENDS_ON:
@@ -90,7 +88,6 @@ repo-specific verification and branch notes there or in conventions as prose.
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WORKER:           griller
 :WRITE_SCOPE:      .orgasmic/decisions.org .orgasmic/glossary.org .orgasmic/tx/**
 :READ_SCOPE:       .orgasmic/project.org README* docs/** src/** crates/** lib/**
 :DEPENDS_ON:       TASK-C9V29.1
@@ -133,7 +130,6 @@ new domain terms you rely on into `.orgasmic/glossary.org`.
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WORKER:           architector
 :WRITE_SCOPE:      .orgasmic/architecture.org .orgasmic/tx/**
 :READ_SCOPE:       .orgasmic/decisions.org .orgasmic/project.org .orgasmic/glossary.org src/** crates/** lib/** docs/**
 :DEPENDS_ON:       TASK-C9V29.2
@@ -171,7 +167,6 @@ faithful map of what exists over an aspirational one.
 :STATE:            backlog
 :PARENT_TASK:      TASK-C9V29
 :PRIORITY:         P1
-:WORKER:           griller
 :WRITE_SCOPE:      .orgasmic/project.org .orgasmic/decisions.org .orgasmic/gotchas.org .orgasmic/conventions/** .orgasmic/tmp/local_instructions.org CLAUDE.md AGENTS.md .orgasmic/tx/**
 :READ_SCOPE:       CLAUDE.md AGENTS.md .cursorrules .cursor/** .github/copilot-instructions.md CONTRIBUTING.md docs/** .orgasmic/**
 :DEPENDS_ON:       TASK-C9V29.3

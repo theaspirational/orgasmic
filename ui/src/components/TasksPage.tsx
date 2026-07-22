@@ -664,18 +664,11 @@ function TaskMetaChips({
 }: {
   task: TaskSummary;
   hideOnSmall?: boolean;
-  // When a live run exists, worker and owner collapse into the performer pill
+  // When a live run exists, owner collapses into the performer pill
   // (rendered by TaskAgentBadges). Only the parent-task chip stays here.
   hasLiveRun?: boolean;
 }) {
   const items: ReactElement[] = [];
-  if (!hasLiveRun && task.worker) {
-    items.push(
-      <Badge key="worker" variant="outline" className="font-mono text-[10px]">
-        {task.worker}
-      </Badge>,
-    );
-  }
   if (task.parent_task) {
     items.push(
       <Badge key="parent" variant="outline" className="gap-1 font-mono text-[10px]">

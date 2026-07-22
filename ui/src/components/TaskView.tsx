@@ -30,7 +30,6 @@ export function TaskView({
         </header>
         <KeyValue label="Title" value={task.data?.title} />
         <KeyValue label="Priority" value={task.data?.priority} />
-        <KeyValue label="Worker" value={task.data?.worker} />
         <KeyValue label="Source file" value={task.data?.source_file} />
         <KeyValue label="Tags" value={(task.data?.tags ?? []).join(', ') || '—'} />
       </div>

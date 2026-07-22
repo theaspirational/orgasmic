@@ -1,14 +1,14 @@
 //! Sandbox permission allowlists model which codex sandbox approval requests
-//! orgasmic may auto-grant for a task or worker.
+//! orgasmic may auto-grant for a task or dispatch-governance layer.
 //!
 //! `SandboxAllowlist` carries the four driver-facing permission switches:
 //! `allow_exec`, `allow_patch`, `allow_network`, and
 //! `allow_writes_outside_cwd`.
-//! Its `Default` is intentionally trust-all so existing workers keep running
-//! unless a task or worker narrows permissions.
+//! Its `Default` is intentionally trust-all so existing dispatches keep running
+//! unless a task or governance layer narrows permissions.
 //! `from_csv` accepts comma-separated `key=true|false` entries for those four
-//! keys, and `resolve(task, worker)` intersects task restrictions with worker/
-//! governance allowlists (least privilege: task may only further restrict).
+//! keys, and `resolve(task, governance)` intersects task restrictions with the
+//! governance allowlist (least privilege: task may only further restrict).
 
 use std::str::FromStr;
 
@@ -45,10 +45,10 @@ pub enum SandboxAllowlistParseError {
 }
 
 impl SandboxAllowlist {
-    /// Effective permissions are the field-wise AND of worker/governance and
+    /// Effective permissions are the field-wise AND of governance and
     /// task layers. Any `false` at a restriction layer stays false.
-    pub fn resolve(task: Option<&Self>, worker: Option<&Self>) -> Self {
-        let base = worker.cloned().unwrap_or_default();
+    pub fn resolve(task: Option<&Self>, governance: Option<&Self>) -> Self {
+        let base = governance.cloned().unwrap_or_default();
         let Some(task) = task else {
             return base;
         };
@@ -108,8 +108,8 @@ mod tests {
     }
 
     #[test]
-    fn resolve_intersects_task_with_worker_without_widening() {
-        let worker = SandboxAllowlist {
+    fn resolve_intersects_task_with_governance_without_widening() {
+        let governance = SandboxAllowlist {
             allow_exec: true,
             allow_patch: true,
             allow_network: false,
@@ -121,12 +121,12 @@ mod tests {
             allow_network: true,
             allow_writes_outside_cwd: false,
         };
-        let resolved = SandboxAllowlist::resolve(Some(&task), Some(&worker));
+        let resolved = SandboxAllowlist::resolve(Some(&task), Some(&governance));
         assert!(!resolved.allow_exec, "task may restrict exec");
         assert!(resolved.allow_patch);
         assert!(
             !resolved.allow_network,
-            "worker network=false must not widen"
+            "governance network=false must not widen"
         );
         assert!(
             !resolved.allow_writes_outside_cwd,
@@ -135,14 +135,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_falls_back_to_worker_then_default() {
-        let worker = SandboxAllowlist {
+    fn resolve_falls_back_to_governance_then_default() {
+        let governance = SandboxAllowlist {
             allow_exec: false,
             allow_patch: true,
             allow_network: true,
             allow_writes_outside_cwd: true,
         };
-        assert_eq!(SandboxAllowlist::resolve(None, Some(&worker)), worker);
+        assert_eq!(
+            SandboxAllowlist::resolve(None, Some(&governance)),
+            governance
+        );
         assert_eq!(
             SandboxAllowlist::resolve(None, None),
             SandboxAllowlist::default()
@@ -162,26 +165,21 @@ mod tests {
     }
 
     #[test]
-    fn task_heading_override_wins_over_worker_in_resolve() {
+    fn task_heading_override_wins_over_runtime_default_in_resolve() {
         use crate::org::OrgFile;
         use crate::schema::TaskHeading;
-        use crate::workers::Worker;
 
-        let worker_source = "* WORKER implementer-codex-stdio\n:PROPERTIES:\n:ID: implementer-codex-stdio\n:KIND:             implementer\n:DRIVER: acp-stdio\n:HARNESS: codex\n:SANDBOX_PERMISSIONS: allow_exec=true,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n";
-        let task_source = "* IN_PROGRESS TASK-079 Example\n:PROPERTIES:\n:ID: TASK-079\n:WORKER: implementer-codex-stdio\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n";
-        let worker_file = OrgFile::parse(worker_source, "worker.org").unwrap();
+        let task_source = "* IN_PROGRESS TASK-079 Example\n:PROPERTIES:\n:ID: TASK-079\n:SANDBOX_PERMISSIONS: allow_exec=false,allow_patch=true,allow_network=true,allow_writes_outside_cwd=true\n:END:\n";
         let task_file = OrgFile::parse(task_source, "backlog.org").unwrap();
-        let worker = Worker::from_org(&worker_file, "worker.org").unwrap();
         let task = TaskHeading::from_heading(
             &task_file,
             task_file.headings.first().expect("task heading"),
             "backlog.org",
         )
         .unwrap();
-        let resolved = SandboxAllowlist::resolve(
-            task.sandbox_permissions.as_ref(),
-            worker.sandbox_permissions.as_ref(),
-        );
+        let runtime_default = SandboxAllowlist::default();
+        let resolved =
+            SandboxAllowlist::resolve(task.sandbox_permissions.as_ref(), Some(&runtime_default));
         assert!(!resolved.allow_exec);
         assert!(resolved.allow_patch);
     }

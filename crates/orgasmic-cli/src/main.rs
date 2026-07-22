@@ -208,11 +208,6 @@ Examples:
         #[command(subcommand)]
         cmd: RunCmd,
     },
-    /// Worker inspection.
-    Worker {
-        #[command(subcommand)]
-        cmd: WorkerCmd,
-    },
     /// Prompt template inspection and dry-run.
     Prompt {
         #[command(subcommand)]
@@ -722,14 +717,6 @@ enum AuthCmd {
 }
 
 #[derive(Subcommand, Debug)]
-enum WorkerCmd {
-    /// List workers known to the daemon.
-    List,
-    /// Show one worker.
-    Show { id: String },
-}
-
-#[derive(Subcommand, Debug)]
 enum PromptCmd {
     /// List prompt specs.
     List,
@@ -985,7 +972,6 @@ fn main() -> Result<()> {
         Cmd::Tasks { cmd } => cmd_tasks(&home, cmd),
         Cmd::Task { cmd } => cmd_task(&home, cmd),
         Cmd::Run { cmd } => cmd_run(&home, cmd),
-        Cmd::Worker { cmd } => cmd_worker(&home, cmd),
         Cmd::Prompt { cmd } => cmd_prompt(&home, cmd),
         Cmd::Skills { cmd } => cmd_skills(&home, cmd),
         Cmd::Optional { cmd } => cmd_optional(&home, cmd),
@@ -2673,20 +2659,6 @@ fn cmd_auth_show(home: &Home) -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn cmd_worker(home: &Home, cmd: WorkerCmd) -> Result<()> {
-    let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
-    runtime.block_on(async move {
-        let client = DaemonClient::from_home_autostart_async(home).await?;
-        let path = match cmd {
-            WorkerCmd::List => "/workers".to_string(),
-            WorkerCmd::Show { id } => format!("/workers/{id}"),
-        };
-        let value: serde_json::Value = client.get(&path).await?;
-        println!("{}", serde_json::to_string_pretty(&value)?);
-        Ok::<(), anyhow::Error>(())
-    })
 }
 
 fn cmd_prompt(home: &Home, cmd: PromptCmd) -> Result<()> {

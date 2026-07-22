@@ -235,11 +235,6 @@ function DialogHeader({
           <Badge variant={stageVariant(task.lifecycle_stage)} className="capitalize">
             {lifecycleStageLabel(task.lifecycle_stage)}
           </Badge>
-          {!hasLiveRun && task.worker ? (
-            <Badge variant="outline" className="font-mono text-[10px]">
-              {task.worker}
-            </Badge>
-          ) : null}
           {task.priority ? (
             <Badge variant="secondary" className="font-mono text-[10px]">
               {task.priority}

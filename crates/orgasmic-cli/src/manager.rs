@@ -88,9 +88,6 @@ pub struct DispatchArgs {
     pub reason: Option<String>,
     #[arg(long)]
     pub dry_run: bool,
-    /// Compatibility label only — not routing authority.
-    #[arg(long)]
-    pub worker: Option<String>,
     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
     #[arg(long = "governance-json")]
     pub governance_json: Option<String>,
@@ -254,8 +251,6 @@ pub(crate) struct DispatchPlan {
     pub(crate) goal_id: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
-    /// Compatibility label only.
-    pub(crate) worker_override: Option<String>,
     pub(crate) governance: Option<orgasmic_daemon::governance::GovernancePatch>,
 }
 
@@ -1598,11 +1593,6 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .with_context(|| format!("parse --harness-args-json: {json}"))?;
         harness_args.extend(parsed);
     }
-    let worker_override = args
-        .worker
-        .as_deref()
-        .map(sanitize_tx_value)
-        .filter(|s| !s.is_empty());
     let from_ref = args.from.as_deref().unwrap_or("HEAD");
     let from_sha = resolve_commit(&project_root, from_ref)?;
     let worktree_path = normalize_path(&match args.worktree {
@@ -1648,7 +1638,6 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .map(|s| sanitize_tx_value(&s))
             .filter(|s| !s.is_empty()),
         dry_run: args.dry_run,
-        worker_override,
         governance,
     })
 }
@@ -1669,9 +1658,6 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     println!("  harness:  {}", plan.harness);
     if !plan.harness_args.is_empty() {
         println!("  argv:     {:?}", plan.harness_args);
-    }
-    if let Some(label) = plan.worker_override.as_deref() {
-        println!("  label:    {label} (compatibility only)");
     }
     if let Some(model) = plan.model_override.as_deref() {
         println!("  model:    {model}");

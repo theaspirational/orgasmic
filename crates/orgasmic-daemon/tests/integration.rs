@@ -574,100 +574,27 @@ async fn get_org_file_directory_read_failure_is_path_free_500() {
 }
 
 #[tokio::test]
-async fn worker_routes_sanitize_loader_failures() {
+async fn retired_worker_content_routes_return_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
-    let bad_path = home.user().join("workers/broken.org");
-    std::fs::create_dir_all(&bad_path).unwrap();
     let running = boot(home.clone()).await;
     let token = read_token(&home);
     let client = reqwest::Client::new();
-    let reject = [home.root.as_path(), bad_path.as_path()];
 
-    for route in ["/api/workers", "/api/workers/broken"] {
+    for route in [
+        "/api/workers",
+        "/api/workers/legacy",
+        "/api/workers/validate",
+    ] {
         let resp = client
             .get(format!("http://{}{}", running.addr, route))
             .bearer_auth(&token)
             .send()
             .await
             .unwrap();
-        let error = assert_path_free_error_response(
-            resp,
-            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to",
-            &reject,
-        )
-        .await;
-        assert!(error.starts_with("failed to"), "{route}: {error}");
+        assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND, "{route}");
     }
-
-    let _ = running.shutdown.send(());
-    let _ = running.join.await;
-}
-
-#[tokio::test]
-async fn worker_validate_routes_return_structured_diagnostics() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = Home::at(tmp.path().join("home"));
-    home.ensure().unwrap();
-    symlink_repo_source(&home);
-    write(
-        &home.user().join("workers/validator-ok.org"),
-        "* WORKER validator-ok\n:PROPERTIES:\n:ID: validator-ok\n:KIND: implementer\n:DRIVER: acp-stdio\n:HARNESS: claude\n:PROVIDERS: anthropic\n:DEFAULT_PROVIDER: anthropic\n:LINKED_SKILLS:\n:END:\n",
-    );
-    write(
-        &home.user().join("workers/validator-missing-skill.org"),
-        "* WORKER validator-missing-skill\n:PROPERTIES:\n:ID: validator-missing-skill\n:KIND: implementer\n:DRIVER: acp-stdio\n:HARNESS: claude\n:LINKED_SKILLS: no-such-skill\n:END:\n",
-    );
-    let running = boot(home.clone()).await;
-    let token = read_token(&home);
-    let client = reqwest::Client::new();
-
-    let sweep = client
-        .get(format!("http://{}/api/workers/validate", running.addr))
-        .bearer_auth(&token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(sweep.status(), reqwest::StatusCode::OK);
-    let sweep: Vec<serde_json::Value> = sweep.json().await.unwrap();
-    let valid = sweep
-        .iter()
-        .find(|result| result["id"] == "validator-ok")
-        .expect("valid worker result");
-    assert_eq!(valid["ok"], true);
-    let missing = sweep
-        .iter()
-        .find(|result| result["id"] == "validator-missing-skill")
-        .expect("missing skill result");
-    assert_eq!(missing["ok"], false);
-    assert_eq!(missing["errors"][0]["code"], "missing_skill");
-
-    let by_id = client
-        .post(format!("http://{}/api/workers/validate", running.addr))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({ "id": "validator-ok" }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(by_id.status(), reqwest::StatusCode::OK);
-    let by_id: serde_json::Value = by_id.json().await.unwrap();
-    assert_eq!(by_id["ok"], true);
-
-    let inline = client
-        .post(format!("http://{}/api/workers/validate", running.addr))
-        .bearer_auth(&token)
-        .json(&serde_json::json!({
-            "source": "* WORKER inline-bad\n:PROPERTIES:\n:ID: inline-bad\n:KIND: implementer\n:DRIVER: acp-ws\n:HARNESS: claude\n:END:\n"
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(inline.status(), reqwest::StatusCode::OK);
-    let inline: serde_json::Value = inline.json().await.unwrap();
-    assert_eq!(inline["ok"], false);
-    assert_eq!(inline["errors"][0]["code"], "unsupported_driver_harness");
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -819,11 +746,7 @@ async fn content_load_routes_sanitize_loader_rule_not_found() {
     let client = reqwest::Client::new();
     let reject = [home.root.as_path()];
 
-    for route in [
-        "/api/workers/missing",
-        "/api/prompt-specs/missing",
-        "/api/skills/missing",
-    ] {
+    for route in ["/api/prompt-specs/missing", "/api/skills/missing"] {
         let resp = client
             .get(format!("http://{}{}", running.addr, route))
             .bearer_auth(&token)
@@ -2757,7 +2680,6 @@ async fn task_007_content_routes_are_real() {
     let client = reqwest::Client::new();
 
     for route in &[
-        "/api/workers",
         "/api/prompt-specs",
         "/api/prompt-specs/parts",
         "/api/prompt-specs/context-packs",
@@ -2856,10 +2778,6 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
     write(
-        &home.user().join("workers/implementer-codex-appserver.org"),
-        "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n",
-    );
-    write(
         &project_root.join(".orgasmic/tasks/backlog.org"),
         "#+title: sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-DISPATCH-CLASS Classifier dispatch smoke\n:PROPERTIES:\n:ID:               TASK-DISPATCH-CLASS\n:END:\n",
     );
@@ -2894,7 +2812,6 @@ async fn dispatch_subprocess_stream_json_classifies_live_then_terminal_noop() {
             "worktree_path": worktree,
             "last_path": last,
             "stdout_path": stdout,
-            "worker_id": "implementer-codex-appserver",
             "reason": "classifier integration test",
         }))
         .send()

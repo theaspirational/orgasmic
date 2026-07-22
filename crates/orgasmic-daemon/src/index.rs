@@ -64,7 +64,6 @@ pub struct TaskSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
     pub priority: Option<String>,
-    pub worker: Option<String>,
     pub provider: Option<String>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
@@ -1510,7 +1509,6 @@ fn parse_task(
         owner: TaskOwner::Human,
         run_id: None,
         priority: view.priority.map(str::to_string),
-        worker: view.worker.map(str::to_string),
         provider: view.provider.map(str::to_string),
         model: view.model.map(str::to_string),
         reasoning_effort: view.reasoning_effort.map(str::to_string),

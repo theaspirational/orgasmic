@@ -47,7 +47,7 @@ pub use crate::api::{router, ApiState};
 pub use crate::artifacts::{ArtifactSummary, BLOCK_TYPES};
 pub use crate::auth::AuthState;
 pub use crate::config::DaemonConfig;
-pub use crate::content::{SkillView, WorkerView};
+pub use crate::content::SkillView;
 pub use crate::events::{Event, EventBus, EventPayload, Topic};
 pub use crate::index::{
     ActivityEntry, ActivityKind, BoardEntry, Index, IndexSnapshot, ParseError, ParseErrorKind,
@@ -226,6 +226,13 @@ impl Daemon {
                 key = %key,
                 path = %home.config().display(),
                 "unrecognized key in orgasmic config.yaml (ignored)"
+            );
+        }
+        let legacy_workers = home.user().join("workers");
+        if legacy_workers.is_dir() {
+            warn!(
+                path = %legacy_workers.display(),
+                "legacy user/workers directory ignored; worker templates were retired"
             );
         }
         let boot = Arc::new(BootIdentity::new());

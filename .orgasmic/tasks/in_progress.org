@@ -1,10 +1,2 @@
 #+title: In Progress
 #+orgasmic_version: 1
-
-* IN_PROGRESS TASK-0SVR3 TASK-SZEWA fix round 5: native semantics and production acceptance
-:PROPERTIES:
-:ID: TASK-0SVR3
-:IMPLEMENTS: dec_WDR5K
-:END:
-
-Resolve all eight HIGH findings from TASK-KKFTM review of 3b948c9: native turn signals and transport-independent cutoff; strict budget parsing and shipped unit migration; task sandbox in babysitter plus full HTTP parity; exact option bytes and real no-worker boot/launch/recovery; production boot artifact restart; recovery argv validation; real transport live-switch capture and disabled Apply; green warning/rmux/UI gates.

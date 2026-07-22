@@ -113,14 +113,6 @@ fn run_git(project_root: &Path, args: &[&str]) -> String {
 fn seed_project(home: &Home, project_root: &Path) {
     symlink_repo_source(home);
     write(
-        &home.user().join("workers/implementer-codex-appserver.org"),
-        "* WORKER implementer-codex-appserver\n:PROPERTIES:\n:ID:                          implementer-codex-appserver\n:KIND:             implementer\n:DRIVER:                      acp-ws\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
-    );
-    write(
-        &home.user().join("workers/reviewer-codex-acp.org"),
-        "* WORKER reviewer-codex-acp\n:PROPERTIES:\n:ID:                          reviewer-codex-acp\n:KIND:             reviewer\n:DRIVER:                      acp-stdio\n:HARNESS:                     claude\n:PROVIDERS:                   anthropic\n:DEFAULT_PROVIDER:            anthropic\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           reviewing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest reviewer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
-    );
-    write(
         &project_root.join(".orgasmic/project.org"),
         "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
     );
@@ -1827,7 +1819,7 @@ async fn dispatch_status_matches_pid_by_last_message_path() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dispatch_worker_flag_shows_in_dry_run_plan() {
+async fn dispatch_address_shows_in_dry_run_plan() {
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1841,8 +1833,8 @@ async fn dispatch_worker_flag_shows_in_dry_run_plan() {
     let path_env = path_with_stub(&bin_dir);
     let codex_dir = tmp.path().join("codex");
     std::fs::create_dir_all(&codex_dir).unwrap();
-    let brief = codex_dir.join("task-worker-flag-brief.md");
-    write(&brief, "worker flag brief");
+    let brief = codex_dir.join("task-address-brief.md");
+    write(&brief, "dispatch address brief");
 
     let running = boot(home.clone()).await;
     let stdout = run_orgasmic(
@@ -3342,10 +3334,6 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    write(
-        &home.user().join("workers/implementer-codex-acp.org"),
-        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
-    );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -3439,10 +3427,6 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    write(
-        &home.user().join("workers/implementer-cursor.org"),
-        "* WORKER implementer-cursor\n:PROPERTIES:\n:ID:                          implementer-cursor\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   cursor\n:DEFAULT_PROVIDER:            cursor\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest subprocess-stream-json implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
-    );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -3533,10 +3517,6 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    write(
-        &home.user().join("workers/implementer-codex-acp.org"),
-        "* WORKER implementer-codex-acp\n:PROPERTIES:\n:ID:                          implementer-codex-acp\n:KIND:             implementer\n:DRIVER:                      acp-stdio\n:HARNESS:                     codex\n:PROVIDERS:                   openai\n:DEFAULT_PROVIDER:            openai\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest acp-stdio implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
-    );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -4510,10 +4490,6 @@ async fn dispatch_cli_subprocess_wire_preserves_verbatim_model_in_session() {
     let project_root = tmp.path().join("project");
     std::fs::create_dir_all(&project_root).unwrap();
     seed_project(&home, &project_root);
-    write(
-        &home.user().join("workers/implementer-cursor.org"),
-        "* WORKER implementer-cursor\n:PROPERTIES:\n:ID:                          implementer-cursor\n:KIND:             implementer\n:DRIVER:                      subprocess-stream-json\n:HARNESS:                     cursor-agent\n:PROVIDERS:                   cursor\n:DEFAULT_PROVIDER:            cursor\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           claimed, analyzing, implementing, testing, fixing\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest subprocess-stream-json implementer.\n\n** Operating Rules\n- Keep test runs simulated.\n",
-    );
     let head = init_git_project(&project_root);
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
@@ -4541,8 +4517,6 @@ async fn dispatch_cli_subprocess_wire_preserves_verbatim_model_in_session() {
             "subprocess-stream-json",
             "--harness",
             "cursor-agent",
-            "--worker",
-            "implementer-cursor",
             "--brief",
             brief.to_str().unwrap(),
             "--from",

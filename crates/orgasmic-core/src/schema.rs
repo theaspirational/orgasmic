@@ -116,9 +116,7 @@ impl FromStr for LifecycleStage {
     }
 }
 
-/// The single role vocabulary: what a worker can do. Tasks reference workers
-/// (`:WORKER:`), runs reference the worker resolved at dispatch — kind is
-/// always derived through the worker, never stored on tasks or runs.
+/// The single role vocabulary selected by addressed dispatches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkerKind {
@@ -214,7 +212,6 @@ pub struct TaskHeading<'a> {
     pub lifecycle_stage: LifecycleStage,
     pub parent_task: Option<String>,
     pub priority: Option<&'a str>,
-    pub worker: Option<&'a str>,
     pub provider: Option<&'a str>,
     pub model: Option<&'a str>,
     pub reasoning_effort: Option<&'a str>,
@@ -277,7 +274,6 @@ impl<'a> TaskHeading<'a> {
             lifecycle_stage,
             parent_task,
             priority: heading.property("PRIORITY"),
-            worker: property_with_legacy(heading, "WORKER", "AGENT_TEMPLATE"),
             provider: normalize_optional_property(heading.property("PROVIDER")),
             model: normalize_optional_property(heading.property("MODEL")),
             reasoning_effort: normalize_optional_property(heading.property("REASONING_EFFORT")),
@@ -781,22 +777,6 @@ pub(crate) fn required<'a>(
             heading: heading.title.clone(),
             key: key.into(),
         })
-}
-
-fn property_with_legacy<'a>(heading: &'a Heading, current: &str, legacy: &str) -> Option<&'a str> {
-    if let Some(value) = heading.property(current) {
-        return Some(value);
-    }
-    let value = heading.property(legacy);
-    if value.is_some() {
-        tracing::warn!(
-            legacy_property = legacy,
-            current_property = current,
-            heading = %heading.title,
-            "legacy orgasmic property parsed"
-        );
-    }
-    value
 }
 
 fn normalize_optional_property(value: Option<&str>) -> Option<&str> {

@@ -203,9 +203,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        std::fs::create_dir_all(home.source().join("shipped/workers")).unwrap();
-        std::fs::create_dir_all(home.user().join("workers")).unwrap();
-        let rel = Path::new("workers/implementer-claude.org");
+        std::fs::create_dir_all(home.source().join("shipped/conventions")).unwrap();
+        std::fs::create_dir_all(home.user().join("conventions")).unwrap();
+        let rel = Path::new("conventions/manager-handoff.org");
         std::fs::write(home.source().join("shipped").join(rel), "shipped").unwrap();
         let p = resolve_loader(&home, rel).unwrap();
         assert!(p.starts_with(home.source()));
