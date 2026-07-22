@@ -12435,3 +12435,38 @@ Resolve QPKCD ship review findings after 5ce2285: unified early-exit quiescence;
 :END:
 
 Resolve all six HIGH findings from TASK-GJ8PC review of c9d4850: healthy-run-safe channel quiescence; pre-Acquire crash reconciliation and stable plan; authoritative corrupt/deleted claim repair; no PATH fallback; actual Claude fork identity; fmt and warning gates.
+
+* DONE TASK-83WS2 TASK-AFE5Q fix round 7 independent ship review
+:PROPERTIES:
+:ID: TASK-83WS2
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Review cumulative de94d4d..b6a8e8e from task-k8et5-impl against the full AFE5Q round-7 contract and prior seven-HIGH verdict. Verify atomic cleanup and all missing interleavings, transaction-wide identity, child ownership setup barriers, endpoint finalization truth, mux-bound send, ambiguity rollback, and warning gates. Read-only; SHIP only with no blocking findings.
+
+* DONE TASK-K8ET5 TASK-AFE5Q fix round 7 continuation: verify and finish atomic cleanup
+:PROPERTIES:
+:ID: TASK-K8ET5
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Continue salvaged AFE5Q fix-round-7 WIP at 90d9de7 after the prior Cursor run hit stall_timeout_exceeded. Complete every TASK-NW4WV acceptance item, resolve compile/clippy/test failures, add any missing deterministic race/security tests, and finalize with a clean committed branch.
+
+* DONE TASK-1FV1N TASK-AFE5Q fix round 6: durable cleanup transaction and child quiescence
+:PROPERTIES:
+:ID: TASK-1FV1N
+:IMPLEMENTS: dec_WDR5K
+:PARENT: TASK-AFE5Q
+:END:
+
+Resolve final AFE5Q review findings after a734b11: durable ended-owner cleanup fencing held across deletion; fail-closed identity-bound no-follow cleanup; cancellation-atomic startup child ownership; reconcile finalize-only endpoint tests/warnings; close Cursor send race; correct artifact reservation ownership transfer.
+
+* DONE TASK-AFE5Q Argv prompt delivery; remove EOT marker and TUI screen capture
+:PROPERTIES:
+:DEPENDS_ON: TASK-P4MGK TASK-0SADP
+:ID: TASK-AFE5Q
+:IMPLEMENTS: dec_WDR5K
+:END:
+
+Supported TUI harnesses receive the compiled prompt as initial-prompt argv (claude/codex/cursor-agent); paste remains only as fallback and for custom harnesses. Delete EOT marker injection + marker watching and the render/scrollback capture tasks from rmux/tmux drivers. Completion = finalize only; pane/process exit without finalize = failed run; stall/max-duration timeouts catch hangs. Live view/typing stays on the PTY-attach WebSocket (/ws/tmux/:run_id).
+Risk: hot-session and persistent-pane paths in rmux.rs special-case the marker — remove without breaking manager panes.

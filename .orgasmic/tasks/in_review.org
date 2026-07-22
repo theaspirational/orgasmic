@@ -1,16 +1,6 @@
 #+title: In Review
 #+orgasmic_version: 1
 
-* IN_REVIEW TASK-AFE5Q Argv prompt delivery; remove EOT marker and TUI screen capture
-:PROPERTIES:
-:DEPENDS_ON: TASK-P4MGK TASK-0SADP
-:ID: TASK-AFE5Q
-:IMPLEMENTS: dec_WDR5K
-:END:
-
-Supported TUI harnesses receive the compiled prompt as initial-prompt argv (claude/codex/cursor-agent); paste remains only as fallback and for custom harnesses. Delete EOT marker injection + marker watching and the render/scrollback capture tasks from rmux/tmux drivers. Completion = finalize only; pane/process exit without finalize = failed run; stall/max-duration timeouts catch hangs. Live view/typing stays on the PTY-attach WebSocket (/ws/tmux/:run_id).
-Risk: hot-session and persistent-pane paths in rmux.rs special-case the marker — remove without breaking manager panes.
-
 * IN_REVIEW TASK-SZEWA Dispatch addresses (kind, mode, harness): API/UI cutover + live model catalog
 :PROPERTIES:
 :DEPENDS_ON: TASK-AYXPB
@@ -20,15 +10,6 @@ Risk: hot-session and persistent-pane paths in rmux.rs special-case the marker �
 
 Dispatch and stage endpoints address (kind, mode, harness) + options; SUPPORTED matrix in orgasmic-drivers is the sole transport registry; babysitter is an ordinary kind. UI worker pickers become kind + transport selection. Custom harness: dispatch payload may carry raw argv (token authority suffices, dec_WDR5K item 4), argv logged verbatim in tx.
 Model/effort: orgasmic carries ZERO model knowledge (dec_WDR5K item 9). Structured catalogs come from PROTOCOL-LEVEL adapters only — the existing runtime_options_catalog trait method: codex (app-server RPC) and hermes (inventory capabilities) already implement it; probe whether claude ACP and cursor-agent ACP report models at session/new (cursor docs https://cursor.com/docs/cli/acp document initialize/authenticate/session/new/session/prompt and an optional model string on cursor/task but NO discovery method — verify against the live binary, do not assume). Boundary rule: adapters parse structured protocol responses, NEVER CLI text output — text parsing is the model-catalog equivalent of scrollback scraping. Harnesses without a protocol catalog degrade to a free-text picker with the harness default as placeholder; the manager may read harness CLIs as judgment but no orgasmic machinery depends on parsing free-form output. No provider-level static fallback, no :MODELS:/:REASONING_EFFORTS: reads, no validation of overrides: dispatch without explicit model passes no model flag (harness default applies); explicit override passes through verbatim and a nonexistent model is the harness's error, surfaced to the manager.
-
-* IN_REVIEW TASK-1FV1N TASK-AFE5Q fix round 6: durable cleanup transaction and child quiescence
-:PROPERTIES:
-:ID: TASK-1FV1N
-:IMPLEMENTS: dec_WDR5K
-:PARENT: TASK-AFE5Q
-:END:
-
-Resolve final AFE5Q review findings after a734b11: durable ended-owner cleanup fencing held across deletion; fail-closed identity-bound no-follow cleanup; cancellation-atomic startup child ownership; reconcile finalize-only endpoint tests/warnings; close Cursor send race; correct artifact reservation ownership transfer.
 
 * IN_REVIEW TASK-K05MX TASK-SZEWA fix round 3: semantic governance and deletion-ready runtime
 :PROPERTIES:
@@ -46,11 +27,3 @@ Resolve SZEWA ship review findings after df86fcd: semantic iteration counting; t
 :END:
 
 Resolve all eight HIGH findings from TASK-JKPAP review of 2475248: native-only turn boundaries; explicit character-budget migration; HTTP governance disable matrix; remove remaining worker model knowledge and prove no-worker/wire paths; true cold artifact restart; manager argv validation; live-switch transport capture; format/warning gates.
-
-* IN_REVIEW TASK-K8ET5 TASK-AFE5Q fix round 7 continuation: verify and finish atomic cleanup
-:PROPERTIES:
-:ID: TASK-K8ET5
-:IMPLEMENTS: dec_WDR5K
-:END:
-
-Continue salvaged AFE5Q fix-round-7 WIP at 90d9de7 after the prior Cursor run hit stall_timeout_exceeded. Complete every TASK-NW4WV acceptance item, resolve compile/clippy/test failures, add any missing deterministic race/security tests, and finalize with a clean committed branch.

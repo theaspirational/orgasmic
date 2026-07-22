@@ -6,31 +6,32 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260722-close-afe5q-and
-:LIVENESS:         4cc9452
+:LIVENESS:         6f7ad70
 :LIVENESS_AT:      [2026-07-22 Wed]
 :UPDATED_AT:       [2026-07-22 Wed]
 :END:
 
-Manager continuity for goal-20260722-close-afe5q-and. QPKCD is complete and its worktrees are pruned. The active sequence is TASK-83WS2 read-only AFE5Q verdict, TASK-0SVR3 SZEWA continuation, then TASK-DZ5NM hard cutover; TASK-41B0T remains available for incident-prevention reprioritization.
+Manager continuity for goal-20260722-close-afe5q-and. QPKCD and AFE5Q are complete. The active sequence is TASK-0SVR3 SZEWA continuation, then TASK-DZ5NM hard cutover; TASK-41B0T polling-incident prevention already landed at 3bbd958/61dbe37.
 
 ** Done so far
 - Reconciled liveness drift d28a11a..4ae89ad: TASK-HQR91, TASK-TMM5H, and TASK-QPKCD completed; recovery authority merged at f0a9480; bounded command polling landed at 3bbd958 with contract tests at 61dbe37; state closed at 4ae89ad.
 - Cleared goal-20260721-finish-qpkcd-through as reached and set goal-20260722-close-afe5q-and from the operator-selected order.
 - Closed stale intermediate QPKCD records TASK-EMY0M and TASK-E3TBC as DONE.
 - Pruned the six QPKCD/HQR91/TMM5H worktrees. Preserved the only dirty pre-prune TMM5H bytes as branch commit fe2e596 before removal.
+- Completed TASK-83WS2 read-only review with NEEDS_CHANGES, repaired the four blocking lifecycle/cleanup findings solo as 14166d4, and closed TASK-K8ET5, TASK-1FV1N, and TASK-AFE5Q.
+- Merged the AFE5Q candidate at e29e4e3 and reconciled it against newer project-scoped leases and QPKCD lifecycle ownership at 6f7ad70. Core, drivers, daemon dispatch endpoint, CLI dispatch, fmt, and clippy gates pass; two daemon and one CLI full-suite parallel-environment flakes each passed immediately in isolation.
+- Hardened the shipped manager convention: worker finalize is the sole success signal; pane/process exit and timeout are failed/orphaned termination with no marker or scrollback fallback.
 
 ** Next likely actions
-1. Complete TASK-83WS2 as a strict read-only verdict over de94d4d..b6a8e8e in the preserved task-83ws2-review worktree; treat its earlier partial review as claims and finish the missing gate matrix.
-2. Resolve TASK-AFE5Q according to that verdict, then continue TASK-0SVR3 from its preserved worktree and close TASK-SZEWA through explicit verification/review.
-3. Once TASK-AFE5Q and TASK-SZEWA are DONE, undertake TASK-DZ5NM.
-4. Pull TASK-41B0T forward only if preventing another semantic-stall incident becomes the higher priority.
+1. Continue TASK-0SVR3 from its preserved worktree and resolve all eight TASK-KKFTM HIGH findings without spawning another worker.
+2. Verify the merged SZEWA production paths and close TASK-SZEWA through an explicit solo ship verdict.
+3. Once TASK-SZEWA is DONE, undertake TASK-DZ5NM.
 
 ** In flight
-TASK-83WS2 is active as a manager-solo strict read-only review over de94d4d..b6a8e8e in the preserved task-83ws2-review worktree. No worker or daemon dispatch is live. TASK-0SVR3 and task-kkftm-review remain paused and untouched.
+TASK-0SVR3 is IN_PROGRESS as a manager-solo continuation in the preserved task-0svr3 worktree. No worker or daemon dispatch is live. The task-kkftm-review worktree remains read-only evidence.
 
 ** Divergence / Risks
 - The live daemon/runtime reports 0.0.12-nightly.20260713 and predates current main; do not treat it as proof of unshipped source behavior.
-- TASK-83WS2 previously ended without finalize; its partial findings and incomplete gates are evidence leads, not a verdict.
 - TASK-0SVR3 begins from a candidate with eight known HIGH findings and remains untrusted until fixed and independently verified.
-- TASK-41B0T runtime semantic-progress design is still open; prompt-level bounded polling mitigates but does not change supervisor timeout semantics.
+- The full daemon and CLI suites contain known parallel-environment flakes; do not hide them, but distinguish them with isolated reruns and retain logs.
 - The operator-owned untracked screenshot remains untouched.
