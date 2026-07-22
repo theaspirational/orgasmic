@@ -4234,6 +4234,18 @@ async fn post_task_dispatch_cleanup(
             }));
         }
     };
+    let expected_branch_oid = match resolve_dispatch_branch_oid(&project.root, &req.branch) {
+        Ok(oid) => oid,
+        Err(err) => {
+            return Ok(Json(DispatchCleanupResponse {
+                status: "failed".into(),
+                released_run_id: None,
+                worktree_removed: false,
+                branch_deleted: false,
+                error: Some(format!("validation: {err}")),
+            }));
+        }
+    };
 
     let cleanup = match state
         .supervisor
@@ -4277,13 +4289,14 @@ async fn post_task_dispatch_cleanup(
                 }));
             }
         };
-    let branch_deleted = match delete_dispatch_branch(&project.root, &req.branch) {
-        Ok(deleted) => deleted,
-        Err(err) => {
-            errors.push(format!("branch: {err}"));
-            false
-        }
-    };
+    let branch_deleted =
+        match delete_dispatch_branch(&project.root, &req.branch, expected_branch_oid.as_deref()) {
+            Ok(deleted) => deleted,
+            Err(err) => {
+                errors.push(format!("branch: {err}"));
+                false
+            }
+        };
 
     state
         .supervisor
@@ -4318,6 +4331,7 @@ fn remove_dispatch_worktree(
     if !path.exists() {
         return Ok(false);
     }
+    orgasmic_core::verify_dispatch_worktree_identity(artifacts, path)?;
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -4336,9 +4350,46 @@ fn remove_dispatch_worktree(
     }
 }
 
-fn delete_dispatch_branch(project_root: &FsPath, branch: &str) -> Result<bool, String> {
+fn resolve_dispatch_branch_oid(
+    project_root: &FsPath,
+    branch: &str,
+) -> Result<Option<String>, String> {
+    let valid = Command::new("git")
+        .args(["check-ref-format", "--branch", branch])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !valid.status.success() {
+        return Err(format!("invalid branch name {branch}"));
+    }
+    let branch_ref = format!("refs/heads/{branch}");
     let output = Command::new("git")
-        .args(["branch", "-D", branch])
+        .args(["rev-parse", "--verify", "--quiet", &branch_ref])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if oid.is_empty() {
+        Err(format!("branch {branch} resolved to an empty object id"))
+    } else {
+        Ok(Some(oid))
+    }
+}
+
+fn delete_dispatch_branch(
+    project_root: &FsPath,
+    branch: &str,
+    expected_oid: Option<&str>,
+) -> Result<bool, String> {
+    let Some(expected_oid) = expected_oid else {
+        return Ok(false);
+    };
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .args(["update-ref", "-d", &branch_ref, expected_oid])
         .current_dir(project_root)
         .output()
         .map_err(|err| err.to_string())?;
@@ -4350,11 +4401,7 @@ fn delete_dispatch_branch(project_root: &FsPath, branch: &str) -> Result<bool, S
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
-        if combined.contains("not found") {
-            Ok(false)
-        } else {
-            Err(combined)
-        }
+        Err(combined)
     }
 }
 
@@ -20608,5 +20655,91 @@ mod tests {
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    #[test]
+    fn dispatch_branch_delete_rejects_substituted_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(root.join("file"), "one").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "file"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "one",
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "cleanup-candidate"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        let expected = resolve_dispatch_branch_oid(root, "cleanup-candidate")
+            .unwrap()
+            .unwrap();
+
+        std::fs::write(root.join("file"), "two").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "file"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "two",
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        let replacement = String::from_utf8_lossy(
+            &Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        assert!(Command::new("git")
+            .args(["update-ref", "refs/heads/cleanup-candidate", &replacement])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+
+        assert!(delete_dispatch_branch(root, "cleanup-candidate", Some(&expected)).is_err());
+        assert_eq!(
+            resolve_dispatch_branch_oid(root, "cleanup-candidate").unwrap(),
+            Some(replacement)
+        );
     }
 }

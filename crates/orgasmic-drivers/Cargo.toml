@@ -23,9 +23,9 @@ tokio-tungstenite.workspace = true
 # connects to a daemon but does NOT bundle the `rmux` binary, so the driver
 # discovers/provisions that separately (RMUX_SDK_DAEMON_BINARY or PATH).
 rmux-sdk = "0.5"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 fs2 = { workspace = true }
 filetime = "0.2"
 

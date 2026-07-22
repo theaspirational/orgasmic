@@ -94,6 +94,7 @@ pub fn project_dispatch_dir(project_root: &Path) -> PathBuf {
 pub struct DispatchAttemptArtifacts {
     pub stem: String,
     pub attempt_id: Option<String>,
+    worktree_handle: std::fs::File,
     stem_dir_handle: std::fs::File,
     last_name: String,
     stdout_name: String,
@@ -113,10 +114,23 @@ pub fn validate_dispatch_cleanup_targets(
     stdout_path: Option<&Path>,
 ) -> Result<DispatchAttemptArtifacts, String> {
     let (stem_dir, stem) = validate_dispatch_worktree_layout(project_root, worktree_path)?;
+    let worktree_handle = open_dispatch_dir(worktree_path)?;
     let last = last_path.ok_or_else(|| "last_path required for dispatch cleanup".to_string())?;
     let stdout =
         stdout_path.ok_or_else(|| "stdout_path required for dispatch cleanup".to_string())?;
-    validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout)
+    validate_dispatch_artifact_pair(&stem_dir, &stem, last, stdout, worktree_handle)
+}
+
+/// Re-open the worktree without following symlinks and prove that the path
+/// still names the directory retained by cleanup validation.
+pub fn verify_dispatch_worktree_identity(
+    artifacts: &DispatchAttemptArtifacts,
+    worktree_path: &Path,
+) -> Result<(), String> {
+    let current = open_dispatch_dir(worktree_path)?;
+    same_file_identity(&artifacts.worktree_handle, &current)
+        .then_some(())
+        .ok_or_else(|| "worktree identity changed after cleanup validation".to_string())
 }
 
 /// After a dispatch worktree is removed, drop only the validated attempt's
@@ -206,8 +220,9 @@ fn validate_dispatch_artifact_pair(
     stem: &str,
     last_path: &Path,
     stdout_path: &Path,
+    worktree_handle: std::fs::File,
 ) -> Result<DispatchAttemptArtifacts, String> {
-    let stem_dir_handle = open_stem_dir(stem_dir)?;
+    let stem_dir_handle = open_dispatch_dir(stem_dir)?;
     let last_name = validate_dispatch_artifact_file(stem_dir, stem, last_path)?;
     let stdout_name = validate_dispatch_artifact_file(stem_dir, stem, stdout_path)?;
     let (last_attempt, last_kind) = parse_dispatch_artifact_name(stem, &last_name)?;
@@ -230,6 +245,7 @@ fn validate_dispatch_artifact_pair(
     Ok(DispatchAttemptArtifacts {
         stem: stem.to_string(),
         attempt_id: last_attempt,
+        worktree_handle,
         stem_dir_handle,
         last_name,
         stdout_name,
@@ -241,7 +257,7 @@ fn validate_dispatch_artifact_pair(
 }
 
 #[cfg(unix)]
-fn open_stem_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
+fn open_dispatch_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
@@ -251,8 +267,22 @@ fn open_stem_dir(stem_dir: &Path) -> Result<std::fs::File, String> {
 }
 
 #[cfg(not(unix))]
-fn open_stem_dir(_stem_dir: &Path) -> Result<std::fs::File, String> {
+fn open_dispatch_dir(_stem_dir: &Path) -> Result<std::fs::File, String> {
     Err("no-follow dispatch cleanup requires unix".into())
+}
+
+#[cfg(unix)]
+fn same_file_identity(left: &std::fs::File, right: &std::fs::File) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (left.metadata(), right.metadata()) {
+        (Ok(left), Ok(right)) => left.dev() == right.dev() && left.ino() == right.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_file_identity(_left: &std::fs::File, _right: &std::fs::File) -> bool {
+    false
 }
 
 #[cfg(unix)]
@@ -639,5 +669,25 @@ mod tests {
         assert!(!renamed.join(&stdout_name).exists());
         assert!(bait.join(&last_name).exists());
         assert!(bait.join(&stdout_name).exists());
+    }
+
+    #[test]
+    fn retained_worktree_identity_rejects_path_swap() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+        let worktree = stem_dir.join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let last = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-last.txt");
+        let stdout = stem_dir.join("task-dispatch-aaaa1111bbbb2222cccc3333dddd4444-stdout.log");
+        std::fs::write(&last, "last").unwrap();
+        std::fs::write(&stdout, "stdout").unwrap();
+        let artifacts =
+            validate_dispatch_cleanup_targets(&project_root, &worktree, Some(&last), Some(&stdout))
+                .unwrap();
+
+        std::fs::rename(&worktree, stem_dir.join("original-worktree")).unwrap();
+        std::fs::create_dir(&worktree).unwrap();
+        assert!(verify_dispatch_worktree_identity(&artifacts, &worktree).is_err());
     }
 }

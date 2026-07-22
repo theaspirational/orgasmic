@@ -15,6 +15,7 @@
 //! (`tmux new-session -d`), runs the configured command, and tears the
 //! session down on `release`.
 
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::{
@@ -380,61 +381,21 @@ impl SendChildOwner {
         cancel: Option<&AtomicBool>,
         build: impl FnOnce() -> Result<tokio::process::Command, DriverError>,
     ) -> Result<(), DriverError> {
-        self.spawn_register_setup_and_wait(cancel, build, |_| Box::pin(async { Ok(()) }))
-            .await
-    }
-
-    async fn spawn_register_setup_and_wait(
-        &self,
-        cancel: Option<&AtomicBool>,
-        build: impl FnOnce() -> Result<tokio::process::Command, DriverError>,
-        setup: impl FnOnce(
-            &mut Child,
-        ) -> std::pin::Pin<
-            Box<dyn std::future::Future<Output = Result<(), DriverError>> + Send + '_>,
-        >,
-    ) -> Result<(), DriverError> {
         if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
             return Ok(());
         }
-        let mut child = {
-            let _guard = self.active.lock().unwrap();
+        {
+            let mut guard = self.active.lock().unwrap();
             if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
                 return Ok(());
             }
             let mut cmd = build()?;
             cmd.kill_on_drop(true);
-            cmd.spawn()
-                .map_err(|e| DriverError::Transport(format!("spawn: {e}")))?
-        };
-        {
-            let mut guard = self.active.lock().unwrap();
-            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
-                drop(guard);
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return Ok(());
-            }
+            let child = cmd
+                .spawn()
+                .map_err(|e| DriverError::Transport(format!("spawn: {e}")))?;
             *guard = Some(child);
         }
-        let mut child = self
-            .active
-            .lock()
-            .unwrap()
-            .take()
-            .expect("registered child");
-        let setup_result = setup(&mut child).await;
-        {
-            let mut guard = self.active.lock().unwrap();
-            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
-                drop(guard);
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return Ok(());
-            }
-            *guard = Some(child);
-        }
-        setup_result?;
         wait_for_owned_send_child(self, cancel).await
     }
 
@@ -889,30 +850,21 @@ async fn paste_text_into_pane(
     }
     let buffer_name = format!("orgasmic-{}", sanitize_tmux_name(session));
     if let Some(owner) = send_child {
-        let text = text.as_bytes().to_vec();
+        let mut input = tempfile::tempfile()
+            .map_err(|e| DriverError::Transport(format!("tmux load-buffer tempfile: {e}")))?;
+        input
+            .write_all(text.as_bytes())
+            .and_then(|_| input.seek(SeekFrom::Start(0)))
+            .map_err(|e| DriverError::Transport(format!("tmux load-buffer prepare: {e}")))?;
         owner
-            .spawn_register_setup_and_wait(
-                cancel,
-                || {
-                    let mut cmd = tokio::process::Command::new("tmux");
-                    cmd.args(["load-buffer", "-b", &buffer_name, "-"])
-                        .stdin(Stdio::piped())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::piped());
-                    Ok(cmd)
-                },
-                |child| {
-                    Box::pin(async move {
-                        if let Some(mut stdin) = child.stdin.take() {
-                            stdin.write_all(&text).await.map_err(|e| {
-                                DriverError::Transport(format!("tmux load-buffer write: {e}"))
-                            })?;
-                            let _ = stdin.shutdown().await;
-                        }
-                        Ok(())
-                    })
-                },
-            )
+            .spawn_register_and_wait(cancel, || {
+                let mut cmd = tokio::process::Command::new("tmux");
+                cmd.args(["load-buffer", "-b", &buffer_name, "-"])
+                    .stdin(Stdio::from(input))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped());
+                Ok(cmd)
+            })
             .await?;
     } else {
         let mut child = tokio::process::Command::new("tmux")

@@ -2001,7 +2001,9 @@ fn remove_worktree_required(
         last_path,
         stdout_path,
     )
-    .ok();
+    .map_err(|err| anyhow::anyhow!(err))?;
+    orgasmic_core::verify_dispatch_worktree_identity(&artifacts, path)
+        .map_err(|err| anyhow::anyhow!(err))?;
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -2015,11 +2017,9 @@ fn remove_worktree_required(
             String::from_utf8_lossy(&output.stdout)
         );
     }
-    if let Some(artifacts) = artifacts {
-        orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
-            .map_err(|err| anyhow::anyhow!(err))
-            .with_context(|| format!("prune dispatch artifacts for {}", path.display()))?;
-    }
+    orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
+        .map_err(|err| anyhow::anyhow!(err))
+        .with_context(|| format!("prune dispatch artifacts for {}", path.display()))?;
     Ok(())
 }
 
@@ -2072,6 +2072,15 @@ fn cleanup_created_resources(
     let mut worktree_failed = false;
     let mut branch_failed = false;
     let mut errors = Vec::new();
+    let expected_branch_oid = match resolve_branch_oid(project_root, branch) {
+        Ok(oid) => oid,
+        Err(err) => {
+            return CleanupOutcome {
+                status: CleanupStatus::BranchFailed,
+                error: Some(sanitize_tx_value(&format!("branch validation: {err}"))),
+            };
+        }
+    };
 
     match remove_worktree_if_present(project_root, path, Some(last_path), Some(stdout_path)) {
         Ok(()) => {}
@@ -2080,9 +2089,13 @@ fn cleanup_created_resources(
             errors.push(format!("worktree: {err}"));
         }
     }
-    if let Err(err) = delete_branch(project_root, branch) {
-        branch_failed = true;
-        errors.push(format!("branch: {err}"));
+    if !worktree_failed {
+        if let Err(err) =
+            delete_branch_if_matches(project_root, branch, expected_branch_oid.as_deref())
+        {
+            branch_failed = true;
+            errors.push(format!("branch: {err}"));
+        }
     }
 
     let status = match (worktree_failed, branch_failed) {
@@ -2198,6 +2211,55 @@ fn delete_branch(project_root: &Path, branch: &str) -> Result<()> {
     if !output.status.success() {
         bail!(
             "git branch -D failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    Ok(())
+}
+
+fn resolve_branch_oid(project_root: &Path, branch: &str) -> Result<Option<String>> {
+    let valid = Command::new("git")
+        .args(["check-ref-format", "--branch", branch])
+        .current_dir(project_root)
+        .output()
+        .with_context(|| format!("validate branch {branch}"))?;
+    if !valid.status.success() {
+        bail!("invalid branch name {branch}");
+    }
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", &branch_ref])
+        .current_dir(project_root)
+        .output()
+        .with_context(|| format!("resolve branch {branch}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if oid.is_empty() {
+        bail!("branch {branch} resolved to an empty object id");
+    }
+    Ok(Some(oid))
+}
+
+fn delete_branch_if_matches(
+    project_root: &Path,
+    branch: &str,
+    expected_oid: Option<&str>,
+) -> Result<()> {
+    let Some(expected_oid) = expected_oid else {
+        return Ok(());
+    };
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .args(["update-ref", "-d", &branch_ref, expected_oid])
+        .current_dir(project_root)
+        .output()
+        .with_context(|| format!("delete branch {branch} at {expected_oid}"))?;
+    if !output.status.success() {
+        bail!(
+            "git update-ref -d failed: {}{}",
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
@@ -3703,5 +3765,58 @@ mod tests {
         assert!(matches(Some("orgasmic"), None));
         assert!(matches(None, Some("orgasmic")));
         assert!(matches(None, None));
+    }
+
+    #[test]
+    fn local_dispatch_rollback_keeps_branch_when_worktree_validation_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(root.join("file"), "content").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "file"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "init",
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "cleanup-candidate"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        let invalid_worktree = root.join("not-a-dispatch-worktree");
+        std::fs::create_dir(&invalid_worktree).unwrap();
+
+        let outcome = cleanup_created_resources(
+            root,
+            &invalid_worktree,
+            "cleanup-candidate",
+            &root.join("missing-last.txt"),
+            &root.join("missing-stdout.log"),
+        );
+        assert_eq!(outcome.status, CleanupStatus::WorktreeFailed);
+        assert!(resolve_branch_oid(root, "cleanup-candidate")
+            .unwrap()
+            .is_some());
     }
 }

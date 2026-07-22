@@ -829,12 +829,12 @@ impl Supervisor {
                 });
             }
             if let Some(worktree) = req.worktree.as_ref() {
-                let reservation_key = CleanupReservationKey {
-                    task_id: req.task_id.clone(),
-                    kind: req.kind,
-                    worktree_key: normalize_cleanup_worktree(worktree),
-                };
-                if guard.cleanup_reservations.contains_key(&reservation_key) {
+                let worktree_key = normalize_cleanup_worktree(worktree);
+                if guard
+                    .cleanup_reservations
+                    .keys()
+                    .any(|reservation| reservation.worktree_key == worktree_key)
+                {
                     return Err(SupervisorError::CleanupInProgress {
                         task_id: req.task_id.clone(),
                         kind: req.kind,
@@ -2537,7 +2537,10 @@ impl Supervisor {
         // window can admit a new acquire (TASK-NW4WV).
         {
             let mut g = self.inner.lock().await;
-            if g.cleanup_reservations.contains_key(&reservation_key) {
+            if g.cleanup_reservations
+                .keys()
+                .any(|held| held.worktree_key == worktree_key)
+            {
                 return Ok(DispatchCleanupOutcome::Conflict);
             }
             for rec in g.runs.values() {
@@ -2653,8 +2656,7 @@ impl Supervisor {
         if reservation.branch != params.branch {
             return;
         }
-        if reservation.dispatch_attempt_token.as_deref()
-            != params.dispatch_attempt_token.as_deref()
+        if reservation.dispatch_attempt_token.as_deref() != params.dispatch_attempt_token.as_deref()
         {
             return;
         }
@@ -3274,8 +3276,8 @@ fn scan_durable_dispatch_owner(
         if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
             continue;
         }
-        let envelopes = read_session_file(&path)
-            .map_err(|_| DurableScanError::UnreadableSessionFile)?;
+        let envelopes =
+            read_session_file(&path).map_err(|_| DurableScanError::UnreadableSessionFile)?;
         let mut current_task: Option<String> = None;
         for envelope in &envelopes {
             if envelope.kind != SessionEventKind::Lifecycle {
@@ -7289,6 +7291,45 @@ mod tests {
             "held cleanup reservation must block a second prepare"
         );
 
+        sup.finish_dispatch_cleanup(&params).await;
+    }
+
+    #[tokio::test]
+    async fn cleanup_reservation_blocks_same_path_for_different_task() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("wt-reservation-global");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let sessions = dir.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let params = DispatchCleanupParams {
+            task_id: "TASK-CLEANUP-OWNER".into(),
+            kind: RunKind::Worker,
+            branch: "task-cleanup-owner-impl".into(),
+            worktree_path: worktree.clone(),
+            dispatch_attempt_token: Some("aaaa1111bbbb2222cccc3333dddd4444".into()),
+            last_path: Some(dir.path().join("owner-last.txt")),
+            stdout_path: Some(dir.path().join("owner-stdout.log")),
+        };
+        assert!(matches!(
+            sup.prepare_dispatch_cleanup(&sessions, &params)
+                .await
+                .unwrap(),
+            DispatchCleanupOutcome::Proceed { .. }
+        ));
+
+        let mut acquire = dispatch_impl_req("TASK-CLEANUP-OTHER", dir.path());
+        acquire.worktree = Some(worktree.clone());
+        let err = sup.acquire(&tmux::driver(), acquire).await.unwrap_err();
+        assert!(matches!(err, SupervisorError::CleanupInProgress { .. }));
+
+        let mut other_params = params.clone();
+        other_params.task_id = "TASK-CLEANUP-OTHER".into();
+        assert_eq!(
+            sup.prepare_dispatch_cleanup(&sessions, &other_params)
+                .await
+                .unwrap(),
+            DispatchCleanupOutcome::Conflict
+        );
         sup.finish_dispatch_cleanup(&params).await;
     }
 }
