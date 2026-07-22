@@ -19697,3 +19697,63 @@
 :FIX_SUBTASK:  t
 :PARENT_TASK:  TASK-HQR91
 :END:
+
+* TX 2026-07-22 Wed 09:33:25 task.state_transitioned TASK-H2KB9
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2349
+:TIME:         [2026-07-22 Wed 09:33:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H2KB9
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-H2KB9 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-22 Wed 09:33:27 manager.dispatch_started TASK-H2KB9
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2350
+:TIME:         [2026-07-22 Wed 09:33:27]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H2KB9
+:REASON:
+:KIND:         implementer
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-h2kb9-impl/worktree
+:BRANCH:       task-h2kb9-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-h2kb9-impl/task-h2kb9-impl.md
+:STARTED_AT:   [2026-07-22 Wed 09:33:27]
+:LIVENESS:     b35ae5b42de0c7e642a61e8d550be8ac5cd39387
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: One-round fix for four HQR91 review7 recovery interleavings.
+:END:
+
+* TX 2026-07-22 Wed 09:33:27 run.created TASK-H2KB9
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2351
+:TIME:         [2026-07-22 Wed 09:33:27]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H2KB9
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-H2KB9-implementer-20260722T093327.jsonl
+:REASON:       One-round fix for four HQR91 review7 recovery interleavings.
+:RUN_ID:       run-20260722T093327-d581302c45a7479690731f932a0ccb7f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-h2kb9-impl/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-h2kb9-impl/task-h2kb9-impl.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-h2kb9-impl/task-h2kb9-impl-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-h2kb9-impl/task-h2kb9-impl-stdout.log
+:PID:          6660
+:DISPATCH_TX:  tx-20260722-orgasmic-2350
+:END:

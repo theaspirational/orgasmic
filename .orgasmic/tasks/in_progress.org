@@ -1,3 +1,13 @@
 #+title: In Progress
 #+orgasmic_version: 1
 
+* IN_PROGRESS TASK-H2KB9 HQR91 review7 fix: close four recovery interleavings :fix:
+:PROPERTIES:
+:ID: TASK-H2KB9
+:IMPLEMENTS: dec_WDR5K
+:PRIORITY:   high
+:FIX_SUBTASK: t
+:PARENT_TASK: TASK-HQR91
+:END:
+
+Fix all four blocking findings from TASK-HQR91 reviewer run run-20260722T090000-5bc9ed64f70241d596da5f2c78e749b2 and report .orgasmic/tmp/dispatch/task-hqr91-review7/task-hqr91-review7-last.txt: producer stop/join and receiver-closure authority for timeout and dead-PID paths; retained no-follow origin/pending session authority through plan and first append; wrapper identity pin plus crash-safe private-alias cleanup; and an ordering-proof, retained-handle Claude fork launch boundary. Add the missing hung-producer, POST swap/symlink/stale-handle, wrapper replacement/SIGKILL, exclusion-gap, and post-check swap regressions. Preserve all previously closed recovery invariants. Full gates and independent re-review required.
