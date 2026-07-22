@@ -112,12 +112,24 @@ fn parse_context_budget_chars_from_heading(
     heading: &crate::Heading,
     display: &str,
 ) -> Result<Option<u32>, WorkerError> {
-    let legacy = heading
-        .property("CONTEXT_BUDGET")
-        .and_then(|v| v.parse().ok());
-    let chars = heading
-        .property("CONTEXT_BUDGET_CHARS")
-        .and_then(|v| v.parse().ok());
+    let parse = |key: &str| -> Result<Option<u32>, WorkerError> {
+        heading
+            .property(key)
+            .map(|value| {
+                value.parse::<u32>().map_err(|err| {
+                    SchemaError::InvalidPropertyValue {
+                        file: display.into(),
+                        heading: heading.title.clone(),
+                        key: key.into(),
+                        detail: format!("expected an unsigned integer: {err}"),
+                    }
+                    .into()
+                })
+            })
+            .transpose()
+    };
+    let legacy = parse("CONTEXT_BUDGET")?;
+    let chars = parse("CONTEXT_BUDGET_CHARS")?;
     resolve_context_budget_chars(legacy, chars).map_err(|err| {
         SchemaError::InvalidPropertyValue {
             file: display.into(),
@@ -605,6 +617,20 @@ mod tests {
         assert!(
             matches!(err, WorkerError::Schema(SchemaError::InvalidPropertyValue { detail, .. }) if detail.contains("overflow"))
         );
+    }
+
+    #[test]
+    fn context_budget_rejects_malformed_values() {
+        for expected_key in ["CONTEXT_BUDGET", "CONTEXT_BUDGET_CHARS"] {
+            let file = parse(&format!(
+                "* WORKER malformed\n:PROPERTIES:\n:ID: malformed\n:KIND: implementer\n:DRIVER: tmux\n:HARNESS: codex\n:{expected_key}: many\n:END:\n"
+            ));
+            let err = Worker::from_org(&file, "inline.org").unwrap_err();
+            assert!(
+                matches!(err, WorkerError::Schema(SchemaError::InvalidPropertyValue { ref key, .. }) if key == expected_key),
+                "malformed {expected_key} must fail closed: {err}"
+            );
+        }
     }
 
     #[test]

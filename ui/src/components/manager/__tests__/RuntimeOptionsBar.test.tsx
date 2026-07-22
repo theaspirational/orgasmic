@@ -88,13 +88,13 @@ describe('RuntimeOptionsBar', () => {
     });
   });
 
-  it('shows unsupported messaging and no Apply when catalog fetch fails', async () => {
+  it('shows unsupported messaging and disabled Apply when catalog fetch fails', async () => {
     fetchRunRuntimeOptionsMock.mockRejectedValue(new Error('capability_unsupported'));
 
     render(<RuntimeOptionsBar runId="run-unsupported" />);
 
     expect(await screen.findByText(/Live runtime switching is not available/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 
   it('disables live controls when catalog lacks live_switching', async () => {
@@ -106,6 +106,6 @@ describe('RuntimeOptionsBar', () => {
     render(<RuntimeOptionsBar runId="run-static" />);
 
     expect(await screen.findByText('Live switch unsupported')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled();
   });
 });

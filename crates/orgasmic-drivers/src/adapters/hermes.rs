@@ -234,15 +234,7 @@ impl HarnessEventAdapter for HermesAdapter {
         {
             Ok(event) => {
                 self.record_terminal(&event);
-                if matches!(
-                    event,
-                    DriverEvent::RunComplete { .. } | DriverEvent::RunFail { .. }
-                ) {
-                    let seq = self.take_seq();
-                    vec![DriverEvent::AgentTurnComplete { seq }, event]
-                } else {
-                    vec![event]
-                }
+                vec![event]
             }
             Err(err) => vec![DriverEvent::DriverError {
                 fatal: true,
@@ -1374,8 +1366,6 @@ mod tests {
                 ..
             } if call_id == "call-1" && name == "transition_state"
         ));
-        let turn = s.events.recv().await.unwrap();
-        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let done = s.events.recv().await.unwrap();
         assert!(matches!(
             done,

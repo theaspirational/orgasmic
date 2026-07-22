@@ -70,7 +70,10 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
   if (unsupported && !catalog) {
     return (
       <div className="flex flex-wrap items-end gap-2 border-b px-3 py-2 text-xs text-muted-foreground">
-        Live runtime switching is not available for this harness.
+        <span>Live runtime switching is not available for this harness.</span>
+        <Button type="button" size="sm" disabled>
+          Apply
+        </Button>
       </div>
     );
   }
@@ -130,13 +133,17 @@ export function RuntimeOptionsBar({ runId }: { runId: string }) {
           />
         )}
       </label>
-      {canApplyLive ? (
-        <Button type="button" size="sm" disabled={busy} onClick={() => void apply()}>
-          Apply
-        </Button>
-      ) : (
+      <Button
+        type="button"
+        size="sm"
+        disabled={busy || !canApplyLive}
+        onClick={() => void apply()}
+      >
+        Apply
+      </Button>
+      {!canApplyLive ? (
         <span className="pb-1 text-[11px] text-muted-foreground">Live switch unsupported</span>
-      )}
+      ) : null}
     </div>
   );
 }

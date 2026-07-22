@@ -165,6 +165,10 @@ pub struct AcquireRequest {
     /// When set on an implementer acquire, spawn this babysitter worker after
     /// the implementer run is live.
     pub babysitter: Option<BabysitterAutoSpawn>,
+    /// Allowed semantic sub-states for this addressed run.
+    pub applicable_states: Vec<String>,
+    /// Maximum native semantic turns before supervisor failure.
+    pub max_iterations: Option<u32>,
     /// Predeclared run/runtime identity for crash-recoverable acquire paths
     /// (Failed recovery claims). When set, the supervisor uses this instead of
     /// minting a fresh hidden identity at acquire time.
@@ -249,6 +253,8 @@ pub enum SupervisorError {
     DeferredWhileInFlight(String),
     #[error("artifactor lifecycle busy: {0}")]
     ArtifactorLifecycleBusy(String),
+    #[error("sub-state is not allowed by run governance: {0}")]
+    DisallowedSubState(String),
     #[error("dispatch cleanup in progress for task={task_id} kind={kind:?} worktree={worktree}")]
     CleanupInProgress {
         task_id: String,
@@ -1048,6 +1054,9 @@ impl Supervisor {
                     DEFAULT_MAX_RUN_DURATION,
                 ),
                 idle_timeout: resolve_idle_timeout_secs(req.idle_timeout_secs),
+                applicable_states: req.applicable_states.clone(),
+                semantic_turn_count: 0,
+                max_iterations: req.max_iterations,
                 next_event_seq: 0,
                 terminal_outcome: None,
                 control,
@@ -1159,7 +1168,7 @@ impl Supervisor {
                             }
                         });
                     let terminal_release = if terminal_outcome.is_some() || iteration_limit_hit {
-                        take_driver_terminal_release(&mut g, &run_id_for_drain)
+                        take_driver_terminal_release(&mut g, &run_id_for_drain, iteration_limit_hit)
                     } else {
                         None
                     };
@@ -1728,6 +1737,9 @@ impl Supervisor {
             max_run_duration: (!is_interactive_manager_task(&task_id))
                 .then_some(DEFAULT_MAX_RUN_DURATION),
             idle_timeout: None,
+            applicable_states: Vec::new(),
+            semantic_turn_count: 0,
+            max_iterations: None,
             next_event_seq: 0,
             terminal_outcome: None,
             control,
@@ -1799,7 +1811,7 @@ impl Supervisor {
                         rec.next_event_seq += 1;
                     }
                     if terminal_outcome.is_some() {
-                        take_driver_terminal_release(&mut g, &run_id_for_drain)
+                        take_driver_terminal_release(&mut g, &run_id_for_drain, false)
                     } else {
                         None
                     }
@@ -1861,6 +1873,8 @@ impl Supervisor {
             max_run_duration_secs: bs.max_run_duration_secs,
             idle_timeout_secs: None,
             babysitter: None,
+            applicable_states: bs.applicable_states.clone(),
+            max_iterations: bs.max_iterations,
             planned_identity: None,
         };
         let resp = self.acquire_impl(driver, req, None).await?;
@@ -3433,7 +3447,14 @@ fn apply_driver_event_to_record(
 ) {
     rec.last_driver_event_at = event_at;
     if let Some(outcome) = terminal_outcome {
-        rec.terminal_outcome = Some(outcome);
+        // A release-triggered control acknowledgement must not downgrade the
+        // failure that caused transport shutdown (including iteration budget
+        // breach) to Completed while queued events drain.
+        if !(rec.terminal_event_shutdown_in_progress
+            && rec.terminal_outcome == Some(ReleaseOutcome::Failed))
+        {
+            rec.terminal_outcome = Some(outcome);
+        }
     }
     if matches!(evt, DriverEvent::Ready { .. }) {
         rec.driver_has_ready = true;
@@ -3812,11 +3833,15 @@ fn resolve_terminal_release(
     }
 }
 
-fn take_driver_terminal_release(inner: &mut Inner, run_id: &str) -> Option<TerminalRelease> {
+fn take_driver_terminal_release(
+    inner: &mut Inner,
+    run_id: &str,
+    force_transport_shutdown: bool,
+) -> Option<TerminalRelease> {
     let should_release = inner
         .runs
         .get(run_id)
-        .map(|rec| terminal_event_releases_transport(&rec.transport))
+        .map(|rec| force_transport_shutdown || terminal_event_releases_transport(&rec.transport))
         .unwrap_or(false);
     if !should_release {
         return None;
@@ -5031,7 +5056,7 @@ mod tests {
     #[async_trait::async_trait]
     impl WorkerDriver for SemanticTurnCountDriver {
         fn transport(&self) -> &'static str {
-            "tmux"
+            "acp-stdio"
         }
 
         async fn acquire(
@@ -5086,6 +5111,7 @@ mod tests {
                 events: rx,
                 control: Box::new(AcceptingInputControl { _events: tx }),
                 native_runtime: None,
+                producer: None,
             })
         }
     }
@@ -5125,6 +5151,8 @@ mod tests {
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: None,
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         }
     }
@@ -5258,6 +5286,7 @@ mod tests {
                     terminal_emitted: std::sync::atomic::AtomicBool::new(false),
                 }),
                 native_runtime: None,
+                producer: None,
             })
         }
     }
@@ -6371,6 +6400,8 @@ mod tests {
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: None,
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         };
         let r2 = sup.acquire(&driver, bs_req).await.unwrap();
@@ -7777,6 +7808,8 @@ mod tests {
             max_run_duration_secs: None,
             idle_timeout_secs: None,
             babysitter: None,
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         };
         let err = sup.acquire(&driver, req).await.unwrap_err();
@@ -7865,7 +7898,15 @@ mod tests {
                 driver_config: tmux::inert_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
+                applicable_states: Vec::new(),
+                linked_skills: Vec::new(),
+                sandbox_permissions: None,
+                max_iterations: None,
+                context_budget_chars: None,
+                harness_args: Vec::new(),
             }),
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         };
         let impl_run = sup.acquire(driver.as_ref(), req).await.unwrap();
@@ -7911,7 +7952,15 @@ mod tests {
                     driver_config: tmux::inert_config(),
                     stall_timeout_secs: None,
                     max_run_duration_secs: None,
+                    applicable_states: Vec::new(),
+                    linked_skills: Vec::new(),
+                    sandbox_permissions: None,
+                    max_iterations: None,
+                    context_budget_chars: None,
+                    harness_args: Vec::new(),
                 }),
+                applicable_states: Vec::new(),
+                max_iterations: None,
                 planned_identity: None,
             };
             let resp = sup.acquire(&driver, req).await.unwrap();
@@ -7954,6 +8003,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -8043,7 +8094,15 @@ mod tests {
                 driver_config: tmux::inert_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
+                applicable_states: Vec::new(),
+                linked_skills: Vec::new(),
+                sandbox_permissions: None,
+                max_iterations: None,
+                context_budget_chars: None,
+                harness_args: Vec::new(),
             }),
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         };
 
@@ -8120,7 +8179,15 @@ mod tests {
                 driver_config: tmux::inert_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
+                applicable_states: Vec::new(),
+                linked_skills: Vec::new(),
+                sandbox_permissions: None,
+                max_iterations: None,
+                context_budget_chars: None,
+                harness_args: Vec::new(),
             }),
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         };
 
@@ -8216,7 +8283,15 @@ mod tests {
                 driver_config: tmux::inert_config(),
                 stall_timeout_secs: None,
                 max_run_duration_secs: None,
+                applicable_states: Vec::new(),
+                linked_skills: Vec::new(),
+                sandbox_permissions: None,
+                max_iterations: None,
+                context_budget_chars: None,
+                harness_args: Vec::new(),
             }),
+            applicable_states: Vec::new(),
+            max_iterations: None,
             planned_identity: None,
         };
 
@@ -8756,6 +8831,9 @@ mod tests {
             stall_timeout: None,
             max_run_duration: None,
             idle_timeout: None,
+            applicable_states: Vec::new(),
+            semantic_turn_count: 0,
+            max_iterations: None,
             next_event_seq: 0,
             terminal_outcome: None,
             control: Box::new(NoopControl),

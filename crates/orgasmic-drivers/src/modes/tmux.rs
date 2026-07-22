@@ -713,14 +713,16 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
             args.push("--dangerously-skip-permissions".to_string());
         }
         if !cfg.native_resume_mode {
-            if let Some(model) = cfg
-                .model
-                .as_deref()
-                .filter(|model| !model.trim().is_empty())
-            {
+            if let Some(model) = cfg.model.as_deref() {
                 if !args.iter().any(|arg| arg == "--model") {
                     args.push("--model".to_string());
                     args.push(model.to_string());
+                }
+            }
+            if let Some(effort) = cfg.effort.as_ref().or(cfg.reasoning_effort.as_ref()) {
+                if !args.iter().any(|arg| arg == "--effort") {
+                    args.push("--effort".to_string());
+                    args.push(effort.clone());
                 }
             }
             // Deterministic native Claude session identity: pin --session-id to the
@@ -729,6 +731,14 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
             if !args.iter().any(|arg| arg == "--session-id") {
                 args.push("--session-id".to_string());
                 args.push(session_id);
+            }
+        }
+    }
+    if matches!(harness, "codex" | "cursor-agent" | "hermes") {
+        if let Some(model) = cfg.model.as_ref() {
+            if !args.iter().any(|arg| arg == "--model" || arg == "-m") {
+                args.push("--model".to_string());
+                args.push(model.clone());
             }
         }
     }
@@ -2559,6 +2569,10 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--effort", "high"]));
         // Argv delivery: prompt is one trailing argv element after `--`.
         assert!(plan.paste_prompt.is_none());
         assert!(plan
@@ -2570,6 +2584,25 @@ mod tests {
             .args
             .iter()
             .any(|arg| arg.contains("end-of-turn marker")));
+    }
+
+    #[test]
+    fn pty_model_and_effort_preserve_exact_option_bytes() {
+        let cfg = TmuxTuiConfig {
+            harness: Some("claude".into()),
+            model: Some("  custom-model  ".into()),
+            effort: Some(" XHIGH ".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-verbatim", RunKind::Worker), "claude");
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--model", "  custom-model  "]));
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--effort", " XHIGH "]));
     }
 
     #[test]

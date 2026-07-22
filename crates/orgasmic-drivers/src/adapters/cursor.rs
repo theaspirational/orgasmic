@@ -137,8 +137,7 @@ impl CursorAgentConfig {
     fn model(&self) -> Option<&str> {
         self.model
             .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
+            .filter(|value| !value.trim().is_empty())
     }
 
     fn sandbox(&self) -> &str {
@@ -150,6 +149,20 @@ impl CursorAgentConfig {
 
     fn force(&self) -> bool {
         self.force.unwrap_or(true)
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::CursorAgentConfig;
+
+    #[test]
+    fn model_accessor_preserves_exact_nonblank_bytes() {
+        let cfg = CursorAgentConfig {
+            model: Some("  Composer-2.5-FAST  ".into()),
+            ..CursorAgentConfig::default()
+        };
+        assert_eq!(cfg.model(), Some("  Composer-2.5-FAST  "));
     }
 }
 

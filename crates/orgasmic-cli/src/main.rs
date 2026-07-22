@@ -1049,7 +1049,17 @@ fn main() -> Result<()> {
             harness,
             reason,
             wait,
-        } => cmd_stage(&home, "plan", project, reason, wait),
+            governance_json,
+        } => cmd_stage(
+            &home,
+            "plan",
+            project,
+            mode,
+            harness,
+            reason,
+            wait,
+            governance_json,
+        ),
         Cmd::ExecPinned { .. } => unreachable!("handled before home/tracing initialization"),
     }
 }
@@ -2879,6 +2889,7 @@ fn cmd_question(home: &Home, cmd: QuestionCmd) -> Result<()> {
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_stage(
     home: &Home,
     stage: &str,

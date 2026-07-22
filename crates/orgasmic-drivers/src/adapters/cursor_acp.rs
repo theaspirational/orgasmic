@@ -636,7 +636,11 @@ impl CursorAcpAdapter {
                 }];
             }
         };
-        crate::r#trait::turn_boundary_events(seq, terminal)
+        if reason == "cancelled" {
+            vec![terminal]
+        } else {
+            crate::r#trait::turn_boundary_events(seq, terminal)
+        }
     }
 
     fn prompt_messages(&self, text: &str) -> Vec<WireMessage> {
@@ -1450,5 +1454,16 @@ mod tests {
             );
             adapter.terminal_emitted = false;
         }
+    }
+
+    #[tokio::test]
+    async fn cancelled_stop_is_terminal_without_fabricated_turn() {
+        let mut adapter = CursorAcpAdapter::new();
+        let events = adapter
+            .on_ws_response("session/prompt", json!({"stopReason": "cancelled"}))
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], DriverEvent::RunComplete { .. }));
     }
 }

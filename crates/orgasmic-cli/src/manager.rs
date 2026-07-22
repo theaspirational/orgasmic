@@ -1634,14 +1634,11 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         from_sha,
         worktree_path,
         branch,
-        model_override: args
-            .model
-            .map(|s| sanitize_tx_value(&s))
-            .filter(|s| !s.is_empty()),
-        effort_override: args
-            .effort
-            .map(|s| sanitize_tx_value(&s))
-            .filter(|s| !s.is_empty()),
+        // Model and effort are opaque provider-owned identifiers. Preserve
+        // explicit CLI bytes (including case and surrounding whitespace)
+        // through the HTTP boundary; provider adapters decide how to use them.
+        model_override: args.model,
+        effort_override: args.effort,
         last_path: PathBuf::new(),
         stdout_path: PathBuf::new(),
         dispatch_attempt_token: String::new(),

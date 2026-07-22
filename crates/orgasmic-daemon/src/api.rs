@@ -2454,6 +2454,8 @@ async fn post_manager_launch(
                 max_run_duration_secs: Some(0),
                 idle_timeout_secs: None,
                 babysitter: None,
+                applicable_states: Vec::new(),
+                max_iterations: None,
                 planned_identity: None,
             },
         )
@@ -3035,6 +3037,8 @@ async fn post_stage(
                 max_run_duration_secs: worker.max_run_duration_secs,
                 idle_timeout_secs: None,
                 babysitter: None,
+                applicable_states: worker.applicable_states.clone(),
+                max_iterations: worker.max_iterations,
                 planned_identity: None,
             },
         )
@@ -3873,6 +3877,7 @@ fn apply_driver_defaults(
 /// Compose a self-contained prompt from a worker's persona and operating rules,
 /// for workers (like the babysitter) that are spawned without compiling a
 /// prompt-spec.
+#[allow(clippy::too_many_arguments)]
 fn build_babysitter_auto_spawn(
     home: &Home,
     overlay: &DispatchGovernanceOverlay,
@@ -3880,6 +3885,7 @@ fn build_babysitter_auto_spawn(
     task_id: &str,
     implementer: &StageWorker,
     worktree: &FsPath,
+    task_sandbox_permissions: Option<&SandboxAllowlist>,
     driver_defaults: &DriverDefaults,
 ) -> Result<Option<BabysitterAutoSpawn>, ApiError> {
     let Some(address) = implementer.babysitter.as_ref() else {
@@ -3910,6 +3916,8 @@ fn build_babysitter_auto_spawn(
     }
     let worker_id =
         compatibility_worker_id(WorkerKind::Babysitter, &address.mode, &address.harness);
+    let resolved_sandbox =
+        SandboxAllowlist::resolve(task_sandbox_permissions, gov.sandbox_permissions.as_ref());
     let babysitter = StageWorker {
         id: worker_id.clone(),
         kind: WorkerKind::Babysitter,
@@ -3926,7 +3934,7 @@ fn build_babysitter_auto_spawn(
         applicable_states: gov.applicable_states,
         stall_timeout_secs: gov.stall_timeout_secs,
         max_run_duration_secs: gov.max_run_duration_secs,
-        sandbox_permissions: gov.sandbox_permissions,
+        sandbox_permissions: Some(resolved_sandbox.clone()),
         harness_args: address.harness_args.clone(),
     };
     let Some(_driver) = driver_for_mode_harness(&babysitter.driver, &babysitter.harness) else {
@@ -3999,7 +4007,7 @@ fn build_babysitter_auto_spawn(
             model: address.model.clone(),
             effort: address.effort.clone(),
         },
-        None,
+        task_sandbox_permissions,
         driver_defaults,
         None,
     );
@@ -4012,7 +4020,7 @@ fn build_babysitter_auto_spawn(
         max_run_duration_secs: babysitter.max_run_duration_secs,
         applicable_states: babysitter.applicable_states,
         linked_skills: babysitter.linked_skills,
-        sandbox_permissions: babysitter.sandbox_permissions,
+        sandbox_permissions: Some(resolved_sandbox),
         max_iterations: babysitter.max_iterations,
         context_budget_chars: babysitter.context_budget_chars,
         harness_args: babysitter.harness_args,
@@ -4215,6 +4223,7 @@ async fn spawn_worker_run(
             req.task_id,
             &worker,
             req.worktree_path,
+            req.task_sandbox_permissions.as_ref(),
             &state.driver_defaults,
         ) {
             Ok(babysitter) => babysitter,
@@ -4260,6 +4269,8 @@ async fn spawn_worker_run(
                     && worker.driver == "rmux")
                     .then_some(DEFAULT_IDLE_TIMEOUT_SECS),
                 babysitter,
+                applicable_states: worker.applicable_states.clone(),
+                max_iterations: worker.max_iterations,
                 planned_identity: None,
             },
         )
@@ -6589,9 +6600,9 @@ fn recovery_planned_driver_fields(
     origin_worktree: &FsPath,
     force_inert: bool,
 ) -> Result<(DriverConfig, Option<String>, String), ApiError> {
-    let terminal_contract = persisted_terminal_contract_from_session(&state.home, origin_envelopes);
+    let terminal_contract = persisted_terminal_contract_from_session(&state.home, origin_envelopes)
+        .map_err(|err| ApiError::bad_request(err.to_string()))?;
     let native = session_native_runtime(origin_envelopes);
-    let meta = session_acquire_meta(origin_envelopes);
     if action == "resume_native_fork" {
         let native = native.ok_or_else(|| {
             ApiError::bad_request("resume_native_fork requires recorded native metadata")
@@ -6639,10 +6650,7 @@ fn recovery_planned_driver_fields(
         .harness
         .clone()
         .or_else(|| native.as_ref().map(|n| n.provider.clone()))
-        .or_else(|| {
-            meta.as_ref()
-                .and_then(|m| recovery_harness_for_worker(&state.home, &m.worker_id))
-        })
+        .or_else(|| recovery_harness_for_worker(&state.home, origin_envelopes))
         .unwrap_or_else(|| "claude".to_string());
     let cfg = if harness == "claude" {
         let pin = state
@@ -7025,7 +7033,8 @@ async fn post_run_recover(
         let origin_envelopes = origin_authority.envelopes()?;
         let meta = session_acquire_meta(origin_envelopes);
         let terminal_contract =
-            persisted_terminal_contract_from_session(&state.home, origin_envelopes);
+            persisted_terminal_contract_from_session(&state.home, origin_envelopes)
+                .map_err(|err| ApiError::bad_request(err.to_string()))?;
         let native = session_native_runtime(origin_envelopes);
         let force_inert = req.force_inert.unwrap_or(false);
         let worktree = Some(origin_authority.worktree.clone());
@@ -7273,6 +7282,7 @@ async fn execute_run_recover_action(
         }
     } else {
         persisted_terminal_contract_from_session(&state.home, envelopes)
+            .map_err(|err| ApiError::bad_request(err.to_string()))?
     };
 
     match action {
@@ -7507,7 +7517,7 @@ async fn execute_run_recover_action(
                     .or_else(|| native.as_ref().map(|n| n.provider.clone()))
                     .or_else(|| {
                         meta.as_ref()
-                            .and_then(|_| recovery_harness_for_worker(&state.home, &envelopes))
+                            .and_then(|_| recovery_harness_for_worker(&state.home, envelopes))
                     })
                     .ok_or_else(|| {
                         ApiError::bad_request(
@@ -7517,9 +7527,7 @@ async fn execute_run_recover_action(
                 let mode = req
                     .mode
                     .clone()
-                    .or_else(|| {
-                        persisted_run_address_from_session(&envelopes).map(|(mode, _)| mode)
-                    })
+                    .or_else(|| persisted_run_address_from_session(envelopes).map(|(mode, _)| mode))
                     .ok_or_else(|| {
                         ApiError::bad_request(
                             "recovery address unavailable; supply mode+harness/start fresh",
@@ -7640,6 +7648,8 @@ async fn execute_run_recover_action(
                     max_run_duration_secs: recovery_run_options.max_run_duration_secs,
                     idle_timeout_secs: recovery_run_options.idle_timeout_secs,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity,
                 };
                 if let Some(plan) = pending_plan {
@@ -7933,6 +7943,25 @@ fn latest_run_segment(envelopes: &[SessionEnvelope]) -> &[SessionEnvelope] {
     &envelopes[start..]
 }
 
+fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Result<(), String> {
+    let persisted_harness_args = candidate
+        .driver_config
+        .get("harness_args")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    validate_address_harness_args(
+        candidate.harness.as_deref().unwrap_or_default(),
+        &persisted_harness_args,
+    )
+}
+
 /// Boot auto-reattach: rehydrate still-live runs into the freshly built
 /// supervisor so a daemon restart/rebuild is transparent to the operator. For
 /// each project's session JSONL that is non-terminal and carries reattach
@@ -7991,6 +8020,15 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                 run_id = %c.run_id,
                 session_path = %c.session_path.display(),
                 "boot reattach: pending recovery prefix reserved for locked reconciliation"
+            );
+            continue;
+        }
+        if let Err(error) = validate_boot_reattach_harness_args(&c) {
+            skipped += 1;
+            tracing::info!(
+                run_id = %c.run_id,
+                error = %error,
+                "boot reattach: persisted harness argv rejected"
             );
             continue;
         }
@@ -13172,6 +13210,7 @@ impl<'a> ArtifactLaunchCleanupGuard<'a> {
 /// opposite ordering appending a spurious `artifact.regenerated` tx entry —
 /// and silently consuming real comments — for a regenerate call that the
 /// lease went on to refuse.
+#[allow(clippy::too_many_arguments)]
 async fn launch_artifact_generation(
     state: &ApiState,
     entry: &BoardEntry,
@@ -15425,6 +15464,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15486,6 +15527,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15567,6 +15610,8 @@ mod tests {
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
                         babysitter: None,
+                        applicable_states: Vec::new(),
+                        max_iterations: None,
                         planned_identity: None,
                     },
                 )
@@ -15747,6 +15792,8 @@ mod tests {
                         max_run_duration_secs: Some(0),
                         idle_timeout_secs: None,
                         babysitter: None,
+                        applicable_states: Vec::new(),
+                        max_iterations: None,
                         planned_identity: None,
                     },
                 )
@@ -15808,6 +15855,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -15968,6 +16017,8 @@ mod tests {
                     max_run_duration_secs: Some(0),
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -16136,6 +16187,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -16155,7 +16208,7 @@ mod tests {
 
     thread_local! {
         static CURSOR_ACP_FIXTURE_WIRE: std::cell::RefCell<Vec<orgasmic_drivers::WireMessage>> =
-            std::cell::RefCell::new(Vec::new());
+            const { std::cell::RefCell::new(Vec::new()) };
     }
 
     fn clear_cursor_acp_fixture_wire() {
@@ -16217,6 +16270,7 @@ mod tests {
                     events: tx,
                 }),
                 native_runtime: None,
+                producer: None,
             })
         }
     }
@@ -16306,6 +16360,7 @@ mod tests {
                     worktree: None,
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path,
                     driver_config: orgasmic_drivers::adapters::cursor_acp::simulated_config(),
                     babysitter_target: None,
@@ -16315,6 +16370,7 @@ mod tests {
                     babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -16393,6 +16449,7 @@ mod tests {
                     worktree: None,
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("unsupported-runtime.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -16402,6 +16459,7 @@ mod tests {
                     babysitter: None,
                     applicable_states: Vec::new(),
                     max_iterations: None,
+                    planned_identity: None,
                 },
             )
             .await
@@ -16607,6 +16665,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -16648,6 +16708,8 @@ mod tests {
                     max_run_duration_secs: None,
                     idle_timeout_secs: None,
                     babysitter: None,
+                    applicable_states: Vec::new(),
+                    max_iterations: None,
                     planned_identity: None,
                 },
             )
@@ -16749,6 +16811,29 @@ mod tests {
         // reattach must still succeed, just without a completion watcher.
         assert!(candidate.last_path.is_none());
         assert!(candidate.stdout_path.is_none());
+
+        let invalid_argv_meta = env(
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::RunMeta {
+                transport: "rmux".into(),
+                harness: Some("claude".into()),
+                project_id: Some("orgasmic".into()),
+                worktree: Some(PathBuf::from("/tmp/orgasmic")),
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                role: Some("terminal".into()),
+                requires_worker_finalize: Some(false),
+                driver_config: json!({"harness_args": ["--smuggle"]}),
+            })
+            .unwrap(),
+        );
+        let invalid_argv = boot_reattach_candidate(&[acquire.clone(), invalid_argv_meta], &path)
+            .expect("invalid argv candidate");
+        assert!(
+            validate_boot_reattach_harness_args(&invalid_argv).is_err(),
+            "boot reattach must use the shared custom-only argv validator"
+        );
 
         // Terminal release → not a candidate.
         assert!(
@@ -16947,8 +17032,8 @@ mod tests {
                     last_path: Some(last_path.clone()),
                     stdout_path: Some(stdout_path.clone()),
                     dispatch_attempt_token: None,
-                    role: None,
-                    requires_worker_finalize: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -18291,7 +18376,6 @@ mod tests {
             project_id: Some("proj".into()),
             worktree: Some(PathBuf::from("/tmp/worktree")),
             babysitter_target: None,
-            continuation: None,
         };
         let config = DriverConfig::from_value(json!({
             "model": "  Composer-2.5-FAST  ",

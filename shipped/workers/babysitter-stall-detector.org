@@ -8,7 +8,7 @@
 :DEFAULT_PROVIDER:            anthropic
 :LINKED_SKILLS:
 :APPLICABLE_STATES:           working, done, blocked, cancelled
-:CONTEXT_BUDGET:              80000
+:CONTEXT_BUDGET_CHARS:        320000
 :VERSION:                     1
 :END:
 

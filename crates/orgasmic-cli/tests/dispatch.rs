@@ -4198,6 +4198,7 @@ fn session_driver_config_field(project_root: &Path, run_id: &str, field: &str) -
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_dispatch_with_model_effort(
     home: &Home,
     running: &RunningDaemon,
@@ -4224,6 +4225,7 @@ fn run_dispatch_with_model_effort(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_dispatch_with_model_effort_output(
     home: &Home,
     running: &RunningDaemon,

@@ -606,8 +606,6 @@ async fn dispatch_notification(
         "thread/closed" => {
             // No fabricated summary: the daemon assembles the worker's real
             // report from the assistant text chunks when summary is None.
-            let seq = seqs.next_turn();
-            let _ = events.send(DriverEvent::AgentTurnComplete { seq }).await;
             let _ = events
                 .send(DriverEvent::RunComplete { summary: None })
                 .await;
@@ -1411,6 +1409,8 @@ mod tests {
             } if call_id == "call-1" && name == "transition_state" && args["to"] == "done"
         ));
 
+        let turn = session.events.recv().await.unwrap();
+        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let complete = session.events.recv().await.unwrap();
         assert!(matches!(complete, DriverEvent::RunComplete { .. }));
         server.await.unwrap();
@@ -1460,12 +1460,14 @@ mod tests {
         .await
         .unwrap();
         assert!(terminal);
-        let turn = rx.recv().await.unwrap();
-        assert!(matches!(turn, DriverEvent::AgentTurnComplete { .. }));
         let event = rx.recv().await.unwrap();
         assert!(
             matches!(event, DriverEvent::RunComplete { summary: None }),
             "expected RunComplete with no fabricated summary, got {event:?}"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "thread closure is not a native turn boundary"
         );
     }
 
