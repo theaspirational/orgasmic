@@ -89,3 +89,11 @@ Continue salvaged AFE5Q fix-round-7 WIP at 90d9de7 after the prior Cursor run hi
 
 Continue salvaged QPKCD fix-round-6 WIP at 6e20c4c after Cursor internal subagent fan-out stalled. Work directly without spawning subagents; format, remove warning, complete all five acceptance areas, add missing fault/security/two-recovery tests, and finalize a clean committed branch.
 
+* IN_REVIEW TASK-HQR91 QPKCD review6c fix: close seven recovery-authority blockers :fix:
+:PROPERTIES:
+:ID: TASK-HQR91
+:IMPLEMENTS: dec_WDR5K
+:PRIORITY: high
+:END:
+
+Fix every blocking finding from TASK-TMM5H reviewer run run-20260722T061109-4f2a295a340b48de82c9d0a8f7d637ec and its report at .orgasmic/tmp/dispatch/task-qpkcd-review6c/task-qpkcd-review6c-last.txt. Required: dead-PID convergence; stop-then-drain terminal freeze; lifecycle-before-event reattach with a real killed-daemon/original-pane crash matrix; origin project/worktree cwd+diff; daemon-anchored retained-handle claim authority with duplicate fail-closed; actual Claude versioned-file symlink identity with execution-bound pin; correlated fork proof; required CLI project. Preserve all contracts and paused streams. Full gates plus independent re-review required.

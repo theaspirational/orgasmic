@@ -19496,3 +19496,98 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-22 Wed 08:33:48 implementer.commit_pending TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2337
+:TIME:         [2026-07-22 Wed 08:33:48]
+:TYPE:         implementer.commit_pending
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-HQR91-implementer-20260722T063313.jsonl
+:REASON:       implementer dispatch completed with uncommitted worktree
+:RUN_ID:       run-20260722T063313-f001018601c74ef1a4bc852fd0c9ce98
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-hqr91-fix/worktree
+:HAS_UNCOMMITTED: yes
+:END:
+
+
+* TX 2026-07-22 Wed 08:56:06 implementer.done TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2338
+:TIME:         [2026-07-22 Wed 08:56:06]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:REASON:       Manager fallback finalize: original 0.0.12-nightly daemon removed the run after a vanished test subprocess left the Codex turn polling a stale session; recovered Worker completed all gates, staged exactly 13 task files, and manager committed the preserved worktree.
+:WORKER_SESSION: .orgasmic/tmp/sessions/dispatch-TASK-HQR91-implementer-20260722T063313.jsonl
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:WORKER_COMMIT: b35ae5b
+:MERGE_SHA:    b35ae5b
+:BRANCH:       task-hqr91-fix
+:REVIEWED_DIFF: 453defd..b35ae5b
+:CLOSED_TX:    tx-20260722-orgasmic-2331
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-22 Wed 08:56:07 task.state_transitioned TASK-HQR91
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2339
+:TIME:         [2026-07-22 Wed 08:56:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQR91
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-HQR91 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-22 Wed 08:58:41 task.created TASK-2D0EJ
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2340
+:TIME:         [2026-07-22 Wed 08:58:41]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2D0EJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       HQR91 live incident exposed unbounded stale unified-exec polling despite ACP liveness heartbeats.
+:END:
+
+* TX 2026-07-22 Wed 08:58:42 task.state_transitioned TASK-2D0EJ
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2341
+:TIME:         [2026-07-22 Wed 08:58:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2D0EJ
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       Operator requested immediate instruction hardening after HQR91 orchestration incident.
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-22 Wed 08:59:11 task.edited TASK-2D0EJ
+:PROPERTIES:
+:TX_ID:        tx-20260722-orgasmic-2342
+:TIME:         [2026-07-22 Wed 08:59:11]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2D0EJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-2D0EJ
+:NODE_ID:      TASK-2D0EJ
+:END:
