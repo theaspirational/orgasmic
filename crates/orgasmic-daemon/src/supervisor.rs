@@ -134,6 +134,9 @@ pub struct AcquireRequest {
     /// acquires (manager launch, recovery, stage launch, babysitter).
     pub last_path: Option<PathBuf>,
     pub stdout_path: Option<PathBuf>,
+    /// Full UUID attempt token minted by the CLI for this dispatch. Fences
+    /// delayed cleanup against a newer live attempt (TASK-ZGT1X).
+    pub dispatch_attempt_token: Option<String>,
     /// Where the per-run JSONL lives. The supervisor opens this through
     /// the daemon writer so concurrent runs don't race on the file
     /// descriptor.
@@ -240,6 +243,12 @@ pub enum SupervisorError {
     DeferredWhileInFlight(String),
     #[error("artifactor lifecycle busy: {0}")]
     ArtifactorLifecycleBusy(String),
+    #[error("dispatch cleanup in progress for task={task_id} kind={kind:?} worktree={worktree}")]
+    CleanupInProgress {
+        task_id: String,
+        kind: RunKind,
+        worktree: String,
+    },
 }
 
 /// Canonical supervisor lease identity (TASK-QPKCD / TASK-EMY0M).
@@ -271,6 +280,58 @@ struct Inner {
     /// `(task_id, Babysitter)` lease. Prevents dispatch churn from turning
     /// one stale babysitter lease into an immediate retry loop.
     babysitter_auto_spawn_backoff: HashMap<String, BabysitterAutoSpawnBackoff>,
+    /// Active dispatch cleanup reservations held through filesystem mutation
+    /// (TASK-1FV1N). Blocks reuse of the same default worktree path.
+    cleanup_reservations: HashMap<CleanupReservationKey, DispatchCleanupReservation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CleanupReservationKey {
+    task_id: String,
+    kind: RunKind,
+    worktree_key: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+struct DispatchCleanupReservation {
+    branch: String,
+    worktree_path: PathBuf,
+    dispatch_attempt_token: Option<String>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+}
+
+/// Identity bundle for dispatch cleanup authorization (TASK-NW4WV).
+#[derive(Debug, Clone)]
+pub struct DispatchCleanupParams {
+    pub task_id: String,
+    pub kind: RunKind,
+    pub branch: String,
+    pub worktree_path: PathBuf,
+    pub dispatch_attempt_token: Option<String>,
+    pub last_path: Option<PathBuf>,
+    pub stdout_path: Option<PathBuf>,
+}
+
+/// Durable dispatch attempt owner recovered from persisted session JSONL.
+#[derive(Debug, Clone)]
+struct DurableDispatchOwner {
+    dispatch_attempt_token: Option<String>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+    worktree: Option<PathBuf>,
+    recorded_at: chrono::DateTime<Utc>,
+}
+
+enum CleanupIdentityAuth {
+    NoOwner,
+    ExactOwner,
+    IdentityMismatch,
+}
+
+enum DurableScanError {
+    UnreadableSessionsDir,
+    UnreadableSessionFile,
 }
 
 /// Owns a lease reservation until the corresponding [`RunRecord`] is live.
@@ -355,6 +416,7 @@ struct RunRecord {
     /// them for boot reattach when the persisted `RunMeta` event has them).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    dispatch_attempt_token: Option<String>,
     /// When true, this run must end with an explicit worker-declared terminal
     /// call writing the finalize tombstone (`finalized_by_worker` + reason).
     /// Protocol-end alone must not count as success (dec_WDR5K item 6 /
@@ -602,6 +664,7 @@ impl Supervisor {
                 leases: HashMap::new(),
                 runs: HashMap::new(),
                 babysitter_auto_spawn_backoff: HashMap::new(),
+                cleanup_reservations: HashMap::new(),
             })),
             writer,
             boot,
@@ -831,6 +894,20 @@ impl Supervisor {
                     run_id: existing.clone(),
                 });
             }
+            if let Some(worktree) = req.worktree.as_ref() {
+                let worktree_key = normalize_cleanup_worktree(worktree);
+                if guard
+                    .cleanup_reservations
+                    .keys()
+                    .any(|reservation| reservation.worktree_key == worktree_key)
+                {
+                    return Err(SupervisorError::CleanupInProgress {
+                        task_id: req.task_id.clone(),
+                        kind: req.kind,
+                        worktree: worktree.display().to_string(),
+                    });
+                }
+            }
             guard.leases.insert(lease_key.clone(), run_id.clone());
         }
         let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
@@ -892,6 +969,7 @@ impl Supervisor {
             req.worktree.clone(),
             req.last_path.clone(),
             req.stdout_path.clone(),
+            req.dispatch_attempt_token.clone(),
             req.role.clone(),
             run_requires_worker_finalize(&req.last_path, &req.role),
             req.driver_config.clone(),
@@ -1377,6 +1455,7 @@ impl Supervisor {
         worktree: Option<PathBuf>,
         last_path: Option<PathBuf>,
         stdout_path: Option<PathBuf>,
+        dispatch_attempt_token: Option<String>,
         role: String,
         requires_worker_finalize: bool,
         driver_config: DriverConfig,
@@ -1388,6 +1467,7 @@ impl Supervisor {
             worktree,
             last_path,
             stdout_path,
+            dispatch_attempt_token,
             role: Some(role),
             requires_worker_finalize: Some(requires_worker_finalize),
             driver_config: driver_config.0,
@@ -1766,6 +1846,7 @@ impl Supervisor {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: bs_path,
             driver_config,
             babysitter_target: Some(target_run.into()),
@@ -2163,6 +2244,7 @@ impl Supervisor {
                 event_count: rec.next_event_seq,
                 last_path: rec.last_path.clone(),
                 stdout_path: rec.stdout_path.clone(),
+                dispatch_attempt_token: rec.dispatch_attempt_token.clone(),
             })
             .collect();
         SupervisorSnapshot {
@@ -2207,6 +2289,7 @@ impl Supervisor {
         run_id: &str,
         last_path: PathBuf,
         stdout_path: PathBuf,
+        dispatch_attempt_token: Option<String>,
     ) {
         let mut g = self.inner.lock().await;
         if let Some(rec) = g.runs.get_mut(run_id) {
@@ -2606,14 +2689,18 @@ impl Supervisor {
         Ok(())
     }
 
-    /// Stop any live dispatch worker (or clear an orphaned lease) before
-    /// daemon-side worktree/branch cleanup. Returns the released run id when
-    /// a worker or lease was cleared.
+    /// Stop any live dispatch worker before daemon-side worktree/branch cleanup.
+    /// Releases the worker only when task, kind, attempt token, worktree, and
+    /// artifact pair all match exactly (TASK-ZGT1X).
     pub async fn release_dispatch_worker_for_cleanup(
         &self,
         project_id: &str,
         task_id: &str,
         kind: RunKind,
+        dispatch_attempt_token: Option<&str>,
+        worktree_path: &Path,
+        last_path: Option<&Path>,
+        stdout_path: Option<&Path>,
     ) -> Result<Option<String>, SupervisorError> {
         let key = lease_key(Some(project_id), task_id, kind);
         let run_id = {
@@ -2627,14 +2714,9 @@ impl Supervisor {
             let g = self.inner.lock().await;
             g.runs.contains_key(&run_id)
         };
-        if live {
-            self.release(
-                &run_id,
-                "dispatch failure cleanup",
-                ReleaseOutcome::Interrupted,
-            )
-            .await?;
-            return Ok(Some(run_id));
+        // Never steal a lease in the lease→RunRecord gap during cleanup (TASK-NW4WV).
+        if !live {
+            return Ok(None);
         }
         match self.release_orphaned_lease(project_id, task_id, kind).await {
             OrphanedLeaseOutcome::Released { run_id } => Ok(Some(run_id)),
@@ -2645,10 +2727,189 @@ impl Supervisor {
                     "dispatch failure cleanup",
                     ReleaseOutcome::Interrupted,
                 )
-                .await?;
-                Ok(Some(run_id))
+            })
+        };
+        if !matches {
+            return Ok(None);
+        }
+        self.release(
+            &run_id,
+            "dispatch failure cleanup",
+            ReleaseOutcome::Interrupted,
+        )
+        .await?;
+        Ok(Some(run_id))
+    }
+
+    /// Authorize and optionally release a dispatch worker for cleanup. Returns
+    /// `Conflict` when the live run, a durable session owner, a newer tokened
+    /// attempt, or an in-flight cleanup reservation owns the same worktree/
+    /// artifacts so filesystem cleanup must not proceed (TASK-KE0JW, TASK-1FV1N,
+    /// TASK-NW4WV).
+    pub async fn prepare_dispatch_cleanup(
+        &self,
+        sessions_dir: &Path,
+        params: &DispatchCleanupParams,
+    ) -> Result<DispatchCleanupOutcome, SupervisorError> {
+        let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
+        let reservation_key = CleanupReservationKey {
+            task_id: params.task_id.clone(),
+            kind: params.kind,
+            worktree_key: worktree_key.clone(),
+        };
+        let reservation = DispatchCleanupReservation {
+            branch: params.branch.clone(),
+            worktree_path: params.worktree_path.clone(),
+            dispatch_attempt_token: params.dispatch_attempt_token.clone(),
+            last_path: params.last_path.clone(),
+            stdout_path: params.stdout_path.clone(),
+        };
+
+        if params.worktree_path.is_dir() {
+            if let Some(checked_out) = dispatch_worktree_checked_out_branch(&params.worktree_path) {
+                if checked_out != params.branch {
+                    return Ok(DispatchCleanupOutcome::Conflict);
+                }
             }
         }
+
+        // Install the cleanup fence atomically before any durable scan or release
+        // window can admit a new acquire (TASK-NW4WV).
+        {
+            let mut g = self.inner.lock().await;
+            if g.cleanup_reservations
+                .keys()
+                .any(|held| held.worktree_key == worktree_key)
+            {
+                return Ok(DispatchCleanupOutcome::Conflict);
+            }
+            for rec in g.runs.values() {
+                if rec.task_id != params.task_id || rec.kind != params.kind {
+                    continue;
+                }
+                if rec.worktree.as_ref().map(|p| normalize_cleanup_worktree(p))
+                    != Some(worktree_key.clone())
+                {
+                    continue;
+                }
+                if !dispatch_cleanup_identity_matches(
+                    rec,
+                    params.dispatch_attempt_token.as_deref(),
+                    &params.worktree_path,
+                    params.last_path.as_deref(),
+                    params.stdout_path.as_deref(),
+                ) {
+                    return Ok(DispatchCleanupOutcome::Conflict);
+                }
+            }
+            if params.dispatch_attempt_token.is_none() {
+                let tokened_owner = g.runs.values().any(|rec| {
+                    rec.worktree.as_ref().map(|p| normalize_cleanup_worktree(p))
+                        == Some(worktree_key.clone())
+                        && rec.dispatch_attempt_token.is_some()
+                });
+                if tokened_owner {
+                    return Ok(DispatchCleanupOutcome::Conflict);
+                }
+            }
+            g.cleanup_reservations
+                .insert(reservation_key.clone(), reservation);
+        }
+
+        let durable_owner =
+            match scan_durable_dispatch_owner(sessions_dir, &params.task_id, &worktree_key) {
+                Ok(owner) => owner,
+                Err(_) => {
+                    self.clear_dispatch_cleanup_reservation(
+                        &params.task_id,
+                        params.kind,
+                        &params.worktree_path,
+                    )
+                    .await;
+                    return Ok(DispatchCleanupOutcome::Conflict);
+                }
+            };
+        match authorize_cleanup_identity(
+            params.dispatch_attempt_token.as_deref(),
+            &params.worktree_path,
+            params.last_path.as_deref(),
+            params.stdout_path.as_deref(),
+            durable_owner.as_ref(),
+        ) {
+            CleanupIdentityAuth::IdentityMismatch => {
+                self.clear_dispatch_cleanup_reservation(
+                    &params.task_id,
+                    params.kind,
+                    &params.worktree_path,
+                )
+                .await;
+                return Ok(DispatchCleanupOutcome::Conflict);
+            }
+            CleanupIdentityAuth::NoOwner | CleanupIdentityAuth::ExactOwner => {}
+        }
+
+        let released_run_id = self
+            .release_dispatch_worker_for_cleanup(
+                &params.task_id,
+                params.kind,
+                params.dispatch_attempt_token.as_deref(),
+                &params.worktree_path,
+                params.last_path.as_deref(),
+                params.stdout_path.as_deref(),
+            )
+            .await?;
+
+        Ok(DispatchCleanupOutcome::Proceed { released_run_id })
+    }
+
+    async fn clear_dispatch_cleanup_reservation(
+        &self,
+        task_id: &str,
+        kind: RunKind,
+        worktree_path: &Path,
+    ) {
+        let worktree_key = normalize_cleanup_worktree(worktree_path);
+        let reservation_key = CleanupReservationKey {
+            task_id: task_id.to_string(),
+            kind,
+            worktree_key,
+        };
+        self.inner
+            .lock()
+            .await
+            .cleanup_reservations
+            .remove(&reservation_key);
+    }
+
+    /// Release a dispatch cleanup reservation after filesystem mutation finishes.
+    pub async fn finish_dispatch_cleanup(&self, params: &DispatchCleanupParams) {
+        let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
+        let reservation_key = CleanupReservationKey {
+            task_id: params.task_id.clone(),
+            kind: params.kind,
+            worktree_key,
+        };
+        let mut g = self.inner.lock().await;
+        let Some(reservation) = g.cleanup_reservations.get(&reservation_key) else {
+            return;
+        };
+        if reservation.branch != params.branch {
+            return;
+        }
+        if reservation.dispatch_attempt_token.as_deref() != params.dispatch_attempt_token.as_deref()
+        {
+            return;
+        }
+        if reservation.worktree_path != params.worktree_path {
+            return;
+        }
+        if reservation.last_path.as_deref() != params.last_path.as_deref() {
+            return;
+        }
+        if reservation.stdout_path.as_deref() != params.stdout_path.as_deref() {
+            return;
+        }
+        g.cleanup_reservations.remove(&reservation_key);
     }
 
     /// Clear an *orphaned* lease: one held for `(project_id, task_id, kind)`
@@ -2673,6 +2934,15 @@ impl Supervisor {
         g.leases.remove(&key);
         OrphanedLeaseOutcome::Released { run_id }
     }
+}
+
+/// Whether a dispatch cleanup request may proceed with filesystem mutation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchCleanupOutcome {
+    /// Identity matches; optional released run id when a live worker was stopped.
+    Proceed { released_run_id: Option<String> },
+    /// A live or newer tokened attempt owns the same worktree/artifacts.
+    Conflict,
 }
 
 /// Result of [`Supervisor::release_orphaned_lease`].
@@ -3012,6 +3282,8 @@ pub struct RunSummary {
     pub last_path: Option<PathBuf>,
     #[serde(default)]
     pub stdout_path: Option<PathBuf>,
+    #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
 }
 
 fn make_run_id(kind: &RunKind) -> String {
@@ -3214,6 +3486,174 @@ fn take_stream_end_release(inner: &mut Inner, run_id: &str) -> Option<RunRecord>
 /// path handles protocol end.
 fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
+}
+
+/// Whether a live run record matches the cleanup request's attempt identity.
+fn dispatch_cleanup_identity_matches(
+    rec: &RunRecord,
+    dispatch_attempt_token: Option<&str>,
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> bool {
+    fn path_eq(left: Option<&PathBuf>, right: Option<&Path>) -> bool {
+        match (left, right) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    rec.worktree.as_deref() == Some(worktree_path)
+        && path_eq(rec.last_path.as_ref(), last_path)
+        && path_eq(rec.stdout_path.as_ref(), stdout_path)
+        && rec.dispatch_attempt_token.as_deref() == dispatch_attempt_token
+}
+
+fn durable_owner_identity_matches(
+    owner: &DurableDispatchOwner,
+    dispatch_attempt_token: Option<&str>,
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> bool {
+    fn path_eq(left: Option<&PathBuf>, right: Option<&Path>) -> bool {
+        match (left, right) {
+            (Some(a), Some(b)) => a == b,
+            (None, None) => true,
+            _ => false,
+        }
+    }
+    owner.worktree.as_deref() == Some(worktree_path)
+        && path_eq(owner.last_path.as_ref(), last_path)
+        && path_eq(owner.stdout_path.as_ref(), stdout_path)
+        && owner.dispatch_attempt_token.as_deref() == dispatch_attempt_token
+}
+
+fn authorize_cleanup_identity(
+    dispatch_attempt_token: Option<&str>,
+    worktree_path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+    durable_owner: Option<&DurableDispatchOwner>,
+) -> CleanupIdentityAuth {
+    let Some(owner) = durable_owner else {
+        return CleanupIdentityAuth::NoOwner;
+    };
+    if durable_owner_identity_matches(
+        owner,
+        dispatch_attempt_token,
+        worktree_path,
+        last_path,
+        stdout_path,
+    ) {
+        CleanupIdentityAuth::ExactOwner
+    } else if owner.dispatch_attempt_token.is_some() || dispatch_attempt_token.is_some() {
+        CleanupIdentityAuth::IdentityMismatch
+    } else {
+        CleanupIdentityAuth::NoOwner
+    }
+}
+
+fn scan_durable_dispatch_owner(
+    sessions_dir: &Path,
+    task_id: &str,
+    worktree_key: &Path,
+) -> Result<Option<DurableDispatchOwner>, DurableScanError> {
+    if !sessions_dir.exists() {
+        return Ok(None);
+    }
+    let entries =
+        std::fs::read_dir(sessions_dir).map_err(|_| DurableScanError::UnreadableSessionsDir)?;
+    let mut latest: Option<DurableDispatchOwner> = None;
+    for entry in entries {
+        let entry = entry.map_err(|_| DurableScanError::UnreadableSessionsDir)?;
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let envelopes =
+            read_session_file(&path).map_err(|_| DurableScanError::UnreadableSessionFile)?;
+        let mut current_task: Option<String> = None;
+        for envelope in &envelopes {
+            if envelope.kind != SessionEventKind::Lifecycle {
+                continue;
+            }
+            match serde_json::from_value::<Lifecycle>(envelope.event.clone()) {
+                Ok(Lifecycle::Acquire {
+                    task_id: acquired_task,
+                    ..
+                }) => current_task = Some(acquired_task),
+                Ok(Lifecycle::RunMeta {
+                    worktree,
+                    last_path,
+                    stdout_path,
+                    dispatch_attempt_token,
+                    ..
+                }) => {
+                    let Some(acquired_task) = current_task.as_deref() else {
+                        continue;
+                    };
+                    if acquired_task != task_id {
+                        continue;
+                    }
+                    let Some(wt) = worktree.as_ref() else {
+                        continue;
+                    };
+                    if normalize_cleanup_worktree(wt) != *worktree_key {
+                        continue;
+                    }
+                    let candidate = DurableDispatchOwner {
+                        dispatch_attempt_token: dispatch_attempt_token.clone(),
+                        last_path: last_path.clone(),
+                        stdout_path: stdout_path.clone(),
+                        worktree: Some(wt.clone()),
+                        recorded_at: envelope.time,
+                    };
+                    if let Some(existing) = latest.as_ref() {
+                        if candidate.recorded_at == existing.recorded_at
+                            && (candidate.dispatch_attempt_token != existing.dispatch_attempt_token
+                                || candidate.last_path != existing.last_path
+                                || candidate.stdout_path != existing.stdout_path)
+                        {
+                            return Err(DurableScanError::UnreadableSessionFile);
+                        }
+                    }
+                    if latest
+                        .as_ref()
+                        .is_none_or(|existing| candidate.recorded_at > existing.recorded_at)
+                    {
+                        latest = Some(candidate);
+                    }
+                }
+                Err(_) => {
+                    return Err(DurableScanError::UnreadableSessionFile);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(latest)
+}
+
+fn normalize_cleanup_worktree(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(worktree)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        None
+    } else {
+        Some(branch)
+    }
 }
 
 /// Whether this run requires an explicit worker-declared terminal call
@@ -4550,6 +4990,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.join(format!("{task}.jsonl")),
             driver_config: tmux::inert_config(),
             babysitter_target: None,
@@ -5257,17 +5698,6 @@ mod tests {
             .unwrap_or(false)
     }
 
-    async fn send_tmux_line_for_test(session: &str, line: &str) {
-        let status = tokio::process::Command::new("tmux")
-            .args(["send-keys", "-t", session, line, "Enter"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .await
-            .expect("tmux send-keys");
-        assert!(status.success(), "tmux send-keys failed");
-    }
-
     async fn wait_for_run_release(sup: &Supervisor, run_id: &str, timeout: Duration) {
         let start = Instant::now();
         loop {
@@ -5471,34 +5901,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tmux_terminal_event_releases_supervisor_run_and_session() {
+    async fn tmux_process_exit_releases_supervisor_run_and_session() {
         let _live_guard = live_session_guard();
         if !tmux_spawn_usable_for_test().await || !command_available_for_test("bash") {
             eprintln!(
-                "skipping tmux_terminal_event_releases_supervisor_run_and_session: tmux/bash unavailable"
+                "skipping tmux_process_exit_releases_supervisor_run_and_session: tmux/bash unavailable"
             );
             return;
         }
         let (sup, dir, _w) = make_supervisor();
         let driver = TmuxTuiDriver;
-        let mut req = impl_req("TASK-TMUX-MOCK", dir.path());
+        let mut req = dispatch_impl_req("TASK-TMUX-MOCK", dir.path());
         req.worker_id = "implementer-claude-tmux".into();
+        // Dispatch-shaped acquire with last_path advertises finalize contract;
+        // pane exit without finalize must tombstone Failed.
         req.driver_config = DriverConfig::from_value(json!({
             "command": "bash",
-            "args": ["-lc", "printf 'mock output\\n'; cat"],
+            "args": ["-lc", "printf 'mock output\\n'; exit 0"],
         }));
         let resp = sup.acquire(&driver, req).await.unwrap();
         let session = tmux::tmux_session_name(&resp.identity);
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert!(tmux_has_session_for_test(&session).await);
-
-        let marker = format!("[orgasmic-eot:{}]", resp.run_id);
-        send_tmux_line_for_test(&session, &marker).await;
         wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(8)).await;
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(
             !tmux_has_session_for_test(&session).await,
-            "tmux session should be killed after EOT release"
+            "tmux session should be killed after process-exit release"
         );
 
         let events = session_events(&dir.path().join("TASK-TMUX-MOCK.jsonl"));
@@ -5509,79 +5936,26 @@ mod tests {
                     Ok(DriverEvent::Ready { .. })
                 )
         }));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::TextChunk { chunk, .. }) if chunk.contains("mock output")
-                )
-        }));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::RunComplete { .. })
-                )
-        }));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::Lifecycle
-                && matches!(
-                    serde_json::from_value::<Lifecycle>(envelope.event.clone()),
-                    Ok(Lifecycle::Release {
-                        outcome: ReleaseOutcome::Completed,
-                        ..
-                    })
-                )
-        }));
-    }
-
-    #[tokio::test]
-    async fn tmux_real_claude_wire_smoke_releases_on_eot() {
-        if !tmux_spawn_usable_for_test().await || !command_available_for_test("claude") {
-            eprintln!(
-                "skipping tmux_real_claude_wire_smoke_releases_on_eot: tmux/claude unavailable"
-            );
-            return;
-        }
-        if std::env::var_os("ORGASMIC_RUN_REAL_CLAUDE_SMOKE").is_none() {
-            eprintln!(
-                "skipping tmux_real_claude_wire_smoke_releases_on_eot: set ORGASMIC_RUN_REAL_CLAUDE_SMOKE=1 to exercise real claude"
-            );
-            return;
-        }
-        let (sup, dir, _w) = make_supervisor();
-        let driver = TmuxTuiDriver;
-        let mut req = impl_req("TASK-TMUX-CLAUDE", dir.path());
-        req.worker_id = "implementer-claude-tmux".into();
-        req.driver_config = DriverConfig::from_value(json!({
-            "prompt_bundle_text": "Respond with just the requested orgasmic end-of-turn marker and no other text.",
-        }));
-
-        let resp = sup.acquire(&driver, req).await.unwrap();
-        let session = tmux::tmux_session_name(&resp.identity);
-        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(60)).await;
-        tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(
-            !tmux_has_session_for_test(&session).await,
-            "real claude tmux session should be gone after terminal release"
+            !events.iter().any(|envelope| {
+                envelope.kind == SessionEventKind::DriverEvent
+                    && matches!(
+                        serde_json::from_value::<DriverEvent>(envelope.event.clone()),
+                        Ok(DriverEvent::TextChunk { .. })
+                    )
+            }),
+            "capture removal must not synthesize TextChunk from scrollback"
         );
-
-        let events = session_events(&dir.path().join("TASK-TMUX-CLAUDE.jsonl"));
-        assert!(events.iter().any(|envelope| {
-            envelope.kind == SessionEventKind::DriverEvent
-                && matches!(
-                    serde_json::from_value::<DriverEvent>(envelope.event.clone()),
-                    Ok(DriverEvent::RunComplete { .. })
-                )
-        }));
         assert!(events.iter().any(|envelope| {
             envelope.kind == SessionEventKind::Lifecycle
                 && matches!(
                     serde_json::from_value::<Lifecycle>(envelope.event.clone()),
                     Ok(Lifecycle::Release {
-                        outcome: ReleaseOutcome::Completed,
+                        reason,
+                        outcome: ReleaseOutcome::Failed,
+                        finalized_by_worker: false,
                         ..
-                    })
+                    }) if reason == "protocol_end_without_finalize"
                 )
         }));
     }
@@ -5677,6 +6051,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join(format!("{}.babysitter.jsonl", r1.run_id)),
             driver_config: tmux::inert_config(),
             babysitter_target: Some(r1.run_id.clone()),
@@ -7093,6 +7468,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("bs.jsonl"),
             driver_config: tmux::inert_config(),
             babysitter_target: None,
@@ -7176,6 +7552,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-079.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -7221,6 +7598,7 @@ mod tests {
                 worktree: None,
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 session_path: dir.path().join(format!("spin-{idx}.jsonl")),
                 driver_config: tmux::inert_config(),
                 babysitter_target: None,
@@ -7269,6 +7647,7 @@ mod tests {
                     worktree: None,
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: dir.path().join("held.babysitter.jsonl"),
                     driver_config: tmux::inert_config(),
                     babysitter_target: Some("external-target".into()),
@@ -7365,6 +7744,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-082.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -7441,6 +7821,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-083-BS-FIRST.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,
@@ -7536,6 +7917,7 @@ mod tests {
             worktree: None,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             session_path: dir.path().join("TASK-083-DOUBLE.jsonl"),
             driver_config: simulated_config(),
             babysitter_target: None,

@@ -112,6 +112,9 @@ impl DaemonClient {
             "kind": plan.kind.as_str(),
             "worktree_path": plan.worktree_path,
             "branch": plan.branch,
+            "dispatch_attempt_token": plan.dispatch_attempt_token,
+            "last_path": plan.last_path,
+            "stdout_path": plan.stdout_path,
         });
         self.post_json(
             &format!("/projects/{project}/tasks/{task}/dispatch/cleanup"),
@@ -122,12 +125,12 @@ impl DaemonClient {
 
     pub(crate) fn dispatch_failure_needs_daemon_cleanup(err: &anyhow::Error) -> bool {
         let msg = err.to_string();
+        // Confirmed daemon rejection — safe to roll back CLI-local resources.
         if msg.contains("daemon returned") {
             return false;
         }
-        msg.contains("timed out")
-            || msg.contains("operation timed out")
-            || msg.contains("daemon request failed")
+        // Any other post-send error may have reached the daemon (TASK-NW4WV).
+        true
     }
 
     fn url(&self, path: &str) -> String {
@@ -168,6 +171,7 @@ pub(crate) struct DispatchRequest {
     worktree_path: PathBuf,
     last_path: PathBuf,
     stdout_path: PathBuf,
+    dispatch_attempt_token: String,
     worker_id: Option<String>,
     model_override: Option<String>,
     effort_override: Option<String>,
@@ -185,6 +189,7 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         worktree_path: plan.worktree_path.clone(),
         last_path: plan.last_path.clone(),
         stdout_path: plan.stdout_path.clone(),
+        dispatch_attempt_token: plan.dispatch_attempt_token.clone(),
         worker_id: plan.worker_override.clone(),
         model_override: plan.model_override.clone(),
         effort_override: plan.effort_override.clone(),
@@ -379,6 +384,7 @@ mod tests {
             effort_override: None,
             last_path: PathBuf::from("/tmp/last.txt"),
             stdout_path: PathBuf::from("/tmp/stdout.log"),
+            dispatch_attempt_token: "aaaa1111bbbb2222cccc3333dddd4444".into(),
             goal_id: None,
             reason: None,
             dry_run: false,
@@ -448,5 +454,34 @@ mod tests {
         let _clear = ScopedEnv::clear(&[DAEMON_URL_ENV, DAEMON_TOKEN_FILE_ENV]);
 
         assert_eq!(read_bearer_token(&home).unwrap(), "home-token");
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_daemon_rejection_is_local_rollback() {
+        let err = anyhow::Error::msg(r#"daemon returned 409 Conflict: {"error":"lease held"}"#);
+        assert!(
+            !DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "confirmed daemon HTTP rejection must not trigger daemon cleanup"
+        );
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_decode_error_is_ambiguous() {
+        let err =
+            anyhow::anyhow!("decode daemon response: invalid type: integer `1`, expected a string");
+        assert!(
+            DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "post-send decode failures may have reached the daemon"
+        );
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_transport_error_is_ambiguous() {
+        let err =
+            anyhow::anyhow!("daemon request failed: connection refused — is the daemon reachable?");
+        assert!(
+            DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "transport failures after POST may have reached the daemon"
+        );
     }
 }

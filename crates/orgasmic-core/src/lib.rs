@@ -63,8 +63,10 @@ pub use org::{
 pub use paths::{
     dotorg_tasks_dir, goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
     lifecycle_stage_file_name, project_dispatch_dir, project_sessions_dir, project_tmp_dir,
-    prune_dispatch_stem_after_worktree, task_file_path, task_file_rel, DEFAULT_TASK_FILE,
-    DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE, TASKS_DIR, TASK_FILE_NAMES,
+    prune_dispatch_stem_after_worktree, prune_validated_dispatch_attempt, task_file_path,
+    task_file_rel, validate_dispatch_cleanup_targets, verify_dispatch_worktree_identity,
+    DispatchAttemptArtifacts, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, GOAL_FILE, HANDOFF_FILE,
+    TASKS_DIR, TASK_FILE_NAMES,
 };
 pub use sandbox::{SandboxAllowlist, SandboxAllowlistParseError};
 pub use schema::{

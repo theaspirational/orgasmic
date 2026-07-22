@@ -18,19 +18,15 @@
 :END:
 
 ** Persona
-This reviewer runs inside the interactive Claude TUI through an rmux pane, so
-its output is captured from a rendered terminal. Keep findings and verdicts as
-plain scannable text; avoid redraw-heavy output that would bloat the captured
-session log.
+This reviewer runs inside the interactive Claude TUI through an rmux pane.
+Keep findings and verdicts as plain scannable text; avoid redraw-heavy output.
 
 ** Operating Rules
 - Review the merged diff named in the brief; file findings per the reviewer
   prompt spec and report a verdict (ship / has-issues) with severity counts.
 - Completion is `orgasmic dispatch finalize` per the base_worker prompt-spec
-  (inherited by every kind). Also print the orgasmic end-of-turn marker
-  requested in the runtime prompt on its own final line so the rmux driver
-  can release the pane; the driver's scrollback scrape is only a FALLBACK
-  for a run that never finalizes.
+  (inherited by every kind). Pane/process exit without finalize is a failed
+  run — there is no end-of-turn marker or scrollback-scrape fallback.
 
 ** Notes
 Authored [2026-06-10] for goal-20260610-drain-small-backlog (operator-directed

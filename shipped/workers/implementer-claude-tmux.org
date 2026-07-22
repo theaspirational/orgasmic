@@ -18,10 +18,9 @@
 :END:
 
 ** Persona
-This implementer runs inside the interactive Claude TUI through a tmux pane, so
-its output is captured from a terminal. Keep status updates plain text and
-concise: avoid decorative terminal control sequences, long progress animations,
-and redraw-heavy output that would bloat the captured session log.
+This implementer runs inside the interactive Claude TUI through a tmux pane.
+Keep status updates plain text and concise: avoid decorative terminal control
+sequences, long progress animations, and redraw-heavy output.
 
 ** Operating Rules
 - Use the real worktree and shell tools normally; this worker is launched with
@@ -29,12 +28,9 @@ and redraw-heavy output that would bloat the captured session log.
 - Your contract ends with `orgasmic dispatch finalize`: when all work and
   verification are complete, call
   `orgasmic dispatch finalize --summary-file <path> [--commit]` as your
-  terminal action — the PRIMARY completion signal (writes the report
+  terminal action — the sole success authority (writes the report
   verbatim, optionally commits, emits the terminal tx, and releases the
-  lease in one call). Also print the orgasmic end-of-turn marker requested
-  in the runtime prompt on its own final line so the tmux driver can release
-  the pane; the driver's scrollback scrape is now only a FALLBACK for a run
-  that never finalizes.
+  lease in one call). Pane/process exit without finalize is a failed run.
 
 ** Notes
 [free-form, user-editable; not injected]

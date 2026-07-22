@@ -2347,6 +2347,7 @@ async fn post_manager_launch(
                 worktree: Some(project.root),
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 session_path,
                 driver_config,
                 babysitter_target: None,
@@ -2896,6 +2897,7 @@ async fn post_stage(
                 worktree: Some(project.root.clone()),
                 last_path,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
@@ -3763,6 +3765,8 @@ struct DispatchRequest {
     pub last_path: PathBuf,
     pub stdout_path: PathBuf,
     #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
+    #[serde(default)]
     pub worker_id: Option<String>,
     #[serde(default)]
     pub model_override: Option<String>,
@@ -3854,6 +3858,7 @@ struct SpawnWorkerRequest<'a> {
     /// a boot reattach can respawn the dispatch completion watcher.
     last_path: Option<&'a FsPath>,
     stdout_path: Option<&'a FsPath>,
+    dispatch_attempt_token: Option<&'a str>,
     origin: &'static str,
     /// Session-path fragment for CLI dispatch (`implementer` / `reviewer`).
     dispatch_kind: Option<&'a str>,
@@ -3957,6 +3962,7 @@ async fn spawn_worker_run(
                 worktree: Some(req.worktree_path.to_path_buf()),
                 last_path: req.last_path.map(|p| p.to_path_buf()),
                 stdout_path: req.stdout_path.map(|p| p.to_path_buf()),
+                dispatch_attempt_token: req.dispatch_attempt_token.map(str::to_string),
                 session_path: session_path.clone(),
                 driver_config,
                 babysitter_target: None,
@@ -4094,6 +4100,7 @@ async fn post_task_dispatch(
             worktree_path: &req.worktree_path,
             last_path: Some(&req.last_path),
             stdout_path: Some(&req.stdout_path),
+            dispatch_attempt_token: req.dispatch_attempt_token.as_deref(),
             origin: "cli_dispatch",
             dispatch_kind: Some(kind.as_str()),
             preloaded_worker: Some(worker_for_bundle),
@@ -4185,6 +4192,12 @@ pub struct DispatchCleanupRequest {
     pub kind: String,
     pub worktree_path: PathBuf,
     pub branch: String,
+    #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
+    #[serde(default)]
+    pub last_path: Option<PathBuf>,
+    #[serde(default)]
+    pub stdout_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Serialize)]
@@ -4220,27 +4233,99 @@ async fn post_task_dispatch_cleanup(
         .ok_or_else(|| ApiError::not_found(format!("project {project_id}")))?;
     drop(snap);
 
-    let released_run_id = state
+    let cleanup_params = DispatchCleanupParams {
+        task_id: task_id.clone(),
+        kind: kind.run_kind(),
+        branch: req.branch.clone(),
+        worktree_path: req.worktree_path.clone(),
+        dispatch_attempt_token: req.dispatch_attempt_token.clone(),
+        last_path: req.last_path.clone(),
+        stdout_path: req.stdout_path.clone(),
+    };
+
+    // Validate the entire mutation plan before changing anything (TASK-NW4WV).
+    let validated_artifacts = match orgasmic_core::validate_dispatch_cleanup_targets(
+        &project.root,
+        &req.worktree_path,
+        req.last_path.as_deref(),
+        req.stdout_path.as_deref(),
+    ) {
+        Ok(artifacts) => artifacts,
+        Err(err) => {
+            return Ok(Json(DispatchCleanupResponse {
+                status: "failed".into(),
+                released_run_id: None,
+                worktree_removed: false,
+                branch_deleted: false,
+                error: Some(format!("validation: {err}")),
+            }));
+        }
+    };
+    let expected_branch_oid = match resolve_dispatch_branch_oid(&project.root, &req.branch) {
+        Ok(oid) => oid,
+        Err(err) => {
+            return Ok(Json(DispatchCleanupResponse {
+                status: "failed".into(),
+                released_run_id: None,
+                worktree_removed: false,
+                branch_deleted: false,
+                error: Some(format!("validation: {err}")),
+            }));
+        }
+    };
+
+    let cleanup = match state
         .supervisor
         .release_dispatch_worker_for_cleanup(&project_id, &task_id, kind.run_kind())
         .await
-        .map_err(|error| ApiError::internal(error.to_string()))?;
+    {
+        Ok(DispatchCleanupOutcome::Conflict) => {
+            return Ok(Json(DispatchCleanupResponse {
+                status: "conflict".into(),
+                released_run_id: None,
+                worktree_removed: false,
+                branch_deleted: false,
+                error: Some("cleanup identity mismatch with live or newer tokened attempt".into()),
+            }));
+        }
+        Ok(DispatchCleanupOutcome::Proceed { released_run_id }) => released_run_id,
+        Err(error) => return Err(ApiError::internal(error.to_string())),
+    };
+
+    let released_run_id = cleanup;
 
     let mut errors = Vec::new();
-    let worktree_removed = match remove_dispatch_worktree(&project.root, &req.worktree_path) {
-        Ok(removed) => removed,
-        Err(err) => {
-            errors.push(format!("worktree: {err}"));
-            false
-        }
-    };
-    let branch_deleted = match delete_dispatch_branch(&project.root, &req.branch) {
-        Ok(deleted) => deleted,
-        Err(err) => {
-            errors.push(format!("branch: {err}"));
-            false
-        }
-    };
+    let worktree_removed =
+        match remove_dispatch_worktree(&project.root, &req.worktree_path, &validated_artifacts) {
+            Ok(removed) => removed,
+            Err(err) => {
+                errors.push(format!("worktree: {err}"));
+                state
+                    .supervisor
+                    .finish_dispatch_cleanup(&cleanup_params)
+                    .await;
+                return Ok(Json(DispatchCleanupResponse {
+                    status: "failed".into(),
+                    released_run_id,
+                    worktree_removed: false,
+                    branch_deleted: false,
+                    error: Some(errors.join("; ")),
+                }));
+            }
+        };
+    let branch_deleted =
+        match delete_dispatch_branch(&project.root, &req.branch, expected_branch_oid.as_deref()) {
+            Ok(deleted) => deleted,
+            Err(err) => {
+                errors.push(format!("branch: {err}"));
+                false
+            }
+        };
+
+    state
+        .supervisor
+        .finish_dispatch_cleanup(&cleanup_params)
+        .await;
 
     let status = match (worktree_removed, branch_deleted, errors.is_empty()) {
         (true, true, true) => "ok",
@@ -4262,10 +4347,15 @@ async fn post_task_dispatch_cleanup(
     }))
 }
 
-fn remove_dispatch_worktree(project_root: &FsPath, path: &FsPath) -> Result<bool, String> {
+fn remove_dispatch_worktree(
+    project_root: &FsPath,
+    path: &FsPath,
+    artifacts: &orgasmic_core::DispatchAttemptArtifacts,
+) -> Result<bool, String> {
     if !path.exists() {
         return Ok(false);
     }
+    orgasmic_core::verify_dispatch_worktree_identity(artifacts, path)?;
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -4273,7 +4363,7 @@ fn remove_dispatch_worktree(project_root: &FsPath, path: &FsPath) -> Result<bool
         .output()
         .map_err(|err| err.to_string())?;
     if output.status.success() {
-        orgasmic_core::prune_dispatch_stem_after_worktree(path);
+        orgasmic_core::prune_validated_dispatch_attempt(artifacts)?;
         Ok(true)
     } else {
         Err(format!(
@@ -4284,9 +4374,46 @@ fn remove_dispatch_worktree(project_root: &FsPath, path: &FsPath) -> Result<bool
     }
 }
 
-fn delete_dispatch_branch(project_root: &FsPath, branch: &str) -> Result<bool, String> {
+fn resolve_dispatch_branch_oid(
+    project_root: &FsPath,
+    branch: &str,
+) -> Result<Option<String>, String> {
+    let valid = Command::new("git")
+        .args(["check-ref-format", "--branch", branch])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !valid.status.success() {
+        return Err(format!("invalid branch name {branch}"));
+    }
+    let branch_ref = format!("refs/heads/{branch}");
     let output = Command::new("git")
-        .args(["branch", "-D", branch])
+        .args(["rev-parse", "--verify", "--quiet", &branch_ref])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if oid.is_empty() {
+        Err(format!("branch {branch} resolved to an empty object id"))
+    } else {
+        Ok(Some(oid))
+    }
+}
+
+fn delete_dispatch_branch(
+    project_root: &FsPath,
+    branch: &str,
+    expected_oid: Option<&str>,
+) -> Result<bool, String> {
+    let Some(expected_oid) = expected_oid else {
+        return Ok(false);
+    };
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .args(["update-ref", "-d", &branch_ref, expected_oid])
         .current_dir(project_root)
         .output()
         .map_err(|err| err.to_string())?;
@@ -4298,11 +4425,7 @@ fn delete_dispatch_branch(project_root: &FsPath, branch: &str) -> Result<bool, S
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
-        if combined.contains("not found") {
-            Ok(false)
-        } else {
-            Err(combined)
-        }
+        Err(combined)
     }
 }
 
@@ -4356,7 +4479,10 @@ fn validate_dispatch_path(field: &str, path: &FsPath) -> Result<(), ApiError> {
 }
 
 fn validate_dispatch_worktree_dir(path: &FsPath) -> Result<(), ApiError> {
-    match std::fs::metadata(path) {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            Err(ApiError::bad_request("worktree path must not be a symlink"))
+        }
         Ok(meta) if meta.is_dir() => Ok(()),
         _ => Err(ApiError::bad_request(
             "worktree path does not exist or is not a directory",
@@ -4634,6 +4760,9 @@ async fn record_dispatch_created(
             ),
         ),
     ];
+    if let Some(token) = record.req.dispatch_attempt_token.as_deref() {
+        extra.push(("DISPATCH_ATTEMPT".to_string(), token.to_string()));
+    }
     if let Some(pid) = record.acquire.pid {
         extra.push(("PID".to_string(), pid.to_string()));
     }
@@ -4679,7 +4808,9 @@ struct DispatchCompletion {
     task_id: String,
     run_id: String,
     session_path: PathBuf,
+    #[allow(dead_code)] // artifact paths; worker finalize writes directly
     last_path: PathBuf,
+    #[allow(dead_code)]
     stdout_path: PathBuf,
     worktree_path: PathBuf,
 }
@@ -4724,11 +4855,9 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 tokio::time::sleep(poll).await;
                 continue;
             };
-            // dec_3M7M0: a worker-declared finalize (`orgasmic dispatch
-            // finalize`) is the PRIMARY completion signal. If it landed, the
-            // worker already wrote last.txt/stdout.log verbatim and emitted
-            // its own terminal tx — this watcher's scrollback-scrape is a
-            // FALLBACK and must never scrape or overwrite that report.
+            // dec_3M7M0 / TASK-AFE5Q: worker-declared finalize is the sole
+            // success authority. If it landed, the worker already wrote
+            // last.txt/stdout.log verbatim — never overwrite that report.
             if dispatch_release_finalized_by_worker(&envelopes) {
                 tracing::info!(
                     run_id = %completion.run_id,
@@ -4736,61 +4865,73 @@ fn spawn_dispatch_completion_watcher(state: ApiState, completion: DispatchComple
                 );
                 return;
             }
-            // The worker never finalized and the run was killed by a timeout:
-            // do NOT synthesize a last.txt that would make this look like a
-            // normal completion. Flag it orphan instead so the manager can
-            // rescue it (acceptance #5, dec_3M7M0). This check must run BEFORE
-            // `dispatch_terminal_reached`: a timeout release carries
-            // `ReleaseOutcome::Failed`, which `dispatch_terminal_reached`
-            // treats as terminal, so nesting this inside the
-            // `!dispatch_terminal_reached` branch (as originally written)
-            // made it unreachable — the timeout release always short-circuited
-            // straight to `write_dispatch_completion_artifacts` below.
-            //
-            // Key on ANY timeout reason, not just the stall string:
-            // `timed_out_run` also emits `max_run_duration_exceeded` and
-            // `idle_timeout_exceeded` (both `ReleaseOutcome::Failed`), and the
-            // persistent artifactor-rmux path disables stall entirely and uses
-            // idle — so matching only `stall_timeout_exceeded` would silently
-            // scrape those into a fabricated "done" report.
-            if dispatch_release_reason(&envelopes)
-                .as_deref()
-                .is_some_and(is_orphan_without_finalize_release_reason)
-            {
-                tracing::warn!(
-                    run_id = %completion.run_id,
-                    reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
-                    "dispatch completion watcher: release without worker finalize, flagging orphan"
-                );
-                record_dispatch_orphaned(&state, &completion).await;
-                return;
-            }
-            if !dispatch_terminal_reached(&envelopes) {
-                if grace_elapsed {
+            // dec_3M7M0 / TASK-ZB90M: only worker finalize may author
+            // completion artifacts. Any tombstone with finalized_by_worker=false
+            // is orphan — never synthesize last.txt/stdout.log from driver events.
+            if dispatch_release_without_worker_finalize(&envelopes) {
+                if dispatch_release_requires_orphan_signal(&envelopes) {
+                    tracing::warn!(
+                        run_id = %completion.run_id,
+                        reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                        "dispatch completion watcher: release without worker finalize, flagging orphan"
+                    );
+                    record_dispatch_orphaned(&state, &completion).await;
+                } else {
                     tracing::info!(
                         run_id = %completion.run_id,
-                        "dispatch completion watcher writing artifacts after post-release grace without terminal session marker"
+                        reason = dispatch_release_reason(&envelopes).as_deref().unwrap_or(""),
+                        "dispatch completion watcher: cancelled release without worker finalize, no orphan"
                     );
-                    write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
-                    return;
                 }
-                tokio::time::sleep(poll).await;
-                continue;
+                return;
             }
-            write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
-            return;
+            if grace_elapsed {
+                if dispatch_terminal_reached(&envelopes)
+                    && dispatch_release_requires_orphan_signal(&envelopes)
+                {
+                    tracing::warn!(
+                        run_id = %completion.run_id,
+                        "dispatch completion watcher: terminal without worker finalize, flagging orphan"
+                    );
+                    record_dispatch_orphaned(&state, &completion).await;
+                } else {
+                    tracing::info!(
+                        run_id = %completion.run_id,
+                        "dispatch completion watcher: post-release grace elapsed without worker finalize; no artifacts"
+                    );
+                }
+                return;
+            }
+            tokio::time::sleep(poll).await;
         }
     });
 }
 
-/// True for every `timed_out_run` release reason (supervisor.rs): the run was
-/// killed by a deadline, not by the worker completing. All three are released
-/// as `ReleaseOutcome::Failed`, so the completion watcher must treat any of
-/// them (absent a worker finalize) as orphan rather than scrape a fake report.
-fn is_timeout_release_reason(reason: &str) -> bool {
+/// Whether a non-finalized release should emit `manager.dispatch_orphaned`.
+/// Intentional cancellation (`ReleaseOutcome::Cancelled`) stays artifact-free
+/// and must not trigger orphan rescue (TASK-756WX).
+// orgasmic:TASK-756WX,dec_3M7M0
+fn dispatch_release_requires_orphan_signal(envelopes: &[SessionEnvelope]) -> bool {
+    if !dispatch_release_without_worker_finalize(envelopes) {
+        return false;
+    }
+    match dispatch_release_outcome(envelopes) {
+        Some(ReleaseOutcome::Cancelled) => false,
+        Some(ReleaseOutcome::Failed) | Some(ReleaseOutcome::Interrupted) => true,
+        Some(ReleaseOutcome::Completed) => true,
+        None => dispatch_release_reason(envelopes)
+            .is_some_and(|reason| anomalous_without_finalize_release_reason(&reason)),
+    }
+}
+
+fn anomalous_without_finalize_release_reason(reason: &str) -> bool {
     matches!(
         reason,
-        "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
+        "stall_timeout_exceeded"
+            | "max_run_duration_exceeded"
+            | "idle_timeout_exceeded"
+            | "protocol_end_without_finalize"
+            | "driver terminal event"
     )
 }
 
@@ -4839,6 +4980,22 @@ fn dispatch_release_finalized_by_worker(envelopes: &[SessionEnvelope]) -> bool {
     })
 }
 
+/// Whether the run was released without the worker calling
+/// `orgasmic dispatch finalize` (any reason/outcome).
+// orgasmic:TASK-ZB90M,dec_3M7M0
+fn dispatch_release_without_worker_finalize(envelopes: &[SessionEnvelope]) -> bool {
+    envelopes.iter().rev().any(|envelope| {
+        envelope.kind == SessionEventKind::Lifecycle
+            && matches!(
+                serde_json::from_value::<Lifecycle>(envelope.event.clone()),
+                Ok(Lifecycle::Release {
+                    finalized_by_worker: false,
+                    ..
+                })
+            )
+    })
+}
+
 /// Flag a dispatch run that ended without the worker ever calling
 /// `orgasmic dispatch finalize` (dec_3M7M0 / TASK-P4MGK): distinct from a
 /// normal completion tx so the manager can rescue it rather than mistake
@@ -4875,74 +5032,7 @@ async fn record_dispatch_orphaned(state: &ApiState, completion: &DispatchComplet
     }
 }
 
-async fn write_dispatch_completion_artifacts(
-    state: &ApiState,
-    completion: &DispatchCompletion,
-    envelopes: &[SessionEnvelope],
-) {
-    // Belt-and-suspenders: the watcher loop already returns before calling
-    // this function when the worker finalized, but callers that reach here
-    // directly (e.g. the post-release grace path) must not overwrite an
-    // authoritative worker-written report either (regression, dec_3M7M0).
-    if dispatch_release_finalized_by_worker(envelopes) {
-        tracing::info!(
-            run_id = %completion.run_id,
-            "dispatch completion artifact write skipped: worker finalized via `orgasmic dispatch finalize`"
-        );
-    } else {
-        if let Err(e) = write_dispatch_last_path(&completion.last_path, envelopes) {
-            tracing::warn!(
-                run_id = %completion.run_id,
-                path = %completion.last_path.display(),
-                error = %e,
-                "dispatch last_path write failed"
-            );
-        }
-        if let Err(e) = write_dispatch_stdout_path(&completion.stdout_path, envelopes) {
-            tracing::warn!(
-                run_id = %completion.run_id,
-                path = %completion.stdout_path.display(),
-                error = %e,
-                "dispatch stdout_path write failed"
-            );
-        }
-    }
-    if state.auto_commit_signal {
-        let dirty = worktree_has_uncommitted_changes(&completion.worktree_path);
-        if dirty {
-            let extra = vec![
-                ("RUN_ID".to_string(), completion.run_id.clone()),
-                (
-                    "WORKTREE".to_string(),
-                    completion.worktree_path.display().to_string(),
-                ),
-                ("HAS_UNCOMMITTED".to_string(), "yes".to_string()),
-            ];
-            if let Err(e) = record_api_tx(
-                state,
-                ApiTxRequest {
-                    ty: "implementer.commit_pending".to_string(),
-                    actor: None,
-                    project: Some(completion.project_id.clone()),
-                    task: Some(completion.task_id.clone()),
-                    target: Some(tx_safe_path(&completion.session_path, None, &state.home)),
-                    reason: "implementer dispatch completed with uncommitted worktree".to_string(),
-                    request_id: None,
-                    extra,
-                },
-            )
-            .await
-            {
-                tracing::warn!(
-                    run_id = %completion.run_id,
-                    error = ?e,
-                    "implementer.commit_pending tx failed"
-                );
-            }
-        }
-    }
-}
-
+#[allow(dead_code)] // retained for unit tests of dispatch_last_summary_from_session
 fn write_dispatch_last_path(
     last_path: &FsPath,
     envelopes: &[SessionEnvelope],
@@ -4957,6 +5047,7 @@ fn write_dispatch_last_path(
     std::fs::write(last_path, summary)
 }
 
+#[allow(dead_code)] // retained for unit tests of dispatch_stdout_from_session
 fn write_dispatch_stdout_path(
     stdout_path: &FsPath,
     envelopes: &[SessionEnvelope],
@@ -5091,13 +5182,11 @@ fn dispatch_last_summary_from_session(envelopes: &[SessionEnvelope]) -> String {
         }
     }
     // rmux/tmux `release(reason)` synthesize a `RunComplete { summary: reason }`
-    // when they tear down a run that never emitted its own terminal event — e.g.
-    // the worker printed its report and the `[orgasmic-eot]` marker but the
-    // render stream missed the marker, so the stall detector fired and released
-    // the run (TASK-B05AM). That sentinel is not a worker report: when the
-    // run_complete summary merely echoes the release reason, drop it so the
-    // actual transcript tail is preserved in last.txt instead of being shadowed
-    // by "stall_timeout_exceeded".
+    // when they tear down a run that never emitted its own terminal event (e.g.
+    // stall detector / operator stop). That sentinel is not a worker report:
+    // when the run_complete summary merely echoes the release reason, drop it
+    // so a native-transcript or system tail can still be used if present,
+    // instead of being shadowed by "stall_timeout_exceeded".
     let run_complete_echoes_release = matches!(
         (run_complete_summary.as_deref(), release_reason.as_deref()),
         (Some(rc), Some(reason)) if rc == reason
@@ -5138,19 +5227,6 @@ fn tail_summary(text: &str) -> Option<String> {
         DISPATCH_SUMMARY_TAIL_BYTES / 1024,
         &trimmed[start..]
     ))
-}
-
-fn worktree_has_uncommitted_changes(worktree: &FsPath) -> bool {
-    Command::new("git")
-        .args([
-            "-C",
-            &worktree.display().to_string(),
-            "status",
-            "--porcelain",
-        ])
-        .output()
-        .map(|output| output.status.success() && !output.stdout.is_empty())
-        .unwrap_or(false)
 }
 
 #[derive(Clone)]
@@ -7374,14 +7450,16 @@ struct BootReattachCandidate {
     /// enables respawning its completion watcher (TASK-567JG).
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    dispatch_attempt_token: Option<String>,
     role: Option<String>,
     requires_worker_finalize: Option<bool>,
     driver_config: serde_json::Value,
     session_path: PathBuf,
 }
 
-/// `(transport, harness, project_id, worktree, last_path, stdout_path, role,
-/// requires_worker_finalize, driver_config)` from a `RunMeta` lifecycle event.
+/// `(transport, harness, project_id, worktree, last_path, stdout_path,
+/// dispatch_attempt_token, role, requires_worker_finalize, driver_config)` from a
+/// `RunMeta` lifecycle event.
 type RunMetaFields = (
     String,
     Option<String>,
@@ -7389,6 +7467,7 @@ type RunMetaFields = (
     Option<PathBuf>,
     Option<PathBuf>,
     Option<PathBuf>,
+    Option<String>,
     Option<String>,
     Option<bool>,
     serde_json::Value,
@@ -7445,9 +7524,11 @@ fn boot_reattach_candidate(
                 worktree,
                 last_path,
                 stdout_path,
+                dispatch_attempt_token,
                 role,
                 requires_worker_finalize,
                 driver_config,
+                ..
             }) => {
                 meta = Some((
                     transport,
@@ -7456,6 +7537,7 @@ fn boot_reattach_candidate(
                     worktree,
                     last_path,
                     stdout_path,
+                    dispatch_attempt_token,
                     role,
                     requires_worker_finalize,
                     driver_config,
@@ -7473,6 +7555,7 @@ fn boot_reattach_candidate(
         worktree,
         last_path,
         stdout_path,
+        dispatch_attempt_token,
         meta_role,
         meta_requires,
         driver_config,
@@ -7496,6 +7579,7 @@ fn boot_reattach_candidate(
         worktree,
         last_path,
         stdout_path,
+        dispatch_attempt_token,
         role: meta_role,
         requires_worker_finalize: meta_requires,
         driver_config,
@@ -7650,6 +7734,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
                                 &c.run_id,
                                 last_path.clone(),
                                 stdout_path.clone(),
+                                c.dispatch_attempt_token.clone(),
                             )
                             .await;
                         spawn_dispatch_completion_watcher(
@@ -12702,6 +12787,7 @@ async fn launch_artifact_generation(
             worktree_path: &entry.path,
             last_path: None,
             stdout_path: None,
+            dispatch_attempt_token: None,
             origin: "artifact_generate",
             dispatch_kind: Some("artifactor"),
             preloaded_worker: Some(worker),
@@ -14725,6 +14811,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     babysitter_target: None,
@@ -14785,6 +14872,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: DriverConfig::from_value(json!({})),
                     babysitter_target: None,
@@ -14865,6 +14953,7 @@ mod tests {
                         worktree: Some(project_root.clone()),
                         last_path: None,
                         stdout_path: None,
+                        dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
                         babysitter_target: None,
@@ -15040,6 +15129,7 @@ mod tests {
                         worktree: Some(project_root.clone()),
                         last_path: acquire_last,
                         stdout_path: None,
+                        dispatch_attempt_token: None,
                         session_path: session_path.clone(),
                         driver_config: DriverConfig::from_value(json!({})),
                         babysitter_target: None,
@@ -15100,6 +15190,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -15259,6 +15350,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: session_path.clone(),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -15426,6 +15518,7 @@ mod tests {
                     worktree: Some(home.source()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("manager-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -15615,6 +15708,7 @@ mod tests {
                     worktree: Some(home.source()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("reviewer-test.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -15655,6 +15749,7 @@ mod tests {
                     worktree: Some(home.source()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     session_path: home.sessions().join("manager-restart-guard.jsonl"),
                     driver_config: orgasmic_drivers::modes::tmux::inert_config(),
                     babysitter_target: None,
@@ -15733,6 +15828,7 @@ mod tests {
                 worktree: Some(PathBuf::from("/tmp/orgasmic")),
                 last_path: None,
                 stdout_path: None,
+                dispatch_attempt_token: None,
                 role: None,
                 requires_worker_finalize: None,
                 driver_config: json!({"system_wide": true}),
@@ -15804,6 +15900,7 @@ mod tests {
                             worktree: Some(tmp.path().join("proj")),
                             last_path: None,
                             stdout_path: None,
+                            dispatch_attempt_token: None,
                             role: None,
                             requires_worker_finalize: None,
                             driver_config: json!({}),
@@ -15895,21 +15992,19 @@ mod tests {
         assert_eq!(recovered.transport, "tmux");
     }
 
-    /// TASK-567JG: a daemon restart mid-run must still write `last.txt` on
-    /// release. `spawn_dispatch_completion_watcher` is a tokio task spawned
-    /// only at dispatch time, so it dies with the old daemon process; without
-    /// respawning it on boot reattach, `write_dispatch_completion_artifacts`
-    /// never runs. This drives the real `reattach_live_runs_on_boot` path
-    /// (not just `boot_reattach_candidate`) against a genuinely live tmux
-    /// session — simulating the restart with a second, independent
+    /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher
+    /// on boot reattach. Without worker finalize, the watcher must not
+    /// synthesize completion artifacts from session scrollback. Drives the real
+    /// `reattach_live_runs_on_boot` path against a genuinely live tmux session
+    /// — simulating the restart with a second, independent
     /// `ApiState`/`Supervisor` that never acquired the run itself — then
-    /// releases the run and asserts the artifact lands.
+    /// releases the run and asserts no artifact is synthesized.
     #[tokio::test]
-    async fn boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt() {
+    async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
         let _live_guard = live_session_guard();
         if !tmux_on_path() {
             eprintln!(
-                "skipping boot_reattach_respawns_dispatch_completion_watcher_and_writes_last_txt: tmux not on PATH"
+                "skipping boot_reattach_respawns_dispatch_completion_watcher_without_artifacts: tmux not on PATH"
             );
             return;
         }
@@ -15960,6 +16055,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: Some(last_path.clone()),
                     stdout_path: Some(stdout_path.clone()),
+                    dispatch_attempt_token: None,
                     role: None,
                     requires_worker_finalize: None,
                     driver_config: json!({}),
@@ -16007,16 +16103,11 @@ mod tests {
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
         while std::time::Instant::now() < deadline {
-            if last_path.exists() {
-                break;
-            }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
-        let last_body = std::fs::read_to_string(&last_path)
-            .unwrap_or_else(|e| panic!("last.txt was never written by the respawned watcher: {e}"));
         assert!(
-            last_body.contains("boot reattach watcher smoke"),
-            "last.txt should carry the worker report: {last_body}"
+            !last_path.exists(),
+            "release without worker finalize must not synthesize last.txt via the respawned watcher"
         );
     }
 
@@ -16119,10 +16210,9 @@ mod tests {
 
     #[test]
     fn stall_release_synthetic_run_complete_does_not_shadow_worker_report() {
-        // A completed rmux run whose eot marker was missed: the worker printed
-        // its report as assistant chunks, then release("stall_timeout_exceeded")
-        // synthesized RunComplete{summary: reason} and the stall Release landed.
-        // last.txt must carry the report, not the stall sentinel (TASK-B05AM).
+        // Stall release synthesizes RunComplete{summary: reason} after the
+        // worker already printed a report as assistant chunks. last.txt must
+        // carry the report, not the stall sentinel (TASK-B05AM).
         let envelopes = vec![
             dispatch_summary_env(
                 SessionEventKind::DriverEvent,
@@ -16155,9 +16245,9 @@ mod tests {
 
     #[test]
     fn genuine_run_complete_summary_is_still_preferred() {
-        // A clean eot completion: run_complete carries the real report tail and
-        // the release reason differs, so the run_complete summary is used as-is
-        // (the B05AM fix must not disturb the normal path).
+        // A clean run_complete carries the real report tail and the release
+        // reason differs, so the run_complete summary is used as-is (the B05AM
+        // fix must not disturb the normal path).
         let envelopes = vec![
             dispatch_summary_env(
                 SessionEventKind::DriverEvent,
@@ -16220,6 +16310,7 @@ mod tests {
                     worktree: Some(project_root.clone()),
                     last_path: None,
                     stdout_path: None,
+                    dispatch_attempt_token: None,
                     role: None,
                     requires_worker_finalize: None,
                     driver_config: json!({}),
@@ -16418,7 +16509,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_completion_artifacts_write_system_only_session_fixture() {
+    async fn dispatch_completion_artifacts_never_synthesized_without_finalize() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -16467,6 +16558,18 @@ mod tests {
             },
         ];
         assert!(!dispatch_terminal_reached(&envelopes));
+        let identity = RuntimeIdentity {
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        for envelope in &envelopes {
+            writer
+                .append(envelope.kind, envelope.event.clone())
+                .unwrap();
+        }
+        drop(writer);
         let completion = DispatchCompletion {
             project_id: "proj-dispatch".into(),
             task_id: "TASK-072".into(),
@@ -16476,32 +16579,31 @@ mod tests {
             stdout_path: stdout_path.clone(),
             worktree_path: worktree.clone(),
         };
-        write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
-        let last_body = std::fs::read_to_string(&last_path).expect("last_path");
+        spawn_dispatch_completion_watcher(state.clone(), completion);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(
-            last_body.contains("meaningful work summary"),
-            "grace-path artifact write should carry accumulated system text: {last_body}"
+            !last_path.exists(),
+            "non-finalized interrupted release must not synthesize last.txt"
         );
-        let stdout_body = std::fs::read_to_string(&stdout_path).expect("stdout_path");
         assert!(
-            stdout_body.contains("[system]"),
-            "stdout_path should include system chunks: {stdout_body}"
+            !stdout_path.exists(),
+            "non-finalized interrupted release must not synthesize stdout.log"
         );
+        let _ = deadline;
     }
 
-    /// Acceptance #4 (TASK-WFW1N, regression, dec_3M7M0): once a worker has
-    /// called `orgasmic dispatch finalize` — recorded as
-    /// `Lifecycle::Release { finalized_by_worker: true, .. }` — the
-    /// completion path must never scrape scrollback and overwrite the
-    /// worker-authored `last.txt`/`stdout.log`, even when reached directly
-    /// (e.g. the post-release grace path, not just the watcher's early
-    /// return).
+    /// Worker finalize tombstone: watcher must never overwrite worker-authored
+    /// artifacts even when invoked directly.
     #[tokio::test]
-    async fn finalized_release_suppresses_completion_artifact_write() {
+    async fn finalized_release_watcher_leaves_worker_artifacts_intact() {
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        let state = direct_stage_test_state(home).await;
+        let mut state = direct_stage_test_state(home).await;
+        state.dispatch_watcher_grace = Duration::from_millis(50);
+
         let session_path = tmp.path().join("session.jsonl");
         let last_path = tmp.path().join("last.txt");
         let stdout_path = tmp.path().join("stdout.log");
@@ -16513,32 +16615,34 @@ mod tests {
         std::fs::write(&last_path, worker_last).unwrap();
         std::fs::write(&stdout_path, worker_stdout).unwrap();
 
-        let envelopes = vec![
-            SessionEnvelope {
-                seq: 0,
-                time: chrono::Utc::now(),
-                run_id: "run-test".into(),
-                runtime_id: "rt-test".into(),
-                boot_id: "boot-test".into(),
-                kind: SessionEventKind::DriverEvent,
-                event: json!({"type": "text_chunk", "stream": "assistant", "chunk": "scrollback scrape candidate — must NOT land in last.txt"}),
-            },
-            SessionEnvelope {
-                seq: 1,
-                time: chrono::Utc::now(),
-                run_id: "run-test".into(),
-                runtime_id: "rt-test".into(),
-                boot_id: "boot-test".into(),
-                kind: SessionEventKind::Lifecycle,
-                event: serde_json::to_value(Lifecycle::Release {
-                    reason: "worker finalize for TASK-B05AM".into(),
-                    outcome: ReleaseOutcome::Completed,
-                    finalized_by_worker: true,
-                })
-                .unwrap(),
-            },
-        ];
+        let envelopes = vec![SessionEnvelope {
+            seq: 1,
+            time: chrono::Utc::now(),
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+            kind: SessionEventKind::Lifecycle,
+            event: serde_json::to_value(Lifecycle::Release {
+                reason: "worker finalize for TASK-B05AM".into(),
+                outcome: ReleaseOutcome::Completed,
+                finalized_by_worker: true,
+            })
+            .unwrap(),
+        }];
         assert!(dispatch_release_finalized_by_worker(&envelopes));
+
+        let identity = RuntimeIdentity {
+            run_id: "run-test".into(),
+            runtime_id: "rt-test".into(),
+            boot_id: "boot-test".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        for envelope in &envelopes {
+            writer
+                .append(envelope.kind, envelope.event.clone())
+                .unwrap();
+        }
+        drop(writer);
 
         let completion = DispatchCompletion {
             project_id: "proj-dispatch".into(),
@@ -16549,17 +16653,13 @@ mod tests {
             stdout_path: stdout_path.clone(),
             worktree_path: worktree.clone(),
         };
-        write_dispatch_completion_artifacts(&state, &completion, &envelopes).await;
+        spawn_dispatch_completion_watcher(state.clone(), completion);
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let last_body = std::fs::read_to_string(&last_path).unwrap();
+        assert_eq!(std::fs::read_to_string(&last_path).unwrap(), worker_last);
         assert_eq!(
-            last_body, worker_last,
-            "finalized release must not overwrite the worker-authored last.txt"
-        );
-        let stdout_body = std::fs::read_to_string(&stdout_path).unwrap();
-        assert_eq!(
-            stdout_body, worker_stdout,
-            "finalized release must not overwrite the worker-authored stdout.log"
+            std::fs::read_to_string(&stdout_path).unwrap(),
+            worker_stdout
         );
     }
 
@@ -16567,22 +16667,17 @@ mod tests {
     /// `orgasmic dispatch finalize` and the run stalls, the completion
     /// watcher must flag the run `manager.dispatch_orphaned` rather than
     /// silently synthesizing a `last.txt` that would read as a normal
-    /// completion. Drives the real `spawn_dispatch_completion_watcher`
-    /// end-to-end against a session file recorded exactly as
-    /// `Supervisor::release_first_timed_out_run_after_candidate` would
-    /// write one (`reason: "stall_timeout_exceeded"`,
-    /// `finalized_by_worker: false`).
+    /// completion.
+    #[tokio::test]
+    async fn manual_release_without_worker_finalize_does_not_flag_orphan() {
+        assert_cancelled_without_finalize_emits_no_orphan("run released").await;
+    }
+
     #[tokio::test]
     async fn stall_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("stall_timeout_exceeded").await;
     }
 
-    /// Reviewer #1 regression: the orphan branch keyed on the literal
-    /// `"stall_timeout_exceeded"`, but `timed_out_run` also emits
-    /// `idle_timeout_exceeded` (the ONLY timeout the persistent artifactor-rmux
-    /// path can hit — it disables stall) and `max_run_duration_exceeded`. Those
-    /// were falling through to a synthesized last.txt (silently "done"). Assert
-    /// a non-stall timeout without finalize is also flagged orphan.
     #[tokio::test]
     async fn idle_timeout_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("idle_timeout_exceeded").await;
@@ -16591,6 +16686,66 @@ mod tests {
     #[tokio::test]
     async fn max_run_duration_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("max_run_duration_exceeded").await;
+    }
+
+    async fn assert_cancelled_without_finalize_emits_no_orphan(release_reason: &str) {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let mut state = direct_stage_test_state(home).await;
+        state.dispatch_watcher_grace = Duration::from_millis(50);
+
+        let session_path = tmp.path().join("session.jsonl");
+        let last_path = tmp.path().join("last.txt");
+        let stdout_path = tmp.path().join("stdout.log");
+        let worktree = tmp.path().join("worktree");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let identity = RuntimeIdentity {
+            run_id: format!("run-cancel-{release_reason}"),
+            runtime_id: "rt-cancel-test".into(),
+            boot_id: "boot-cancel-test".into(),
+        };
+        let mut writer =
+            orgasmic_core::SessionWriter::open(&session_path, identity.clone()).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: release_reason.into(),
+                    outcome: ReleaseOutcome::Cancelled,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        let completion = DispatchCompletion {
+            project_id: "proj-dispatch".into(),
+            task_id: "TASK-CANCEL".into(),
+            run_id: identity.run_id.clone(),
+            session_path: session_path.clone(),
+            last_path: last_path.clone(),
+            stdout_path: stdout_path.clone(),
+            worktree_path: worktree.clone(),
+        };
+        spawn_dispatch_completion_watcher(state.clone(), completion);
+
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let mut tx_raw = String::new();
+        while std::time::Instant::now() < deadline {
+            if let Ok(body) = std::fs::read_to_string(&state.default_tx_path) {
+                tx_raw = body;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            !tx_raw.contains("manager.dispatch_orphaned"),
+            "cancelled release must not record manager.dispatch_orphaned: {tx_raw:?}"
+        );
+        assert!(!last_path.exists());
+        assert!(!stdout_path.exists());
     }
 
     async fn assert_timeout_without_finalize_flags_orphan(release_reason: &str) {
@@ -23939,5 +24094,91 @@ mod tests {
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    #[test]
+    fn dispatch_branch_delete_rejects_substituted_ref() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(root.join("file"), "one").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "file"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "one",
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "cleanup-candidate"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        let expected = resolve_dispatch_branch_oid(root, "cleanup-candidate")
+            .unwrap()
+            .unwrap();
+
+        std::fs::write(root.join("file"), "two").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "file"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "two",
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        let replacement = String::from_utf8_lossy(
+            &Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(root)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_string();
+        assert!(Command::new("git")
+            .args(["update-ref", "refs/heads/cleanup-candidate", &replacement])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+
+        assert!(delete_dispatch_branch(root, "cleanup-candidate", Some(&expected)).is_err());
+        assert_eq!(
+            resolve_dispatch_branch_oid(root, "cleanup-candidate").unwrap(),
+            Some(replacement)
+        );
     }
 }

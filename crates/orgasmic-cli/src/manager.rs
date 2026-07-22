@@ -181,10 +181,9 @@ impl FinalizeStatus {
     }
 }
 
-/// Worker-driven dispatch finalization (dec_3M7M0): the terminal action a
-/// dispatched worker takes instead of relying on the daemon to infer
-/// completion from an EOT marker + scrollback scrape. In one daemon call it
-/// commits the worktree (`--commit`), writes `last.txt` verbatim from
+/// Worker-driven dispatch finalization (dec_3M7M0 / TASK-AFE5Q): the sole
+/// success authority for a dispatched worker. In one daemon call it commits
+/// the worktree (`--commit`), writes `last.txt` verbatim from
 /// `--summary-file`, emits the terminal tx, and releases the lease.
 #[derive(Args, Debug, Clone)]
 #[command(after_help = "\
@@ -239,6 +238,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) effort_override: Option<String>,
     pub(crate) last_path: PathBuf,
     pub(crate) stdout_path: PathBuf,
+    pub(crate) dispatch_attempt_token: String,
     pub(crate) goal_id: Option<String>,
     pub(crate) reason: Option<String>,
     pub(crate) dry_run: bool,
@@ -248,6 +248,20 @@ pub(crate) struct DispatchPlan {
 impl DispatchPlan {
     pub(crate) fn dispatch_task(&self) -> String {
         task_list_property(&self.tasks)
+    }
+
+    fn with_artifacts(
+        mut self,
+        brief_path: PathBuf,
+        last_path: PathBuf,
+        stdout_path: PathBuf,
+        dispatch_attempt_token: String,
+    ) -> Self {
+        self.brief_path = brief_path;
+        self.last_path = last_path;
+        self.stdout_path = stdout_path;
+        self.dispatch_attempt_token = dispatch_attempt_token;
+        self
     }
 }
 
@@ -316,6 +330,9 @@ struct DispatchRecord {
     model: Option<String>,
     effort: Option<String>,
     brief_path: Option<PathBuf>,
+    last_path: Option<PathBuf>,
+    stdout_path: Option<PathBuf>,
+    dispatch_attempt_token: Option<String>,
     run_id: Option<String>,
     worker_id: Option<String>,
     driver: Option<String>,
@@ -409,9 +426,21 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     }
 
     if plan.dry_run {
-        print_dispatch_plan(&plan);
+        let attempt_id = mint_dispatch_attempt_id();
+        let (brief, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&plan.project_root, &plan.brief_path, &attempt_id);
+        print_dispatch_plan(&plan.with_artifacts(brief, last, stdout, attempt_id));
         return Ok(());
     }
+
+    let mut reservation =
+        DispatchArtifactReservation::reserve(&plan.project_root, &plan.brief_path)?;
+    let plan = plan.with_artifacts(
+        reservation.brief_path(),
+        reservation.last_path(),
+        reservation.stdout_path(),
+        reservation.attempt_token(),
+    );
 
     materialize_dispatch_brief(&plan)?;
 
@@ -433,8 +462,13 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         &dispatch_lifecycle_transitions(plan.kind, &plan.tasks),
     ) {
         let reason = format!("lifecycle update failed: {err}");
-        let cleanup =
-            cleanup_created_resources(&plan.project_root, &plan.worktree_path, &plan.branch);
+        let cleanup = cleanup_created_resources(
+            &plan.project_root,
+            &plan.worktree_path,
+            &plan.branch,
+            &plan.last_path,
+            &plan.stdout_path,
+        );
         if cleanup.status != CleanupStatus::Ok {
             bail!(
                 "{reason}; cleanup status={} error={}",
@@ -448,29 +482,41 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     let response = match runtime.block_on(client.post_dispatch(&plan)) {
         Ok(response) => response,
         Err(err) => {
+            let ambiguous =
+                crate::daemon_client::DaemonClient::dispatch_failure_needs_daemon_cleanup(&err);
+            if ambiguous {
+                // POST may have been accepted; commit ownership so a live daemon
+                // run retains its declared artifact paths (TASK-1FV1N).
+                reservation.commit();
+            }
             let reason = format!("daemon dispatch failed: {err}");
-            let cleanup =
-                if crate::daemon_client::DaemonClient::dispatch_failure_needs_daemon_cleanup(&err) {
-                    // If the cleanup request can't reach the daemon either, do
-                    // NOT fall back to local deletion: the original failure was
-                    // ambiguous, so a spawned worker may own the worktree
-                    // (fencing invariant). Leave the resources for inspection
-                    // and keep going so lifecycle restore + the original error
-                    // still surface.
-                    match runtime.block_on(request_daemon_dispatch_cleanup(&client, &plan)) {
-                        Ok(outcome) => outcome,
-                        Err(cleanup_err) => CleanupOutcome {
-                            status: CleanupStatus::Partial,
-                            error: Some(sanitize_tx_value(&format!(
-                                "daemon cleanup request failed: {cleanup_err}; worktree {} and branch {} left in place",
-                                plan.worktree_path.display(),
-                                plan.branch
-                            ))),
-                        },
-                    }
-                } else {
-                    cleanup_created_resources(&plan.project_root, &plan.worktree_path, &plan.branch)
-                };
+            let cleanup = if ambiguous {
+                // If the cleanup request can't reach the daemon either, do
+                // NOT fall back to local deletion: the original failure was
+                // ambiguous, so a spawned worker may own the worktree
+                // (fencing invariant). Leave the resources for inspection
+                // and keep going so lifecycle restore + the original error
+                // still surface.
+                match runtime.block_on(request_daemon_dispatch_cleanup(&client, &plan)) {
+                    Ok(outcome) => outcome,
+                    Err(cleanup_err) => CleanupOutcome {
+                        status: CleanupStatus::Partial,
+                        error: Some(sanitize_tx_value(&format!(
+                            "daemon cleanup request failed: {cleanup_err}; worktree {} and branch {} left in place",
+                            plan.worktree_path.display(),
+                            plan.branch
+                        ))),
+                    },
+                }
+            } else {
+                cleanup_created_resources(
+                    &plan.project_root,
+                    &plan.worktree_path,
+                    &plan.branch,
+                    &plan.last_path,
+                    &plan.stdout_path,
+                )
+            };
             restore_task_lifecycle_stages(&client, &plan.project_id, &pre_dispatch_stages);
             if cleanup.status != CleanupStatus::Ok {
                 bail!(
@@ -482,6 +528,9 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
             bail!(reason);
         }
     };
+
+    // POST succeeded — commit artifact ownership before any further I/O.
+    reservation.commit();
 
     println!(
         "dispatched: {} {} pid={} run_id={} worker={} driver={} harness={} brief={}",
@@ -958,11 +1007,10 @@ struct LiveRunsResponse {
     live: Vec<LiveRunInfo>,
 }
 
-/// The worker-driven counterpart to `dispatch-close` (dec_3M7M0): a
-/// dispatched worker calls this as its terminal action instead of relying on
-/// the daemon to infer completion from an EOT marker + scrollback scrape. In
-/// one daemon call it optionally commits the worktree, writes `last.txt`
-/// verbatim from `--summary-file`, emits the terminal tx
+/// The worker-driven counterpart to `dispatch-close` (dec_3M7M0 / TASK-AFE5Q):
+/// a dispatched worker calls this as its terminal action — the sole success
+/// authority. In one daemon call it optionally commits the worktree, writes
+/// `last.txt` verbatim from `--summary-file`, emits the terminal tx
 /// (`implementer.done`/`reviewer.done`/`manager.dispatch_aborted`), and
 /// releases the lease — converging on the same `release_dispatch_run`/`/tx`
 /// plumbing `dispatch-close` uses.
@@ -1540,7 +1588,6 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let branch = args
         .branch
         .unwrap_or_else(|| default_branch(first_task(&tasks), args.kind));
-    let (brief_path, last_path, stdout_path) = dispatch_artifact_paths(&project_root, &brief_path);
     let goal_id = read_active_goal_id(&project_root)?;
     Ok(DispatchPlan {
         project_root,
@@ -1560,8 +1607,9 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
             .effort
             .map(|s| sanitize_tx_value(&s))
             .filter(|s| !s.is_empty()),
-        last_path,
-        stdout_path,
+        last_path: PathBuf::new(),
+        stdout_path: PathBuf::new(),
+        dispatch_attempt_token: String::new(),
         goal_id,
         reason: args
             .reason
@@ -1927,17 +1975,36 @@ fn create_worktree(project_root: &Path, path: &Path, branch: &str, from_sha: &st
     Ok(())
 }
 
-fn remove_worktree_if_present(project_root: &Path, path: &Path) -> Result<()> {
+fn remove_worktree_if_present(
+    project_root: &Path,
+    path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    remove_worktree_required(project_root, path)
+    remove_worktree_required(project_root, path, last_path, stdout_path)
 }
 
-fn remove_worktree_required(project_root: &Path, path: &Path) -> Result<()> {
+fn remove_worktree_required(
+    project_root: &Path,
+    path: &Path,
+    last_path: Option<&Path>,
+    stdout_path: Option<&Path>,
+) -> Result<()> {
     if !path.exists() {
         bail!("worktree path missing: {}", path.display());
     }
+    let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
+        project_root,
+        path,
+        last_path,
+        stdout_path,
+    )
+    .map_err(|err| anyhow::anyhow!(err))?;
+    orgasmic_core::verify_dispatch_worktree_identity(&artifacts, path)
+        .map_err(|err| anyhow::anyhow!(err))?;
     let output = Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
@@ -1951,7 +2018,9 @@ fn remove_worktree_required(project_root: &Path, path: &Path) -> Result<()> {
             String::from_utf8_lossy(&output.stdout)
         );
     }
-    orgasmic_core::prune_dispatch_stem_after_worktree(path);
+    orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
+        .map_err(|err| anyhow::anyhow!(err))
+        .with_context(|| format!("prune dispatch artifacts for {}", path.display()))?;
     Ok(())
 }
 
@@ -1994,21 +2063,40 @@ fn daemon_cleanup_to_outcome(
     })
 }
 
-fn cleanup_created_resources(project_root: &Path, path: &Path, branch: &str) -> CleanupOutcome {
+fn cleanup_created_resources(
+    project_root: &Path,
+    path: &Path,
+    branch: &str,
+    last_path: &Path,
+    stdout_path: &Path,
+) -> CleanupOutcome {
     let mut worktree_failed = false;
     let mut branch_failed = false;
     let mut errors = Vec::new();
+    let expected_branch_oid = match resolve_branch_oid(project_root, branch) {
+        Ok(oid) => oid,
+        Err(err) => {
+            return CleanupOutcome {
+                status: CleanupStatus::BranchFailed,
+                error: Some(sanitize_tx_value(&format!("branch validation: {err}"))),
+            };
+        }
+    };
 
-    match remove_worktree_if_present(project_root, path) {
+    match remove_worktree_if_present(project_root, path, Some(last_path), Some(stdout_path)) {
         Ok(()) => {}
         Err(err) => {
             worktree_failed = true;
             errors.push(format!("worktree: {err}"));
         }
     }
-    if let Err(err) = delete_branch(project_root, branch) {
-        branch_failed = true;
-        errors.push(format!("branch: {err}"));
+    if !worktree_failed {
+        if let Err(err) =
+            delete_branch_if_matches(project_root, branch, expected_branch_oid.as_deref())
+        {
+            branch_failed = true;
+            errors.push(format!("branch: {err}"));
+        }
     }
 
     let status = match (worktree_failed, branch_failed) {
@@ -2027,12 +2115,23 @@ fn cleanup_created_resources(project_root: &Path, path: &Path, branch: &str) -> 
     }
 }
 
+fn resolve_project_path(project_root: &Path, path: Option<PathBuf>) -> Option<PathBuf> {
+    path.map(|mut path| {
+        if path.is_relative() {
+            path = project_root.join(path);
+        }
+        path
+    })
+}
+
 fn cleanup_dispatch(
     project_root: &Path,
     open: &DispatchRecord,
     remove_worktree: bool,
     branch_delete: bool,
 ) -> CleanupOutcome {
+    let last_path = resolve_project_path(project_root, open.last_path.clone());
+    let stdout_path = resolve_project_path(project_root, open.stdout_path.clone());
     let mut worktree_failed = false;
     let mut branch_failed = false;
     let mut worktree_missing = false;
@@ -2041,7 +2140,12 @@ fn cleanup_dispatch(
     if remove_worktree {
         match &open.worktree {
             Some(worktree) => {
-                if let Err(err) = remove_worktree_required(project_root, worktree) {
+                if let Err(err) = remove_worktree_required(
+                    project_root,
+                    worktree,
+                    last_path.as_deref(),
+                    stdout_path.as_deref(),
+                ) {
                     worktree_failed = true;
                     errors.push(format!("worktree: {err}"));
                 }
@@ -2108,6 +2212,55 @@ fn delete_branch(project_root: &Path, branch: &str) -> Result<()> {
     if !output.status.success() {
         bail!(
             "git branch -D failed: {}{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    Ok(())
+}
+
+fn resolve_branch_oid(project_root: &Path, branch: &str) -> Result<Option<String>> {
+    let valid = Command::new("git")
+        .args(["check-ref-format", "--branch", branch])
+        .current_dir(project_root)
+        .output()
+        .with_context(|| format!("validate branch {branch}"))?;
+    if !valid.status.success() {
+        bail!("invalid branch name {branch}");
+    }
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", &branch_ref])
+        .current_dir(project_root)
+        .output()
+        .with_context(|| format!("resolve branch {branch}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+    let oid = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if oid.is_empty() {
+        bail!("branch {branch} resolved to an empty object id");
+    }
+    Ok(Some(oid))
+}
+
+fn delete_branch_if_matches(
+    project_root: &Path,
+    branch: &str,
+    expected_oid: Option<&str>,
+) -> Result<()> {
+    let Some(expected_oid) = expected_oid else {
+        return Ok(());
+    };
+    let branch_ref = format!("refs/heads/{branch}");
+    let output = Command::new("git")
+        .args(["update-ref", "-d", &branch_ref, expected_oid])
+        .current_dir(project_root)
+        .output()
+        .with_context(|| format!("delete branch {branch} at {expected_oid}"))?;
+    if !output.status.success() {
+        bail!(
+            "git update-ref -d failed: {}{}",
             String::from_utf8_lossy(&output.stderr),
             String::from_utf8_lossy(&output.stdout)
         );
@@ -2540,23 +2693,202 @@ fn dispatch_artifact_stem(brief_path: &Path) -> (String, String) {
     (file_name, stem)
 }
 
+fn mint_dispatch_attempt_id() -> String {
+    uuid::Uuid::new_v4().simple().to_string()
+}
+
+const DISPATCH_ARTIFACT_RESERVE_RETRIES: usize = 8;
+
+/// RAII reservation for dispatch last/stdout artifact pair. Rolls back only
+/// files this attempt created on drop unless committed (TASK-KE0JW).
+struct DispatchArtifactReservation {
+    owned: Vec<PathBuf>,
+    brief_path: PathBuf,
+    last_path: PathBuf,
+    stdout_path: PathBuf,
+    attempt_token: String,
+    committed: bool,
+}
+
+impl DispatchArtifactReservation {
+    fn reserve(project_root: &Path, brief_path: &Path) -> Result<Self> {
+        for _ in 0..DISPATCH_ARTIFACT_RESERVE_RETRIES {
+            let attempt_id = mint_dispatch_attempt_id();
+            let (brief, last, stdout) =
+                dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
+            if let Some(parent) = brief.parent() {
+                std::fs::create_dir_all(parent).with_context(|| {
+                    format!("create dispatch artifact dir {}", parent.display())
+                })?;
+            }
+            match reserve_dispatch_artifact_pair(&last, &stdout) {
+                Ok(owned) => {
+                    return Ok(Self {
+                        owned,
+                        brief_path: brief,
+                        last_path: last,
+                        stdout_path: stdout,
+                        attempt_token: attempt_id,
+                        committed: false,
+                    });
+                }
+                Err(ReservePairError::Collision) => continue,
+                Err(ReservePairError::Io(err)) => return Err(err.into()),
+            }
+        }
+        bail!("failed to reserve dispatch artifact pair after {DISPATCH_ARTIFACT_RESERVE_RETRIES} attempts");
+    }
+
+    fn brief_path(&self) -> PathBuf {
+        self.brief_path.clone()
+    }
+
+    fn last_path(&self) -> PathBuf {
+        self.last_path.clone()
+    }
+
+    fn stdout_path(&self) -> PathBuf {
+        self.stdout_path.clone()
+    }
+
+    fn attempt_token(&self) -> String {
+        self.attempt_token.clone()
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+        self.owned.clear();
+    }
+}
+
+impl Drop for DispatchArtifactReservation {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        if let Err(err) = self.rollback_owned() {
+            tracing::warn!(
+                "dispatch artifact reservation rollback failed: {err}; paths may remain"
+            );
+        }
+    }
+}
+
+impl DispatchArtifactReservation {
+    fn rollback_owned(&mut self) -> Result<()> {
+        let mut last_error = None;
+        for path in self.owned.drain(..) {
+            if let Err(err) = std::fs::remove_file(&path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    last_error = Some(err);
+                }
+            }
+        }
+        if let Some(err) = last_error {
+            Err(err.into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+enum ReservePairError {
+    Collision,
+    Io(std::io::Error),
+}
+
+fn reserve_dispatch_artifact_pair(
+    last: &Path,
+    stdout: &Path,
+) -> Result<Vec<PathBuf>, ReservePairError> {
+    let mut owned = Vec::new();
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(last)
+    {
+        Ok(_) => owned.push(last.to_path_buf()),
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(ReservePairError::Collision);
+        }
+        Err(err) => return Err(ReservePairError::Io(err)),
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(stdout)
+    {
+        Ok(_) => {
+            owned.push(stdout.to_path_buf());
+            Ok(owned)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            for path in owned {
+                std::fs::remove_file(path).map_err(ReservePairError::Io)?;
+            }
+            Err(ReservePairError::Collision)
+        }
+        Err(err) => {
+            for path in owned {
+                if let Err(cleanup_err) = std::fs::remove_file(path) {
+                    if cleanup_err.kind() != std::io::ErrorKind::NotFound {
+                        return Err(ReservePairError::Io(cleanup_err));
+                    }
+                }
+            }
+            Err(ReservePairError::Io(err))
+        }
+    }
+}
+
+/// Atomically reserve the (brief, last, stdout) artifact paths for a dispatch.
+/// Prefer [`DispatchArtifactReservation`] in production dispatch paths.
+#[cfg(test)]
+fn reserve_dispatch_artifact_paths(
+    project_root: &Path,
+    brief_path: &Path,
+) -> Result<(PathBuf, PathBuf, PathBuf, String)> {
+    let mut reservation = DispatchArtifactReservation::reserve(project_root, brief_path)?;
+    let paths = (
+        reservation.brief_path(),
+        reservation.last_path(),
+        reservation.stdout_path(),
+        reservation.attempt_token(),
+    );
+    reservation.commit();
+    Ok(paths)
+}
+
 /// Resolve the (brief, last, stdout) artifact paths for a dispatch. All three
-/// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`
-/// (the stem encodes task + kind, e.g. `task-129-impl`), keeping the prefixed
-/// filenames so they stay self-describing when read in isolation.
+/// live together in a per-task subfolder under `.orgasmic/tmp/dispatch/<stem>/`.
+/// Completion artifacts include a per-attempt id so consecutive dispatches cannot
+/// inherit a prior attempt's report (TASK-756WX, TASK-ZHRRH).
 fn dispatch_artifact_paths(project_root: &Path, brief_path: &Path) -> (PathBuf, PathBuf, PathBuf) {
+    loop {
+        let attempt_id = mint_dispatch_attempt_id();
+        let paths = dispatch_artifact_paths_for_attempt(project_root, brief_path, &attempt_id);
+        if !paths.1.exists() && !paths.2.exists() {
+            return paths;
+        }
+    }
+}
+
+fn dispatch_artifact_paths_for_attempt(
+    project_root: &Path,
+    brief_path: &Path,
+    attempt_id: &str,
+) -> (PathBuf, PathBuf, PathBuf) {
     let (file_name, stem) = dispatch_artifact_stem(brief_path);
     let dir = project_dispatch_dir(project_root).join(&stem);
     (
         dir.join(file_name),
-        dir.join(format!("{stem}-last.txt")),
-        dir.join(format!("{stem}-stdout.log")),
+        dir.join(format!("{stem}-{attempt_id}-last.txt")),
+        dir.join(format!("{stem}-{attempt_id}-stdout.log")),
     )
 }
 
-/// Derive the last/stdout paths as siblings of an already-resolved brief. Once
-/// the brief lives in its per-task subfolder, the siblings land in the same
-/// folder automatically.
+/// Derive the last/stdout paths as siblings of an already-resolved brief when
+/// the attempt id is known (e.g. from a live run's recorded `last_path`).
 fn dispatch_sibling_artifact_paths(brief_path: &Path) -> (PathBuf, PathBuf) {
     let parent = brief_path.parent().unwrap_or_else(|| Path::new("."));
     let (_, stem) = dispatch_artifact_stem(brief_path);
@@ -2564,6 +2896,20 @@ fn dispatch_sibling_artifact_paths(brief_path: &Path) -> (PathBuf, PathBuf) {
         parent.join(format!("{stem}-last.txt")),
         parent.join(format!("{stem}-stdout.log")),
     )
+}
+
+fn dispatch_sibling_artifact_paths_from_last(last_path: &Path) -> (PathBuf, PathBuf) {
+    let parent = last_path.parent().unwrap_or_else(|| Path::new("."));
+    let file = last_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("last.txt");
+    let stdout = if file.ends_with("-last.txt") {
+        file.replacen("-last.txt", "-stdout.log", 1)
+    } else {
+        "stdout.log".to_string()
+    };
+    (last_path.to_path_buf(), parent.join(stdout))
 }
 
 fn materialize_dispatch_brief(plan: &DispatchPlan) -> Result<()> {
@@ -2682,6 +3028,9 @@ fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
         model: extra_compat(entry, "MODEL", "CODEX_MODEL").map(str::to_string),
         effort: extra_compat(entry, "EFFORT", "CODEX_EFFORT").map(str::to_string),
         brief_path: extra_compat(entry, "BRIEF_PATH", "CODEX_BRIEF_PATH").map(PathBuf::from),
+        last_path: None,
+        stdout_path: None,
+        dispatch_attempt_token: None,
         run_id: None,
         worker_id: None,
         driver: None,
@@ -2709,6 +3058,9 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
     let driver = extra(entry, "DRIVER").map(str::to_string);
     let harness = extra(entry, "HARNESS").map(str::to_string);
     let pid = extra(entry, "PID").and_then(|pid| pid.parse::<u32>().ok());
+    let last_path = extra(entry, "LAST_PATH").map(PathBuf::from);
+    let stdout_path = extra(entry, "STDOUT_PATH").map(PathBuf::from);
+    let dispatch_attempt_token = extra(entry, "DISPATCH_ATTEMPT").map(str::to_string);
     let kind = extra(entry, "KIND");
     let tasks = entry
         .task
@@ -2728,6 +3080,15 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
             record.driver = driver;
             record.harness = harness;
             record.pid = pid;
+            if last_path.is_some() {
+                record.last_path = last_path;
+            }
+            if stdout_path.is_some() {
+                record.stdout_path = stdout_path;
+            }
+            if dispatch_attempt_token.is_some() {
+                record.dispatch_attempt_token = dispatch_attempt_token;
+            }
             return;
         }
     }
@@ -2900,7 +3261,11 @@ fn derive_worker_pid(record: &DispatchRecord) -> Option<u32> {
         }
     }
     let brief_path = record.brief_path.as_ref()?;
-    let (last_path, _) = dispatch_sibling_artifact_paths(brief_path);
+    let (last_path, _) = record
+        .last_path
+        .as_ref()
+        .map(|path| dispatch_sibling_artifact_paths_from_last(path))
+        .unwrap_or_else(|| dispatch_sibling_artifact_paths(brief_path));
     let last_path = last_path.display().to_string();
     let output = Command::new("ps")
         .args(["-axo", "pid=,command="])
@@ -3010,6 +3375,9 @@ mod tests {
             model: None,
             effort: None,
             brief_path: None,
+            last_path: None,
+            stdout_path: None,
+            dispatch_attempt_token: None,
             run_id: None,
             worker_id: None,
             driver: None,
@@ -3244,29 +3612,101 @@ mod tests {
     }
 
     #[test]
+    fn reserve_dispatch_artifact_pair_creates_zero_length_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root.join("task-reserve-brief.md");
+        let (_, last, stdout, attempt) =
+            reserve_dispatch_artifact_paths(&project_root, &brief).unwrap();
+        assert_eq!(std::fs::metadata(&last).unwrap().len(), 0);
+        assert_eq!(std::fs::metadata(&stdout).unwrap().len(), 0);
+        assert_eq!(attempt.len(), 32);
+        assert!(attempt.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn reserve_dispatch_artifact_pair_preserves_preexisting_collider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root.join("task-reserve-brief.md");
+        let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+        let (_, last, stdout) = dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt);
+        std::fs::create_dir_all(last.parent().unwrap()).unwrap();
+        std::fs::write(&last, "existing").unwrap();
+        assert!(matches!(
+            reserve_dispatch_artifact_pair(&last, &stdout),
+            Err(ReservePairError::Collision)
+        ));
+        assert_eq!(std::fs::read_to_string(&last).unwrap(), "existing");
+        assert!(!stdout.exists());
+    }
+
+    #[test]
+    fn reserve_dispatch_artifact_pair_second_file_collision_preserves_first_collider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief = project_root.join("task-reserve-brief.md");
+        let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+        let (_, last, stdout) = dispatch_artifact_paths_for_attempt(&project_root, &brief, attempt);
+        std::fs::create_dir_all(last.parent().unwrap()).unwrap();
+        std::fs::write(&last, "existing-last").unwrap();
+        std::fs::write(&stdout, "existing-stdout").unwrap();
+        assert!(matches!(
+            reserve_dispatch_artifact_pair(&last, &stdout),
+            Err(ReservePairError::Collision)
+        ));
+        assert_eq!(std::fs::read_to_string(&last).unwrap(), "existing-last");
+        assert_eq!(std::fs::read_to_string(&stdout).unwrap(), "existing-stdout");
+    }
+
+    #[test]
+    fn dispatch_failure_needs_daemon_cleanup_decode_is_ambiguous() {
+        let err = anyhow::anyhow!("decode daemon response: EOF while parsing a value");
+        assert!(crate::daemon_client::DaemonClient::dispatch_failure_needs_daemon_cleanup(&err));
+    }
+
+    #[test]
     fn places_dispatch_artifacts_under_per_task_subfolder() {
         let project_root = PathBuf::from("/repo/main");
         let brief = PathBuf::from("/elsewhere/task-045-impl-brief.md");
-        let (resolved_brief, last, stdout) = dispatch_artifact_paths(&project_root, &brief);
+        let (resolved_brief, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&project_root, &brief, "a1b2c3d4");
         assert_eq!(
             resolved_brief,
             PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md")
         );
         assert_eq!(
             last,
-            PathBuf::from("/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-last.txt")
+            PathBuf::from(
+                "/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-a1b2c3d4-last.txt"
+            )
         );
         assert_eq!(
             stdout,
             PathBuf::from(
-                "/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-stdout.log"
+                "/repo/main/.orgasmic/tmp/dispatch/task-045-impl/task-045-impl-a1b2c3d4-stdout.log"
             )
         );
-        // last/stdout derived as siblings of the resolved brief land in the
-        // same per-task subfolder.
-        let (sib_last, sib_stdout) = dispatch_sibling_artifact_paths(&resolved_brief);
+        let (sib_last, sib_stdout) = dispatch_sibling_artifact_paths_from_last(&last);
         assert_eq!(sib_last, last);
         assert_eq!(sib_stdout, stdout);
+    }
+
+    #[test]
+    fn attempt_scoped_paths_isolate_consecutive_dispatches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_root = tmp.path().join("repo");
+        let brief =
+            project_root.join(".orgasmic/tmp/dispatch/task-045-impl/task-045-impl-brief.md");
+        let (_, last1, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt1");
+        let (_, last2, _) = dispatch_artifact_paths_for_attempt(&project_root, &brief, "attempt2");
+        assert_ne!(last1, last2);
+        std::fs::create_dir_all(last1.parent().unwrap()).unwrap();
+        std::fs::write(&last1, "attempt 1 report").unwrap();
+        assert!(
+            !last2.exists(),
+            "attempt 2 waiter path must not observe attempt 1 report"
+        );
     }
 
     #[test]
@@ -3326,5 +3766,58 @@ mod tests {
         assert!(matches(Some("orgasmic"), None));
         assert!(matches(None, Some("orgasmic")));
         assert!(matches(None, None));
+    }
+
+    #[test]
+    fn local_dispatch_rollback_keeps_branch_when_worktree_validation_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        assert!(Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(root.join("file"), "content").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "file"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-qm",
+                "init",
+            ])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args(["branch", "cleanup-candidate"])
+            .current_dir(root)
+            .status()
+            .unwrap()
+            .success());
+        let invalid_worktree = root.join("not-a-dispatch-worktree");
+        std::fs::create_dir(&invalid_worktree).unwrap();
+
+        let outcome = cleanup_created_resources(
+            root,
+            &invalid_worktree,
+            "cleanup-candidate",
+            &root.join("missing-last.txt"),
+            &root.join("missing-stdout.log"),
+        );
+        assert_eq!(outcome.status, CleanupStatus::WorktreeFailed);
+        assert!(resolve_branch_oid(root, "cleanup-candidate")
+            .unwrap()
+            .is_some());
     }
 }

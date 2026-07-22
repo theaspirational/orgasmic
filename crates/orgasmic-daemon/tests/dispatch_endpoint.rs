@@ -1170,15 +1170,81 @@ async fn release_dispatch_run_with_reason(
     );
 }
 
+async fn assert_no_finalize_artifacts(last: &Path, stdout: &Path) {
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let last_body = std::fs::read_to_string(last).unwrap_or_default();
+    assert!(
+        last_body.is_empty(),
+        "release without worker finalize must not write last_path: {last_body}"
+    );
+    let stdout_body = std::fs::read_to_string(stdout).unwrap_or_default();
+    assert!(
+        stdout_body.is_empty(),
+        "release without worker finalize must not write stdout_path: {stdout_body}"
+    );
+}
+
+async fn assert_orphan_without_finalize_artifacts(project_root: &Path, last: &Path, stdout: &Path) {
+    wait_for_orphan_tx(project_root).await;
+    assert_no_finalize_artifacts(last, stdout).await;
+}
+
+async fn wait_for_session_failed_release(session_path: &Path, reason: &str) {
+    use orgasmic_core::Lifecycle;
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while std::time::Instant::now() < deadline {
+        if let Ok(envelopes) = read_session_file(session_path) {
+            for envelope in envelopes.iter().rev() {
+                if envelope.kind != SessionEventKind::Lifecycle {
+                    continue;
+                }
+                if let Ok(Lifecycle::Release {
+                    outcome,
+                    reason: release_reason,
+                    ..
+                }) = serde_json::from_value(envelope.event.clone())
+                {
+                    if outcome == orgasmic_core::ReleaseOutcome::Failed && release_reason == reason
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for failed release reason={reason}");
+}
+
+async fn wait_for_orphan_tx(project_root: &Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if read_project_tx(project_root).contains(":TYPE:         manager.dispatch_orphaned") {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("timed out waiting for manager.dispatch_orphaned tx");
+}
+
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
+async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_empty() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-LAST";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -1189,9 +1255,12 @@ async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
     init_git_worktree(&worktree);
     write(&worktree.join("dirty.txt"), "uncommitted change\n");
 
+    let script = fake_cursor_protocol_exit_script("orphan-last");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1213,79 +1282,35 @@ async fn dispatch_run_complete_writes_last_path_and_commit_pending_signal() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        if last.exists()
-            && !std::fs::read_to_string(&last)
-                .unwrap_or_default()
-                .is_empty()
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let last_body = std::fs::read_to_string(&last).unwrap_or_default();
-    assert!(
-        !last_body.is_empty(),
-        "last_path should be written on RunComplete"
-    );
-    assert!(
-        last_body.contains("dispatch endpoint test release") || last_body.contains("complete"),
-        "last_path should carry run summary: {last_body}"
-    );
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        !stdout_body.is_empty(),
-        "stdout_path should be written on RunComplete"
-    );
-
-    let tx_deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut saw_commit_pending = false;
-    while std::time::Instant::now() < tx_deadline {
-        let mut raw = String::new();
-        let tx_dir = project_root.join(".orgasmic/tx");
-        if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-            for entry in entries.flatten() {
-                if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                    raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-                }
-            }
-        }
-        if raw.contains(":TYPE:         implementer.commit_pending")
-            && raw.contains(":HAS_UNCOMMITTED:")
-            && raw.contains("yes")
-        {
-            saw_commit_pending = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        saw_commit_pending,
-        "dirty worktree should emit implementer.commit_pending"
-    );
+    let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// TASK-066: the pre-fix watcher used a 30s wall clock from dispatch start, so
-/// releases after that window never populated :LAST_PATH: / :STDOUT_PATH:.
-/// The watcher now anchors no clock at dispatch start (it follows the live
-/// run indefinitely), so this canary only needs a short delay — it guards the
-/// shape of the regression, not the literal 30s constant.
+/// TASK-066: delayed protocol end without worker finalize orphans and leaves
+/// artifacts empty.
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
+async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-DELAYED-ARTIFACTS";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-delayed.md");
     let worktree = tmp.path().join("worktree-delayed");
@@ -1295,9 +1320,16 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
     std::fs::create_dir_all(&worktree).unwrap();
     init_git_worktree(&worktree);
 
+    let mut script = fake_cursor_protocol_exit_script("orphan-delayed");
+    script.insert_str(
+        script.find("cat >/dev/null\n").unwrap() + "cat >/dev/null\n".len(),
+        "sleep 2\n",
+    );
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1319,38 +1351,35 @@ async fn dispatch_run_complete_writes_artifacts_after_delayed_release() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(10)).await;
-    assert!(
-        !last_body.is_empty(),
-        "last_path should be written after delayed release"
-    );
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        !stdout_body.is_empty(),
-        "stdout_path should be written after delayed release"
-    );
+    let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// TASK-066.1: cursor-agent sessions carry assistant `text_chunk` events and a
-/// driver `run_complete` before manager dispatch-close adds a lifecycle release.
-/// `last_path` must prefer that substantive output over the dispatch-close reason.
+/// TASK-066.1: cursor-shaped sessions without worker finalize must not scrape
+/// assistant chunks into completion artifacts.
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chunks() {
+async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-CURSOR-SHAPED";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-cursor-shaped.md");
     let worktree = tmp.path().join("worktree-cursor-shaped");
@@ -1361,9 +1390,12 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
     init_git_worktree(&worktree);
     write(&worktree.join("dirty.txt"), "uncommitted change\n");
 
+    let script = fake_cursor_protocol_exit_script("orphan-cursor");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1385,7 +1417,6 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
     let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
 
     wait_for_session_ready(&session_path).await;
@@ -1405,63 +1436,32 @@ async fn dispatch_cursor_shaped_session_writes_artifacts_from_assistant_text_chu
             "summary": "hello world cursor agent summary",
         }),
     );
-
-    release_dispatch_run_with_reason(
-        &client,
-        running.addr,
-        &token,
-        &run_id,
-        "dispatch close for TASK-CURSOR-SHAPED",
-    )
-    .await;
-
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(10)).await;
-    assert!(
-        last_body.contains("hello world cursor agent summary"),
-        "last_path should prefer run_complete summary over dispatch-close reason: {last_body}"
-    );
-    assert!(
-        !last_body.contains("dispatch close for TASK-CURSOR-SHAPED"),
-        "last_path must not carry dispatch-close boilerplate: {last_body}"
-    );
-
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        stdout_body.contains("[assistant] hello world"),
-        "stdout_path should render cursor-shaped assistant chunks: {stdout_body}"
-    );
-
-    let tx_deadline = std::time::Instant::now() + Duration::from_secs(10);
-    let mut saw_commit_pending = false;
-    while std::time::Instant::now() < tx_deadline {
-        let raw = read_project_tx(&project_root);
-        if raw.contains(":TYPE:         implementer.commit_pending")
-            && raw.contains(":HAS_UNCOMMITTED:")
-            && raw.contains("yes")
-        {
-            saw_commit_pending = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        saw_commit_pending,
-        "dirty worktree should still emit implementer.commit_pending"
-    );
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
+async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-CLEAN";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree-clean");
@@ -1481,9 +1481,12 @@ async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
         .status()
         .unwrap();
 
+    let script = fake_cursor_protocol_exit_script("orphan-clean");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1505,34 +1508,14 @@ async fn dispatch_run_complete_skips_commit_pending_when_worktree_clean() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while std::time::Instant::now() < deadline {
-        if last.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    assert!(
-        last.exists(),
-        "last_path should still be written on RunComplete"
-    );
-
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    let mut raw = String::new();
-    let tx_dir = project_root.join(".orgasmic/tx");
-    if let Ok(entries) = std::fs::read_dir(&tx_dir) {
-        for entry in entries.flatten() {
-            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
-                raw.push_str(&std::fs::read_to_string(entry.path()).unwrap_or_default());
-            }
-        }
-    }
+    let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
+    let raw = read_project_tx(&project_root);
     assert!(
         !raw.contains(":TYPE:         implementer.commit_pending"),
-        "clean worktree must not emit implementer.commit_pending"
+        "clean worktree protocol end without finalize must not emit commit_pending"
     );
 
     let _ = running.shutdown.send(());
@@ -1842,17 +1825,26 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
     let _ = running.join.await;
 }
 
-/// TASK-072 item 1: system-only cursor-agent session chunks must appear in
-/// dispatch stdout artifacts after a normal release-driven completion.
+/// TASK-072 item 1: system-only session chunks without worker finalize must
+/// not appear in dispatch stdout artifacts.
+#[cfg(unix)]
 #[tokio::test]
-async fn dispatch_system_only_session_writes_system_stdout_after_release() {
+async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
+    let _lock = fake_cursor_agent_test_lock();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-cursor";
     let task_id = "TASK-SYSTEM-ONLY-STDOUT";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    seed_worker(
+        &home,
+        worker_id,
+        "subprocess-stream-json",
+        "cursor-agent",
+        "cursor",
+        "composer-2.5-fast",
+    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-system-only.md");
     let worktree = tmp.path().join("worktree-system-only");
@@ -1862,9 +1854,12 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
     std::fs::create_dir_all(&worktree).unwrap();
     init_git_worktree(&worktree);
 
+    let script = fake_cursor_protocol_exit_script("orphan-system");
+    let bin = install_fake_cursor_agent(tmp.path(), &script);
+    let _path_guard = PrependPathGuard::new(&bin);
+
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let client = reqwest::Client::new();
     let response = post_dispatch(
         &running,
         &token,
@@ -1886,7 +1881,6 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    let run_id = body["run_id"].as_str().unwrap().to_string();
     let session_path = PathBuf::from(body["session_path"].as_str().unwrap());
 
     wait_for_session_ready(&session_path).await;
@@ -1904,22 +1898,9 @@ async fn dispatch_system_only_session_writes_system_stdout_after_release() {
             }),
         );
     }
-    release_dispatch_run(&client, running.addr, &token, &run_id).await;
-
-    let stdout_body = wait_for_nonempty_file(&stdout, Duration::from_secs(10)).await;
-    assert!(
-        stdout_body.contains("[system] Implement"),
-        "stdout_path should render system-only cursor-agent chunks: {stdout_body}"
-    );
-    let last_body = wait_for_nonempty_file(&last, Duration::from_secs(10)).await;
-    assert!(
-        last_body.contains("Implemented TASK-072"),
-        "last_path should carry accumulated system text, not release boilerplate: {last_body}"
-    );
-    assert!(
-        !last_body.contains("dispatch endpoint test release"),
-        "last_path should prefer system fallback over release reason: {last_body}"
-    );
+    wait_for_session_run_complete_summary(&session_path, Duration::from_secs(30)).await;
+    wait_for_session_failed_release(&session_path, "protocol_end_without_finalize").await;
+    assert_orphan_without_finalize_artifacts(&project_root, &last, &stdout).await;
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
@@ -2082,6 +2063,19 @@ fn fake_cursor_agent_test_lock() -> std::sync::MutexGuard<'static, ()> {
     FAKE_CURSOR_AGENT_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[cfg(unix)]
+fn fake_cursor_protocol_exit_script(session_id: &str) -> String {
+    let mut script = format!(
+        "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"{session_id}\"}}'\n"
+    );
+    for idx in 1..=15 {
+        script.push_str(&format!(
+            "printf '%s\\n' '{{\"type\":\"synthetic-chunk-{idx:02}\"}}'\n"
+        ));
+    }
+    script
 }
 
 #[cfg(unix)]
@@ -2894,7 +2888,9 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         std::fs::set_permissions(&codex, perms).unwrap();
     }
 
-    let worktree = tmp.path().join("worktrees/task-cleanup-ep");
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-ep");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
     Command::new("git")
         .args([
             "worktree",
@@ -2907,28 +2903,27 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         .current_dir(&project_root)
         .status()
         .unwrap();
-    let brief = tmp.path().join("brief.md");
+    let brief = stem_dir.join("task-cleanup-ep-brief.md");
     write(&brief, "cleanup endpoint brief");
-    let last = tmp.path().join("last.txt");
-    let stdout = tmp.path().join("stdout.log");
+    let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+    let last = stem_dir.join(format!("task-cleanup-ep-{attempt}-last.txt"));
+    let stdout = stem_dir.join(format!("task-cleanup-ep-{attempt}-stdout.log"));
+    std::fs::write(&last, "").unwrap();
+    std::fs::write(&stdout, "").unwrap();
 
     let running = boot(home.clone()).await;
     let token = read_token(&home);
-    let response = post_dispatch(
-        &running,
-        &token,
-        project_id,
-        task_id,
-        dispatch_body(
-            "implementer",
-            &brief,
-            &worktree,
-            &last,
-            &stdout,
-            Some("implementer-codex-appserver"),
-        ),
-    )
-    .await;
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
+    dispatch["branch"] = serde_json::json!("task-cleanup-ep-impl");
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
     assert_eq!(
         response.status(),
         200,
@@ -2945,6 +2940,9 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
             "kind": "implementer",
             "worktree_path": worktree,
             "branch": "task-cleanup-ep-impl",
+            "dispatch_attempt_token": attempt,
+            "last_path": last,
+            "stdout_path": stdout,
         }),
     )
     .await;
@@ -2982,6 +2980,508 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         .unwrap();
     let lease_body: serde_json::Value = lease.json().await.unwrap();
     assert_eq!(lease_body["status"], "no_lease");
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-CLEANUP-BRANCH";
+    seed_worker(
+        &home,
+        "implementer-codex-appserver",
+        "acp-ws",
+        "codex",
+        "openai",
+        "gpt-5.5",
+    );
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-appserver",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tester@example.com"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    write(&project_root.join("README.md"), "init\n");
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-branch");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    let branch = "task-cleanup-branch-impl";
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            branch,
+            worktree.to_str().unwrap(),
+            &head,
+        ])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let brief = stem_dir.join("task-cleanup-branch-brief.md");
+    write(&brief, "branch mismatch cleanup brief");
+    let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+    let last = stem_dir.join(format!("task-cleanup-branch-{attempt}-last.txt"));
+    let stdout = stem_dir.join(format!("task-cleanup-branch-{attempt}-stdout.log"));
+    std::fs::write(&last, "").unwrap();
+    std::fs::write(&stdout, "").unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
+    dispatch["branch"] = serde_json::json!(branch);
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+
+    let cleanup = post_dispatch_cleanup(
+        &running,
+        &token,
+        project_id,
+        task_id,
+        serde_json::json!({
+            "kind": "implementer",
+            "worktree_path": worktree,
+            "branch": "wrong-branch-impl",
+            "dispatch_attempt_token": attempt,
+            "last_path": last,
+            "stdout_path": stdout,
+        }),
+    )
+    .await;
+    assert_eq!(cleanup.status(), 200, "cleanup endpoint transport failed");
+    let body: serde_json::Value = cleanup.json().await.unwrap();
+    assert_eq!(body["status"], "conflict");
+    assert!(!body["worktree_removed"].as_bool().unwrap_or(true));
+    assert!(!body["branch_deleted"].as_bool().unwrap_or(true));
+    assert!(
+        worktree.exists(),
+        "worktree must survive branch mismatch cleanup"
+    );
+    let branch_ref = format!("refs/heads/{branch}");
+    let branch_exists = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", branch_ref.as_str()])
+        .current_dir(&project_root)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(
+        branch_exists,
+        "dispatch branch must survive mismatch cleanup"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-NW4WV: worker finalize through the dispatch endpoint must preserve
+/// worker-authored last/stdout artifacts and must not flag an orphan.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-FINALIZE-EP";
+    seed_worker(
+        &home,
+        "implementer-codex-appserver",
+        "acp-ws",
+        "codex",
+        "openai",
+        "gpt-5.5",
+    );
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-appserver",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tester@example.com"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    write(&project_root.join("README.md"), "init\n");
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(
+        &codex,
+        "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-finalize-ep");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    let branch = "task-finalize-ep-impl";
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            branch,
+            worktree.to_str().unwrap(),
+            &head,
+        ])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let brief = stem_dir.join("task-finalize-ep-brief.md");
+    write(&brief, "finalize endpoint brief");
+    let attempt = "aaaa1111bbbb2222cccc3333dddd4444";
+    let last = stem_dir.join(format!("task-finalize-ep-{attempt}-last.txt"));
+    let stdout = stem_dir.join(format!("task-finalize-ep-{attempt}-stdout.log"));
+    std::fs::write(&last, "").unwrap();
+    std::fs::write(&stdout, "").unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
+    dispatch["branch"] = serde_json::json!(branch);
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    let run_id = body["run_id"]
+        .as_str()
+        .expect("dispatch response run_id")
+        .to_string();
+
+    let worker_last = "## Report\nendpoint finalize authoritative.";
+    let worker_stdout = "endpoint stdout authoritative.";
+    std::fs::write(&last, worker_last).unwrap();
+    std::fs::write(&stdout, worker_stdout).unwrap();
+
+    let release = reqwest::Client::new()
+        .post(format!("http://{}/api/runs/{run_id}/release", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": format!("worker finalize for {task_id}"),
+            "finalized_by_worker": true,
+            "request_id": "dispatch-endpoint-finalize-test"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        release.status().is_success(),
+        "worker finalize release failed: {}",
+        release.status()
+    );
+
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(std::fs::read_to_string(&last).unwrap(), worker_last);
+    assert_eq!(std::fs::read_to_string(&stdout).unwrap(), worker_stdout);
+    assert!(
+        !read_project_tx(&project_root).contains(":TYPE:         manager.dispatch_orphaned"),
+        "worker finalize must not flag manager.dispatch_orphaned"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-NW4WV: mismatched cleanup while a live tokened worker holds the lease
+/// must conflict and leave process/worktree/branch/artifacts intact.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-CLEANUP-LIVE";
+    seed_worker(
+        &home,
+        "implementer-codex-appserver",
+        "acp-ws",
+        "codex",
+        "openai",
+        "gpt-5.5",
+    );
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-appserver",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "tester@example.com"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test User"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    write(&project_root.join("README.md"), "init\n");
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "init"])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let head = String::from_utf8_lossy(
+        &Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&project_root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .trim()
+    .to_string();
+
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(
+        &codex,
+        "#!/bin/sh\nlast=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"--output-last-message\" ]; then\n    shift\n    last=\"$1\"\n  fi\n  shift\ndone\nif [ -n \"$last\" ]; then\n  printf 'stub-done\\n' > \"$last\"\nfi\nsleep 120\n",
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-cleanup-live");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    let branch = "task-cleanup-live-impl";
+    Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-B",
+            branch,
+            worktree.to_str().unwrap(),
+            &head,
+        ])
+        .current_dir(&project_root)
+        .status()
+        .unwrap();
+    let brief = stem_dir.join("task-cleanup-live-brief.md");
+    write(&brief, "live cleanup mismatch brief");
+    let attempt_b = "bbbb1111cccc2222dddd3333eeee4444";
+    let last = stem_dir.join(format!("task-cleanup-live-{attempt_b}-last.txt"));
+    let stdout = stem_dir.join(format!("task-cleanup-live-{attempt_b}-stdout.log"));
+    std::fs::write(&last, "live-worker-last").unwrap();
+    std::fs::write(&stdout, "live-worker-stdout").unwrap();
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-appserver"),
+    );
+    dispatch["dispatch_attempt_token"] = serde_json::json!(attempt_b);
+    dispatch["branch"] = serde_json::json!(branch);
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let dispatch_body: serde_json::Value = response.json().await.unwrap();
+    let pid = dispatch_body["pid"].as_u64().expect("live dispatch pid");
+
+    let cleanup = post_dispatch_cleanup(
+        &running,
+        &token,
+        project_id,
+        task_id,
+        serde_json::json!({
+            "kind": "implementer",
+            "worktree_path": worktree,
+            "branch": branch,
+            "dispatch_attempt_token": "aaaa1111bbbb2222cccc3333dddd4444",
+            "last_path": last,
+            "stdout_path": stdout,
+        }),
+    )
+    .await;
+    assert_eq!(cleanup.status(), 200, "cleanup endpoint transport failed");
+    let cleanup_body: serde_json::Value = cleanup.json().await.unwrap();
+    assert_eq!(cleanup_body["status"], "conflict");
+    assert!(!cleanup_body["worktree_removed"].as_bool().unwrap_or(true));
+    assert!(!cleanup_body["branch_deleted"].as_bool().unwrap_or(true));
+    assert!(
+        worktree.exists(),
+        "live worker worktree must survive mismatched cleanup"
+    );
+    assert_eq!(std::fs::read_to_string(&last).unwrap(), "live-worker-last");
+    assert_eq!(
+        std::fs::read_to_string(&stdout).unwrap(),
+        "live-worker-stdout"
+    );
+    let branch_ref = format!("refs/heads/{branch}");
+    let branch_exists = Command::new("git")
+        .args(["show-ref", "--verify", "--quiet", branch_ref.as_str()])
+        .current_dir(&project_root)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false);
+    assert!(
+        branch_exists,
+        "live worker branch must survive mismatched cleanup"
+    );
+    let pid_arg = pid.to_string();
+    assert!(
+        Command::new("kill")
+            .args(["-0", pid_arg.as_str()])
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false),
+        "live worker process must survive mismatched cleanup"
+    );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;

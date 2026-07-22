@@ -36,6 +36,12 @@ impl Drop for LiveSessionGuard {
     }
 }
 
+fn dispatch_artifact_has_content(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .map(|meta| meta.len() > 0)
+        .unwrap_or(false)
+}
+
 fn test_options() -> DaemonOptions {
     DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -429,6 +435,31 @@ fn append_partial_close_tx(
         "\n\n* TX 2026-05-23 Sat 10:01:00 implementer.done {task}\n:PROPERTIES:\n:TX_ID:        tx-partial-close-{task}\n:TIME:         [2026-05-23 Sat 10:01:00]\n:TYPE:         implementer.done\n:ACTOR:        agent.implementer\n:MACHINE:      test\n:PROJECT:      orgasmic\n:TASK:         {task}\n:MERGE_SHA:    {head}\n:BRANCH:       {branch}\n:CLOSED_TX:    {closed_tx}\n:CLEANUP_STATUS: ok\n:END:\n"
     ));
     write(&path, raw);
+}
+
+fn tx_property_for(raw: &str, ty: &str, task: &str, key: &str) -> String {
+    for block in raw.split("\n\n* TX ") {
+        if block.contains(&format!(":TYPE:         {ty}"))
+            && block.contains(&format!(":TASK:         {task}"))
+        {
+            let prefix = format!(":{key}:");
+            for line in block.lines() {
+                if let Some(value) = line.trim_start().strip_prefix(prefix.as_str()) {
+                    return value.trim().to_string();
+                }
+            }
+        }
+    }
+    panic!("missing {key} for type={ty} task={task}\n{raw}");
+}
+
+fn resolve_project_path(project_root: &Path, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_relative() {
+        project_root.join(path)
+    } else {
+        path
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1940,12 +1971,12 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
     write_git_proxy(&bin_dir);
     write_sleeping_stub_codex(&bin_dir);
     let path_env = path_with_stub(&bin_dir);
-    let codex_dir = tmp.path().join("codex");
-    std::fs::create_dir_all(&codex_dir).unwrap();
-    let brief = codex_dir.join("task-timeout-brief.md");
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-dispatch");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let brief = stem_dir.join("task-dispatch-brief.md");
     write(&brief, "timeout regression brief");
-    let worktree = tmp.path().join("worktrees/task-timeout");
-    let branch = "task-timeout-impl";
+    let branch = "task-dispatch-impl";
+    let worktree = stem_dir.join("worktree");
 
     let running = boot_with_options(
         home.clone(),
@@ -1974,10 +2005,6 @@ async fn dispatch_timeout_requests_daemon_cleanup() {
             brief.to_str().unwrap(),
             "--from",
             &head,
-            "--worktree",
-            worktree.to_str().unwrap(),
-            "--branch",
-            branch,
         ],
         &[("ORGASMIC_DISPATCH_HTTP_TIMEOUT_SECS", "1")],
     );
@@ -2192,8 +2219,25 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     );
     let worktree = stem_dir.join("worktree");
     assert!(worktree.is_dir());
-    write(&stem_dir.join("task-dispatch-last.txt"), "worker summary");
-    write(&stem_dir.join("task-dispatch-stdout.log"), "worker stdout");
+    let tx_raw = tx_log(&project_root);
+    let attempt_last = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "LAST_PATH"),
+    );
+    let attempt_stdout = resolve_project_path(
+        &project_root,
+        &tx_property_for(&tx_raw, "run.created", "TASK-DISPATCH", "STDOUT_PATH"),
+    );
+    write(&attempt_last, "worker summary");
+    write(&attempt_stdout, "worker stdout");
+    let sibling_last = stem_dir.join("task-dispatch-attempt2-last.txt");
+    let sibling_stdout = stem_dir.join("task-dispatch-attempt2-stdout.log");
+    let legacy_last = stem_dir.join("task-dispatch-last.txt");
+    let legacy_stdout = stem_dir.join("task-dispatch-stdout.log");
+    write(&sibling_last, "sibling attempt report");
+    write(&sibling_stdout, "sibling attempt stdout");
+    write(&legacy_last, "legacy summary");
+    write(&legacy_stdout, "legacy stdout");
 
     let _ = run_orgasmic(
         &home,
@@ -2218,12 +2262,28 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
 
     assert!(!worktree.exists(), "worktree should be removed on close");
     assert!(
-        !stem_dir.join("task-dispatch-last.txt").exists(),
-        "last.txt should be pruned on close"
+        !attempt_last.exists(),
+        "selected attempt last.txt should be pruned on close"
     );
     assert!(
-        !stem_dir.join("task-dispatch-stdout.log").exists(),
-        "stdout.log should be pruned on close"
+        !attempt_stdout.exists(),
+        "selected attempt stdout.log should be pruned on close"
+    );
+    assert!(
+        sibling_last.exists(),
+        "sibling attempt last.txt must survive close"
+    );
+    assert!(
+        sibling_stdout.exists(),
+        "sibling attempt stdout.log must survive close"
+    );
+    assert!(
+        legacy_last.exists(),
+        "legacy last.txt must survive when not selected"
+    );
+    assert!(
+        legacy_stdout.exists(),
+        "legacy stdout.log must survive when not selected"
     );
     assert!(brief.is_file(), "brief should be retained after close");
 
@@ -2886,7 +2946,7 @@ async fn dispatch_finalize_survives_stall_sweep_race_and_still_records_done() {
     let racer_last_path = last_path.clone();
     let racer = tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        while !racer_last_path.exists() {
+        while !dispatch_artifact_has_content(&racer_last_path) {
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "timed out waiting for {} before racing the release",
@@ -3490,7 +3550,7 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     let racer_last_path = last_path.clone();
     let racer = tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-        while !racer_last_path.exists() {
+        while !dispatch_artifact_has_content(&racer_last_path) {
             assert!(
                 tokio::time::Instant::now() < deadline,
                 "timed out waiting for {} before racing protocol-end",

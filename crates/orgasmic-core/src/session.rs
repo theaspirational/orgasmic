@@ -301,6 +301,9 @@ pub enum Lifecycle {
         last_path: Option<PathBuf>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stdout_path: Option<PathBuf>,
+        /// Full UUID attempt token for CLI dispatch cleanup fencing (TASK-ZGT1X).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dispatch_attempt_token: Option<String>,
         /// Worker role at acquire time (including `terminal` for custom bare
         /// terminals). Boot reattach restores this instead of inferring from
         /// `worker_id` alone (TASK-99W9C / dec_WDR5K item 6).

@@ -29,6 +29,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::json;
 use tokio::io::AsyncWriteExt;
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
@@ -243,22 +244,20 @@ impl WorkerDriver for TmuxDriver {
             let task = start_capture_loop(
                 session_name.clone(),
                 tx.clone(),
-                spawn_plan.eot_marker.clone(),
                 terminal_emitted.clone(),
             );
-            // Deliver the dispatch prompt in the *background* so `acquire`
-            // returns as soon as the session is spawned (~100ms) instead of
-            // blocking the HTTP handler for the input-ready wait (up to 10s) +
-            // paste. Blocking here is what raced the CLI's 10s timeout and left
-            // a zombie lease. A delivery failure surfaces as a fatal
-            // DriverError on the stream, not a late `acquire()` error.
-            if let Some(prompt) = spawn_plan.initial_prompt.clone() {
+            // Paste fallback only (hermes/custom, or a harness without argv
+            // delivery). Supported TUIs already received the prompt in argv.
+            // Deliver in the background so `acquire` returns promptly.
+            let startup_task = if let Some(prompt) = spawn_plan.paste_prompt.clone() {
                 let session = session_name.clone();
                 let command = spawn_plan.command.clone();
                 let timeout = cfg.input_ready_timeout;
                 let deliver_tx = tx.clone();
                 let deliver_terminal = terminal_emitted.clone();
-                tokio::spawn(async move {
+                let send_child = send_child.clone();
+                let cancel = startup_cancel.clone();
+                Some(tokio::spawn(async move {
                     deliver_prompt(
                         &session,
                         &command,
@@ -266,11 +265,43 @@ impl WorkerDriver for TmuxDriver {
                         timeout,
                         &deliver_tx,
                         &deliver_terminal,
+                        Some(send_child),
+                        Some(cancel),
                     )
                     .await;
-                });
-            }
-            Some(task)
+                }))
+            } else if cursor_argv_needs_startup_trust(harness, &spawn_plan.paste_prompt) {
+                // Cursor preserves argv across the workspace-trust gate, but
+                // fresh worktrees block until `[a] Trust this workspace` is sent.
+                let session = session_name.clone();
+                let workspace = ctx
+                    .worktree
+                    .as_deref()
+                    .map(|path| path.display().to_string())
+                    .unwrap_or_default();
+                let timeout = cfg.input_ready_timeout;
+                let cancel = startup_cancel.clone();
+                let send_child = send_child.clone();
+                Some(tokio::spawn(async move {
+                    if let Err(e) = accept_cursor_workspace_trust(
+                        &session,
+                        &workspace,
+                        timeout,
+                        Some(cancel),
+                        Some(send_child),
+                    )
+                    .await
+                    {
+                        tracing::warn!(
+                            ?e,
+                            "cursor workspace trust gate not cleared within timeout"
+                        );
+                    }
+                }))
+            } else {
+                None
+            };
+            (Some(task), startup_task)
         } else {
             if cfg.native_resume_mode
                 && is_claude_harness_command(
@@ -396,6 +427,73 @@ struct TmuxTuiControl {
     terminal_emitted: Arc<AtomicBool>,
     kill_on_drop: bool,
     released: bool,
+}
+
+fn abort_driver_task(task: Option<JoinHandle<()>>) {
+    if let Some(task) = task {
+        task.abort();
+    }
+}
+
+pub(crate) async fn cancel_and_join_driver_task(
+    cancel: &AtomicBool,
+    task: Option<JoinHandle<()>>,
+    send_child: Option<&SendChildOwner>,
+) {
+    cancel.store(true, Ordering::SeqCst);
+    if let Some(owner) = send_child {
+        owner.kill_and_reap().await;
+    }
+    if let Some(task) = task {
+        task.abort();
+        let _ = task.await;
+    }
+}
+
+/// Owns the in-flight tmux CLI child for send-keys and related verbs.
+#[derive(Clone)]
+pub(crate) struct SendChildOwner {
+    active: Arc<std::sync::Mutex<Option<Child>>>,
+}
+
+impl SendChildOwner {
+    pub(crate) fn new() -> Self {
+        Self {
+            active: Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Check cancellation, spawn, and register under one lock boundary.
+    pub(crate) async fn spawn_register_and_wait(
+        &self,
+        cancel: Option<&AtomicBool>,
+        build: impl FnOnce() -> Result<tokio::process::Command, DriverError>,
+    ) -> Result<(), DriverError> {
+        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            return Ok(());
+        }
+        {
+            let mut guard = self.active.lock().unwrap();
+            if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                return Ok(());
+            }
+            let mut cmd = build()?;
+            cmd.kill_on_drop(true);
+            let child = cmd
+                .spawn()
+                .map_err(|e| DriverError::Transport(format!("spawn: {e}")))?;
+            *guard = Some(child);
+        }
+        wait_for_owned_send_child(self, cancel).await
+    }
+
+    pub(crate) async fn kill_and_reap(&self) {
+        let child = self.active.lock().unwrap().take();
+        if let Some(mut child) = child {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+        }
+    }
 }
 
 #[async_trait]
@@ -524,8 +622,9 @@ struct TmuxSpawnPlan {
     command: String,
     args: Vec<String>,
     cwd: PathBuf,
-    initial_prompt: Option<String>,
-    eot_marker: String,
+    /// Prompt to paste after spawn. `None` when the prompt was delivered via
+    /// initial-prompt argv (claude/codex/cursor-agent) or when absent.
+    paste_prompt: Option<String>,
     /// Harness-aware native runtime identity recorded into the session JSONL.
     /// `None` when the harness has no known native session semantics.
     native_runtime: Option<NativeRuntimeMeta>,
@@ -615,6 +714,17 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         }
     }
 
+    // orgasmic:TASK-AFE5Q — argv delivery when the resolved binary is a
+    // supported TUI harness; paste remains for hermes/custom and for
+    // non-harness commands (test fixtures, explicit wrappers).
+    let paste_prompt = match prompt_text {
+        Some(prompt) if argv_prompt_delivery_applies(harness, &command) => {
+            push_initial_prompt_argv(&mut args, &prompt);
+            None
+        }
+        other => other,
+    };
+
     let native_runtime = if is_claude {
         if cfg.native_resume_mode {
             let resumed_session_id = args
@@ -662,8 +772,7 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         command,
         args,
         cwd,
-        initial_prompt,
-        eot_marker,
+        paste_prompt,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
         native_resume_mode: cfg.native_resume_mode,
@@ -671,6 +780,37 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         pinned_executable: cfg.pinned_executable.clone(),
         provider_home: cfg.provider_home.clone(),
     }
+}
+
+/// Harnesses that accept the compiled initial prompt as one trailing argv
+/// element (dec_WDR5K item 8 / TASK-AFE5Q). Hermes has no trustworthy TUI
+/// argv form — paste remains the fallback.
+// orgasmic:TASK-AFE5Q,dec_WDR5K
+pub(crate) fn harness_supports_initial_prompt_argv(harness: &str) -> bool {
+    matches!(harness, "claude" | "codex" | "cursor-agent")
+}
+
+/// True when both the harness id and the resolved binary basename support
+/// initial-prompt argv delivery.
+// orgasmic:TASK-AFE5Q
+pub(crate) fn argv_prompt_delivery_applies(harness: &str, command: &str) -> bool {
+    if !harness_supports_initial_prompt_argv(harness) {
+        return false;
+    }
+    let base = std::path::Path::new(command)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(command);
+    base == harness
+}
+
+/// Append the compiled prompt as exactly one argv element after `--`, so
+/// quotes/newlines/metacharacters and leading dashes never reach a shell and
+/// are never option-parsed.
+// orgasmic:TASK-AFE5Q
+pub(crate) fn push_initial_prompt_argv(args: &mut Vec<String>, prompt: &str) {
+    args.push("--".to_string());
+    args.push(prompt.to_string());
 }
 
 /// Deterministic Claude native session id pinned to the run's runtime UUID.
@@ -1245,21 +1385,6 @@ fn command_available(command: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub(crate) fn tmux_eot_marker(run_id: &str) -> String {
-    format!("[orgasmic-eot:{run_id}]")
-}
-
-pub(crate) fn prompt_with_eot_instruction(bundle: &str, run_id: &str) -> String {
-    let mut prompt = String::new();
-    prompt.push_str(bundle.trim());
-    prompt.push_str("\n\norgasmic tmux-tui control instruction:\n");
-    prompt.push_str("When all requested work and verification is complete, print a final end-of-turn marker on its own line. Compose the marker as '[' + 'orgasmic-eot:' + the run id below + ']'.\n");
-    prompt.push_str("run_id: ");
-    prompt.push_str(run_id);
-    prompt.push('\n');
-    prompt
-}
-
 /// Initial session geometry. Matches the daemon's PTY-attach bridge init size
 /// so the wrapped TUI lays out once instead of repainting on first attach.
 const TMUX_SESSION_COLS: &str = "200";
@@ -1439,42 +1564,66 @@ async fn spawn_tmux_session(
     Ok(launch_observation)
 }
 
-async fn paste_text_into_pane(session: &str, text: &str) -> Result<(), DriverError> {
+async fn paste_text_into_pane(
+    session: &str,
+    text: &str,
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
     if text.is_empty() {
         return Ok(());
     }
     let buffer_name = format!("orgasmic-{}", sanitize_tmux_name(session));
-    let mut child = tokio::process::Command::new("tmux")
-        .args(["load-buffer", "-b", &buffer_name, "-"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| DriverError::Transport(format!("tmux load-buffer spawn: {e}")))?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
+    if let Some(owner) = send_child {
+        let mut input = tempfile::tempfile()
+            .map_err(|e| DriverError::Transport(format!("tmux load-buffer tempfile: {e}")))?;
+        input
             .write_all(text.as_bytes())
-            .await
-            .map_err(|e| DriverError::Transport(format!("tmux load-buffer write: {e}")))?;
-        let _ = stdin.shutdown().await;
+            .and_then(|_| input.seek(SeekFrom::Start(0)))
+            .map_err(|e| DriverError::Transport(format!("tmux load-buffer prepare: {e}")))?;
+        owner
+            .spawn_register_and_wait(cancel, || {
+                let mut cmd = tokio::process::Command::new("tmux");
+                cmd.args(["load-buffer", "-b", &buffer_name, "-"])
+                    .stdin(Stdio::from(input))
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped());
+                Ok(cmd)
+            })
+            .await?;
+    } else {
+        let mut child = tokio::process::Command::new("tmux")
+            .args(["load-buffer", "-b", &buffer_name, "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| DriverError::Transport(format!("tmux load-buffer spawn: {e}")))?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin
+                .write_all(text.as_bytes())
+                .await
+                .map_err(|e| DriverError::Transport(format!("tmux load-buffer write: {e}")))?;
+            let _ = stdin.shutdown().await;
+        }
+        wait_for_send_child(child, cancel).await?;
     }
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("tmux load-buffer wait: {e}")))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DriverError::Transport(format!(
-            "tmux load-buffer failed: {}",
-            stderr.trim()
-        )));
-    }
-    run_tmux(&["paste-buffer", "-p", "-b", &buffer_name, "-t", session]).await?;
-    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name]).await;
+    run_tmux(
+        &["paste-buffer", "-p", "-b", &buffer_name, "-t", session],
+        send_child,
+        cancel,
+    )
+    .await?;
+    let _ = run_tmux(&["delete-buffer", "-b", &buffer_name], send_child, cancel).await;
     Ok(())
 }
 
-async fn send_keys(session: &str, keys: &[String]) -> Result<(), DriverError> {
+async fn send_keys(
+    session: &str,
+    keys: &[String],
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
     if keys.is_empty() {
         return Ok(());
     }
@@ -1482,26 +1631,110 @@ async fn send_keys(session: &str, keys: &[String]) -> Result<(), DriverError> {
     for key in keys {
         args.push(key.as_str());
     }
-    run_tmux(&args).await
+    run_tmux(&args, send_child, cancel).await
 }
 
-async fn run_tmux(args: &[&str]) -> Result<(), DriverError> {
-    let output = tokio::process::Command::new("tmux")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
-        .await
-        .map_err(|e| DriverError::Transport(format!("tmux {:?}: {e}", args)))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(DriverError::Transport(format!(
-            "tmux {:?} failed: {}",
-            args,
-            stderr.trim()
-        )));
+async fn run_tmux(
+    args: &[&str],
+    send_child: Option<&SendChildOwner>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
+    if let Some(owner) = send_child {
+        let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+        owner
+            .spawn_register_and_wait(cancel, || {
+                let mut cmd = tokio::process::Command::new("tmux");
+                for arg in &args {
+                    cmd.arg(arg);
+                }
+                cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+                cmd.kill_on_drop(true);
+                Ok(cmd)
+            })
+            .await
+    } else {
+        let child = tokio::process::Command::new("tmux")
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| DriverError::Transport(format!("tmux {:?}: {e}", args)))?;
+        wait_for_send_child(child, cancel).await
     }
-    Ok(())
+}
+
+pub(crate) async fn wait_for_owned_send_child(
+    owner: &SendChildOwner,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
+    loop {
+        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            owner.kill_and_reap().await;
+            return Ok(());
+        }
+        let wait_result = {
+            let mut guard = owner.active.lock().unwrap();
+            let Some(child) = guard.as_mut() else {
+                return Ok(());
+            };
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    guard.take();
+                    if status.success() {
+                        Ok(Some(true))
+                    } else {
+                        Ok(Some(false))
+                    }
+                }
+                Ok(None) => Ok(None),
+                Err(e) => {
+                    guard.take();
+                    Err(e)
+                }
+            }
+        };
+        match wait_result {
+            Ok(Some(true)) => return Ok(()),
+            Ok(Some(false)) => {
+                return Err(DriverError::Transport(
+                    "tmux send child exited with failure".into(),
+                ));
+            }
+            Ok(None) => tokio::time::sleep(Duration::from_millis(10)).await,
+            Err(e) => {
+                return Err(DriverError::Transport(format!("tmux send child wait: {e}")));
+            }
+        }
+    }
+}
+
+async fn wait_for_send_child(
+    mut child: Child,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), DriverError> {
+    loop {
+        if cancel.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Ok(());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if status.success() {
+                    return Ok(());
+                }
+                return Err(DriverError::Transport(format!(
+                    "tmux send child exited with {status}"
+                )));
+            }
+            Ok(None) => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(e) => {
+                return Err(DriverError::Transport(format!("tmux send child wait: {e}")));
+            }
+        }
+    }
 }
 
 fn sanitize_tmux_name(session: &str) -> String {
@@ -1517,29 +1750,26 @@ fn sanitize_tmux_name(session: &str) -> String {
         .collect()
 }
 
-fn start_capture_loop(
+/// Watch for pane/process end only. No scrollback scrape, no marker watch,
+/// no TextChunk synthesis — live view stays on `/ws/tmux/:run_id` (TASK-AFE5Q).
+// orgasmic:TASK-AFE5Q
+fn start_session_exit_watch(
     session_name: String,
     events: mpsc::Sender<DriverEvent>,
-    eot_marker: String,
     terminal_emitted: Arc<AtomicBool>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        capture_loop(session_name, events, eot_marker, terminal_emitted).await;
+        session_exit_watch(session_name, events, terminal_emitted).await;
     })
 }
 
-async fn capture_loop(
+async fn session_exit_watch(
     session: String,
     events: mpsc::Sender<DriverEvent>,
-    eot_marker: String,
     terminal_emitted: Arc<AtomicBool>,
 ) {
     let mut poll = tokio::time::interval(Duration::from_millis(500));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut previous = String::new();
-    let mut recent_chunk = String::new();
-    let mut seq = 0_u64;
-    let mut approval_sent = false;
 
     loop {
         poll.tick().await;
@@ -1550,51 +1780,10 @@ async fn capture_loop(
             emit_fatal_driver_error_once(
                 &events,
                 &terminal_emitted,
-                format!("tmux session {session} ended before EOT marker"),
+                format!("tmux session {session} ended without finalize"),
             )
             .await;
             break;
-        }
-        let pane = match capture_pane(&session).await {
-            Ok(pane) => pane,
-            Err(e) => {
-                let _ = events
-                    .send(DriverEvent::DriverError {
-                        fatal: false,
-                        message: e.to_string(),
-                    })
-                    .await;
-                continue;
-            }
-        };
-        if pane != previous {
-            let chunk = pane_delta(&previous, &pane);
-            let chunk = strip_ansi_codes(&chunk);
-            if !chunk.trim().is_empty() && chunk != recent_chunk {
-                seq += 1;
-                recent_chunk = chunk.clone();
-                let _ = events
-                    .send(DriverEvent::TextChunk {
-                        stream: TextStream::Assistant,
-                        chunk,
-                        seq,
-                    })
-                    .await;
-            }
-            if !approval_sent && pane_requests_approval(&pane) {
-                approval_sent = true;
-                let _ = send_keys(&session, &[String::from("y"), String::from("Enter")]).await;
-            }
-            if pane_contains_eot_marker(&pane, &eot_marker) {
-                emit_run_complete_once(
-                    &events,
-                    &terminal_emitted,
-                    Some("tmux TUI end-of-turn marker observed".to_string()),
-                )
-                .await;
-                break;
-            }
-            previous = pane;
         }
     }
 }
@@ -1622,6 +1811,7 @@ async fn capture_pane(session: &str) -> Result<String, DriverError> {
 /// brief and submit. Runs in the background after `acquire` returns; a failure
 /// becomes a fatal `DriverError` on the event stream so the run fails cleanly
 /// instead of leaving the worker idle without its brief.
+#[allow(clippy::too_many_arguments)]
 async fn deliver_prompt(
     session: &str,
     command: &str,
@@ -1629,6 +1819,8 @@ async fn deliver_prompt(
     input_ready_timeout: Duration,
     events: &mpsc::Sender<DriverEvent>,
     terminal_emitted: &AtomicBool,
+    send_child: Option<SendChildOwner>,
+    cancel: Option<Arc<AtomicBool>>,
 ) {
     if command == "claude" {
         if let Err(e) = wait_for_input_ready(session, input_ready_timeout).await {
@@ -1641,8 +1833,20 @@ async fn deliver_prompt(
         tokio::time::sleep(Duration::from_millis(800)).await;
     }
     let result = async {
-        paste_text_into_pane(session, prompt).await?;
-        send_keys(session, &[String::from("Enter")]).await
+        paste_text_into_pane(
+            session,
+            prompt,
+            send_child.as_ref(),
+            cancel.as_ref().map(|flag| flag.as_ref()),
+        )
+        .await?;
+        send_keys(
+            session,
+            &[String::from("Enter")],
+            send_child.as_ref(),
+            cancel.as_ref().map(|flag| flag.as_ref()),
+        )
+        .await
     }
     .await;
     if let Err(e) = result {
@@ -1653,6 +1857,339 @@ async fn deliver_prompt(
         )
         .await;
     }
+}
+
+async fn capture_pane_visible(session: &str) -> Result<String, DriverError> {
+    let output = tokio::process::Command::new("tmux")
+        .args(["capture-pane", "-p", "-t", session])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .await
+        .map_err(|e| DriverError::Transport(format!("tmux capture-pane: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(DriverError::Transport(format!(
+            "tmux capture-pane failed: {}",
+            stderr.trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// True when cursor-agent argv delivery still needs a startup-only trust
+/// transition (prompt already on argv — never paste again).
+pub(crate) fn cursor_argv_needs_startup_trust(
+    harness: &str,
+    paste_prompt: &Option<String>,
+) -> bool {
+    harness == "cursor-agent" && paste_prompt.is_none()
+}
+
+/// Startup-only classification of the current visible pane frame. Never scans
+/// scrollback — only the live viewport matters (TASK-756WX).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CursorStartupFrame {
+    BlankOrLoading,
+    TrustDialog,
+    Ready,
+}
+
+/// Whether the visible frame matches Cursor 2026.07.16's ordered trust component.
+/// Requires the full contiguous interactive component including the real first
+/// description line, workspace path, and ordered actions (TASK-ZGT1X).
+// orgasmic:TASK-756WX,TASK-AFE5Q,TASK-ZHRRH,TASK-ZGT1X
+pub(crate) fn is_cursor_trust_dialog_layout(pane: &str, workspace_path: &str) -> bool {
+    parse_cursor_trust_component(pane, workspace_path).is_some()
+}
+
+async fn send_trust_key_guarded<S, SFut>(
+    validated_pane: &str,
+    workspace_path: &str,
+    send_key: &mut S,
+    cancel: &Option<Arc<AtomicBool>>,
+) -> Result<(), DriverError>
+where
+    S: FnMut(&str) -> SFut,
+    SFut: std::future::Future<Output = Result<(), DriverError>>,
+{
+    if startup_cancelled(cancel) {
+        return Ok(());
+    }
+    if is_cursor_trust_dialog_layout(validated_pane, workspace_path) {
+        // Deliver immediately after synchronous re-validation on the captured
+        // frame — send_key must spawn without an intervening mux capture (TASK-NW4WV).
+        send_key("a").await
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn classify_cursor_startup_frame(
+    pane: &str,
+    workspace_path: &str,
+) -> CursorStartupFrame {
+    let trimmed = pane.trim();
+    if trimmed.is_empty() || cursor_startup_frame_is_loading(trimmed) {
+        return CursorStartupFrame::BlankOrLoading;
+    }
+    if is_cursor_trust_dialog_layout(pane, workspace_path) {
+        return CursorStartupFrame::TrustDialog;
+    }
+    CursorStartupFrame::Ready
+}
+
+const CURSOR_TRUST_TITLE: &str = "workspace trust required";
+const CURSOR_TRUST_DESCRIPTION: &str =
+    "Cursor Agent can execute code and access files in this directory.";
+const CURSOR_TRUST_MCP_DESCRIPTION: &str =
+    "This will also enable the MCP servers configured for this workspace.";
+const CURSOR_TRUST_QUESTION: &str = "Do you trust the contents of this directory?";
+const CURSOR_TRUST_ACTION: &str = "[a] trust this workspace";
+const CURSOR_TRUST_MCP_ACTION: &str = "[w] trust this workspace, but don't enable all mcp servers";
+const CURSOR_TRUST_QUIT: &str = "[q] quit";
+
+fn meaningful_pane_lines(pane: &str) -> Vec<String> {
+    pane.lines()
+        .map(|line| strip_ansi_codes(line).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn parse_cursor_trust_component(pane: &str, workspace_path: &str) -> Option<()> {
+    let lines = meaningful_pane_lines(pane);
+    if lines.is_empty() {
+        return None;
+    }
+    let mut i = 0;
+    if lines[i].to_ascii_lowercase() != CURSOR_TRUST_TITLE {
+        return None;
+    }
+    i += 1;
+    if i >= lines.len() || lines[i] != CURSOR_TRUST_DESCRIPTION {
+        return None;
+    }
+    i += 1;
+    let has_mcp_description = i < lines.len() && lines[i] == CURSOR_TRUST_MCP_DESCRIPTION;
+    if has_mcp_description {
+        i += 1;
+    }
+    if i >= lines.len() || lines[i] != CURSOR_TRUST_QUESTION {
+        return None;
+    }
+    i += 1;
+    if i >= lines.len() || !workspace_path_matches(&lines[i], workspace_path) {
+        return None;
+    }
+    i += 1;
+    if i >= lines.len() || lines[i].to_ascii_lowercase() != CURSOR_TRUST_ACTION {
+        return None;
+    }
+    i += 1;
+    let has_mcp_action =
+        i < lines.len() && lines[i].to_ascii_lowercase() == CURSOR_TRUST_MCP_ACTION;
+    if has_mcp_description != has_mcp_action {
+        return None;
+    }
+    if has_mcp_action {
+        i += 1;
+    }
+    if i >= lines.len() || lines[i].to_ascii_lowercase() != CURSOR_TRUST_QUIT {
+        return None;
+    }
+    i += 1;
+    if i != lines.len() {
+        return None;
+    }
+    Some(())
+}
+
+fn workspace_path_matches(displayed: &str, expected: &str) -> bool {
+    fn normalize(path: &str) -> Option<PathBuf> {
+        let trimmed = path.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            return None;
+        }
+        std::path::Path::new(trimmed)
+            .canonicalize()
+            .ok()
+            .or_else(|| Some(PathBuf::from(trimmed)))
+    }
+    match (normalize(displayed), normalize(expected)) {
+        (Some(displayed), Some(expected)) => displayed == expected,
+        _ => false,
+    }
+}
+
+fn cursor_startup_frame_is_loading(pane: &str) -> bool {
+    let meaningful: Vec<String> = pane
+        .lines()
+        .map(|line| strip_ansi_codes(line).trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    if meaningful.is_empty() {
+        return true;
+    }
+    if meaningful.len() == 1 {
+        let line = meaningful[0].to_ascii_lowercase();
+        if line.contains("loading") || line.contains("starting") || line == "..." {
+            return true;
+        }
+    }
+    false
+}
+
+/// One-shot startup state machine for Cursor workspace trust. Inspects only the
+/// current visible frame; sends `a` at most once; terminates on ready/exit.
+async fn accept_cursor_workspace_trust(
+    session: &str,
+    workspace_path: &str,
+    timeout: Duration,
+    cancel: Option<Arc<AtomicBool>>,
+    send_child: Option<SendChildOwner>,
+) -> Result<(), DriverError> {
+    let session = session.to_string();
+    let workspace_path = workspace_path.to_string();
+    accept_cursor_workspace_trust_with_capture(
+        &workspace_path,
+        timeout,
+        Duration::from_millis(250),
+        {
+            let session = session.clone();
+            move || {
+                let session = session.clone();
+                async move { capture_pane_visible(&session).await }
+            }
+        },
+        {
+            let session = session.clone();
+            move || {
+                let session = session.clone();
+                async move { has_tmux_session(&session).await.unwrap_or(false) }
+            }
+        },
+        {
+            let session = session.clone();
+            let send_child = send_child.clone();
+            let cancel_for_send = cancel.clone();
+            move |key| {
+                let session = session.clone();
+                let key = key.to_string();
+                let send_child = send_child.clone();
+                let cancel_for_send = cancel_for_send.clone();
+                async move {
+                    send_keys(
+                        &session,
+                        &[key],
+                        send_child.as_ref(),
+                        cancel_for_send.as_ref().map(|flag| flag.as_ref()),
+                    )
+                    .await
+                }
+            }
+        },
+        cancel,
+    )
+    .await
+}
+
+fn startup_cancelled(cancel: &Option<Arc<AtomicBool>>) -> bool {
+    cancel
+        .as_ref()
+        .is_some_and(|flag| flag.load(Ordering::SeqCst))
+}
+
+pub(crate) async fn accept_cursor_workspace_trust_with_capture<C, Fut, A, AFut, S, SFut>(
+    workspace_path: &str,
+    timeout: Duration,
+    poll_interval: Duration,
+    mut capture: C,
+    mut is_alive: A,
+    mut send_key: S,
+    cancel: Option<Arc<AtomicBool>>,
+) -> Result<(), DriverError>
+where
+    C: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<String, DriverError>>,
+    A: FnMut() -> AFut,
+    AFut: std::future::Future<Output = bool>,
+    S: FnMut(&str) -> SFut,
+    SFut: std::future::Future<Output = Result<(), DriverError>>,
+{
+    let workspace_path = workspace_path.to_string();
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut poll = tokio::time::interval(poll_interval);
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    poll.tick().await;
+    loop {
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => {
+                return Err(DriverError::InputNotReady(timeout));
+            }
+            _ = poll.tick() => {
+                if startup_cancelled(&cancel) {
+                    return Ok(());
+                }
+                if !is_alive().await {
+                    return Ok(());
+                }
+                match capture().await {
+                    Err(_) => continue,
+                    Ok(pane) => match classify_cursor_startup_frame(&pane, &workspace_path) {
+                        CursorStartupFrame::BlankOrLoading => continue,
+                        CursorStartupFrame::TrustDialog => {
+                            if startup_cancelled(&cancel) {
+                                return Ok(());
+                            }
+                            match capture().await {
+                                Ok(pane)
+                                    if is_cursor_trust_dialog_layout(&pane, &workspace_path) =>
+                                {
+                                    send_trust_key_guarded(
+                                        &pane,
+                                        &workspace_path,
+                                        &mut send_key,
+                                        &cancel,
+                                    )
+                                    .await?;
+                                }
+                                _ => {}
+                            }
+                            return Ok(());
+                        }
+                        CursorStartupFrame::Ready => return Ok(()),
+                    },
+                }
+            }
+        }
+    }
+}
+
+/// Canonical bounded Cursor trust-screen layout for tests and probes.
+#[cfg(test)]
+pub(crate) fn cursor_trust_dialog_frame(workspace: &str) -> String {
+    format!(
+        "Workspace Trust Required\n\n\
+         {CURSOR_TRUST_DESCRIPTION}\n\n\
+         {CURSOR_TRUST_QUESTION}\n\n\
+         {workspace}\n\n\
+         [a] Trust this workspace\n\
+         [q] Quit\n"
+    )
+}
+
+#[cfg(test)]
+pub(crate) fn cursor_trust_dialog_frame_with_mcp(workspace: &str) -> String {
+    format!(
+        "Workspace Trust Required\n\n\
+         {CURSOR_TRUST_DESCRIPTION}\n\n\
+         {CURSOR_TRUST_MCP_DESCRIPTION}\n\n\
+         {CURSOR_TRUST_QUESTION}\n\n\
+         {workspace}\n\n\
+         [a] Trust this workspace\n\
+         [w] Trust this workspace, but don't enable all MCP servers\n\
+         [q] Quit\n"
+    )
 }
 
 async fn wait_for_input_ready(session: &str, timeout: Duration) -> Result<(), DriverError> {
@@ -1670,7 +2207,7 @@ async fn wait_for_input_ready(session: &str, timeout: Duration) -> Result<(), Dr
                     // Accept the folder-trust dialog (default selection is
                     // "Yes, proceed") so the harness reaches its composer.
                     if pane_requests_folder_trust(&pane) {
-                        let _ = send_keys(session, &[String::from("Enter")]).await;
+                        let _ = send_keys(session, &[String::from("Enter")], None, None).await;
                         continue;
                     }
                     if pane_has_input_prompt(&pane) {
@@ -1726,6 +2263,16 @@ pub(crate) fn pane_has_input_prompt(pane: &str) -> bool {
     })
 }
 
+/// Cursor composer readiness: bounded to the harness input component (`❯`
+/// at column zero), not generic `>` blockquotes from prompt/model output.
+#[cfg(test)]
+pub(crate) fn pane_has_cursor_composer_ready(pane: &str) -> bool {
+    pane.lines().any(|line| {
+        let line = strip_ansi_codes(line);
+        line_starts_with_prompt(&line, "❯") && !line_is_numbered_menu_item(&line)
+    })
+}
+
 fn line_starts_with_prompt(line: &str, marker: &str) -> bool {
     line.strip_prefix(marker)
         .and_then(|rest| rest.chars().next())
@@ -1751,70 +2298,6 @@ fn line_is_numbered_menu_item(line: &str) -> bool {
     saw_digit && matches!(chars.next(), Some('.') | Some(')'))
 }
 
-pub(crate) fn pane_delta(previous: &str, current: &str) -> String {
-    if previous.is_empty() {
-        return current.to_string();
-    }
-
-    if previous == current {
-        String::new()
-    } else if let Some(delta) = current.strip_prefix(previous) {
-        delta.to_string()
-    } else {
-        let previous_lines = split_lines_keepends(previous);
-        let current_lines = split_lines_keepends(current);
-        let max_overlap = previous_lines.len().min(current_lines.len());
-        for overlap in (1..=max_overlap).rev() {
-            if previous_lines[previous_lines.len() - overlap..] == current_lines[..overlap] {
-                return current_lines[overlap..].concat();
-            }
-        }
-        redraw_delta(current)
-    }
-}
-
-fn split_lines_keepends(s: &str) -> Vec<&str> {
-    s.split_inclusive('\n').collect()
-}
-
-fn redraw_delta(current: &str) -> String {
-    const REDRAW_MARKER: &str = "[orgasmic-tui-redraw]\n";
-    const MAX_REDRAW_BYTES: usize = 10 * 1024;
-    let content = if current.len() <= MAX_REDRAW_BYTES {
-        current
-    } else {
-        let mut start = current.len() - MAX_REDRAW_BYTES;
-        while !current.is_char_boundary(start) {
-            start += 1;
-        }
-        &current[start..]
-    };
-    format!("{REDRAW_MARKER}{content}")
-}
-
-pub(crate) fn pane_contains_eot_marker(pane: &str, marker: &str) -> bool {
-    // Wrapped agent TUIs do not render the marker verbatim: a markdown pass
-    // may strip the `[...]` (link-label syntax, observed with opencode), and
-    // full-screen layouts can pack sidebar text onto the same rendered row.
-    // Accept a line that *starts* with the bracketed marker or its
-    // bracket-less core — start-anchored so prose that merely mentions the
-    // marker mid-sentence still does not complete the run.
-    let core = marker
-        .strip_prefix('[')
-        .and_then(|m| m.strip_suffix(']'))
-        .unwrap_or(marker);
-    pane.lines().any(|line| {
-        let trimmed = line.trim();
-        trimmed.starts_with(marker) || trimmed.starts_with(core)
-    })
-}
-
-fn pane_requests_approval(pane: &str) -> bool {
-    let lower = pane.to_ascii_lowercase();
-    lower.contains("approve")
-        && (lower.contains(" yes") || lower.contains("[y") || lower.contains("allow"))
-}
-
 /// Whether the pane is showing Claude's folder-trust dialog ("Do you trust the
 /// files in this folder?") as a numbered menu. Shared by the rmux driver. Used
 /// to accept the dialog (default "Yes, proceed") so a fresh worktree's harness
@@ -1828,16 +2311,6 @@ pub(crate) fn pane_requests_folder_trust(pane: &str) -> bool {
         && pane
             .lines()
             .any(|line| line_is_numbered_menu_item(&strip_ansi_codes(line)))
-}
-
-async fn emit_run_complete_once(
-    events: &mpsc::Sender<DriverEvent>,
-    terminal_emitted: &AtomicBool,
-    summary: Option<String>,
-) {
-    if !terminal_emitted.swap(true, Ordering::SeqCst) {
-        let _ = events.send(DriverEvent::RunComplete { summary }).await;
-    }
 }
 
 async fn emit_fatal_driver_error_once(
@@ -1940,6 +2413,10 @@ mod tests {
     use super::*;
     use serde_json::Value;
     use std::collections::VecDeque;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Mutex;
 
     /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
     /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
@@ -2067,10 +2544,57 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
-        let prompt = plan.initial_prompt.unwrap();
-        assert!(prompt.contains("do the task"));
-        assert!(!prompt.contains("[orgasmic-eot:run-plan]"));
-        assert!(prompt.contains("run_id: run-plan"));
+        // Argv delivery: prompt is one trailing argv element after `--`.
+        assert!(plan.paste_prompt.is_none());
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
+        assert!(!plan.args.iter().any(|arg| arg.contains("orgasmic-eot")));
+        assert!(!plan
+            .args
+            .iter()
+            .any(|arg| arg.contains("end-of-turn marker")));
+    }
+
+    #[test]
+    fn supported_harnesses_deliver_prompt_as_single_argv_element() {
+        // Quotes, newlines, metacharacters, Unicode, and leading dashes must
+        // remain one argv element — never shell-concatenated.
+        let nasty = "line1\n\"quoted\" $HOME; `--flag` — café";
+        for harness in ["claude", "codex", "cursor-agent"] {
+            let cfg = TmuxTuiConfig {
+                harness: Some(harness.into()),
+                prompt_bundle_text: Some(nasty.into()),
+                ..TmuxTuiConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-argv", RunKind::Worker), harness);
+            assert!(
+                plan.paste_prompt.is_none(),
+                "{harness} should use argv delivery"
+            );
+            assert_eq!(plan.args[plan.args.len() - 2], "--");
+            assert_eq!(plan.args[plan.args.len() - 1], nasty);
+            let native = plan.native_runtime.expect("native meta");
+            assert_eq!(native.launch_argv.last().map(String::as_str), Some(nasty));
+        }
+    }
+
+    #[test]
+    fn hermes_and_custom_keep_paste_fallback_without_eot() {
+        let hermes_cfg = TmuxTuiConfig {
+            harness: Some("hermes".into()),
+            prompt_bundle_text: Some("do the task".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let hermes = build_spawn_plan(&hermes_cfg, &ctx("run-hermes", RunKind::Worker), "hermes");
+        assert_eq!(hermes.paste_prompt.as_deref(), Some("do the task"));
+        assert!(!hermes.args.iter().any(|arg| arg == "do the task"));
+        assert!(!hermes
+            .paste_prompt
+            .as_deref()
+            .unwrap()
+            .contains("orgasmic-eot"));
     }
 
     /// Worker `:HARNESS_ARGS:` ride along on the harness argv; a `--model`
@@ -2546,48 +3070,43 @@ mod tests {
     }
 
     #[test]
-    fn pane_delta_and_eot_detection_are_stable() {
-        let before = "hello\n";
-        let after = "hello\nworld\n[orgasmic-eot:run-x]\n";
-        assert_eq!(pane_delta(before, after), "world\n[orgasmic-eot:run-x]\n");
-        assert!(pane_contains_eot_marker(after, "[orgasmic-eot:run-x]"));
-        assert!(!pane_contains_eot_marker(after, "[orgasmic-eot:other]"));
-    }
-
-    /// Wrapped TUIs render the marker imperfectly: opencode's markdown pass
-    /// strips the `[...]` link-label brackets, and full-screen layouts pack
-    /// sidebar columns onto the marker's rendered row. Both must still
-    /// complete the run; prose mentioning the marker mid-sentence must not.
-    #[test]
-    fn pane_eot_detection_tolerates_tui_rendering() {
-        let marker = "[orgasmic-eot:run-x]";
-        // Markdown link-label pass stripped the brackets.
-        assert!(pane_contains_eot_marker("orgasmic-eot:run-x\n", marker));
-        // Sidebar text rendered on the same screen row.
-        assert!(pane_contains_eot_marker(
-            "   orgasmic-eot:run-x          2% used\n",
-            marker
-        ));
-        assert!(pane_contains_eot_marker(
-            "  [orgasmic-eot:run-x]   ctrl+p commands\n",
-            marker
-        ));
-        // Mid-sentence mention (instruction echo / agent narration) is not
-        // a completion signal.
-        assert!(!pane_contains_eot_marker(
-            "I will print [orgasmic-eot:run-x] when done\n",
-            marker
-        ));
-        assert!(!pane_contains_eot_marker(
-            "compose '[' + 'orgasmic-eot:' + run id + ']'\n",
-            marker
-        ));
+    fn prompt_bytes_preserved_with_leading_trailing_whitespace() {
+        let bundle = "\n  do the task  \n";
+        for harness in ["claude", "codex", "cursor-agent"] {
+            let cfg = TmuxTuiConfig {
+                harness: Some(harness.into()),
+                prompt_bundle_text: Some(bundle.to_string()),
+                ..TmuxTuiConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-bytes", RunKind::Worker), harness);
+            assert_eq!(plan.args.last().map(String::as_str), Some(bundle));
+            assert_eq!(plan.paste_prompt.as_deref(), None);
+        }
+        let hermes_cfg = TmuxTuiConfig {
+            harness: Some("hermes".into()),
+            prompt_bundle_text: Some(bundle.to_string()),
+            ..TmuxTuiConfig::default()
+        };
+        let hermes = build_spawn_plan(
+            &hermes_cfg,
+            &ctx("run-hermes-bytes", RunKind::Worker),
+            "hermes",
+        );
+        assert_eq!(hermes.paste_prompt.as_deref(), Some(bundle));
     }
 
     #[test]
     fn tmux_config_defaults_input_ready_timeout_to_ten_seconds() {
         let cfg: TmuxTuiConfig = serde_json::from_value(json!({})).unwrap();
         assert_eq!(cfg.input_ready_timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn pane_has_cursor_composer_ready_rejects_markdown_blockquote() {
+        assert!(!pane_has_cursor_composer_ready(
+            "model output\n> quoted line\n"
+        ));
+        assert!(pane_has_cursor_composer_ready("cursor-agent\n❯ \n"));
     }
 
     #[test]
@@ -2619,6 +3138,579 @@ mod tests {
         assert!(!pane_requests_folder_trust("we trust the files here"));
         // A plain composer prompt is not the trust dialog.
         assert!(!pane_requests_folder_trust("Claude Code\n❯ "));
+    }
+
+    #[test]
+    fn is_cursor_trust_dialog_layout_matches_bounded_dialog() {
+        let workspace = "/tmp/worktree";
+        let trust = cursor_trust_dialog_frame(workspace);
+        assert!(is_cursor_trust_dialog_layout(&trust, workspace));
+        assert!(is_cursor_trust_dialog_layout(
+            &cursor_trust_dialog_frame_with_mcp(workspace),
+            workspace
+        ));
+        assert!(!is_cursor_trust_dialog_layout(
+            "cursor-agent ready\n❯ ",
+            workspace
+        ));
+        assert!(!is_cursor_trust_dialog_layout(
+            "Workspace Trust Required\n\n[a] Trust this workspace\n",
+            workspace
+        ));
+        assert!(!is_cursor_trust_dialog_layout(
+            "prompt: Workspace Trust Required — choose [a] Trust this workspace now",
+            workspace
+        ));
+    }
+
+    #[test]
+    fn classify_cursor_startup_frame_rejects_partial_trust_phrases_and_blockquotes() {
+        let workspace = "/tmp/worktree";
+        assert_eq!(
+            classify_cursor_startup_frame(
+                "Workspace Trust Required\n\n[a] Trust this workspace\n",
+                workspace
+            ),
+            CursorStartupFrame::Ready,
+            "partial two-line trust prose must not trigger trust; first stable frame exits"
+        );
+        assert_eq!(
+            classify_cursor_startup_frame("model working\n> blockquote line\n", workspace),
+            CursorStartupFrame::Ready,
+            "first stable non-trust frame terminates startup handling"
+        );
+        assert_eq!(
+            classify_cursor_startup_frame(&cursor_trust_dialog_frame(workspace), workspace),
+            CursorStartupFrame::TrustDialog
+        );
+    }
+
+    #[test]
+    fn classify_cursor_startup_frame_rejects_scattered_trust_lines() {
+        let workspace = "/tmp/worktree";
+        let hostile = "Workspace Trust Required\nmodel output\n\
+                        [a] Trust this workspace\nmore output\n\
+                        Do you trust the contents of this directory?\n\
+                        /tmp/worktree\n[q] Quit\n";
+        assert_eq!(
+            classify_cursor_startup_frame(hostile, workspace),
+            CursorStartupFrame::Ready,
+            "unordered scattered trust lines must not trigger trust input"
+        );
+    }
+
+    #[test]
+    fn classify_cursor_startup_frame_rejects_glyph_without_trust_component() {
+        let workspace = "/tmp/worktree";
+        let prompt = "TASK-756WX fix round 2: Workspace Trust Required\n\n\
+                      [a] Trust this workspace in the brief\n\n❯ ";
+        assert_eq!(
+            classify_cursor_startup_frame(prompt, workspace),
+            CursorStartupFrame::Ready,
+            "column-zero glyph without bounded trust component must not defer trust handling"
+        );
+    }
+
+    #[test]
+    fn classify_cursor_startup_frame_rejects_wrong_workspace_path() {
+        let trust = cursor_trust_dialog_frame("/tmp/other-worktree");
+        assert_eq!(
+            classify_cursor_startup_frame(&trust, "/tmp/worktree"),
+            CursorStartupFrame::Ready,
+            "trust dialog with mismatched workspace path must not trigger trust input"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_sends_a_without_pasting_prompt() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let ready = "cursor-agent\n❯ \n";
+        let mut panes =
+            VecDeque::from([Ok(trust.clone()), Ok(trust.clone()), Ok(ready.to_string())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(ready.to_string()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"], "trust gate must accept with [a] only");
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_skips_send_when_frame_transitions() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let ready = "cursor-agent\n❯ \n";
+        let mut panes = VecDeque::from([Ok(trust.clone()), Ok(ready.to_string())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(ready.to_string()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            sent.is_empty(),
+            "must not send after trust frame transitions"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_no_send_when_pane_transitions_during_blocked_send() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let ready = "cursor-agent\n❯ \n";
+        let pane_state = Arc::new(Mutex::new(trust.clone()));
+        let capture_count = Arc::new(AtomicUsize::new(0));
+        let second_capture_blocked = Arc::new(tokio::sync::Notify::new());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let accept = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(200),
+            Duration::from_millis(1),
+            {
+                let pane_state = pane_state.clone();
+                let capture_count = capture_count.clone();
+                let second_capture_blocked = second_capture_blocked.clone();
+                move || {
+                    let pane_state = pane_state.clone();
+                    let capture_count = capture_count.clone();
+                    let second_capture_blocked = second_capture_blocked.clone();
+                    async move {
+                        let n = capture_count.fetch_add(1, Ordering::SeqCst);
+                        if n == 1 {
+                            second_capture_blocked.notified().await;
+                        }
+                        Ok(pane_state.lock().unwrap().clone())
+                    }
+                }
+            },
+            || async { true },
+            {
+                let sent = sent.clone();
+                move |key: &str| {
+                    let sent = sent.clone();
+                    let key = key.to_string();
+                    async move {
+                        sent.lock().unwrap().push(key);
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                        Ok(())
+                    }
+                }
+            },
+            None,
+        );
+        let accept = tokio::spawn(accept);
+        let deadline = std::time::Instant::now() + Duration::from_millis(100);
+        while capture_count.load(Ordering::SeqCst) < 2 && std::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            capture_count.load(Ordering::SeqCst) >= 2,
+            "expected trust re-validation capture to block before send"
+        );
+        *pane_state.lock().unwrap() = ready.to_string();
+        second_capture_blocked.notify_waiters();
+        assert!(accept.await.unwrap().is_ok());
+        assert!(
+            sent.lock().unwrap().is_empty(),
+            "must not send when pane transitions during blocked re-validation capture"
+        );
+    }
+
+    #[test]
+    fn parse_cursor_trust_rejects_impossible_mcp_only_variant() {
+        let workspace = "/tmp/worktree";
+        let pane = cursor_trust_dialog_frame_with_mcp(workspace).replace(
+            "[w] Trust this workspace, but don't enable all MCP servers\n",
+            "",
+        );
+        assert!(
+            !is_cursor_trust_dialog_layout(&pane, workspace),
+            "MCP description without paired action must fail closed"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_waits_through_loading_then_trust() {
+        let loading = "\n\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut panes = VecDeque::from([
+            Ok(loading.to_string()),
+            Ok(trust.clone()),
+            Ok(trust.clone()),
+        ]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.clone()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"]);
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_already_trusted_exits_without_input() {
+        let ready = "cursor-agent\n❯ \n";
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(ready.to_string()) },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(sent.is_empty(), "already-trusted UI must send nothing");
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_repeated_frames_send_once() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(trust.clone()) },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"]);
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_prompt_text_sends_nothing() {
+        let prose =
+            "Implement TASK-756WX\nWorkspace Trust Required\n[a] Trust this workspace\n\n❯ ";
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(prose.to_string()) },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(sent.is_empty(), "prompt prose must not send trust input");
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_recovers_after_capture_errors() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut attempts = 0;
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                attempts += 1;
+                let trust = trust.clone();
+                async move {
+                    if attempts == 1 {
+                        Err(DriverError::Transport("capture failed".into()))
+                    } else {
+                        Ok(trust)
+                    }
+                }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert_eq!(sent, vec!["a"]);
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_exits_when_pane_gone_without_input() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(trust.clone()) },
+            || async { false },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(sent.is_empty(), "pane/process exit must not send input");
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_honours_cancel_before_send() {
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let cancel = Arc::new(AtomicBool::new(true));
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || async { Ok(trust.clone()) },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            Some(cancel),
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            sent.is_empty(),
+            "cancelled startup must not inject trust input"
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_cursor_workspace_trust_blockquote_frame_exits_without_input() {
+        let working = "Thinking...\n> quoted model output\n";
+        let trust = cursor_trust_dialog_frame("/tmp/worktree");
+        let mut panes = VecDeque::from([Ok(working.to_string()), Ok(trust.clone())]);
+        let mut sent = Vec::new();
+        let result = accept_cursor_workspace_trust_with_capture(
+            "/tmp/worktree",
+            Duration::from_millis(50),
+            Duration::from_millis(1),
+            || {
+                let pane = panes.pop_front().unwrap_or_else(|| Ok(trust.clone()));
+                async move { pane }
+            },
+            || async { true },
+            |key: &str| {
+                sent.push(key.to_string());
+                async { Ok(()) }
+            },
+            None,
+        )
+        .await;
+        assert!(result.is_ok());
+        assert!(
+            sent.is_empty(),
+            "first stable non-trust frame must terminate without trust input"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_cancel_before_spawn_leaves_no_child() {
+        let owner = SendChildOwner::new();
+        let cancel = AtomicBool::new(true);
+        owner
+            .spawn_register_and_wait(Some(&cancel), || {
+                let mut cmd = tokio::process::Command::new("sleep");
+                cmd.arg("300");
+                Ok(cmd)
+            })
+            .await
+            .unwrap();
+        owner.kill_and_reap().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_release_kills_blocked_fake_cli() {
+        let owner = SendChildOwner::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_task = cancel.clone();
+        let owner_for_task = owner.clone();
+        let task = tokio::spawn(async move {
+            let _ = owner_for_task
+                .spawn_register_and_wait(Some(cancel_for_task.as_ref()), || {
+                    let mut cmd = tokio::process::Command::new("sleep");
+                    cmd.arg("300");
+                    Ok(cmd)
+                })
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let joined = tokio::time::timeout(
+            Duration::from_secs(2),
+            cancel_and_join_driver_task(cancel.as_ref(), Some(task), Some(&owner)),
+        )
+        .await;
+        assert!(
+            joined.is_ok(),
+            "release must kill/join a blocked fake tmux CLI child promptly"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_cancel_during_blocked_wait_kills_child() {
+        let owner = SendChildOwner::new();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_task = cancel.clone();
+        let owner_for_task = owner.clone();
+        let task = tokio::spawn(async move {
+            let _ = owner_for_task
+                .spawn_register_and_wait(Some(cancel_for_task.as_ref()), || {
+                    let mut cmd = tokio::process::Command::new("sleep");
+                    cmd.arg("300");
+                    Ok(cmd)
+                })
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        cancel.store(true, Ordering::SeqCst);
+        let joined = tokio::time::timeout(
+            Duration::from_secs(2),
+            cancel_and_join_driver_task(cancel.as_ref(), Some(task), Some(&owner)),
+        )
+        .await;
+        assert!(
+            joined.is_ok(),
+            "cancel during blocked wait must kill/join the fake tmux CLI child promptly"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn send_child_owner_child_error_does_not_leave_registered_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let stub = tmp.path().join("fail.sh");
+        std::fs::write(&stub, "#!/bin/sh\nexit 42\n").unwrap();
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+        let owner = SendChildOwner::new();
+        let result = owner
+            .spawn_register_and_wait(None, || Ok(tokio::process::Command::new(&stub)))
+            .await;
+        assert!(
+            result.is_err(),
+            "child exit must surface as transport error"
+        );
+        owner.kill_and_reap().await;
+    }
+
+    #[tokio::test]
+    async fn cursor_trust_probe_fresh_worktree_when_enabled() {
+        if std::env::var("ORGASMIC_PROBE_CURSOR_TRUST").as_deref() != Ok("1") {
+            eprintln!(
+                "SKIP cursor_trust_probe_fresh_worktree_when_enabled: set ORGASMIC_PROBE_CURSOR_TRUST=1"
+            );
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let session = format!("orgasmic-trust-probe-{}", std::process::id());
+        let _guard = live_session_guard();
+        let output = tokio::process::Command::new("tmux")
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                &session,
+                "-c",
+                tmp.path().to_str().unwrap(),
+                "cursor-agent",
+            ])
+            .output()
+            .await
+            .expect("spawn tmux session for cursor trust probe");
+        assert!(
+            output.status.success(),
+            "tmux new-session failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let pane = capture_pane_visible(&session)
+            .await
+            .expect("capture probe pane");
+        let _ = tokio::process::Command::new("tmux")
+            .args(["kill-session", "-t", &session])
+            .status()
+            .await;
+        let workspace = tmp.path().display().to_string();
+        let frame = classify_cursor_startup_frame(&pane, &workspace);
+        assert!(
+            matches!(
+                frame,
+                CursorStartupFrame::TrustDialog | CursorStartupFrame::Ready
+            ),
+            "fresh cursor-agent pane should be trust dialog or already-trusted composer, got {frame:?}\n{pane}"
+        );
+    }
+
+    #[test]
+    fn cursor_argv_delivery_skips_paste_prompt() {
+        let cfg = TmuxTuiConfig {
+            harness: Some("cursor-agent".into()),
+            prompt_bundle_text: Some("do the task".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-cursor", RunKind::Worker), "cursor-agent");
+        assert!(plan.paste_prompt.is_none());
+        assert!(plan
+            .args
+            .windows(2)
+            .any(|pair| pair == ["--", "do the task"]));
+        assert!(cursor_argv_needs_startup_trust(
+            "cursor-agent",
+            &plan.paste_prompt
+        ));
     }
 
     #[tokio::test]
@@ -2656,31 +3748,6 @@ mod tests {
             matches!(result, Err(DriverError::InputNotReady(observed)) if observed == timeout),
             "expected InputNotReady timeout, got {result:?}"
         );
-    }
-
-    #[test]
-    fn pane_delta_handles_line_window_edges() {
-        assert_eq!(pane_delta("", ""), "");
-        assert_eq!(pane_delta("", "one line"), "one line");
-        assert_eq!(pane_delta("one", "one plus"), " plus");
-        assert_eq!(pane_delta("one\n", "one\ntwo\nthree\n"), "two\nthree\n");
-        assert_eq!(
-            pane_delta("one\ntwo\nthree\n", "two\nthree\nfour\n"),
-            "four\n"
-        );
-        assert_eq!(pane_delta("one\ntwo\n", ""), "[orgasmic-tui-redraw]\n");
-        assert_eq!(
-            pane_delta("one\ntwo\n", "replacement\n"),
-            "[orgasmic-tui-redraw]\nreplacement\n"
-        );
-    }
-
-    #[test]
-    fn pane_delta_caps_redraw_payload() {
-        let current = "x".repeat(12 * 1024);
-        let delta = pane_delta("old\n", &current);
-        assert!(delta.starts_with("[orgasmic-tui-redraw]\n"));
-        assert!(delta.len() <= "[orgasmic-tui-redraw]\n".len() + 10 * 1024);
     }
 
     #[tokio::test]
@@ -2922,8 +3989,7 @@ mod tests {
             command: "claude".into(),
             args: vec!["--dangerously-skip-permissions".into()],
             cwd: std::env::current_dir().unwrap(),
-            initial_prompt: None,
-            eot_marker: tmux_eot_marker("run-input-ready"),
+            paste_prompt: None,
             native_runtime: None,
             run_id: "run-input-ready".into(),
             native_resume_mode: false,
@@ -2940,53 +4006,6 @@ mod tests {
             ready.is_ok(),
             "claude input field should become ready within 10s: {ready:?}"
         );
-    }
-
-    #[tokio::test]
-    async fn real_tmux_eot_marker_emits_run_complete() {
-        let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await || !command_available("bash") {
-            eprintln!("skipping real_tmux_eot_marker_emits_run_complete: tmux/bash unavailable");
-            return;
-        }
-        let d = driver();
-        let run_id = "run-mock-eot";
-        let marker = tmux_eot_marker(run_id);
-        let script = format!("printf 'mock output\\n{}\\n'; sleep 60", marker);
-        let cfg = DriverConfig::from_value(json!({
-            "command": "bash",
-            "args": ["-lc", script],
-        }));
-        let mut s = d.acquire(ctx(run_id, RunKind::Worker), cfg).await.unwrap();
-        let _guard = SessionGuard(tmux_session_name(&s.identity));
-        let ev = s.events.recv().await.unwrap();
-        assert!(matches!(ev, DriverEvent::Ready { .. }));
-
-        let mut saw_text = false;
-        let mut saw_complete = false;
-        for _ in 0..10 {
-            let ev = tokio::time::timeout(Duration::from_secs(2), s.events.recv())
-                .await
-                .expect("timed out waiting for tmux event")
-                .expect("event stream closed");
-            match ev {
-                DriverEvent::TextChunk { chunk, .. } => {
-                    saw_text |= chunk.contains("mock output");
-                }
-                DriverEvent::RunComplete { summary } => {
-                    saw_complete = true;
-                    assert_eq!(
-                        summary.as_deref(),
-                        Some("tmux TUI end-of-turn marker observed")
-                    );
-                    break;
-                }
-                other => panic!("unexpected event before completion: {other:?}"),
-            }
-        }
-        assert!(saw_text, "expected mock output text chunk");
-        assert!(saw_complete, "expected RunComplete");
-        s.control.release("cleanup").await.unwrap();
     }
 
     /// Non-blocking acquire (zombie-lease fix): with a dispatch prompt, the
@@ -3024,10 +4043,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn real_tmux_early_exit_before_eot_is_failure() {
+    async fn real_tmux_early_exit_without_finalize_is_failure() {
         let _live_guard = live_session_guard();
         if !tmux_spawn_usable().await || !command_available("bash") {
-            eprintln!("skipping real_tmux_early_exit_before_eot_is_failure: tmux/bash unavailable");
+            eprintln!(
+                "skipping real_tmux_early_exit_without_finalize_is_failure: tmux/bash unavailable"
+            );
             return;
         }
         let d = driver();
@@ -3050,12 +4071,11 @@ mod tests {
                 .expect("event stream closed");
             match ev {
                 DriverEvent::DriverError { fatal, message } if fatal => {
-                    assert!(message.contains("ended before EOT marker"), "{message}");
+                    assert!(message.contains("ended without finalize"), "{message}");
                     saw_failure = true;
                     break;
                 }
                 DriverEvent::DriverError { fatal: false, .. } => {}
-                DriverEvent::TextChunk { .. } => {}
                 DriverEvent::RunComplete { .. } => {
                     panic!("early tmux exit must not emit RunComplete")
                 }
