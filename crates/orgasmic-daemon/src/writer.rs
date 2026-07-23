@@ -196,6 +196,38 @@ struct TransactionRequest {
     rewrites: Vec<FileRewrite>,
     tx: TxAppend,
     request_id: String,
+    mutation: Option<MutationIdentity>,
+    mutation_id: Option<String>,
+}
+
+/// Semantic scope retained by the writer for a retriable mutation. Keeping it
+/// with the cached result prevents replay recovery from consulting a lagging
+/// index snapshot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MutationIdentity {
+    pub operation: String,
+    pub project_id: String,
+    pub payload: String,
+}
+
+impl MutationIdentity {
+    pub fn new(
+        operation: impl Into<String>,
+        project_id: impl Into<String>,
+        payload: impl Into<String>,
+    ) -> Self {
+        Self {
+            operation: operation.into(),
+            project_id: project_id.into(),
+            payload: payload.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CachedMutation {
+    pub tx_id: String,
+    pub mutation_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -226,8 +258,85 @@ impl TestTransactionGate {
 
 #[derive(Debug, Clone)]
 enum CachedResponse {
-    Tx(TxAppendResult),
+    Tx {
+        result: TxAppendResult,
+        mutation: Option<MutationIdentity>,
+        mutation_id: Option<String>,
+    },
     Rewrite,
+}
+
+fn cached_mutation_from_map(
+    cache: &HashMap<String, CachedResponse>,
+    request_id: &str,
+    expected: &MutationIdentity,
+) -> Result<Option<CachedMutation>> {
+    let Some(cached) = cache.get(request_id) else {
+        return Ok(None);
+    };
+    let CachedResponse::Tx {
+        result,
+        mutation,
+        mutation_id,
+    } = cached
+    else {
+        bail!("request_id `{request_id}` was already used by a different mutation type");
+    };
+    if mutation.as_ref() != Some(expected) {
+        bail!(
+            "request_id `{request_id}` was reused with a different operation, project, or payload"
+        );
+    }
+    let mutation_id = mutation_id
+        .clone()
+        .ok_or_else(|| anyhow!("cached mutation lacks its recorded identity"))?;
+    Ok(Some(CachedMutation {
+        tx_id: result.tx_id.clone(),
+        mutation_id,
+    }))
+}
+
+fn transaction_identity(tx: &TxAppend, rewrites: &[FileRewrite]) -> MutationIdentity {
+    let payload = rewrites
+        .iter()
+        .map(|rewrite| {
+            format!(
+                "{}:{:?}",
+                rewrite.path.display(),
+                rewrite.new_contents.as_slice()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("|");
+    MutationIdentity::new(
+        tx.entry.ty.clone(),
+        tx.project_id
+            .clone()
+            .unwrap_or_else(|| "<none>".to_string()),
+        payload,
+    )
+}
+
+fn cached_transaction_from_map(
+    cache: &HashMap<String, CachedResponse>,
+    request_id: &str,
+    expected: &MutationIdentity,
+) -> Result<Option<TxAppendResult>> {
+    let Some(cached) = cache.get(request_id) else {
+        return Ok(None);
+    };
+    let CachedResponse::Tx {
+        result, mutation, ..
+    } = cached
+    else {
+        bail!("request_id `{request_id}` was already used by a different mutation type");
+    };
+    if mutation.as_ref() != Some(expected) {
+        bail!(
+            "request_id `{request_id}` was reused with a different operation, project, or payload"
+        );
+    }
+    Ok(Some(result.clone()))
 }
 
 impl WriterHandle {
@@ -243,8 +352,8 @@ impl WriterHandle {
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         {
             let cache = self.idempotency.lock().await;
-            if let Some(CachedResponse::Tx(prior)) = cache.get(&request_id) {
-                return Ok(prior.clone());
+            if let Some(CachedResponse::Tx { result, .. }) = cache.get(&request_id) {
+                return Ok(result.clone());
             }
         }
         let (reply, rx) = oneshot::channel();
@@ -254,7 +363,14 @@ impl WriterHandle {
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
         let mut cache = self.idempotency.lock().await;
-        cache.insert(request_id, CachedResponse::Tx(res.clone()));
+        cache.insert(
+            request_id,
+            CachedResponse::Tx {
+                result: res.clone(),
+                mutation: None,
+                mutation_id: None,
+            },
+        );
         Ok(res)
     }
 
@@ -264,9 +380,21 @@ impl WriterHandle {
     pub async fn cached_tx_id(&self, request_id: &str) -> Option<String> {
         let cache = self.idempotency.lock().await;
         match cache.get(request_id) {
-            Some(CachedResponse::Tx(prior)) => Some(prior.tx_id.clone()),
+            Some(CachedResponse::Tx { result, .. }) => Some(result.tx_id.clone()),
             _ => None,
         }
+    }
+
+    /// Recover a mutation only when its exact semantic scope matches. A
+    /// request-id collision across operations, projects, or payloads fails
+    /// closed instead of returning an unrelated prior result.
+    pub async fn cached_mutation(
+        &self,
+        request_id: &str,
+        expected: &MutationIdentity,
+    ) -> Result<Option<CachedMutation>> {
+        let cache = self.idempotency.lock().await;
+        cached_mutation_from_map(&cache, request_id, expected)
     }
 
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
@@ -279,10 +407,11 @@ impl WriterHandle {
             .request_id
             .clone()
             .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let mutation = transaction_identity(&tx, &rewrites);
         {
             let cache = self.idempotency.lock().await;
-            if let Some(CachedResponse::Tx(prior)) = cache.get(&request_id) {
-                return Ok(prior.tx_id.clone());
+            if let Some(result) = cached_transaction_from_map(&cache, &request_id, &mutation)? {
+                return Ok(result.tx_id.clone());
             }
         }
         let (reply, rx) = oneshot::channel();
@@ -292,16 +421,49 @@ impl WriterHandle {
                     rewrites,
                     tx,
                     request_id: request_id.clone(),
+                    mutation: Some(mutation),
+                    mutation_id: None,
                 },
                 reply,
             })
             .await
             .map_err(|_| anyhow!("writer task is gone"))?;
         let res = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
-        let tx_id = res.tx_id.clone();
-        let mut cache = self.idempotency.lock().await;
-        cache.insert(request_id, CachedResponse::Tx(res));
-        Ok(tx_id)
+        Ok(res.tx_id)
+    }
+
+    pub async fn transaction_mutation(
+        &self,
+        rewrites: Vec<FileRewrite>,
+        tx: TxAppend,
+        mutation: MutationIdentity,
+        mutation_id: String,
+    ) -> Result<CachedMutation> {
+        let request_id = tx
+            .request_id
+            .clone()
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        if let Some(cached) = self.cached_mutation(&request_id, &mutation).await? {
+            return Ok(cached);
+        }
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(WriterCommand::Transaction {
+                req: TransactionRequest {
+                    rewrites,
+                    tx,
+                    request_id: request_id.clone(),
+                    mutation: Some(mutation.clone()),
+                    mutation_id: Some(mutation_id),
+                },
+                reply,
+            })
+            .await
+            .map_err(|_| anyhow!("writer task is gone"))?;
+        let _ = rx.await.map_err(|_| anyhow!("writer reply dropped"))??;
+        self.cached_mutation(&request_id, &mutation)
+            .await?
+            .ok_or_else(|| anyhow!("writer did not retain mutation idempotency record"))
     }
 
     pub async fn append_session(&self, req: SessionAppend) -> Result<SessionAppendResult> {
@@ -375,7 +537,7 @@ impl WriterHandle {
 pub fn spawn(events: EventBus) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
-    tokio::spawn(writer_loop(rx, events));
+    tokio::spawn(writer_loop(rx, events, Arc::clone(&idempotency)));
     WriterHandle {
         tx,
         idempotency,
@@ -384,7 +546,11 @@ pub fn spawn(events: EventBus) -> WriterHandle {
     }
 }
 
-async fn writer_loop(mut rx: mpsc::Receiver<WriterCommand>, events: EventBus) {
+async fn writer_loop(
+    mut rx: mpsc::Receiver<WriterCommand>,
+    events: EventBus,
+    idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
+) {
     let mut tx_handles: HashMap<PathBuf, CachedTxWriter> = HashMap::new();
     let mut session_handles: HashMap<String, SessionWriter> = HashMap::new();
     let mut seq_cache = ProjectTxSeqCache::default();
@@ -492,6 +658,33 @@ async fn writer_loop(mut rx: mpsc::Receiver<WriterCommand>, events: EventBus) {
                 let _ = reply.send(result);
             }
             WriterCommand::Transaction { req, reply } => {
+                let cached = {
+                    let cache = idempotency.lock().await;
+                    match req.mutation.as_ref() {
+                        Some(mutation) => {
+                            cached_mutation_from_map(&cache, &req.request_id, mutation).map(
+                                |cached| {
+                                    cached.map(|cached| TxAppendResult {
+                                        tx_id: cached.tx_id,
+                                        tx_path: req.tx.tx_path.clone(),
+                                    })
+                                },
+                            )
+                        }
+                        None => unreachable!("all writer transactions carry an identity"),
+                    }
+                };
+                match cached {
+                    Ok(Some(result)) => {
+                        let _ = reply.send(Ok(result));
+                        continue;
+                    }
+                    Err(error) => {
+                        let _ = reply.send(Err(error));
+                        continue;
+                    }
+                    Ok(None) => {}
+                }
                 let result = transaction_inner(
                     &mut tx_handles,
                     &mut seq_cache,
@@ -501,6 +694,16 @@ async fn writer_loop(mut rx: mpsc::Receiver<WriterCommand>, events: EventBus) {
                     || Ok(()),
                 );
                 if let Ok(ref ok) = result {
+                    let mut cache = idempotency.lock().await;
+                    cache.insert(
+                        req.request_id.clone(),
+                        CachedResponse::Tx {
+                            result: ok.clone(),
+                            mutation: req.mutation.clone(),
+                            mutation_id: req.mutation_id.clone(),
+                        },
+                    );
+                    drop(cache);
                     for rewrite in &req.rewrites {
                         events.publish(
                             Topic::Graph,

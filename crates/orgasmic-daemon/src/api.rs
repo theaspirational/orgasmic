@@ -30,11 +30,12 @@ use include_dir::{include_dir, Dir};
 use orgasmic_core::projects::{init_project, register_project, ScaffoldInputs};
 use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
-    goal_file_path, goal_file_rel, handoff_file_path, lifecycle_stage_file_name,
-    project_sessions_dir, read_session_file, resolve_loader, task_file_path, task_file_rel,
-    DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile,
-    ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind,
-    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
+    lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
+    task_file_path, task_file_rel, DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile,
+    OrgRewriter, ProjectFile, ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope,
+    SessionEventKind, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
+    REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -81,7 +82,7 @@ use crate::supervisor::{
     BabysitterAutoSpawn, DispatchCleanupOutcome, DispatchCleanupParams, RecoveryReattachPlan,
     Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
 };
-use crate::writer::{FileRewrite, TxAppend, TxIdPolicy, WriterHandle};
+use crate::writer::{FileRewrite, MutationIdentity, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
 
 static UI_DIST: Dir<'_> = include_dir!("$ORGASMIC_UI_DIST_DIR");
@@ -9277,7 +9278,7 @@ async fn get_glossary_term(
         .ok_or_else(|| ApiError::not_found(format!("glossary term {id}")))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct GraphCreateRequest {
     #[serde(default)]
     pub project: Option<String>,
@@ -9607,12 +9608,22 @@ async fn create_graph_heading(
     req: GraphCreateRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
     // orgasmic:TASK-N4TGD
-    if let Some(cached) =
-        graph_create_cached_response(state, req.request_id.as_deref(), "created").await
-    {
-        return Ok(Json(cached));
-    }
     let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
+    let mutation = graph_create_mutation_identity(layer, &project_id, &req)?;
+    if let Some(request_id) = transaction_request_key(req.request_id.as_deref()) {
+        if let Some(cached) = state
+            .writer
+            .cached_mutation(&request_id, &mutation)
+            .await
+            .map_err(|error| ApiError::bad_request(error.to_string()))?
+        {
+            return Ok(Json(GraphMutationResponse {
+                id: cached.mutation_id,
+                action: "created".to_string(),
+                tx_id: cached.tx_id,
+            }));
+        }
+    }
     if !req.force {
         let known_ids = known_reference_ids(state, &project_id).await;
         for (key, value) in &req.properties {
@@ -9650,6 +9661,7 @@ async fn create_graph_heading(
         path,
         source,
         request_id: req.request_id,
+        mutation: Some(mutation),
         tx_type: format!("graph.{}.created", layer.layer_name()),
         node_id,
         action: "created",
@@ -9657,36 +9669,43 @@ async fn create_graph_heading(
     .await
 }
 
-/// Recover a prior create response from the writer idempotency cache + tx index
-/// so a lost-response retry returns the original node id (TASK-N4TGD).
-async fn graph_create_cached_response(
-    state: &ApiState,
-    request_id: Option<&str>,
-    action: &str,
-) -> Option<GraphMutationResponse> {
-    let request_id = request_id.map(str::trim).filter(|id| !id.is_empty())?;
-    let cache_key = format!("{request_id}/tx");
-    let tx_id = state.writer.cached_tx_id(&cache_key).await?;
-    let snap = state.index.snapshot().await;
-    let node_id = snap.tx.iter().find_map(|rec| {
-        if rec.entry.tx_id == tx_id {
-            rec.entry
-                .extra
-                .iter()
-                .find(|(key, _)| key == "NODE_ID")
-                .map(|(_, value)| value.clone())
-        } else {
-            None
-        }
-    })?;
-    Some(GraphMutationResponse {
-        id: node_id,
-        action: action.to_string(),
-        tx_id,
-    })
+fn transaction_request_key(request_id: Option<&str>) -> Option<String> {
+    request_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .map(|id| format!("{id}/tx"))
 }
 
-/// Trim + Unicode case-fold. Shared by glossary uniqueness checks so tests and
+fn mutation_identity(
+    operation: &str,
+    project_id: &str,
+    payload: Value,
+) -> Result<MutationIdentity, ApiError> {
+    let payload = serde_json::to_string(&payload)
+        .map_err(|error| ApiError::internal(format!("serialize mutation identity: {error}")))?;
+    Ok(MutationIdentity::new(operation, project_id, payload))
+}
+
+fn graph_create_mutation_identity(
+    layer: GraphLayer,
+    project_id: &str,
+    req: &GraphCreateRequest,
+) -> Result<MutationIdentity, ApiError> {
+    mutation_identity(
+        &format!("graph.{}.created", layer.layer_name()),
+        project_id,
+        json!({
+            "id": req.id,
+            "title": req.title,
+            "properties": req.properties,
+            "body": req.body,
+            "force": req.force,
+            "allow_marker": req.allow_marker,
+        }),
+    )
+}
+
+/// Trim + Unicode lowercase. Shared by glossary uniqueness checks so tests and
 /// the write guard cannot drift (TASK-N4TGD).
 pub fn normalize_glossary_identity(value: &str) -> String {
     value.trim().to_lowercase()
@@ -9830,6 +9849,7 @@ async fn mutate_graph_heading(
         path,
         source: updated,
         request_id: req.request_id,
+        mutation: None,
         tx_type: format!("graph.{}.{}", layer.layer_name(), action),
         node_id: id,
         action: &action,
@@ -9975,6 +9995,7 @@ async fn delete_decision_heading(
         path,
         source: updated,
         request_id,
+        mutation: None,
         tx_type: "graph.decision.deleted".to_string(),
         node_id: id,
         action: "deleted",
@@ -10446,6 +10467,11 @@ async fn post_org_node_delete(
     // orgasmic:TASK-N4TGD
     let layer = resolve_node_layer(req.kind.as_deref(), &id)?;
     match layer {
+        NodeLayer::Task => {
+            return Err(ApiError::bad_request(
+                "task deletion is not implemented through /org/node; task-specific delete semantics are required",
+            ));
+        }
         NodeLayer::Goal => {
             return Err(ApiError::bad_request(
                 "goal nodes cannot be deleted through /org/node; use goal clear/supersede",
@@ -10475,6 +10501,13 @@ async fn post_org_node_delete(
     if current_version != req.base_version {
         return Err(ApiError::conflict(format!(
             "node {id} changed on disk; reload before deleting"
+        )));
+    }
+    let inbound = inbound_reference_owners(&project_id, &id, &state).await?;
+    if !inbound.is_empty() {
+        return Err(ApiError::bad_request(format!(
+            "node {id} still has inbound references from {}; remove or redirect them before deleting",
+            inbound.join(", ")
         )));
     }
     if layer == NodeLayer::Decision && decision_has_children(&file, &id)? {
@@ -10508,6 +10541,62 @@ async fn post_org_node_delete(
     };
     // Full output is just the compact shape: the node no longer exists.
     compact_or_full_response(q.json, compact, compact_or_delete_full(&id))
+}
+
+async fn inbound_reference_owners(
+    project_id: &str,
+    target_id: &str,
+    state: &ApiState,
+) -> Result<Vec<String>, ApiError> {
+    let snap = state.index.snapshot().await;
+    let project = snap
+        .project(project_id)
+        .ok_or_else(|| project_not_found_error(&snap, project_id))?;
+    let dotorg = project.root.join(".orgasmic");
+    let mut paths = vec![
+        dotorg.join("project.org"),
+        dotorg.join("decisions.org"),
+        dotorg.join("architecture.org"),
+        dotorg.join("glossary.org"),
+        goal_file_path(&project.root),
+        handoff_file_path(&project.root),
+    ];
+    paths.extend(iter_task_file_paths(&project.root));
+    let mut owners = BTreeSet::new();
+    for path in paths.into_iter().filter(|path| path.exists()) {
+        let source = read_artifact(&path, "org file")?;
+        let file = OrgFile::parse(source, path.to_string_lossy())
+            .map_err(|error| org_parse_bad_request(&path, "org file", error))?;
+        for heading in &file.headings {
+            collect_inbound_reference_owners(heading, target_id, &mut owners);
+        }
+    }
+    Ok(owners.into_iter().collect())
+}
+
+fn collect_inbound_reference_owners(
+    heading: &Heading,
+    target_id: &str,
+    owners: &mut BTreeSet<String>,
+) {
+    let references_target = heading.property_entries().any(|property| {
+        REFERENCE_PROPERTY_KEYS.contains(&property.key.as_str())
+            && property
+                .value
+                .split_whitespace()
+                .any(|token| token == target_id)
+    });
+    if references_target {
+        owners.insert(
+            heading
+                .property("ID")
+                .map(str::to_string)
+                .unwrap_or_else(|| heading.title.clone()),
+        );
+    }
+    for section in &heading.sections {
+        collect_inbound_reference_owners(section, target_id, owners);
+    }
 }
 
 fn compact_or_delete_full(id: &str) -> serde_json::Value {
@@ -10655,6 +10744,7 @@ struct GraphWriteRequest<'a> {
     path: PathBuf,
     source: String,
     request_id: Option<String>,
+    mutation: Option<MutationIdentity>,
     tx_type: String,
     node_id: String,
     action: &'a str,
@@ -10682,12 +10772,25 @@ async fn write_graph_and_record(
         },
     )
     .await?;
-    let tx_id = req
-        .state
-        .writer
-        .transaction(rewrites, prepared_tx.tx)
-        .await
-        .map_err(writer_transaction_error)?;
+    let (tx_id, response_node_id) = match req.mutation {
+        Some(mutation) => {
+            let cached = req
+                .state
+                .writer
+                .transaction_mutation(rewrites, prepared_tx.tx, mutation, req.node_id.clone())
+                .await
+                .map_err(writer_transaction_error)?;
+            (cached.tx_id, cached.mutation_id)
+        }
+        None => (
+            req.state
+                .writer
+                .transaction(rewrites, prepared_tx.tx)
+                .await
+                .map_err(writer_transaction_error)?,
+            req.node_id.clone(),
+        ),
+    };
     refresh_after_tx(
         req.state,
         prepared_tx.project_tx,
@@ -10701,7 +10804,7 @@ async fn write_graph_and_record(
             EventPayload::GraphNodeCreated {
                 project_id: req.project_id.clone(),
                 layer: layer.clone(),
-                node_id: req.node_id.clone(),
+                node_id: response_node_id.clone(),
                 tx_id: tx_id.clone(),
             },
         );
@@ -10711,7 +10814,7 @@ async fn write_graph_and_record(
             EventPayload::GraphNodeRevised {
                 project_id: req.project_id.clone(),
                 layer: layer.clone(),
-                node_id: req.node_id.clone(),
+                node_id: response_node_id.clone(),
                 action: req.action.to_string(),
                 tx_id: tx_id.clone(),
             },
@@ -10719,7 +10822,7 @@ async fn write_graph_and_record(
     }
     let _ = req.state.index.refresh_project(&req.project_id).await;
     Ok(Json(GraphMutationResponse {
-        id: req.node_id,
+        id: response_node_id,
         action: req.action.to_string(),
         tx_id,
     }))
@@ -10955,6 +11058,25 @@ struct TaskCreateResponse {
     tx_id: String,
 }
 
+fn task_create_mutation_identity(
+    project_id: &str,
+    req: &TaskCreateRequest,
+) -> Result<MutationIdentity, ApiError> {
+    mutation_identity(
+        "task.created",
+        project_id,
+        json!({
+            "id": req.id,
+            "title": req.title,
+            "tags": req.tags,
+            "properties": req.properties,
+            "body": req.body,
+            "reason": req.reason,
+            "force": req.force,
+        }),
+    )
+}
+
 fn resolve_task_create_id(req: &TaskCreateRequest) -> Result<String, ApiError> {
     match req.id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
         None => Ok(orgasmic_core::mint_node_id(
@@ -11079,6 +11201,20 @@ async fn post_task_create(
     let project = snap
         .project(&project_id)
         .ok_or_else(|| project_not_found_error(&snap, &project_id))?;
+    let mutation = task_create_mutation_identity(&project_id, &req)?;
+    if let Some(request_id) = transaction_request_key(req.request_id.as_deref()) {
+        if let Some(cached) = state
+            .writer
+            .cached_mutation(&request_id, &mutation)
+            .await
+            .map_err(|error| ApiError::bad_request(error.to_string()))?
+        {
+            return Ok(Json(TaskCreateResponse {
+                id: cached.mutation_id,
+                tx_id: cached.tx_id,
+            }));
+        }
+    }
     if !req.force {
         let known_ids = known_reference_ids(&state, &project_id).await;
         for (key, value) in &req.properties {
@@ -11138,27 +11274,34 @@ async fn post_task_create(
         },
     )
     .await?;
-    let tx_id = state
+    let cached = state
         .writer
-        .transaction(
+        .transaction_mutation(
             vec![FileRewrite {
                 path: path.clone(),
                 new_contents: source.into_bytes(),
             }],
             prepared.tx,
+            mutation,
+            task_id.clone(),
         )
         .await
         .map_err(writer_transaction_error)?;
+    let tx_id = cached.tx_id;
+    let response_task_id = cached.mutation_id;
     refresh_after_tx(&state, prepared.project_tx, prepared.destination_project_id).await;
     state.events.publish(
         Topic::Task,
         EventPayload::TaskUpdated {
             project_id: project_id.clone(),
-            task_id: task_id.clone(),
+            task_id: response_task_id.clone(),
         },
     );
     let _ = state.index.refresh_project(&project_id).await;
-    Ok(Json(TaskCreateResponse { id: task_id, tx_id }))
+    Ok(Json(TaskCreateResponse {
+        id: response_task_id,
+        tx_id,
+    }))
 }
 
 // ---- goal lifecycle + task state flip (TASK-G9KCN) -------------------------
