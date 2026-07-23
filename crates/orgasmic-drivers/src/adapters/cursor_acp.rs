@@ -245,6 +245,16 @@ impl HarnessEventAdapter for CursorAcpAdapter {
         self.session_id = Some(session_id.clone());
         // Live cursor-agent ACP returns a structured models block on session/new
         // (not documented as a discovery method; verified against the binary).
+        let requested_model = self.cfg_model();
+        let selected_model = requested_model
+            .as_deref()
+            .map(|model| resolve_session_model(thread_response, model))
+            .transpose()?;
+        if let Some(selected_model) = selected_model {
+            if let Some(cfg) = self.cfg.as_mut() {
+                cfg.model = Some(selected_model);
+            }
+        }
         self.runtime_catalog =
             catalog_from_session_new(thread_response, self.cfg_model().as_deref());
         let ctx = self
@@ -275,6 +285,23 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             .as_ref()
             .ok_or_else(|| DriverError::Other("cursor ACP config missing".into()))?;
         Ok(session_prompt_params(session_id, cfg))
+    }
+
+    fn jsonrpc_post_session_params(
+        &mut self,
+        method: &str,
+        mut params: Value,
+    ) -> Result<Value, DriverError> {
+        if method == "session/set_config_option" && params.get("configId") == Some(&json!("model"))
+        {
+            let model = self.cfg_model().ok_or_else(|| {
+                DriverError::Transport(
+                    "cursor ACP model selection missing after session/new".into(),
+                )
+            })?;
+            params["value"] = json!(model);
+        }
+        Ok(params)
     }
 
     async fn on_ws_response(
@@ -844,6 +871,121 @@ fn session_new_params(ctx: &DriverContext) -> Value {
     })
 }
 
+/// Resolve an operator's requested model against the values the live Cursor
+/// session advertises. Cursor's catalog values are protocol identifiers such
+/// as `grok-4.5[effort=high,fast=true]`; do not send the manager-facing legacy
+/// alias (for example `cursor-grok-4.5-high-fast`) as a config value.
+fn resolve_session_model(thread_response: &Value, requested: &str) -> Result<String, DriverError> {
+    let offered = session_model_options(thread_response);
+    let exact = offered
+        .iter()
+        .filter(|option| option.value == requested || option.name == requested)
+        .collect::<Vec<_>>();
+    if exact.len() == 1 {
+        return Ok(exact[0].value.clone());
+    }
+
+    let legacy = requested.strip_prefix("cursor-").unwrap_or(requested);
+    let aliases = offered
+        .iter()
+        .filter(|option| legacy_model_alias_matches(legacy, option))
+        .collect::<Vec<_>>();
+    if aliases.len() == 1 {
+        return Ok(aliases[0].value.clone());
+    }
+
+    Err(DriverError::InvalidConfig(format!(
+        "cursor ACP model '{requested}' is not a unique session/new model option"
+    )))
+}
+
+#[derive(Debug)]
+struct SessionModelOption {
+    value: String,
+    name: String,
+}
+
+fn session_model_options(thread_response: &Value) -> Vec<SessionModelOption> {
+    let from_config = thread_response
+        .get("configOptions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .find(|option| option.get("id") == Some(&json!("model")))
+        .and_then(|option| option.get("options"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|option| {
+            let value = option.get("value").and_then(Value::as_str)?.to_string();
+            let name = option
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or(&value)
+                .to_string();
+            Some(SessionModelOption { value, name })
+        })
+        .collect::<Vec<_>>();
+    if !from_config.is_empty() {
+        return from_config;
+    }
+
+    thread_response
+        .pointer("/models/availableModels")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|model| {
+            let value = model
+                .get("modelId")
+                .or_else(|| model.get("id"))
+                .and_then(Value::as_str)?
+                .to_string();
+            let name = model
+                .get("name")
+                .or_else(|| model.get("label"))
+                .and_then(Value::as_str)
+                .unwrap_or(&value)
+                .to_string();
+            Some(SessionModelOption { value, name })
+        })
+        .collect()
+}
+
+fn legacy_model_alias_matches(requested: &str, option: &SessionModelOption) -> bool {
+    let Some((model, attributes)) = option.value.split_once('[') else {
+        return false;
+    };
+    let Some(suffix) = requested
+        .strip_prefix(model)
+        .and_then(|rest| rest.strip_prefix('-'))
+    else {
+        return false;
+    };
+    let attributes = attributes.trim_end_matches(']');
+    let attributes = attributes
+        .split(',')
+        .filter_map(|pair| pair.split_once('='))
+        .collect::<BTreeMap<_, _>>();
+    let requested_parts = suffix.split('-').collect::<Vec<_>>();
+    if requested_parts.is_empty() || requested_parts.iter().any(|part| part.is_empty()) {
+        return false;
+    }
+
+    // A legacy suffix must name every advertised discriminator. Otherwise an
+    // alias such as `grok-4.5-high` could silently select `fast=true`.
+    let mut matched = HashSet::new();
+    for part in requested_parts {
+        let Some((key, _)) = attributes.iter().find(|(key, value)| {
+            !matched.contains(*key) && (**value == part || (**key == part && **value == "true"))
+        }) else {
+            return false;
+        };
+        matched.insert(*key);
+    }
+    matched.len() == attributes.len()
+}
+
 /// Parse the structured `models` / `configOptions` block from a live
 /// `session/new` result. Never scrapes CLI text.
 fn catalog_from_session_new(
@@ -1243,6 +1385,96 @@ mod tests {
                 "params": { "configId": "model", "value": "fixture-model" }
             }])
         );
+    }
+
+    #[tokio::test]
+    async fn legacy_model_alias_is_resolved_from_session_new_before_prompt() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter
+            .stdio_session_init(
+                &ctx(),
+                &DriverConfig::from_value(json!({
+                    "model": "cursor-grok-4.5-high-fast"
+                })),
+            )
+            .unwrap();
+        adapter
+            .on_ws_thread_started(
+                "stdio",
+                &json!({
+                    "sessionId": "sess-fixture",
+                    "models": {
+                        "currentModelId": "composer-2.5[fast=true]",
+                        "availableModels": [
+                            { "modelId": "grok-4.5[effort=high,fast=true]", "name": "grok-4.5" }
+                        ]
+                    },
+                    "configOptions": [{
+                        "id": "model",
+                        "options": [{
+                            "value": "grok-4.5[effort=high,fast=true]",
+                            "name": "grok-4.5"
+                        }]
+                    }]
+                }),
+            )
+            .await
+            .unwrap();
+
+        let params = adapter
+            .jsonrpc_post_session_params(
+                "session/set_config_option",
+                json!({
+                    "sessionId": "sess-fixture",
+                    "configId": "model",
+                    // Regression fixture: this legacy value is rejected by
+                    // cursor-agent with -32602 Invalid params.
+                    "value": "cursor-grok-4.5-high-fast"
+                }),
+            )
+            .unwrap();
+        assert_eq!(
+            params,
+            json!({
+                "sessionId": "sess-fixture",
+                "configId": "model",
+                "value": "grok-4.5[effort=high,fast=true]"
+            })
+        );
+        let catalog = adapter.runtime_options_catalog().await.unwrap();
+        assert_eq!(
+            catalog.current.model.as_deref(),
+            Some("grok-4.5[effort=high,fast=true]")
+        );
+    }
+
+    #[test]
+    fn unknown_explicit_model_does_not_fall_back_to_current_session_model() {
+        let result = resolve_session_model(
+            &json!({
+                "models": { "availableModels": [
+                    { "modelId": "fixture-a", "name": "Fixture A" }
+                ] }
+            }),
+            "not-offered",
+        );
+        assert!(
+            matches!(result, Err(DriverError::InvalidConfig(message)) if message.contains("not a unique"))
+        );
+    }
+
+    #[test]
+    fn under_specified_legacy_alias_does_not_select_extra_attributes() {
+        let result = resolve_session_model(
+            &json!({
+                "models": { "availableModels": [{
+                    "modelId": "grok-4.5[effort=high,fast=true]",
+                    "name": "grok-4.5"
+                }] }
+            }),
+            "cursor-grok-4.5-high",
+        );
+        assert!(matches!(result, Err(DriverError::InvalidConfig(_))));
     }
 
     #[tokio::test]

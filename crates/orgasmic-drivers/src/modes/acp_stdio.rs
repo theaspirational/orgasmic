@@ -189,6 +189,14 @@ impl HarnessEventAdapter for AcpStdioComposeAdapter {
         self.inner.jsonrpc_turn_start_method()
     }
 
+    fn jsonrpc_post_session_params(
+        &mut self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, DriverError> {
+        self.inner.jsonrpc_post_session_params(method, params)
+    }
+
     async fn on_ws_response(
         &mut self,
         method: &str,
