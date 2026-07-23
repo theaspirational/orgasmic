@@ -30,6 +30,7 @@ mod test_support;
 mod update;
 
 use std::ffi::OsString;
+use std::io::{self, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -906,6 +907,8 @@ const ENTRY_DEFAULT_WORKFLOW_SECTION: &str = "** Default workflow";
 const ENTRY_SCAFFOLD_VERSION: &str = "1";
 
 fn main() -> Result<()> {
+    // Before any log write can hit a closed stdout/stderr pipe (TASK-FZF2D).
+    orgasmic_daemon::ignore_sigpipe();
     let cli = Cli::parse();
     if let Cmd::ExecPinned {
         target,
@@ -1773,18 +1776,27 @@ fn cmd_serve(home: &Home, bind: Option<IpAddr>, port: Option<u16>) -> Result<()>
                 if let Some(incumbent) =
                     error.downcast_ref::<orgasmic_daemon::DaemonAlreadyRunning>()
                 {
-                    println!("✓ {incumbent}");
+                    // Best-effort: a closed stdout pipe must not kill serve (TASK-FZF2D).
+                    let _ = writeln!(io::stdout(), "✓ {incumbent}");
                     return Ok(());
                 }
                 return Err(error);
             }
         };
-        println!(
+        // Best-effort stdout: `println!` panics on EPIPE and would half-kill the
+        // daemon after `serve | head` closes the pipe (TASK-FZF2D).
+        let _ = writeln!(
+            io::stdout(),
             "✓ orgasmic daemon listening on http://{} (boot_id={})",
-            running.addr, running.boot_id
+            running.addr,
+            running.boot_id
         );
-        println!("  token file: {}", home.auth_token().display());
-        println!("  press Ctrl+C to stop");
+        let _ = writeln!(
+            io::stdout(),
+            "  token file: {}",
+            home.auth_token().display()
+        );
+        let _ = writeln!(io::stdout(), "  press Ctrl+C to stop");
         tokio::signal::ctrl_c().await.ok();
         let _ = running.shutdown.send(());
         let _ = running.join.await;
