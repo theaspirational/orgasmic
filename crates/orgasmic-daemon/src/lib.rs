@@ -21,6 +21,7 @@ pub mod content;
 pub mod events;
 pub mod governance;
 pub mod index;
+pub mod logging;
 pub mod manager_registration;
 pub mod prompt_compiler;
 pub mod recovery_claim;
@@ -44,7 +45,6 @@ use orgasmic_drivers::modes::tmux;
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 
 pub use crate::api::embedded_ui_asset_hash;
 pub use crate::api::{router, ApiState};
@@ -61,6 +61,9 @@ pub use crate::index::{
     ActivityEntry, ActivityKind, BoardEntry, Index, IndexSnapshot, ParseError, ParseErrorKind,
     ProjectIndex, TaskId, TaskOwner, TaskSummary, TxRecord,
 };
+pub use crate::logging::{
+    dropped_log_writes, ignore_sigpipe, init_tracing, init_tracing_to, LogMirror, DAEMON_OUT_LOG,
+};
 pub use crate::prompt_compiler::{
     CompiledPrompt, ContextPackView, PromptCompileRequest, PromptDiagnostic, PromptPartSaveRequest,
     PromptPartView, PromptSourceMapEntry, PromptSpecSaveRequest, PromptSpecView,
@@ -70,13 +73,6 @@ pub use crate::watcher::{spawn as spawn_watcher, WatcherConfig, WatcherHandle};
 pub use crate::writer::{
     spawn as spawn_writer, FileRewrite, TxAppend, TxAppendResult, TxIdPolicy, WriterHandle,
 };
-
-pub fn init_tracing(default_filter: &str) {
-    let filter = EnvFilter::try_from_default_env()
-        .or_else(|_| EnvFilter::try_new(default_filter))
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
-}
 
 /// Boot result that returns the bound socket address and a shutdown handle.
 pub struct RunningDaemon {
@@ -444,7 +440,10 @@ impl Daemon {
         if let Some(port) = opts.port_override {
             cfg = cfg.with_port(port);
         }
-        init_tracing(&cfg.log_level);
+        // Durable file sink under $ORGASMIC_HOME/logs; stdout is a best-effort
+        // mirror so a closed pipe cannot poison request handling (TASK-FZF2D).
+        let daemon_log = home.logs().join(DAEMON_OUT_LOG);
+        init_tracing_to(&cfg.log_level, Some(&daemon_log), LogMirror::Stdout);
         for key in &cfg.unrecognized_keys {
             warn!(
                 key = %key,
