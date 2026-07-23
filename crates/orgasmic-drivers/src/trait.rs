@@ -320,6 +320,17 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         "turn/start"
     }
 
+    /// Resolve a post-session JSON-RPC request after `session/new` has made
+    /// runtime-provided configuration values available. Most adapters can use
+    /// the static request from their session-init envelope unchanged.
+    fn jsonrpc_post_session_params(
+        &mut self,
+        _method: &str,
+        params: Value,
+    ) -> Result<Value, DriverError> {
+        Ok(params)
+    }
+
     /// JSON-RPC response hook for non-handshake responses.
     async fn on_ws_response(
         &mut self,
