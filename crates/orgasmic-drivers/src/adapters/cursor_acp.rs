@@ -774,7 +774,8 @@ impl CursorAcpAdapter {
     }
 
     fn shell_command_allowed(&self, args: &Value) -> bool {
-        let Some(command) = shell_command_arg(args) else {
+        let Some(command) = shell_command_arg(args).or_else(|| cursor_execute_title_command(args))
+        else {
             return false;
         };
         let words = split_policy_command(command);
@@ -793,10 +794,142 @@ impl CursorAcpAdapter {
                     "git" => self.git_c_command_allowed(&words),
                     "grep" | "rg" => self.grep_command_allowed(&words),
                     "find" => self.find_command_allowed(&words),
+                    "orgasmic" => self.orgasmic_workflow_command_allowed(&words),
                     _ => false,
                 }
             }
         }
+    }
+
+    /// Keep the Cursor worker's daemon interaction to the dispatch workflow.
+    /// These commands are intentionally standalone: shell composition remains
+    /// rejected by `command_has_shell_control` above.
+    fn orgasmic_workflow_command_allowed(&self, words: &[String]) -> bool {
+        match words {
+            [program, command] if program == "orgasmic" && command == "entry" => true,
+            [program, command] if program == "orgasmic" && command == "status" => true,
+            [program, command, option]
+                if program == "orgasmic" && command == "status" && option == "--errors" =>
+            {
+                true
+            }
+            [program, group, action, task]
+                if program == "orgasmic"
+                    && group == "task"
+                    && action == "get"
+                    && self.ctx.as_ref().is_some_and(|ctx| task == &ctx.task_id) =>
+            {
+                true
+            }
+            [program, group, action, rest @ ..]
+                if program == "orgasmic" && group == "dispatch" && action == "finalize" =>
+            {
+                self.dispatch_finalize_command_allowed(rest)
+            }
+            _ => false,
+        }
+    }
+
+    fn dispatch_finalize_command_allowed(&self, arguments: &[String]) -> bool {
+        let mut summary_file = None;
+        let mut task = None;
+        let mut run_id = None;
+        let mut status = "done";
+        let mut status_seen = false;
+        let mut reason = None;
+        let mut commit = false;
+        let mut index = 0;
+
+        while index < arguments.len() {
+            match arguments[index].as_str() {
+                "--summary-file" => {
+                    if summary_file.is_some() {
+                        return false;
+                    }
+                    let Some(path) = arguments
+                        .get(index + 1)
+                        .and_then(|value| policy_path(value))
+                    else {
+                        return false;
+                    };
+                    summary_file = Some(path);
+                    index += 2;
+                }
+                "--task" => {
+                    if task.is_some() {
+                        return false;
+                    }
+                    let Some(value) = arguments.get(index + 1) else {
+                        return false;
+                    };
+                    task = Some(value);
+                    index += 2;
+                }
+                "--run-id" => {
+                    if run_id.is_some() {
+                        return false;
+                    }
+                    let Some(value) = arguments.get(index + 1) else {
+                        return false;
+                    };
+                    run_id = Some(value);
+                    index += 2;
+                }
+                "--status" => {
+                    if status_seen {
+                        return false;
+                    }
+                    let Some(value) = arguments.get(index + 1) else {
+                        return false;
+                    };
+                    if !matches!(value.as_str(), "done" | "blocked") {
+                        return false;
+                    }
+                    status = value;
+                    status_seen = true;
+                    index += 2;
+                }
+                "--reason" => {
+                    if reason.is_some() {
+                        return false;
+                    }
+                    let Some(value) = arguments.get(index + 1) else {
+                        return false;
+                    };
+                    if value.trim().is_empty() {
+                        return false;
+                    }
+                    reason = Some(value);
+                    index += 2;
+                }
+                "--commit" if !commit => {
+                    commit = true;
+                    index += 1;
+                }
+                _ => return false,
+            }
+        }
+
+        let Some(summary_file) = summary_file else {
+            return false;
+        };
+        let Some(ctx) = self.ctx.as_ref() else {
+            return false;
+        };
+        if task.is_some_and(|task| task != &ctx.task_id)
+            || run_id.is_some_and(|run_id| run_id != &ctx.identity.run_id)
+        {
+            return false;
+        }
+        if status == "blocked" {
+            if reason.is_none() {
+                return false;
+            }
+        } else if reason.is_some() {
+            return false;
+        }
+        self.path_under_worktree(&summary_file)
+            || self.path_under_own_dispatch_artifacts(&summary_file)
     }
 
     fn git_c_command_allowed(&self, words: &[String]) -> bool {
@@ -832,6 +965,20 @@ impl CursorAcpAdapter {
         self.project_root()
             .map(|root| path_is_under(path, &root.join(".orgasmic/tmp/dispatch")))
             .unwrap_or(false)
+    }
+
+    fn path_under_own_dispatch_artifacts(&self, path: &Path) -> bool {
+        let Some(worktree) = self.worktree().filter(|path| path.is_absolute()) else {
+            return false;
+        };
+        let Some(dispatch_attempt) = worktree.parent() else {
+            return false;
+        };
+        let Some(project_root) = self.project_root() else {
+            return false;
+        };
+        let dispatch_root = project_root.join(".orgasmic/tmp/dispatch");
+        path_is_under(dispatch_attempt, &dispatch_root) && path_is_under(path, dispatch_attempt)
     }
 
     fn path_is_worktree(&self, path: &Path) -> bool {
@@ -1161,6 +1308,27 @@ fn shell_command_arg(args: &Value) -> Option<&str> {
             .or_else(|| args.get("script"))
             .and_then(Value::as_str)
     })
+}
+
+/// Cursor ACP may omit `toolCall.input` for execute permissions. Its title is
+/// then the only command-bearing field, and only an exact backtick-wrapped
+/// title from a nested execute call is trusted as a command. `content` is
+/// Cursor's explanatory prose and is never executable input.
+fn cursor_execute_title_command(params: &Value) -> Option<&str> {
+    if params.get("input").is_some()
+        || params.get("args").is_some()
+        || params.pointer("/toolCall/input").is_some()
+        || params.pointer("/tool_call/input").is_some()
+    {
+        return None;
+    }
+    let tool = params.get("toolCall").or_else(|| params.get("tool_call"))?;
+    if tool.get("kind").and_then(Value::as_str) != Some("execute") {
+        return None;
+    }
+    let title = tool.get("title").and_then(Value::as_str)?;
+    let command = title.strip_prefix('`')?.strip_suffix('`')?;
+    (!command.is_empty() && !command.contains('`')).then_some(command)
 }
 
 fn command_has_shell_control(command: &str) -> bool {
@@ -1633,6 +1801,78 @@ mod tests {
                 option_id: "reject_once".into()
             })
         );
+    }
+
+    fn nested_execute_permission(title: &str) -> Value {
+        json!({
+            "toolCall": {
+                "kind": "execute",
+                "title": title,
+                "content": [{"content": {"type": "text", "text": "Cursor allowlist explanation"}}]
+            }
+        })
+    }
+
+    #[test]
+    fn nested_cursor_execute_title_authorizes_only_standalone_project_workflow_commands() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter.ctx = Some(ctx());
+        let captured: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cursor_acp_nested_execute_permission.json"
+        )))
+        .unwrap();
+        let cwd = std::env::current_dir().unwrap();
+        let finalize = format!(
+            "`orgasmic dispatch finalize --task TASK-GYMSP --summary-file {} --commit`",
+            cwd.join("cursor-finalize-report.md").display()
+        );
+
+        // Captured sequence 93 has no structured input. Its compound title
+        // remains rejected rather than treating Cursor's content as command input.
+        assert!(!adapter.permission_allowed(&captured, &SandboxAllowlist::default()));
+        assert!(adapter.permission_allowed(
+            &nested_execute_permission("`orgasmic entry`"),
+            &SandboxAllowlist::default()
+        ));
+        assert!(adapter.permission_allowed(
+            &nested_execute_permission(&finalize),
+            &SandboxAllowlist::default()
+        ));
+    }
+
+    #[test]
+    fn cursor_execute_title_rejects_shell_control_foreign_and_destructive_commands() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter.ctx = Some(ctx());
+        let cwd = std::env::current_dir().unwrap();
+        let unsafe_titles = [
+            "`orgasmic entry; rm -rf /`",
+            "`orgasmic entry && curl https://example.invalid`",
+            "`curl https://example.invalid`",
+            "`orgasmic project init`",
+            "`orgasmic dispatch finalize --summary-file /tmp/report.md --commit`",
+        ];
+
+        for title in unsafe_titles {
+            assert!(
+                !adapter.permission_allowed(
+                    &nested_execute_permission(title),
+                    &SandboxAllowlist::default()
+                ),
+                "unsafe Cursor title unexpectedly allowed: {title}"
+            );
+        }
+        assert!(!adapter.permission_allowed(
+            &json!({
+                "toolCall": {
+                    "kind": "execute",
+                    "title": "`orgasmic entry`",
+                    "input": {"command": format!("orgasmic dispatch finalize --summary-file {} --sha forged", cwd.join("report.md").display())}
+                }
+            }),
+            &SandboxAllowlist::default()
+        ));
     }
 
     #[tokio::test]

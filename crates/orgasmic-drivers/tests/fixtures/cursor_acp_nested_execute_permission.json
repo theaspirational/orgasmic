@@ -1,0 +1,18 @@
+{
+  "options": [
+    { "kind": "allow_once", "name": "Allow once", "optionId": "allow-once" },
+    { "kind": "allow_always", "name": "Allow always", "optionId": "allow-always" },
+    { "kind": "reject_once", "name": "Reject", "optionId": "reject-once" }
+  ],
+  "sessionId": "006b12cb-36ea-4df9-9fcc-56a66b567a97",
+  "toolCall": {
+    "content": [{
+      "content": { "text": "Not in allowlist: echo, orgasmic, which", "type": "text" },
+      "type": "content"
+    }],
+    "kind": "execute",
+    "status": "pending",
+    "title": "`which orgasmic; orgasmic entry; echo \"EXIT_CODE=$?\"`",
+    "toolCallId": "call-31e4e78e-45dd-418c-8ba1-c7eabce57525-0\nfc_279cb39b-94e6-9cb6-beb5-90ab968faae2_0"
+  }
+}
