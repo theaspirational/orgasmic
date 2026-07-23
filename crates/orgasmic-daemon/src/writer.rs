@@ -258,6 +258,17 @@ impl WriterHandle {
         Ok(res)
     }
 
+    /// Peek the in-memory idempotency cache for a prior transaction result.
+    /// Used by graph create to return the original node id on a lost-response
+    /// retry before uniqueness guards treat the survivor as a distinct duplicate.
+    pub async fn cached_tx_id(&self, request_id: &str) -> Option<String> {
+        let cache = self.idempotency.lock().await;
+        match cache.get(request_id) {
+            Some(CachedResponse::Tx(prior)) => Some(prior.tx_id.clone()),
+            _ => None,
+        }
+    }
+
     pub async fn transaction(&self, rewrites: Vec<FileRewrite>, tx: TxAppend) -> Result<String> {
         #[cfg(test)]
         if let Some(gate) = self.transaction_gate.lock().await.take() {

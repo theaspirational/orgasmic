@@ -218,6 +218,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/org/file", get(get_org_file).post(post_org_file))
         .route("/org/node", get(get_org_node))
         .route("/org/node/:id/edit", post(post_org_node_edit))
+        .route("/org/node/:id/delete", post(post_org_node_delete))
         .route("/ws", get(ws::handler))
         .route("/ws/tmux/:run_id", get(ws::tmux_handler))
         // Stubs — wired so callers can discover them; tracked tasks owned elsewhere.
@@ -9605,6 +9606,12 @@ async fn create_graph_heading(
     layer: GraphLayer,
     req: GraphCreateRequest,
 ) -> Result<Json<GraphMutationResponse>, ApiError> {
+    // orgasmic:TASK-N4TGD
+    if let Some(cached) =
+        graph_create_cached_response(state, req.request_id.as_deref(), "created").await
+    {
+        return Ok(Json(cached));
+    }
     let (project_id, path) = graph_path(state, req.project.as_deref(), layer).await?;
     if !req.force {
         let known_ids = known_reference_ids(state, &project_id).await;
@@ -9620,10 +9627,13 @@ async fn create_graph_heading(
     }
     let node_id = resolve_graph_create_id(layer, &req)?;
     let mut source = read_or_seed_graph_file(&path, layer)?;
+    let file = OrgFile::parse(source.clone(), path.to_string_lossy())
+        .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
     if layer == GraphLayer::Decision {
-        let file = OrgFile::parse(source.clone(), path.to_string_lossy())
-            .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
         validate_decision_create_parent(&path, &file, &node_id, req.properties.get("PARENT"))?;
+    }
+    if layer == GraphLayer::Glossary {
+        reject_glossary_duplicate_identity(&file, &req, &node_id)?;
     }
     let heading = render_graph_heading(layer, &req, &node_id)?;
     if !source.ends_with('\n') {
@@ -9645,6 +9655,93 @@ async fn create_graph_heading(
         action: "created",
     })
     .await
+}
+
+/// Recover a prior create response from the writer idempotency cache + tx index
+/// so a lost-response retry returns the original node id (TASK-N4TGD).
+async fn graph_create_cached_response(
+    state: &ApiState,
+    request_id: Option<&str>,
+    action: &str,
+) -> Option<GraphMutationResponse> {
+    let request_id = request_id.map(str::trim).filter(|id| !id.is_empty())?;
+    let cache_key = format!("{request_id}/tx");
+    let tx_id = state.writer.cached_tx_id(&cache_key).await?;
+    let snap = state.index.snapshot().await;
+    let node_id = snap.tx.iter().find_map(|rec| {
+        if rec.entry.tx_id == tx_id {
+            rec.entry
+                .extra
+                .iter()
+                .find(|(key, _)| key == "NODE_ID")
+                .map(|(_, value)| value.clone())
+        } else {
+            None
+        }
+    })?;
+    Some(GraphMutationResponse {
+        id: node_id,
+        action: action.to_string(),
+        tx_id,
+    })
+}
+
+/// Trim + Unicode case-fold. Shared by glossary uniqueness checks so tests and
+/// the write guard cannot drift (TASK-N4TGD).
+pub fn normalize_glossary_identity(value: &str) -> String {
+    value.trim().to_lowercase()
+}
+
+fn glossary_heading_human_title(heading: &Heading) -> String {
+    node_display_title(heading)
+}
+
+fn reject_glossary_duplicate_identity(
+    file: &OrgFile,
+    req: &GraphCreateRequest,
+    node_id: &str,
+) -> Result<(), ApiError> {
+    if req.force {
+        return Ok(());
+    }
+    let create_title = normalize_glossary_identity(req.title.as_deref().unwrap_or(node_id));
+    let create_canonical = req
+        .properties
+        .get("CANONICAL")
+        .map(|value| normalize_glossary_identity(value))
+        .filter(|value| !value.is_empty());
+    for heading in &file.headings {
+        let Some(existing_id) = heading.property("ID") else {
+            continue;
+        };
+        // Same id/request replay is not a distinct duplicate.
+        if existing_id == node_id {
+            continue;
+        }
+        let is_glossary = heading.title.starts_with("term:")
+            || heading.title.starts_with("term_")
+            || existing_id.starts_with("term_")
+            || existing_id.starts_with("term:");
+        if !is_glossary {
+            continue;
+        }
+        let existing_title = normalize_glossary_identity(&glossary_heading_human_title(heading));
+        if !create_title.is_empty() && existing_title == create_title {
+            return Err(ApiError::bad_request(format!(
+                "glossary title conflicts with existing term {existing_id} (use --force for intentional homonyms)"
+            )));
+        }
+        if let (Some(create_canonical), Some(existing_canonical)) =
+            (create_canonical.as_deref(), heading.property("CANONICAL"))
+        {
+            if create_canonical == normalize_glossary_identity(existing_canonical) {
+                return Err(ApiError::bad_request(format!(
+                    "glossary CANONICAL conflicts with existing term {existing_id} (use --force for intentional homonyms)"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn graph_layer_class(layer: GraphLayer) -> orgasmic_core::NodeIdClass {
@@ -10324,6 +10421,100 @@ async fn post_org_node_edit(
         tx_id,
     };
     compact_or_full_response(q.json, compact, doc)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct NodeDeleteRequest {
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    /// Explicit layer selector; see [`NodeQuery::kind`].
+    #[serde(default)]
+    pub kind: Option<String>,
+    pub base_version: String,
+}
+
+/// Delete one org node through the writer transaction (TASK-N4TGD).
+/// Decision deletes reuse the existing child-guard semantics.
+async fn post_org_node_delete(
+    State(state): State<ApiState>,
+    Path(id): Path<String>,
+    Query(q): Query<MutationOutputQuery>,
+    Json(req): Json<NodeDeleteRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // orgasmic:TASK-N4TGD
+    let layer = resolve_node_layer(req.kind.as_deref(), &id)?;
+    match layer {
+        NodeLayer::Goal => {
+            return Err(ApiError::bad_request(
+                "goal nodes cannot be deleted through /org/node; use goal clear/supersede",
+            ));
+        }
+        NodeLayer::Project => {
+            return Err(ApiError::bad_request(
+                "project nodes cannot be deleted through /org/node",
+            ));
+        }
+        NodeLayer::Handoff => {
+            return Err(ApiError::bad_request(
+                "handoff nodes cannot be deleted through /org/node",
+            ));
+        }
+        _ => {}
+    }
+    let (project_id, path, _source_file) =
+        org_node_path(&state, req.project.as_deref(), &id, layer).await?;
+    let source = read_artifact(&path, layer.artifact_name())?;
+    let file = OrgFile::parse(source, path.to_string_lossy())
+        .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+    let heading = file
+        .find_by_id(&id)
+        .ok_or_else(|| ApiError::not_found(format!("node {id}")))?;
+    let current_version = content_hash(file.slice(heading.span.clone()).as_bytes());
+    if current_version != req.base_version {
+        return Err(ApiError::conflict(format!(
+            "node {id} changed on disk; reload before deleting"
+        )));
+    }
+    if layer == NodeLayer::Decision && decision_has_children(&file, &id)? {
+        return Err(ApiError::bad_request(format!(
+            "decision {id} still has child decisions; re-parent or delete children first"
+        )));
+    }
+    let mut rw = OrgRewriter::new(&file, path.to_string_lossy());
+    rw.remove_heading(&id)
+        .map_err(|e| org_rewriter_error("remove heading", &id, e))?;
+    let updated = rw.finish();
+    OrgFile::parse(updated.clone(), path.to_string_lossy())
+        .map_err(|e| org_parse_bad_request(&path, layer.artifact_name(), e))?;
+    let tx_id = write_org_node_edit_and_record(NodeEditWriteRequest {
+        state: &state,
+        layer,
+        project_id: project_id.clone(),
+        path: path.clone(),
+        source: updated,
+        request_id: req.request_id,
+        node_id: id.clone(),
+        action: "deleted",
+    })
+    .await?;
+    let mut changed = BTreeMap::new();
+    changed.insert("deleted".to_string(), "true".to_string());
+    let compact = CompactMutationResponse {
+        id: id.clone(),
+        changed,
+        tx_id,
+    };
+    // Full output is just the compact shape: the node no longer exists.
+    compact_or_full_response(q.json, compact, compact_or_delete_full(&id))
+}
+
+fn compact_or_delete_full(id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "deleted": true,
+    })
 }
 
 fn validate_decision_parent_ops(
@@ -13865,6 +14056,74 @@ mod tests {
     fn glossary_marker_guard_allow_marker_overrides() {
         let req = glossary_create_request("struct Foo { field: bool }", true);
         assert!(reject_glossary_implementation_detail(&req).is_ok());
+    }
+
+    #[test]
+    fn glossary_identity_normalization_trims_and_case_folds() {
+        assert_eq!(
+            normalize_glossary_identity("  Vertical Slice  "),
+            "vertical slice"
+        );
+        assert_eq!(
+            normalize_glossary_identity("VERTICAL SLICE"),
+            normalize_glossary_identity("vertical slice")
+        );
+    }
+
+    #[test]
+    fn glossary_duplicate_identity_rejects_title_and_canonical() {
+        let source = "\
+#+title: glossary
+#+orgasmic_version: 1
+
+* term_AAAAA Vertical Slice
+:PROPERTIES:
+:ID: term_AAAAA
+:CANONICAL: Vertical Slice
+:END:
+";
+        let file = OrgFile::parse(source.to_string(), "glossary.org").unwrap();
+        let mut req = glossary_create_request("plain definition", false);
+        req.title = Some("vertical slice".into());
+        req.properties.insert("CANONICAL".into(), "other".into());
+        let err = reject_glossary_duplicate_identity(&file, &req, "term_BBBBB").unwrap_err();
+        assert!(
+            err.message.contains("term_AAAAA"),
+            "title conflict must name survivor: {}",
+            err.message
+        );
+
+        req.title = Some("Distinct Title".into());
+        req.properties
+            .insert("CANONICAL".into(), "  VERTICAL SLICE ".into());
+        let err = reject_glossary_duplicate_identity(&file, &req, "term_BBBBB").unwrap_err();
+        assert!(
+            err.message.contains("term_AAAAA"),
+            "canonical conflict must name survivor: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn glossary_duplicate_identity_same_id_and_force_ok() {
+        let source = "\
+#+title: glossary
+#+orgasmic_version: 1
+
+* term_AAAAA Vertical Slice
+:PROPERTIES:
+:ID: term_AAAAA
+:CANONICAL: Vertical Slice
+:END:
+";
+        let file = OrgFile::parse(source.to_string(), "glossary.org").unwrap();
+        let mut req = glossary_create_request("plain definition", false);
+        req.title = Some("Vertical Slice".into());
+        req.properties
+            .insert("CANONICAL".into(), "Vertical Slice".into());
+        assert!(reject_glossary_duplicate_identity(&file, &req, "term_AAAAA").is_ok());
+        req.force = true;
+        assert!(reject_glossary_duplicate_identity(&file, &req, "term_BBBBB").is_ok());
     }
 
     #[test]
