@@ -73,7 +73,11 @@ fn write_boot_state_atomic(path: &Path, state: &DaemonBootState) -> Result<()> {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
     let payload = serde_json::to_vec_pretty(state).context("serialize daemon boot state")?;
-    let tmp = path.with_extension(format!("boot.{}.tmp", state.pid));
+    // A refresher and `set_phase` may publish concurrently. The monotonic
+    // sequence is allocated before this write, so it gives every publication
+    // its own staging path instead of allowing one writer to rename another
+    // writer's file (or receive ENOENT).
+    let tmp = path.with_extension(format!("boot.{}.{}.tmp", state.pid, state.seq));
     {
         let mut file = File::create(&tmp).with_context(|| format!("create {}", tmp.display()))?;
         file.write_all(&payload)
@@ -92,10 +96,21 @@ struct SharedBootProgress {
     started_at: DateTime<Utc>,
     seq: AtomicU64,
     phase: Mutex<String>,
+    /// Serializes publication and retirement so an aborted refresh cannot
+    /// recreate the record after its owner has retired it.
+    publication: Mutex<()>,
 }
 
 impl SharedBootProgress {
     fn publish(&self) -> Result<()> {
+        let _publication = self
+            .publication
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.publish_locked()
+    }
+
+    fn publish_locked(&self) -> Result<()> {
         let phase = self
             .phase
             .lock()
@@ -110,6 +125,29 @@ impl SharedBootProgress {
             refreshed_at: Utc::now(),
         };
         write_boot_state_atomic(&self.path, &state)
+    }
+
+    fn set_phase(&self, phase: String) -> Result<()> {
+        let _publication = self
+            .publication
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        {
+            let mut guard = self
+                .phase
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            *guard = phase;
+        }
+        self.publish_locked()
+    }
+
+    fn retire(&self) {
+        let _publication = self
+            .publication
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        clear_boot_state_if_owner_at(&self.path, self.pid);
     }
 }
 
@@ -129,6 +167,7 @@ impl BootProgress {
             started_at: Utc::now(),
             seq: AtomicU64::new(0),
             phase: Mutex::new(phase.into()),
+            publication: Mutex::new(()),
         });
         shared.publish()?;
         Ok(Self {
@@ -139,15 +178,7 @@ impl BootProgress {
     }
 
     pub fn set_phase(&self, phase: impl Into<String>) -> Result<()> {
-        {
-            let mut guard = self
-                .shared
-                .phase
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            *guard = phase.into();
-        }
-        self.shared.publish()
+        self.shared.set_phase(phase.into())
     }
 
     /// Keep `refreshed_at`/`seq` advancing during a long single phase.
@@ -181,14 +212,14 @@ impl BootProgress {
     /// Retire this process's boot record once the daemon is ready (or aborting).
     pub fn retire(mut self) {
         self.stop_refresh_loop();
-        clear_boot_state_if_owner_at(&self.shared.path, self.shared.pid);
+        self.shared.retire();
     }
 }
 
 impl Drop for BootProgress {
     fn drop(&mut self) {
         self.stop_refresh_loop();
-        clear_boot_state_if_owner_at(&self.shared.path, self.shared.pid);
+        self.shared.retire();
     }
 }
 
@@ -272,5 +303,73 @@ mod tests {
         assert!(read_boot_state(&home).is_none());
         std::fs::write(&path, "").unwrap();
         assert!(read_boot_state(&home).is_none());
+    }
+
+    #[test]
+    fn slow_prebind_phase_is_visible_before_listener_bind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let progress = BootProgress::start(&home, "reattaching runs").unwrap();
+        progress.set_phase("waiting to bind listener").unwrap();
+
+        let state = read_boot_state(&home).expect("pre-bind state");
+        assert_eq!(state.phase, "waiting to bind listener");
+        progress.retire();
+    }
+
+    #[test]
+    fn concurrent_publication_and_retirement_leave_no_partial_or_owned_state() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let progress = Arc::new(BootProgress::start(&home, "loading config").unwrap());
+        let mut workers = Vec::new();
+        for worker in 0..8 {
+            let progress = progress.clone();
+            workers.push(std::thread::spawn(move || {
+                for step in 0..20 {
+                    progress
+                        .set_phase(format!("phase-{worker}-{step}"))
+                        .expect("concurrent publish");
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+
+        let state = read_boot_state(&home).expect("final state remains parseable");
+        assert_eq!(state.pid, std::process::id());
+        let staged = std::fs::read_dir(&home.root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+            .count();
+        assert_eq!(staged, 0, "atomic staging files must be consumed");
+
+        let progress = match Arc::try_unwrap(progress) {
+            Ok(progress) => progress,
+            Err(_) => panic!("all concurrent publishers should be joined"),
+        };
+        progress.retire();
+        assert!(!boot_state_path(&home).exists());
+    }
+
+    #[tokio::test]
+    async fn retirement_wins_against_an_in_flight_refresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let mut progress = BootProgress::start(&home, "binding listener").unwrap();
+        progress.start_refresh_loop(Duration::from_millis(1));
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        progress.retire();
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(
+            !boot_state_path(&home).exists(),
+            "an aborted refresh must not recreate the retired owner record"
+        );
     }
 }
