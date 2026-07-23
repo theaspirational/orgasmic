@@ -6,6 +6,7 @@
 //! without asking the user to keep a shell, tmux pane, or terminal window alive.
 
 use std::fs::OpenOptions;
+use std::io::{Read, Seek, SeekFrom};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -33,7 +34,7 @@ pub struct DaemonStatus {
 
 #[derive(Debug, Clone)]
 pub struct DaemonStarting {
-    pub pid: u32,
+    pub pid: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -206,8 +207,8 @@ fn stop_inner(
         }
         LocalDaemonState::Starting(starting) => {
             daemon_service::stop(home)?;
-            if process_alive(starting.pid) {
-                stop_pid(starting.pid)?;
+            if let Some(pid) = starting.pid.filter(|pid| process_alive(*pid)) {
+                stop_pid(pid)?;
             }
             wait_until_down(home)?;
             remove_pid_file(home);
@@ -463,7 +464,9 @@ fn wait_until_running_after_start(
                         return bail_start_failed(home, started.elapsed());
                     }
                     if started.elapsed() >= timeout {
-                        return Ok(DaemonStartOutcome::StillBooting(DaemonStarting { pid }));
+                        return Ok(DaemonStartOutcome::StillBooting(DaemonStarting {
+                            pid: Some(pid),
+                        }));
                     }
                 } else if started.elapsed() >= timeout {
                     return bail_start_failed(home, started.elapsed());
@@ -526,8 +529,11 @@ fn wait_until_down(home: &Home) -> Result<()> {
             LocalDaemonState::Starting(starting) => {
                 if started.elapsed() >= STOP_TIMEOUT {
                     bail!(
-                        "daemon pid {} did not stop after {}s",
-                        starting.pid,
+                        "daemon{} did not stop after {}s",
+                        starting
+                            .pid
+                            .map(|pid| format!(" pid {pid}"))
+                            .unwrap_or_default(),
                         STOP_TIMEOUT.as_secs()
                     );
                 }
@@ -554,10 +560,10 @@ fn probe_local(home: &Home) -> Result<LocalDaemonState> {
 
 async fn probe_local_async(home: &Home) -> Result<LocalDaemonState> {
     let Some(base_url) = local_base_url(home)? else {
-        return Ok(starting_from_pid_file(home).unwrap_or(LocalDaemonState::Down));
+        return Ok(starting_fallback(home));
     };
     let Some(token) = read_token(home) else {
-        return Ok(starting_from_pid_file(home).unwrap_or(LocalDaemonState::Down));
+        return Ok(starting_fallback(home));
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -571,7 +577,7 @@ async fn probe_local_async(home: &Home) -> Result<LocalDaemonState> {
     {
         Ok(response) => response,
         Err(error) if error.is_connect() || error.is_timeout() => {
-            return Ok(starting_from_pid_file(home).unwrap_or(LocalDaemonState::Down));
+            return Ok(starting_fallback(home));
         }
         Err(error) => return Err(anyhow!("probe daemon: {error}")),
     };
@@ -579,7 +585,7 @@ async fn probe_local_async(home: &Home) -> Result<LocalDaemonState> {
         return Ok(LocalDaemonState::Unauthorized);
     }
     if !response.status().is_success() {
-        return Ok(starting_from_pid_file(home).unwrap_or(LocalDaemonState::Down));
+        return Ok(starting_fallback(home));
     }
     let status = response
         .json::<DaemonStatus>()
@@ -699,6 +705,10 @@ fn pid_file(home: &Home) -> PathBuf {
     home.state().join("daemon.pid")
 }
 
+fn daemon_lock_file(home: &Home) -> PathBuf {
+    home.root.join("daemon.lock")
+}
+
 fn write_pid_file(home: &Home, pid: u32) -> Result<()> {
     std::fs::create_dir_all(home.state())
         .with_context(|| format!("create {}", home.state().display()))?;
@@ -713,11 +723,45 @@ fn read_pid_file(home: &Home) -> Option<u32> {
 fn starting_from_pid_file(home: &Home) -> Option<LocalDaemonState> {
     let pid = read_pid_file(home)?;
     if process_alive(pid) {
-        Some(LocalDaemonState::Starting(DaemonStarting { pid }))
+        Some(LocalDaemonState::Starting(DaemonStarting {
+            pid: Some(pid),
+        }))
     } else {
         remove_pid_file(home);
         None
     }
+}
+
+fn starting_from_daemon_lock(home: &Home) -> Option<LocalDaemonState> {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(daemon_lock_file(home))
+        .ok()?;
+    match fs2::FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            let _ = fs2::FileExt::unlock(&file);
+            None
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+            let _ = file.seek(SeekFrom::Start(0));
+            let mut raw = String::new();
+            let _ = file.read_to_string(&mut raw);
+            let pid = raw
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|pid| process_alive(*pid));
+            Some(LocalDaemonState::Starting(DaemonStarting { pid }))
+        }
+        Err(_) => None,
+    }
+}
+
+fn starting_fallback(home: &Home) -> LocalDaemonState {
+    starting_from_daemon_lock(home)
+        .or_else(|| starting_from_pid_file(home))
+        .unwrap_or(LocalDaemonState::Down)
 }
 
 fn process_alive(pid: u32) -> bool {
@@ -792,7 +836,9 @@ mod tests {
         write_pid_file(&home, child.0.id()).unwrap();
 
         match status(&home).unwrap() {
-            LocalDaemonState::Starting(starting) => assert_eq!(starting.pid, child.0.id()),
+            LocalDaemonState::Starting(starting) => {
+                assert_eq!(starting.pid, Some(child.0.id()))
+            }
             other => panic!("expected starting state, got {other:?}"),
         }
     }
@@ -814,9 +860,41 @@ mod tests {
         )
         .unwrap();
         match outcome {
-            DaemonStartOutcome::StillBooting(starting) => assert_eq!(starting.pid, child.0.id()),
+            DaemonStartOutcome::StillBooting(starting) => {
+                assert_eq!(starting.pid, Some(child.0.id()))
+            }
             other => panic!("expected still-booting start outcome, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn autostart_preserves_booting_lock_owner_without_spawning_a_racer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(home.config(), "bind_host: 127.0.0.1\nbind_port: 65533\n").unwrap();
+        let mut lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(daemon_lock_file(&home))
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        lock.set_len(0).unwrap();
+        std::io::Write::write_all(&mut lock, format!("{}\n", std::process::id()).as_bytes())
+            .unwrap();
+        lock.sync_data().unwrap();
+
+        let outcome = start_local(&home, false).unwrap();
+
+        match outcome {
+            DaemonStartOutcome::StillBooting(starting) => {
+                assert_eq!(starting.pid, Some(std::process::id()))
+            }
+            other => panic!("expected lock owner to remain booting, got {other:?}"),
+        }
+        fs2::FileExt::unlock(&lock).unwrap();
     }
 
     #[test]

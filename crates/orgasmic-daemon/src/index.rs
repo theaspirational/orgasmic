@@ -8,9 +8,11 @@
 //! `parse_errors` map (AC #2 + dec_022).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::Stdio;
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
@@ -22,6 +24,8 @@ use orgasmic_core::{
     ParentTreeNode, SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -446,17 +450,77 @@ impl Index {
     /// Rebuild from disk. Called at boot before the daemon serves normal
     /// reads (arch_006 / AC #1) and on watcher-driven refresh.
     pub async fn rebuild(&self) {
-        let mut snap = IndexSnapshot {
+        self.rebuild_with_timeout(Duration::from_secs(5)).await;
+    }
+
+    async fn rebuild_with_timeout(&self, timeout: Duration) {
+        // Home-owned state is small and must remain available even when one
+        // registered project is on a filesystem that stalls. Move project
+        // traversal to the blocking pool and bound the wait so boot can bind.
+        let mut base = IndexSnapshot {
             rebuilt_at: Some(Utc::now()),
             ..IndexSnapshot::default()
         };
-        self.load_board(&mut snap);
-        self.load_home_tx(&mut snap);
-        let board = snap.board.clone();
+        self.load_board(&mut base);
+        self.load_home_tx(&mut base);
+        let board = base.board.clone();
+        let mut snap = base;
         for entry in board {
-            self.load_project(&entry, &mut snap);
+            let scan_index = self.clone();
+            let scan_seed = snap.clone();
+            let scan_entry = entry.clone();
+            let scan = tokio::task::spawn_blocking(move || {
+                let mut next = scan_seed;
+                scan_index.load_project(&scan_entry, &mut next);
+                next
+            });
+            match tokio::time::timeout(timeout, scan).await {
+                Ok(Ok(next)) => snap = next,
+                Ok(Err(error)) => {
+                    warn!(
+                        project = %entry.id,
+                        path = %entry.path.display(),
+                        error = %error,
+                        "project index scan task failed; omitting project from this index pass"
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        project = %entry.id,
+                        path = %entry.path.display(),
+                        timeout_secs = timeout.as_secs_f64(),
+                        "project index scan timed out; omitting project so daemon boot can continue"
+                    );
+                    warn_macos_files_access_timeout(std::slice::from_ref(&entry.path));
+                }
+            }
         }
+        rebuild_all_activity_indexes(&mut snap);
         *self.inner.write().await = snap;
+    }
+
+    /// Resolve repository metadata after the listener is serving. Normal Git
+    /// config files are read directly during the scan; this bounded child is a
+    /// fallback for worktrees/includes and never gates daemon availability.
+    pub fn spawn_missing_repo_url_refresh(&self) {
+        let index = self.clone();
+        tokio::spawn(async move {
+            index.refresh_missing_repo_urls().await;
+        });
+    }
+
+    async fn refresh_missing_repo_urls(&self) {
+        let targets: Vec<(String, PathBuf)> = {
+            let snap = self.inner.read().await;
+            snap.projects
+                .iter()
+                .filter(|(_, project)| project.repo_url.is_empty())
+                .map(|(id, project)| (id.clone(), project.root.clone()))
+                .collect()
+        };
+        for (project_id, project_root) in targets {
+            self.refresh_repo_url(&project_id, &project_root).await;
+        }
     }
 
     /// Refresh one project after a watcher event. Preserves the rest of the
@@ -474,7 +538,33 @@ impl Index {
             .retain(|r| r.project_id.as_deref() != Some(project_id));
         let entry = prior_board.clone();
         self.load_project(&entry, &mut snap);
+        let project_root = entry.path.clone();
+        drop(snap);
+        self.refresh_repo_url(project_id, &project_root).await;
         Ok(())
+    }
+
+    async fn refresh_repo_url(&self, project_id: &str, project_root: &Path) {
+        if !project_root.join(".git").exists() {
+            return;
+        }
+        let repo_url = match git_remote_origin_url_from_config(project_root) {
+            Some(repo_url) => Some(repo_url),
+            None => {
+                git_remote_origin_url_with_program(
+                    project_root,
+                    OsStr::new("git"),
+                    Duration::from_secs(3),
+                )
+                .await
+            }
+        };
+        let Some(repo_url) = repo_url else {
+            return;
+        };
+        if let Some(project) = self.inner.write().await.projects.get_mut(project_id) {
+            project.repo_url = repo_url;
+        }
     }
 
     pub async fn refresh_board(&self) {
@@ -539,7 +629,9 @@ impl Index {
         let project = ProjectIndex {
             project_id: board_entry.id.clone(),
             root: board_entry.path.clone(),
-            repo_url: git_remote_origin_url(&board_entry.path).unwrap_or_default(),
+            // Avoid spawning Git on the boot scan. The common case is a normal
+            // .git/config; unusual layouts are resolved asynchronously later.
+            repo_url: git_remote_origin_url_from_config(&board_entry.path).unwrap_or_default(),
             branch: board_entry.branch.clone(),
             status: board_entry.status.clone(),
             tasks: Vec::new(),
@@ -1347,20 +1439,148 @@ fn read_org(path: &Path) -> Result<OrgFile, String> {
     OrgFile::parse(raw, path.to_string_lossy()).map_err(|e| e.to_string())
 }
 
-fn git_remote_origin_url(project_root: &Path) -> Option<String> {
-    let output = Command::new("git")
+fn git_remote_origin_url_from_config(project_root: &Path) -> Option<String> {
+    let dot_git = project_root.join(".git");
+    let config_path = if dot_git.is_dir() {
+        dot_git.join("config")
+    } else {
+        let pointer = std::fs::read_to_string(&dot_git).ok()?;
+        let git_dir = pointer.trim().strip_prefix("gitdir:")?.trim();
+        let git_dir = PathBuf::from(git_dir);
+        let git_dir = if git_dir.is_absolute() {
+            git_dir
+        } else {
+            project_root.join(git_dir)
+        };
+        git_dir.join("config")
+    };
+    let config = std::fs::read_to_string(config_path).ok()?;
+    let mut in_origin = false;
+    for line in config.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            let section = trimmed.trim_matches(&['[', ']'][..]);
+            in_origin = section
+                .strip_prefix("remote ")
+                .map(|name| name.trim_matches('"') == "origin")
+                .unwrap_or(false);
+            continue;
+        }
+        if !in_origin {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        if key.trim() == "url" {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+async fn git_remote_origin_url_with_program(
+    project_root: &Path,
+    program: &OsStr,
+    timeout: Duration,
+) -> Option<String> {
+    let mut child = Command::new(program)
         .args(["config", "--get", "remote.origin.url"])
         .current_dir(project_root)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
         .ok()?;
-    if !output.status.success() {
+    let mut stdout = child.stdout.take()?;
+    let stdout_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).await.map(|_| bytes)
+    });
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            warn!(
+                project = %project_root.display(),
+                error = %error,
+                "git remote origin lookup failed"
+            );
+            stdout_reader.abort();
+            return None;
+        }
+        Err(_) => {
+            warn!(
+                project = %project_root.display(),
+                timeout_secs = timeout.as_secs_f64(),
+                "git remote origin lookup timed out; killing child and leaving repo_url empty"
+            );
+            if let Err(error) = child.start_kill() {
+                warn!(
+                    project = %project_root.display(),
+                    error = %error,
+                    "failed to kill timed-out git remote origin child"
+                );
+            }
+            if let Err(error) = child.wait().await {
+                warn!(
+                    project = %project_root.display(),
+                    error = %error,
+                    "failed to reap timed-out git remote origin child"
+                );
+            }
+            let _ = stdout_reader.await;
+            return None;
+        }
+    };
+    let output = stdout_reader.await.ok()?.ok()?;
+    if !status.success() {
         return None;
     }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let value = String::from_utf8_lossy(&output).trim().to_string();
     if value.is_empty() {
         None
     } else {
         Some(value)
+    }
+}
+
+fn macos_files_access_hint(path: &Path, user_home: &Path) -> Option<String> {
+    let protected = [
+        ("Documents", user_home.join("Documents")),
+        ("Desktop", user_home.join("Desktop")),
+        ("Downloads", user_home.join("Downloads")),
+    ];
+    protected.into_iter().find_map(|(folder, root)| {
+        path.starts_with(root).then(|| {
+            format!(
+                "project scan timed out at {} under ~/{}; grant the orgasmic daemon Files and Folders access for {} in System Settings > Privacy & Security, then restart the daemon",
+                path.display(),
+                folder,
+                folder
+            )
+        })
+    })
+}
+
+fn warn_macos_files_access_timeout(paths: &[PathBuf]) {
+    #[cfg(target_os = "macos")]
+    {
+        let Some(user_home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return;
+        };
+        for path in paths {
+            if let Some(hint) = macos_files_access_hint(path, &user_home) {
+                warn!(project = %path.display(), "{hint}");
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = paths;
     }
 }
 
@@ -1783,6 +2003,113 @@ mod tests {
         write(
             &sprint,
             "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
+        );
+    }
+
+    #[test]
+    fn reads_origin_without_spawning_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        write(
+            &project.join(".git/config"),
+            "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = git@example.com:org/repo.git\n",
+        );
+
+        assert_eq!(
+            git_remote_origin_url_from_config(&project).as_deref(),
+            Some("git@example.com:org/repo.git")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn blocking_git_origin_child_is_killed_and_reaped_on_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let fake_git = tmp.path().join("git");
+        write(&fake_git, "#!/bin/sh\nexec sleep 30\n");
+        let mut permissions = std::fs::metadata(&fake_git).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, permissions).unwrap();
+
+        let started = std::time::Instant::now();
+        let value = git_remote_origin_url_with_program(
+            &project,
+            fake_git.as_os_str(),
+            Duration::from_millis(500),
+        )
+        .await;
+
+        assert_eq!(value, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "hung git child was not bounded"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn blocked_project_scan_times_out_without_blocking_the_index() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("blocked-project");
+        seed_project(&project);
+        seed_board(&home, &project, "blocked-project");
+        let task_file = project.join(".orgasmic/tasks/backlog.org");
+        std::fs::remove_file(&task_file).unwrap();
+        let task_file_c = std::ffi::CString::new(task_file.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(task_file_c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "create blocking task fifo");
+        let index = Index::new(home);
+
+        let started = std::time::Instant::now();
+        index.rebuild_with_timeout(Duration::from_millis(50)).await;
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "project scan timeout did not bound rebuild"
+        );
+        let snapshot = index.snapshot().await;
+        assert_eq!(snapshot.board.len(), 1);
+        assert!(
+            !snapshot.projects.contains_key("blocked-project"),
+            "timed-out project should be omitted from the pass"
+        );
+
+        // Release the abandoned blocking-pool scan before the tempdir is
+        // removed. Unlink the FIFO after pairing its blocked reader, replace
+        // the path with a regular file for any later reads in the same scan,
+        // then close the old pipe. The timed-out result is ignored.
+        let mut fifo_writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&task_file)
+            .unwrap();
+        std::fs::remove_file(&task_file).unwrap();
+        std::fs::write(&task_file, "#+title: tasks\n#+orgasmic_version: 1\n\n").unwrap();
+        std::io::Write::write_all(
+            &mut fifo_writer,
+            b"#+title: tasks\n#+orgasmic_version: 1\n\n",
+        )
+        .unwrap();
+        drop(fifo_writer);
+    }
+
+    #[test]
+    fn protected_folder_timeout_hint_is_path_specific_and_actionable() {
+        let user_home = Path::new("/Users/example");
+        let project = user_home.join("Documents/work/orgasmic");
+        let hint = macos_files_access_hint(&project, user_home).unwrap();
+
+        assert!(hint.contains(&project.display().to_string()));
+        assert!(hint.contains("Files and Folders"));
+        assert!(hint.contains("System Settings > Privacy & Security"));
+        assert_eq!(
+            macos_files_access_hint(Path::new("/tmp/project"), user_home),
+            None
         );
     }
 
