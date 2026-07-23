@@ -464,6 +464,16 @@ impl Index {
         // Home-owned state is small and must remain available even when one
         // registered project is on a filesystem that stalls. Move project
         // traversal to the blocking pool and bound the wait so boot can bind.
+        // A live rebuild starts a fresh snapshot, so carry Git-backed metadata
+        // forward explicitly until its post-bind refresh can replace it.
+        let prior_repo_urls: BTreeMap<String, String> = self
+            .inner
+            .read()
+            .await
+            .projects
+            .iter()
+            .map(|(id, project)| (id.clone(), project.repo_url.clone()))
+            .collect();
         let mut base = IndexSnapshot {
             rebuilt_at: Some(Utc::now()),
             ..IndexSnapshot::default()
@@ -476,9 +486,10 @@ impl Index {
             let scan_index = self.clone();
             let scan_seed = snap.clone();
             let scan_entry = entry.clone();
+            let prior_repo_url = prior_repo_urls.get(&entry.id).cloned();
             let scan = tokio::task::spawn_blocking(move || {
                 let mut next = scan_seed;
-                scan_index.load_project(&scan_entry, &mut next);
+                scan_index.load_project(&scan_entry, &mut next, prior_repo_url);
                 next
             });
             match tokio::time::timeout(timeout, scan).await {
@@ -504,29 +515,31 @@ impl Index {
         }
         rebuild_all_activity_indexes(&mut snap);
         *self.inner.write().await = snap;
+        if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
+            self.spawn_repo_url_refreshes();
+        }
     }
 
     /// Enable and resolve repository metadata after the listener is bound.
     /// Until this method is called, neither boot scans nor watcher refreshes
     /// may spawn Git.
     pub fn spawn_repo_url_refresh(&self) {
+        self.repo_url_refresh_enabled.store(true, Ordering::Release);
+        self.spawn_repo_url_refreshes();
+    }
+
+    fn spawn_repo_url_refreshes(&self) {
         let index = self.clone();
         tokio::spawn(async move {
-            index.enable_and_refresh_repo_urls().await;
+            index.refresh_repo_urls().await;
         });
     }
 
-    async fn enable_and_refresh_repo_urls(&self) {
-        self.repo_url_refresh_enabled.store(true, Ordering::Release);
-        self.refresh_missing_repo_urls().await;
-    }
-
-    async fn refresh_missing_repo_urls(&self) {
+    async fn refresh_repo_urls(&self) {
         let targets: Vec<(String, PathBuf)> = {
             let snap = self.inner.read().await;
             snap.projects
                 .iter()
-                .filter(|(_, project)| project.repo_url.is_empty())
                 .map(|(id, project)| (id.clone(), project.root.clone()))
                 .collect()
         };
@@ -549,7 +562,7 @@ impl Index {
         snap.tx
             .retain(|r| r.project_id.as_deref() != Some(project_id));
         let entry = prior_board.clone();
-        self.load_project(&entry, &mut snap);
+        self.load_project(&entry, &mut snap, None);
         let project_root = entry.path.clone();
         drop(snap);
         if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
@@ -636,12 +649,18 @@ impl Index {
         }
     }
 
-    fn load_project(&self, board_entry: &BoardEntry, snap: &mut IndexSnapshot) {
-        let prior_repo_url = snap
-            .projects
-            .get(&board_entry.id)
-            .map(|project| project.repo_url.clone())
-            .unwrap_or_default();
+    fn load_project(
+        &self,
+        board_entry: &BoardEntry,
+        snap: &mut IndexSnapshot,
+        prior_repo_url: Option<String>,
+    ) {
+        let prior_repo_url = prior_repo_url.unwrap_or_else(|| {
+            snap.projects
+                .get(&board_entry.id)
+                .map(|project| project.repo_url.clone())
+                .unwrap_or_default()
+        });
         let project = ProjectIndex {
             project_id: board_entry.id.clone(),
             root: board_entry.path.clone(),
@@ -2013,7 +2032,10 @@ mod tests {
         assert_eq!(index.snapshot().await.projects["project"].repo_url, "");
         assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
 
-        index.enable_and_refresh_repo_urls().await;
+        index
+            .repo_url_refresh_enabled
+            .store(true, Ordering::Release);
+        index.refresh_repo_urls().await;
         assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 1);
 
         // A watcher scan must not erase the last Git-backed value while the
@@ -2031,6 +2053,69 @@ mod tests {
         assert_eq!(
             index.snapshot().await.projects["project"].repo_url,
             "ssh://git@example.com/org/project.git"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh() {
+        fn git(cwd: &Path, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        git(&project, &["init", "--quiet"]);
+        git(
+            &project,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "ssh://git@example.com/org/project.git",
+            ],
+        );
+        let index = Index::new(home);
+
+        // Boot's pre-bind rebuild never invokes Git.
+        index.rebuild().await;
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
+
+        index
+            .repo_url_refresh_enabled
+            .store(true, Ordering::Release);
+        index.refresh_repo_urls().await;
+        let expected = "ssh://git@example.com/org/project.git";
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
+        );
+        let attempts_before_rebuild = index.git_spawn_attempts.load(Ordering::Relaxed);
+
+        // POST /reindex follows this same live-rebuild path. Publishing the
+        // new snapshot must retain its known URL while Git refreshes it again.
+        index.rebuild().await;
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
+        );
+        assert!(index.repo_url_refresh_enabled.load(Ordering::Acquire));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while index.git_spawn_attempts.load(Ordering::Relaxed) <= attempts_before_rebuild {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("live rebuild did not schedule a post-bind Git refresh");
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
         );
     }
 
