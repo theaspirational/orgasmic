@@ -15,6 +15,7 @@ pub mod api;
 pub mod artifacts;
 pub mod auth;
 pub mod authz;
+pub mod boot_state;
 pub mod config;
 pub mod content;
 pub mod events;
@@ -49,6 +50,10 @@ pub use crate::api::embedded_ui_asset_hash;
 pub use crate::api::{router, ApiState};
 pub use crate::artifacts::{ArtifactSummary, BLOCK_TYPES};
 pub use crate::auth::AuthState;
+pub use crate::boot_state::{
+    boot_state_path, clear_boot_state_if_owner, read_boot_state, BootProgress, DaemonBootState,
+    BOOT_STATE_FILE,
+};
 pub use crate::config::DaemonConfig;
 pub use crate::content::SkillView;
 pub use crate::events::{Event, EventBus, EventPayload, Topic};
@@ -428,6 +433,9 @@ impl Daemon {
             Ok(lock) => lock,
             Err(incumbent) => return Err(incumbent.into()),
         };
+        // Lock ownership precedes boot work: publish heartbeat before any slow
+        // pre-bind phase so the CLI can distinguish progress from death.
+        let mut boot_progress = boot_state::BootProgress::start(&home, "loading config")?;
         home.ensure().context("ensure orgasmic home")?;
         let mut cfg = DaemonConfig::load(&home)?;
         if let Some(bind) = opts.bind_override {
@@ -460,6 +468,7 @@ impl Daemon {
             },
         );
 
+        boot_progress.set_phase("loading auth")?;
         let token = auth::load_or_generate(&home)?;
         let auth_state = AuthState::new(token);
 
@@ -471,9 +480,12 @@ impl Daemon {
             "orgasmic daemon starting pre-bind boot work"
         );
 
+        boot_progress.set_phase("scanning projects")?;
+        boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
         let index = Index::new(home.clone());
         // AC #1: rebuild before serving normal reads.
         index.rebuild().await;
+        boot_progress.stop_refresh_loop();
         let initial_snapshot = index.snapshot().await;
         if let Some(error) = initial_snapshot.first_historical_tx_parse_error().cloned() {
             return Err(HistoricalTxStartupError::from_parse_error(error).into());
@@ -482,6 +494,7 @@ impl Daemon {
         // One-shot relocation of legacy home-level session transcripts into each
         // project's `.orgasmic/tmp/sessions/` (per-project tmp). No-op once the
         // legacy dir is drained.
+        boot_progress.set_phase("migrating sessions")?;
         let migrate_projects: Vec<(String, PathBuf)> = initial_snapshot
             .board
             .iter()
@@ -489,6 +502,7 @@ impl Daemon {
             .collect();
         api::migrate_legacy_home_sessions(&home, &migrate_projects);
 
+        boot_progress.set_phase("starting runtime")?;
         let writer = spawn_writer(events.clone());
         let supervisor = supervisor::Supervisor::new(writer.clone(), boot.clone());
         let manager_registry = manager_registration::ManagerRegistry::new();
@@ -503,6 +517,7 @@ impl Daemon {
             .map(|(_, root)| root.clone())
             .collect();
 
+        boot_progress.set_phase("attaching watchers")?;
         let watcher = spawn_watcher(
             home.clone(),
             index.clone(),
@@ -558,6 +573,7 @@ impl Daemon {
         // restart/rebuild is transparent. Runs whose mux session is gone are
         // skipped, not interrupted. Reattached dispatch runs get their
         // completion watcher respawned (TASK-567JG).
+        boot_progress.set_phase("reattaching runs")?;
         api::reattach_live_runs_on_boot(&api_state, &reattach_roots).await;
 
         let app: Router = router(api_state);
@@ -565,9 +581,18 @@ impl Daemon {
         if let Some(delay) = bind_delay_for_tests() {
             tokio::time::sleep(delay).await;
         }
+        if let Some(hold) = boot_state::prebind_hold_for_tests() {
+            boot_progress.set_phase("test boot hold")?;
+            boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
+            tokio::time::sleep(hold).await;
+            boot_progress.stop_refresh_loop();
+        }
+        boot_progress.set_phase("binding listener")?;
+        boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
         let listener = bind_listener_with_retry(addr)
             .await
             .with_context(|| format!("bind {addr}"))?;
+        boot_progress.stop_refresh_loop();
         let local_addr = listener.local_addr().context("local_addr")?;
         info!(
             address = %local_addr,
@@ -575,6 +600,8 @@ impl Daemon {
             home = %home.root.display(),
             "orgasmic daemon listening"
         );
+        // Ready: retire boot heartbeat so readers do not keep reporting phases.
+        boot_progress.retire();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let writer_for_shutdown = writer.clone();
         let join = tokio::spawn(async move {

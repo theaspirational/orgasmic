@@ -13,6 +13,8 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
+use chrono::{DateTime, Utc};
+use orgasmic_daemon::{read_boot_state, DaemonBootState};
 use reqwest::StatusCode;
 use serde::Deserialize;
 use serde_yaml::Value as YamlValue;
@@ -35,6 +37,40 @@ pub struct DaemonStatus {
 #[derive(Debug, Clone)]
 pub struct DaemonStarting {
     pub pid: Option<u32>,
+    pub phase: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub refreshed_at: Option<DateTime<Utc>>,
+    pub seq: Option<u64>,
+}
+
+impl DaemonStarting {
+    fn from_pid(pid: Option<u32>) -> Self {
+        Self {
+            pid,
+            phase: None,
+            started_at: None,
+            refreshed_at: None,
+            seq: None,
+        }
+    }
+
+    fn with_boot_state(mut self, state: &DaemonBootState) -> Self {
+        if self.pid.is_none() {
+            self.pid = Some(state.pid);
+        }
+        self.phase = Some(state.phase.clone());
+        self.started_at = Some(state.started_at);
+        self.refreshed_at = Some(state.refreshed_at);
+        self.seq = Some(state.seq);
+        self
+    }
+
+    fn progress_key(&self) -> Option<(u64, i64)> {
+        match (self.seq, self.refreshed_at) {
+            (Some(seq), Some(refreshed_at)) => Some((seq, refreshed_at.timestamp_millis())),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -77,7 +113,7 @@ fn ensure_running_local(home: &Home, repair_unauthorized: bool) -> Result<()> {
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             let spawned_pid = start_via_selected_adapter(home)?;
-            wait_until_running_after_start(home, spawned_pid, START_TIMEOUT).map(|_| ())
+            wait_until_ready_after_start(home, spawned_pid, START_TIMEOUT).map(|_| ())
         }
     }
 }
@@ -104,7 +140,7 @@ async fn ensure_running_local_async(home: &Home, repair_unauthorized: bool) -> R
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             start_via_selected_adapter(home)?;
-            wait_until_running_after_start_async(home, START_TIMEOUT)
+            wait_until_ready_after_start_async(home, START_TIMEOUT)
                 .await
                 .map(|_| ())
         }
@@ -118,7 +154,7 @@ async fn ensure_running_local_async_without_repair(home: &Home) -> Result<()> {
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             start_via_selected_adapter(home)?;
-            wait_until_running_after_start_async(home, START_TIMEOUT)
+            wait_until_ready_after_start_async(home, START_TIMEOUT)
                 .await
                 .map(|_| ())
         }
@@ -423,14 +459,7 @@ fn stop_pid(pid: u32) -> Result<()> {
 }
 
 fn wait_until_running(home: &Home) -> Result<DaemonStatus> {
-    loop {
-        match probe_local(home)? {
-            LocalDaemonState::Running(status) => return Ok(status),
-            LocalDaemonState::Starting(_) => std::thread::sleep(Duration::from_millis(200)),
-            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
-            LocalDaemonState::Down => return bail_start_failed(home, START_TIMEOUT),
-        }
-    }
+    wait_until_ready_after_start(home, None, START_TIMEOUT)
 }
 
 #[cfg(test)]
@@ -442,69 +471,214 @@ fn wait_until_running_for_start_with_timeout(
     wait_until_running_after_start(home, Some(spawned_pid), timeout)
 }
 
+/// Autostart path: wait until Running, extending the budget while heartbeat
+/// progress advances. Never reports a progressing boot as "exited".
+fn wait_until_ready_after_start(
+    home: &Home,
+    spawned_pid: Option<u32>,
+    progress_budget: Duration,
+) -> Result<DaemonStatus> {
+    let mut last_progress: Option<(u64, i64)> = None;
+    let mut last_progress_at = Instant::now();
+    loop {
+        match probe_local(home)? {
+            LocalDaemonState::Running(status) => return Ok(status),
+            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
+            LocalDaemonState::Starting(starting) => {
+                observe_boot_progress(
+                    &starting,
+                    spawned_pid,
+                    &mut last_progress,
+                    &mut last_progress_at,
+                    progress_budget,
+                )?;
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            LocalDaemonState::Down => {
+                if let Some(pid) = spawned_pid.filter(|pid| process_alive(*pid)) {
+                    let starting = enrich_starting(DaemonStarting::from_pid(Some(pid)), home);
+                    observe_boot_progress(
+                        &starting,
+                        spawned_pid,
+                        &mut last_progress,
+                        &mut last_progress_at,
+                        progress_budget,
+                    )?;
+                    std::thread::sleep(Duration::from_millis(200));
+                } else if let Some(pid) = spawned_pid {
+                    let _ = pid;
+                    return bail_start_failed(home, last_progress_at.elapsed());
+                } else if last_progress_at.elapsed() >= progress_budget {
+                    return bail_start_failed(home, last_progress_at.elapsed());
+                } else {
+                    std::thread::sleep(Duration::from_millis(200));
+                }
+            }
+        }
+    }
+}
+
+/// `daemon start` path: may return StillBooting once the no-progress budget
+/// elapses while the process is still alive (operator can poll status).
 fn wait_until_running_after_start(
     home: &Home,
     spawned_pid: Option<u32>,
-    timeout: Duration,
+    progress_budget: Duration,
 ) -> Result<DaemonStartOutcome> {
-    let started = Instant::now();
+    let mut last_progress: Option<(u64, i64)> = None;
+    let mut last_progress_at = Instant::now();
+    // For start without heartbeat, preserve prior wall-clock StillBooting
+    // behavior after the budget so callers are not blocked forever.
+    let wall_started = Instant::now();
     loop {
         match probe_local(home)? {
             LocalDaemonState::Running(status) => return Ok(DaemonStartOutcome::Running(status)),
-            LocalDaemonState::Starting(starting) => {
-                if started.elapsed() >= timeout {
-                    return Ok(DaemonStartOutcome::StillBooting(starting));
-                }
-                std::thread::sleep(Duration::from_millis(200));
-            }
             LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
+            LocalDaemonState::Starting(starting) => {
+                match classify_boot_wait_for_start(
+                    &starting,
+                    spawned_pid,
+                    &mut last_progress,
+                    &mut last_progress_at,
+                    wall_started,
+                    progress_budget,
+                )? {
+                    BootWait::Continue => std::thread::sleep(Duration::from_millis(200)),
+                    BootWait::StillBooting(starting) => {
+                        return Ok(DaemonStartOutcome::StillBooting(starting))
+                    }
+                }
+            }
             LocalDaemonState::Down => {
                 if let Some(pid) = spawned_pid {
                     if !process_alive(pid) {
-                        return bail_start_failed(home, started.elapsed());
+                        return bail_start_failed(home, wall_started.elapsed());
                     }
-                    if started.elapsed() >= timeout {
-                        return Ok(DaemonStartOutcome::StillBooting(DaemonStarting {
-                            pid: Some(pid),
-                        }));
+                    let starting = enrich_starting(DaemonStarting::from_pid(Some(pid)), home);
+                    match classify_boot_wait_for_start(
+                        &starting,
+                        spawned_pid,
+                        &mut last_progress,
+                        &mut last_progress_at,
+                        wall_started,
+                        progress_budget,
+                    )? {
+                        BootWait::Continue => std::thread::sleep(Duration::from_millis(200)),
+                        BootWait::StillBooting(starting) => {
+                            return Ok(DaemonStartOutcome::StillBooting(starting))
+                        }
                     }
-                } else if started.elapsed() >= timeout {
-                    return bail_start_failed(home, started.elapsed());
+                } else if wall_started.elapsed() >= progress_budget {
+                    return bail_start_failed(home, wall_started.elapsed());
+                } else {
+                    std::thread::sleep(Duration::from_millis(200));
                 }
-                std::thread::sleep(Duration::from_millis(200));
             }
         }
     }
 }
 
 async fn wait_until_running_async(home: &Home) -> Result<DaemonStatus> {
+    wait_until_ready_after_start_async(home, START_TIMEOUT).await
+}
+
+async fn wait_until_ready_after_start_async(
+    home: &Home,
+    progress_budget: Duration,
+) -> Result<DaemonStatus> {
+    let mut last_progress: Option<(u64, i64)> = None;
+    let mut last_progress_at = Instant::now();
     loop {
         match probe_local_async(home).await? {
             LocalDaemonState::Running(status) => return Ok(status),
-            LocalDaemonState::Starting(_) => tokio::time::sleep(Duration::from_millis(200)).await,
             LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
-            LocalDaemonState::Down => return bail_start_failed(home, START_TIMEOUT),
+            LocalDaemonState::Starting(starting) => {
+                observe_boot_progress(
+                    &starting,
+                    None,
+                    &mut last_progress,
+                    &mut last_progress_at,
+                    progress_budget,
+                )?;
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+            LocalDaemonState::Down => {
+                if last_progress_at.elapsed() >= progress_budget {
+                    return bail_start_failed(home, last_progress_at.elapsed());
+                }
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
         }
     }
 }
 
-async fn wait_until_running_after_start_async(
-    home: &Home,
-    timeout: Duration,
-) -> Result<DaemonStatus> {
-    let started = Instant::now();
-    loop {
-        match probe_local_async(home).await? {
-            LocalDaemonState::Running(status) => return Ok(status),
-            LocalDaemonState::Starting(_) | LocalDaemonState::Down => {
-                if started.elapsed() >= timeout {
-                    return bail_start_failed(home, started.elapsed());
-                }
-                tokio::time::sleep(Duration::from_millis(200)).await;
-            }
-            LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
+enum BootWait {
+    Continue,
+    StillBooting(DaemonStarting),
+}
+
+/// Fail closed for autostart when the pid is dead or heartbeat stalls.
+fn observe_boot_progress(
+    starting: &DaemonStarting,
+    spawned_pid: Option<u32>,
+    last_progress: &mut Option<(u64, i64)>,
+    last_progress_at: &mut Instant,
+    progress_budget: Duration,
+) -> Result<()> {
+    if let Some(pid) = starting.pid.or(spawned_pid) {
+        if !process_alive(pid) {
+            return bail_stale_boot(starting);
         }
     }
+    if let Some(key) = starting.progress_key() {
+        if last_progress.as_ref() != Some(&key) {
+            *last_progress = Some(key);
+            *last_progress_at = Instant::now();
+        }
+    }
+    if last_progress_at.elapsed() < progress_budget {
+        return Ok(());
+    }
+    if starting.progress_key().is_some()
+        || starting.pid.is_some_and(process_alive)
+        || spawned_pid.is_some_and(process_alive)
+    {
+        return bail_boot_stalled(starting, progress_budget);
+    }
+    bail!(
+        "daemon did not become ready after {}s with no live boot progress; check logs",
+        progress_budget.as_secs()
+    )
+}
+
+fn classify_boot_wait_for_start(
+    starting: &DaemonStarting,
+    spawned_pid: Option<u32>,
+    last_progress: &mut Option<(u64, i64)>,
+    last_progress_at: &mut Instant,
+    wall_started: Instant,
+    progress_budget: Duration,
+) -> Result<BootWait> {
+    if let Some(pid) = starting.pid.or(spawned_pid) {
+        if !process_alive(pid) {
+            return bail_stale_boot(starting);
+        }
+    }
+    if let Some(key) = starting.progress_key() {
+        if last_progress.as_ref() != Some(&key) {
+            *last_progress = Some(key);
+            *last_progress_at = Instant::now();
+            return Ok(BootWait::Continue);
+        }
+        if last_progress_at.elapsed() >= progress_budget {
+            return Ok(BootWait::StillBooting(starting.clone()));
+        }
+        return Ok(BootWait::Continue);
+    }
+    if wall_started.elapsed() >= progress_budget {
+        return Ok(BootWait::StillBooting(starting.clone()));
+    }
+    Ok(BootWait::Continue)
 }
 
 fn bail_auth_token_mismatch<T>() -> Result<T> {
@@ -517,6 +691,33 @@ fn bail_start_failed<T>(home: &Home, elapsed: Duration) -> Result<T> {
         elapsed.as_secs(),
         home.logs().join("daemon.out.log").display(),
         home.logs().join("daemon.err.log").display()
+    )
+}
+
+fn bail_stale_boot<T>(starting: &DaemonStarting) -> Result<T> {
+    let phase = starting.phase.as_deref().unwrap_or("unknown");
+    let pid = starting
+        .pid
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    bail!(
+        "daemon boot heartbeat is stale (pid {pid} is dead, last phase {phase}); check daemon.out.log and daemon.err.log under $ORGASMIC_HOME/logs"
+    )
+}
+
+fn bail_boot_stalled<T>(starting: &DaemonStarting, budget: Duration) -> Result<T> {
+    let phase = starting.phase.as_deref().unwrap_or("unknown");
+    let since = starting
+        .started_at
+        .map(|ts| ts.to_rfc3339())
+        .unwrap_or_else(|| "unknown".to_string());
+    let pid = starting
+        .pid
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    bail!(
+        "daemon boot stalled: booting since {since}, phase {phase}, pid {pid}; no heartbeat progress for {}s — inspect $ORGASMIC_HOME/logs/daemon.out.log and daemon.err.log",
+        budget.as_secs()
     )
 }
 
@@ -723,9 +924,10 @@ fn read_pid_file(home: &Home) -> Option<u32> {
 fn starting_from_pid_file(home: &Home) -> Option<LocalDaemonState> {
     let pid = read_pid_file(home)?;
     if process_alive(pid) {
-        Some(LocalDaemonState::Starting(DaemonStarting {
-            pid: Some(pid),
-        }))
+        Some(LocalDaemonState::Starting(enrich_starting(
+            DaemonStarting::from_pid(Some(pid)),
+            home,
+        )))
     } else {
         remove_pid_file(home);
         None
@@ -752,9 +954,29 @@ fn starting_from_daemon_lock(home: &Home) -> Option<LocalDaemonState> {
                 .parse::<u32>()
                 .ok()
                 .filter(|pid| process_alive(*pid));
-            Some(LocalDaemonState::Starting(DaemonStarting { pid }))
+            Some(LocalDaemonState::Starting(enrich_starting(
+                DaemonStarting::from_pid(pid),
+                home,
+            )))
         }
         Err(_) => None,
+    }
+}
+
+fn enrich_starting(mut starting: DaemonStarting, home: &Home) -> DaemonStarting {
+    match read_boot_state(home) {
+        Some(state) => {
+            // Prefer heartbeat pid when lock/pid-file pid is missing, but do not
+            // trust a heartbeat that names a different live process.
+            if let Some(pid) = starting.pid {
+                if pid != state.pid {
+                    return starting;
+                }
+            }
+            starting = starting.with_boot_state(&state);
+            starting
+        }
+        None => starting,
     }
 }
 
