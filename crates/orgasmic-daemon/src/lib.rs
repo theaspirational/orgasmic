@@ -192,9 +192,9 @@ pub struct DaemonOptions {
 impl Default for DaemonOptions {
     fn default() -> Self {
         let actor = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
-        // Do not spawn `hostname` here: `DaemonOptions::default()` is built by
-        // the CLI before `Daemon::run` can take the single-instance lock.
-        let machine = std::env::var("HOSTNAME").unwrap_or_else(|_| "unknown".into());
+        // `DaemonOptions::default()` is built before `Daemon::run` can take the
+        // single-instance lock, so machine discovery must never spawn.
+        let machine = resolve_machine_name(std::env::var("HOSTNAME").ok(), os_machine_name);
         Self {
             bind_override: None,
             port_override: None,
@@ -207,6 +207,37 @@ impl Default for DaemonOptions {
             trusted_exec_wrapper_override: None,
         }
     }
+}
+
+fn resolve_machine_name(
+    hostname_env: Option<String>,
+    os_source: impl FnOnce() -> Option<String>,
+) -> String {
+    hostname_env
+        .filter(|name| !name.trim().is_empty())
+        .or_else(os_source)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(unix)]
+fn os_machine_name() -> Option<String> {
+    let mut buffer = [0_u8; 256];
+    // SAFETY: `buffer` is valid for its full length and `gethostname` writes
+    // at most that many bytes.
+    if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(buffer.len());
+    Some(String::from_utf8_lossy(&buffer[..end]).trim().to_string())
+}
+
+#[cfg(not(unix))]
+fn os_machine_name() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok()
 }
 
 const INCUMBENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -555,7 +586,7 @@ impl Daemon {
             }
             writer_for_shutdown.shutdown().await;
         });
-        index.spawn_missing_repo_url_refresh();
+        index.spawn_repo_url_refresh();
 
         Ok(RunningDaemon {
             addr: local_addr,
@@ -577,6 +608,23 @@ pub fn default_home_tx_path(home: &Home) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_name_uses_non_spawning_os_source_when_hostname_is_absent() {
+        let machine = resolve_machine_name(None, || Some("stable-os-machine".to_string()));
+
+        assert_eq!(machine, "stable-os-machine");
+        assert_ne!(machine, "unknown");
+    }
+
+    #[test]
+    fn machine_name_prefers_explicit_environment_value() {
+        let machine = resolve_machine_name(Some("explicit-machine".to_string()), || {
+            panic!("OS source must not replace an explicit machine name")
+        });
+
+        assert_eq!(machine, "explicit-machine");
+    }
 
     #[tokio::test]
     async fn daemon_boots_and_status_reports_boot_id() {

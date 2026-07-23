@@ -11,6 +11,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -412,6 +413,9 @@ impl IndexSnapshot {
 pub struct Index {
     inner: Arc<RwLock<IndexSnapshot>>,
     home: Home,
+    repo_url_refresh_enabled: Arc<AtomicBool>,
+    #[cfg(test)]
+    git_spawn_attempts: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Index {
@@ -419,6 +423,9 @@ impl Index {
         Self {
             inner: Arc::new(RwLock::new(IndexSnapshot::default())),
             home,
+            repo_url_refresh_enabled: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            git_spawn_attempts: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -499,14 +506,19 @@ impl Index {
         *self.inner.write().await = snap;
     }
 
-    /// Resolve repository metadata after the listener is serving. Normal Git
-    /// config files are read directly during the scan; this bounded child is a
-    /// fallback for worktrees/includes and never gates daemon availability.
-    pub fn spawn_missing_repo_url_refresh(&self) {
+    /// Enable and resolve repository metadata after the listener is bound.
+    /// Until this method is called, neither boot scans nor watcher refreshes
+    /// may spawn Git.
+    pub fn spawn_repo_url_refresh(&self) {
         let index = self.clone();
         tokio::spawn(async move {
-            index.refresh_missing_repo_urls().await;
+            index.enable_and_refresh_repo_urls().await;
         });
+    }
+
+    async fn enable_and_refresh_repo_urls(&self) {
+        self.repo_url_refresh_enabled.store(true, Ordering::Release);
+        self.refresh_missing_repo_urls().await;
     }
 
     async fn refresh_missing_repo_urls(&self) {
@@ -540,7 +552,9 @@ impl Index {
         self.load_project(&entry, &mut snap);
         let project_root = entry.path.clone();
         drop(snap);
-        self.refresh_repo_url(project_id, &project_root).await;
+        if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
+            self.refresh_repo_url(project_id, &project_root).await;
+        }
         Ok(())
     }
 
@@ -548,17 +562,14 @@ impl Index {
         if !project_root.join(".git").exists() {
             return;
         }
-        let repo_url = match git_remote_origin_url_from_config(project_root) {
-            Some(repo_url) => Some(repo_url),
-            None => {
-                git_remote_origin_url_with_program(
-                    project_root,
-                    OsStr::new("git"),
-                    Duration::from_secs(3),
-                )
-                .await
-            }
-        };
+        #[cfg(test)]
+        self.git_spawn_attempts.fetch_add(1, Ordering::Relaxed);
+        let repo_url = git_remote_origin_url_with_program(
+            project_root,
+            OsStr::new("git"),
+            Duration::from_secs(3),
+        )
+        .await;
         let Some(repo_url) = repo_url else {
             return;
         };
@@ -626,12 +637,18 @@ impl Index {
     }
 
     fn load_project(&self, board_entry: &BoardEntry, snap: &mut IndexSnapshot) {
+        let prior_repo_url = snap
+            .projects
+            .get(&board_entry.id)
+            .map(|project| project.repo_url.clone())
+            .unwrap_or_default();
         let project = ProjectIndex {
             project_id: board_entry.id.clone(),
             root: board_entry.path.clone(),
-            // Avoid spawning Git on the boot scan. The common case is a normal
-            // .git/config; unusual layouts are resolved asynchronously later.
-            repo_url: git_remote_origin_url_from_config(&board_entry.path).unwrap_or_default(),
+            // Git is authoritative for config syntax, includes, and worktree
+            // layout. Initial resolution happens asynchronously after bind;
+            // watcher scans retain the last known value until Git responds.
+            repo_url: prior_repo_url,
             branch: board_entry.branch.clone(),
             status: board_entry.status.clone(),
             tasks: Vec::new(),
@@ -1439,49 +1456,6 @@ fn read_org(path: &Path) -> Result<OrgFile, String> {
     OrgFile::parse(raw, path.to_string_lossy()).map_err(|e| e.to_string())
 }
 
-fn git_remote_origin_url_from_config(project_root: &Path) -> Option<String> {
-    let dot_git = project_root.join(".git");
-    let config_path = if dot_git.is_dir() {
-        dot_git.join("config")
-    } else {
-        let pointer = std::fs::read_to_string(&dot_git).ok()?;
-        let git_dir = pointer.trim().strip_prefix("gitdir:")?.trim();
-        let git_dir = PathBuf::from(git_dir);
-        let git_dir = if git_dir.is_absolute() {
-            git_dir
-        } else {
-            project_root.join(git_dir)
-        };
-        git_dir.join("config")
-    };
-    let config = std::fs::read_to_string(config_path).ok()?;
-    let mut in_origin = false;
-    for line in config.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') {
-            let section = trimmed.trim_matches(&['[', ']'][..]);
-            in_origin = section
-                .strip_prefix("remote ")
-                .map(|name| name.trim_matches('"') == "origin")
-                .unwrap_or(false);
-            continue;
-        }
-        if !in_origin {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        if key.trim() == "url" {
-            let value = value.trim();
-            if !value.is_empty() {
-                return Some(value.to_string());
-            }
-        }
-    }
-    None
-}
-
 async fn git_remote_origin_url_with_program(
     project_root: &Path,
     program: &OsStr,
@@ -1509,7 +1483,21 @@ async fn git_remote_origin_url_with_program(
                 error = %error,
                 "git remote origin lookup failed"
             );
-            stdout_reader.abort();
+            if let Err(kill_error) = child.start_kill() {
+                warn!(
+                    project = %project_root.display(),
+                    error = %kill_error,
+                    "failed to kill errored git remote origin child"
+                );
+            }
+            if let Err(wait_error) = child.wait().await {
+                warn!(
+                    project = %project_root.display(),
+                    error = %wait_error,
+                    "failed to reap errored git remote origin child"
+                );
+            }
+            let _ = stdout_reader.await;
             return None;
         }
         Err(_) => {
@@ -2006,18 +1994,112 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reads_origin_without_spawning_git() {
-        let tmp = tempfile::tempdir().unwrap();
+    #[tokio::test]
+    async fn repo_url_resolution_is_disabled_until_post_bind_refresh() {
+        let (tmp, home) = make_home();
         let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let index = Index::new(home);
+
+        index.rebuild().await;
+        assert_eq!(index.snapshot().await.projects["project"].repo_url, "");
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
+
+        // Watcher refreshes can happen during boot. They must preserve the
+        // no-Git-before-bind invariant too.
+        index.refresh_project("project").await.unwrap();
+        assert_eq!(index.snapshot().await.projects["project"].repo_url, "");
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
+
+        index.enable_and_refresh_repo_urls().await;
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 1);
+
+        // A watcher scan must not erase the last Git-backed value while the
+        // repository metadata is temporarily unavailable.
+        index
+            .inner
+            .write()
+            .await
+            .projects
+            .get_mut("project")
+            .unwrap()
+            .repo_url = "ssh://git@example.com/org/project.git".to_string();
+        std::fs::rename(project.join(".git"), project.join(".git-hidden")).unwrap();
+        index.refresh_project("project").await.unwrap();
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            "ssh://git@example.com/org/project.git"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_resolves_quoted_included_origin_from_linked_worktree() {
+        fn git(cwd: &Path, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let worktree = tmp.path().join("linked-worktree");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "--quiet"]);
+        write(&main.join("tracked"), "seed\n");
+        git(&main, &["add", "tracked"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--quiet",
+                "-m",
+                "seed",
+            ],
+        );
+        let included = tmp.path().join("origin.inc");
         write(
-            &project.join(".git/config"),
-            "[core]\n\trepositoryformatversion = 0\n[remote \"origin\"]\n\turl = git@example.com:org/repo.git\n",
+            &included,
+            "[remote \"origin\"]\n\turl = \"ssh://git@example.com/org/quoted.git\"\n",
+        );
+        git(
+            &main,
+            &[
+                "config",
+                "include.path",
+                included.to_str().expect("UTF-8 temp path"),
+            ],
+        );
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                worktree.to_str().expect("UTF-8 temp path"),
+                "HEAD",
+            ],
         );
 
+        let repo_url = git_remote_origin_url_with_program(
+            &worktree,
+            OsStr::new("git"),
+            Duration::from_secs(3),
+        )
+        .await;
+
         assert_eq!(
-            git_remote_origin_url_from_config(&project).as_deref(),
-            Some("git@example.com:org/repo.git")
+            repo_url.as_deref(),
+            Some("ssh://git@example.com/org/quoted.git")
         );
     }
 
