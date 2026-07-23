@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
+#[cfg(test)]
+use orgasmic_daemon::boot_state_path;
 use orgasmic_daemon::{read_boot_state, DaemonBootState};
 use reqwest::StatusCode;
 use serde::Deserialize;
@@ -27,6 +29,11 @@ use crate::home::Home;
 // draining predecessor releases the port during a runtime-swap restart).
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+/// A healthy large-board rebuild can take several minutes. This ceiling is
+/// measured from the daemon-authored boot timestamp, not from a later CLI
+/// invocation, so autostart remains finite without cutting off responsive
+/// long-running phases.
+const AUTOSTART_ABSOLUTE_BOOT_BACKSTOP: Duration = Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DaemonStatus {
@@ -65,7 +72,7 @@ impl DaemonStarting {
         self
     }
 
-    fn progress_key(&self) -> Option<(u64, i64)> {
+    fn heartbeat_key(&self) -> Option<(u64, i64)> {
         match (self.seq, self.refreshed_at) {
             (Some(seq), Some(refreshed_at)) => Some((seq, refreshed_at.timestamp_millis())),
             _ => None,
@@ -478,38 +485,25 @@ fn wait_until_ready_after_start(
     spawned_pid: Option<u32>,
     progress_budget: Duration,
 ) -> Result<DaemonStatus> {
-    let mut last_progress: Option<(u64, i64)> = None;
-    let mut last_progress_at = Instant::now();
+    let mut progress = BootProgressTracker::new(progress_budget);
     loop {
         match probe_local(home)? {
             LocalDaemonState::Running(status) => return Ok(status),
             LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
             LocalDaemonState::Starting(starting) => {
-                observe_boot_progress(
-                    &starting,
-                    spawned_pid,
-                    &mut last_progress,
-                    &mut last_progress_at,
-                    progress_budget,
-                )?;
+                observe_boot_progress(&starting, spawned_pid, &mut progress, progress_budget)?;
                 std::thread::sleep(Duration::from_millis(200));
             }
             LocalDaemonState::Down => {
                 if let Some(pid) = spawned_pid.filter(|pid| process_alive(*pid)) {
                     let starting = enrich_starting(DaemonStarting::from_pid(Some(pid)), home);
-                    observe_boot_progress(
-                        &starting,
-                        spawned_pid,
-                        &mut last_progress,
-                        &mut last_progress_at,
-                        progress_budget,
-                    )?;
+                    observe_boot_progress(&starting, spawned_pid, &mut progress, progress_budget)?;
                     std::thread::sleep(Duration::from_millis(200));
                 } else if let Some(pid) = spawned_pid {
                     let _ = pid;
-                    return bail_start_failed(home, last_progress_at.elapsed());
-                } else if last_progress_at.elapsed() >= progress_budget {
-                    return bail_start_failed(home, last_progress_at.elapsed());
+                    return bail_start_failed(home, progress.wall_elapsed());
+                } else if progress.heartbeat_elapsed() >= progress_budget {
+                    return bail_start_failed(home, progress.wall_elapsed());
                 } else {
                     std::thread::sleep(Duration::from_millis(200));
                 }
@@ -525,8 +519,7 @@ fn wait_until_running_after_start(
     spawned_pid: Option<u32>,
     progress_budget: Duration,
 ) -> Result<DaemonStartOutcome> {
-    let mut last_progress: Option<(u64, i64)> = None;
-    let mut last_progress_at = Instant::now();
+    let mut progress = BootProgressTracker::new(progress_budget);
     // For start without heartbeat, preserve prior wall-clock StillBooting
     // behavior after the budget so callers are not blocked forever.
     let wall_started = Instant::now();
@@ -538,8 +531,7 @@ fn wait_until_running_after_start(
                 match classify_boot_wait_for_start(
                     &starting,
                     spawned_pid,
-                    &mut last_progress,
-                    &mut last_progress_at,
+                    &mut progress,
                     wall_started,
                     progress_budget,
                 )? {
@@ -558,8 +550,7 @@ fn wait_until_running_after_start(
                     match classify_boot_wait_for_start(
                         &starting,
                         spawned_pid,
-                        &mut last_progress,
-                        &mut last_progress_at,
+                        &mut progress,
                         wall_started,
                         progress_budget,
                     )? {
@@ -586,25 +577,18 @@ async fn wait_until_ready_after_start_async(
     home: &Home,
     progress_budget: Duration,
 ) -> Result<DaemonStatus> {
-    let mut last_progress: Option<(u64, i64)> = None;
-    let mut last_progress_at = Instant::now();
+    let mut progress = BootProgressTracker::new(progress_budget);
     loop {
         match probe_local_async(home).await? {
             LocalDaemonState::Running(status) => return Ok(status),
             LocalDaemonState::Unauthorized => return bail_auth_token_mismatch(),
             LocalDaemonState::Starting(starting) => {
-                observe_boot_progress(
-                    &starting,
-                    None,
-                    &mut last_progress,
-                    &mut last_progress_at,
-                    progress_budget,
-                )?;
+                observe_boot_progress(&starting, None, &mut progress, progress_budget)?;
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
             LocalDaemonState::Down => {
-                if last_progress_at.elapsed() >= progress_budget {
-                    return bail_start_failed(home, last_progress_at.elapsed());
+                if progress.heartbeat_elapsed() >= progress_budget {
+                    return bail_start_failed(home, progress.wall_elapsed());
                 }
                 tokio::time::sleep(Duration::from_millis(200)).await;
             }
@@ -617,12 +601,79 @@ enum BootWait {
     StillBooting(DaemonStarting),
 }
 
-/// Fail closed for autostart when the pid is dead or heartbeat stalls.
+#[derive(Debug)]
+struct BootProgressTracker {
+    wall_started: Instant,
+    last_phase: Option<String>,
+    last_heartbeat: Option<(u64, i64)>,
+    last_heartbeat_at: Instant,
+}
+
+impl BootProgressTracker {
+    fn new(_progress_budget: Duration) -> Self {
+        let now = Instant::now();
+        Self {
+            wall_started: now,
+            last_phase: None,
+            last_heartbeat: None,
+            last_heartbeat_at: now,
+        }
+    }
+
+    /// A refresh updates liveness only. A changed named phase is the sole
+    /// meaningful boot progress that earns another no-progress window.
+    fn observe_phase(&mut self, starting: &DaemonStarting) -> bool {
+        let Some(phase) = starting.phase.as_deref() else {
+            return false;
+        };
+        if self.last_phase.as_deref() == Some(phase) {
+            return false;
+        }
+        self.last_phase = Some(phase.to_string());
+        true
+    }
+
+    /// Heartbeats prove the daemon is still responsive during one long phase;
+    /// they deliberately do not change the recorded meaningful phase.
+    fn observe_heartbeat(&mut self, starting: &DaemonStarting) -> bool {
+        let Some(heartbeat) = starting.heartbeat_key() else {
+            return false;
+        };
+        if self.last_heartbeat.as_ref() == Some(&heartbeat) {
+            return false;
+        }
+        self.last_heartbeat = Some(heartbeat);
+        self.last_heartbeat_at = Instant::now();
+        true
+    }
+
+    fn heartbeat_elapsed(&self) -> Duration {
+        self.last_heartbeat_at.elapsed()
+    }
+
+    fn wall_elapsed(&self) -> Duration {
+        self.wall_started.elapsed()
+    }
+
+    fn boot_age(&self, starting: &DaemonStarting) -> Duration {
+        starting
+            .started_at
+            .and_then(|started_at| Utc::now().signed_duration_since(started_at).to_std().ok())
+            .unwrap_or_else(|| self.wall_elapsed())
+    }
+
+    fn exceeded_absolute_backstop(&self, starting: &DaemonStarting) -> bool {
+        self.boot_age(starting) >= AUTOSTART_ABSOLUTE_BOOT_BACKSTOP
+    }
+}
+
+/// Fail closed for autostart when the pid is dead, a heartbeat freezes, or the
+/// daemon-authored absolute boot-age ceiling expires. Phase changes are useful
+/// diagnostics, while heartbeat liveness proves a long current phase is alive.
 fn observe_boot_progress(
     starting: &DaemonStarting,
     spawned_pid: Option<u32>,
-    last_progress: &mut Option<(u64, i64)>,
-    last_progress_at: &mut Instant,
+    progress: &mut BootProgressTracker,
     progress_budget: Duration,
 ) -> Result<()> {
     if let Some(pid) = starting.pid.or(spawned_pid) {
@@ -630,32 +681,21 @@ fn observe_boot_progress(
             return bail_stale_boot(starting);
         }
     }
-    if let Some(key) = starting.progress_key() {
-        if last_progress.as_ref() != Some(&key) {
-            *last_progress = Some(key);
-            *last_progress_at = Instant::now();
-        }
+    if progress.exceeded_absolute_backstop(starting) {
+        return bail_boot_backstop(starting, AUTOSTART_ABSOLUTE_BOOT_BACKSTOP);
     }
-    if last_progress_at.elapsed() < progress_budget {
+    progress.observe_phase(starting);
+    progress.observe_heartbeat(starting);
+    if progress.heartbeat_elapsed() < progress_budget {
         return Ok(());
     }
-    if starting.progress_key().is_some()
-        || starting.pid.is_some_and(process_alive)
-        || spawned_pid.is_some_and(process_alive)
-    {
-        return bail_boot_stalled(starting, progress_budget);
-    }
-    bail!(
-        "daemon did not become ready after {}s with no live boot progress; check logs",
-        progress_budget.as_secs()
-    )
+    bail_boot_stalled(starting, progress_budget)
 }
 
 fn classify_boot_wait_for_start(
     starting: &DaemonStarting,
     spawned_pid: Option<u32>,
-    last_progress: &mut Option<(u64, i64)>,
-    last_progress_at: &mut Instant,
+    progress: &mut BootProgressTracker,
     wall_started: Instant,
     progress_budget: Duration,
 ) -> Result<BootWait> {
@@ -664,20 +704,13 @@ fn classify_boot_wait_for_start(
             return bail_stale_boot(starting);
         }
     }
-    if let Some(key) = starting.progress_key() {
-        if last_progress.as_ref() != Some(&key) {
-            *last_progress = Some(key);
-            *last_progress_at = Instant::now();
-            return Ok(BootWait::Continue);
-        }
-        if last_progress_at.elapsed() >= progress_budget {
-            return Ok(BootWait::StillBooting(starting.clone()));
-        }
-        return Ok(BootWait::Continue);
-    }
+    // Explicit `daemon start` is an operator-facing pollable command. It must
+    // return a non-error StillBooting result at a bounded wall-clock point even
+    // if a single frozen phase continues publishing liveness refreshes.
     if wall_started.elapsed() >= progress_budget {
         return Ok(BootWait::StillBooting(starting.clone()));
     }
+    progress.observe_phase(starting);
     Ok(BootWait::Continue)
 }
 
@@ -718,6 +751,22 @@ fn bail_boot_stalled<T>(starting: &DaemonStarting, budget: Duration) -> Result<T
     bail!(
         "daemon boot stalled: booting since {since}, phase {phase}, pid {pid}; no heartbeat progress for {}s — inspect $ORGASMIC_HOME/logs/daemon.out.log and daemon.err.log",
         budget.as_secs()
+    )
+}
+
+fn bail_boot_backstop<T>(starting: &DaemonStarting, backstop: Duration) -> Result<T> {
+    let phase = starting.phase.as_deref().unwrap_or("unknown");
+    let since = starting
+        .started_at
+        .map(|started_at| started_at.to_rfc3339())
+        .unwrap_or_else(|| "unknown".to_string());
+    let pid = starting
+        .pid
+        .map(|pid| pid.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    bail!(
+        "daemon boot exceeded the {}s absolute startup backstop since {since}, phase {phase}, pid {pid}; inspect $ORGASMIC_HOME/logs/daemon.out.log and daemon.err.log",
+        backstop.as_secs()
     )
 }
 
@@ -1143,6 +1192,181 @@ mod tests {
                 .contains("daemon process exited before becoming ready"),
             "unexpected error: {err:?}"
         );
+    }
+
+    fn booting(pid: u32, phase: &str, seq: u64) -> DaemonStarting {
+        DaemonStarting {
+            pid: Some(pid),
+            phase: Some(phase.to_string()),
+            started_at: Some(Utc::now()),
+            refreshed_at: Some(Utc::now()),
+            seq: Some(seq),
+        }
+    }
+
+    #[test]
+    fn explicit_start_is_wall_clock_bounded_despite_liveness_refreshes() {
+        let mut progress = BootProgressTracker::new(Duration::from_secs(1));
+        let starting = booting(std::process::id(), "scanning projects", 1);
+        let started_before_budget = Instant::now()
+            .checked_sub(Duration::from_millis(5))
+            .expect("monotonic instant supports recent subtraction");
+
+        // A newer seq/refreshed_at represents timer liveness only. Explicit
+        // start still returns a pollable, non-error outcome at its deadline.
+        let mut refreshed = starting.clone();
+        refreshed.seq = Some(2);
+        refreshed.refreshed_at = Some(Utc::now());
+        let outcome = classify_boot_wait_for_start(
+            &refreshed,
+            Some(std::process::id()),
+            &mut progress,
+            started_before_budget,
+            Duration::from_millis(1),
+        )
+        .unwrap();
+        assert!(matches!(outcome, BootWait::StillBooting(_)));
+    }
+
+    #[test]
+    fn phase_progress_and_heartbeat_liveness_are_tracked_separately() {
+        let mut progress = BootProgressTracker::new(Duration::from_secs(1));
+        let initial = booting(std::process::id(), "scanning projects", 1);
+        assert!(progress.observe_phase(&initial));
+        assert!(progress.observe_heartbeat(&initial));
+
+        let refreshed = booting(std::process::id(), "scanning projects", 2);
+        assert!(
+            !progress.observe_phase(&refreshed),
+            "a new heartbeat sequence is liveness, not a phase transition"
+        );
+        assert!(progress.observe_heartbeat(&refreshed));
+
+        let binding = booting(std::process::id(), "binding listener", 3);
+        assert!(
+            progress.observe_phase(&binding),
+            "a real phase transition remains meaningful boot progress"
+        );
+    }
+
+    #[test]
+    fn advancing_same_phase_heartbeat_keeps_autostart_healthy_beyond_normal_budget() {
+        let starting = booting(std::process::id(), "scanning projects", 1);
+        let mut progress = BootProgressTracker::new(Duration::from_secs(1));
+        progress.observe_phase(&starting);
+        progress.observe_heartbeat(&starting);
+        progress.last_heartbeat_at = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("monotonic instant supports recent subtraction");
+
+        let refreshed = booting(std::process::id(), "scanning projects", 99);
+        observe_boot_progress(
+            &refreshed,
+            Some(std::process::id()),
+            &mut progress,
+            Duration::from_secs(1),
+        )
+        .expect("a fresh heartbeat must keep a long healthy phase alive");
+        assert_eq!(progress.last_phase.as_deref(), Some("scanning projects"));
+        assert_eq!(progress.last_heartbeat, refreshed.heartbeat_key());
+    }
+
+    #[test]
+    fn frozen_heartbeat_stalls_autostart() {
+        let starting = booting(std::process::id(), "scanning projects", 1);
+        let mut progress = BootProgressTracker::new(Duration::from_secs(1));
+        progress.observe_phase(&starting);
+        progress.observe_heartbeat(&starting);
+        progress.last_heartbeat_at = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("monotonic instant supports recent subtraction");
+
+        let err = observe_boot_progress(
+            &starting,
+            Some(std::process::id()),
+            &mut progress,
+            Duration::from_secs(1),
+        )
+        .expect_err("a frozen heartbeat must fail autostart");
+        assert!(err.to_string().contains("daemon boot stalled"));
+        assert!(err.to_string().contains("scanning projects"));
+    }
+
+    #[test]
+    fn autostart_uses_authoritative_boot_age_for_absolute_backstop() {
+        let mut starting = booting(std::process::id(), "binding listener", 3);
+        starting.started_at = Some(Utc::now() - chrono::Duration::minutes(16));
+        let mut progress = BootProgressTracker::new(Duration::from_secs(1));
+
+        let err = observe_boot_progress(
+            &starting,
+            Some(std::process::id()),
+            &mut progress,
+            Duration::from_secs(1),
+        )
+        .expect_err("autostart must have a finite hard ceiling");
+        assert!(err.to_string().contains("absolute startup backstop"));
+        assert!(err.to_string().contains("binding listener"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn dead_pid_heartbeat_fails_even_when_its_record_is_fresh() {
+        let mut child = Command::new("/bin/sh")
+            .args(["-c", "exit 0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("spawn exiting child");
+        let pid = child.id();
+        let _ = child.wait();
+        let starting = booting(pid, "scanning projects", 2);
+        let mut progress = BootProgressTracker::new(Duration::from_secs(1));
+
+        let err =
+            observe_boot_progress(&starting, Some(pid), &mut progress, Duration::from_secs(1))
+                .expect_err("dead heartbeat owner must not be treated as live");
+        assert!(err.to_string().contains("heartbeat is stale"));
+        assert!(err.to_string().contains("scanning projects"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn mismatched_or_malformed_heartbeat_falls_back_to_lock_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let child = sleeping_child();
+        write_pid_file(&home, child.0.id()).unwrap();
+
+        let mismatched = DaemonBootState {
+            pid: std::process::id(),
+            phase: "scanning projects".into(),
+            started_at: Utc::now(),
+            seq: 1,
+            refreshed_at: Utc::now(),
+        };
+        std::fs::write(
+            boot_state_path(&home),
+            serde_json::to_vec(&mismatched).unwrap(),
+        )
+        .unwrap();
+        let starting = enrich_starting(DaemonStarting::from_pid(Some(child.0.id())), &home);
+        assert_eq!(starting.pid, Some(child.0.id()));
+        assert!(
+            starting.phase.is_none(),
+            "foreign heartbeat must be ignored"
+        );
+
+        std::fs::write(boot_state_path(&home), "{partial").unwrap();
+        match status(&home).unwrap() {
+            LocalDaemonState::Starting(starting) => {
+                assert_eq!(starting.pid, Some(child.0.id()));
+                assert!(starting.phase.is_none());
+            }
+            other => panic!("expected pid fallback after malformed heartbeat, got {other:?}"),
+        }
     }
 
     #[test]

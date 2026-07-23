@@ -578,17 +578,20 @@ impl Daemon {
 
         let app: Router = router(api_state);
         let addr = SocketAddr::new(cfg.bind, cfg.port);
+        // The pre-bind delay can be deliberately slow in tests and can also
+        // cover a draining predecessor in production. Report it as a phase
+        // and keep liveness fresh, but leave it to the CLI to decide whether
+        // phase progress has actually occurred.
+        boot_progress.set_phase("waiting to bind listener")?;
+        boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
         if let Some(delay) = bind_delay_for_tests() {
             tokio::time::sleep(delay).await;
         }
         if let Some(hold) = boot_state::prebind_hold_for_tests() {
             boot_progress.set_phase("test boot hold")?;
-            boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
             tokio::time::sleep(hold).await;
-            boot_progress.stop_refresh_loop();
         }
         boot_progress.set_phase("binding listener")?;
-        boot_progress.start_refresh_loop(boot_state::default_refresh_interval());
         let listener = bind_listener_with_retry(addr)
             .await
             .with_context(|| format!("bind {addr}"))?;
