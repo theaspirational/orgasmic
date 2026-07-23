@@ -1943,7 +1943,22 @@ fn print_start_outcome(home: &Home, outcome: &daemon_lifecycle::DaemonStartOutco
             println!("  boot_id: {}", status.boot_id);
         }
         daemon_lifecycle::DaemonStartOutcome::StillBooting(starting) => {
-            println!("daemon still booting — check `orgasmic daemon status` shortly");
+            match (&starting.phase, starting.started_at) {
+                (Some(phase), Some(started_at)) => {
+                    println!(
+                        "daemon still booting since {}, phase {phase} — be patient or inspect $ORGASMIC_HOME/logs",
+                        started_at.to_rfc3339()
+                    );
+                }
+                (Some(phase), None) => {
+                    println!(
+                        "daemon still booting, phase {phase} — be patient or inspect $ORGASMIC_HOME/logs"
+                    );
+                }
+                _ => {
+                    println!("daemon still booting — check `orgasmic daemon status` shortly");
+                }
+            }
             print_starting_pid(starting);
         }
     }
@@ -1962,6 +1977,12 @@ fn print_starting_pid(starting: &daemon_lifecycle::DaemonStarting) {
         Some(pid) => println!("  pid:     {pid}"),
         None => println!("  pid:     (lock owner has not published its pid yet)"),
     }
+    if let Some(phase) = &starting.phase {
+        println!("  phase:   {phase}");
+    }
+    if let Some(started_at) = starting.started_at {
+        println!("  started: {}", started_at.to_rfc3339());
+    }
 }
 
 fn cmd_daemon_status(home: &Home) -> Result<()> {
@@ -1973,7 +1994,13 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
             println!("  boot_id: {}", status.boot_id);
         }
         daemon_lifecycle::LocalDaemonState::Starting(starting) => {
-            println!("starting");
+            match (&starting.phase, starting.started_at) {
+                (Some(phase), Some(started_at)) => {
+                    println!("starting since {}, phase {phase}", started_at.to_rfc3339());
+                }
+                (Some(phase), None) => println!("starting, phase {phase}"),
+                _ => println!("starting"),
+            }
             print_daemon_persistence(home);
             print_starting_pid(&starting);
         }
