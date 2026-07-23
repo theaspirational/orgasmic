@@ -51,6 +51,23 @@ pub enum NodeCmd {
         #[command(subcommand)]
         cmd: NodePropCmd,
     },
+    /// Delete one node through the daemon org-node surface (OCC + tx).
+    Delete {
+        id: String,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long, value_enum)]
+        kind: Option<NodeKindArg>,
+        /// Optimistic-concurrency token from `org node get` / prior edit; fetched when omitted.
+        #[arg(long = "base-version")]
+        base_version: Option<String>,
+        #[arg(long = "request-id")]
+        request_id: Option<String>,
+        /// Print `{id, deleted: true}` instead of the default compact
+        /// `{id, changed, tx_id}` mutation response.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -331,6 +348,36 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&response)?);
                 }
             },
+            NodeCmd::Delete {
+                id,
+                project,
+                kind,
+                base_version,
+                request_id,
+                json,
+            } => {
+                // orgasmic:TASK-N4TGD
+                let (base_version, project) =
+                    resolve_base_version(&client, project, &id, kind_str(kind), base_version)
+                        .await?;
+                let path = if json {
+                    format!("/org/node/{id}/delete?json=true")
+                } else {
+                    format!("/org/node/{id}/delete")
+                };
+                let response: serde_json::Value = client
+                    .post_json(
+                        &path,
+                        &serde_json::json!({
+                            "project": project,
+                            "kind": kind_str(kind),
+                            "base_version": base_version,
+                            "request_id": request_id,
+                        }),
+                    )
+                    .await?;
+                println!("{}", serde_json::to_string_pretty(&response)?);
+            }
         }
         Ok::<(), anyhow::Error>(())
     })

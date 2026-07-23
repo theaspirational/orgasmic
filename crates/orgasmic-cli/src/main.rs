@@ -2154,20 +2154,19 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                 let properties: std::collections::BTreeMap<_, _> =
                     parse_key_values(properties)?.into_iter().collect();
                 let id = id.filter(|id| !id.trim().is_empty());
+                let mut body = serde_json::json!({
+                    "id": id,
+                    "title": title,
+                    "tags": tag,
+                    "body": body,
+                    "reason": reason,
+                    "properties": properties,
+                    "force": force,
+                });
+                let request_id = resolve_create_request_id(request_id, &body);
+                body["request_id"] = serde_json::json!(request_id);
                 client
-                    .post_json(
-                        &format!("/projects/{project}/tasks"),
-                        &serde_json::json!({
-                            "id": id,
-                            "title": title,
-                            "tags": tag,
-                            "body": body,
-                            "reason": reason,
-                            "request_id": request_id,
-                            "properties": properties,
-                            "force": force,
-                        }),
-                    )
+                    .post_json(&format!("/projects/{project}/tasks"), &body)
                     .await?
             }
             TaskCmd::Get { id, project } => {
@@ -2281,21 +2280,18 @@ fn cmd_glossary(home: &Home, cmd: GlossaryCmd) -> Result<()> {
                     properties.insert("RELATES_TO".to_string(), relates_to.join(" "));
                 }
                 let id = id.filter(|id| !id.trim().is_empty());
-                client
-                    .post_json(
-                        "/glossary",
-                        &serde_json::json!({
-                            "project": project,
-                            "request_id": request_id,
-                            "id": id,
-                            "title": title,
-                            "properties": properties,
-                            "body": body,
-                            "force": force,
-                            "allow_marker": allow_marker,
-                        }),
-                    )
-                    .await?
+                let mut body = serde_json::json!({
+                    "project": project,
+                    "id": id,
+                    "title": title,
+                    "properties": properties,
+                    "body": body,
+                    "force": force,
+                    "allow_marker": allow_marker,
+                });
+                let request_id = resolve_create_request_id(request_id, &body);
+                body["request_id"] = serde_json::json!(request_id);
+                client.post_json("/glossary", &body).await?
             }
         };
         print_json(&value)
@@ -2345,20 +2341,17 @@ fn cmd_decision(home: &Home, cmd: DecisionCmd) -> Result<()> {
                 let properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
                 let id = id.filter(|id| !id.trim().is_empty());
-                let value: serde_json::Value = client
-                    .post_json(
-                        "/decisions",
-                        &serde_json::json!({
-                            "project": project,
-                            "request_id": request_id,
-                            "id": id,
-                            "title": title,
-                            "properties": properties,
-                            "body": body,
-                            "force": force,
-                        }),
-                    )
-                    .await?;
+                let mut body = serde_json::json!({
+                    "project": project,
+                    "id": id,
+                    "title": title,
+                    "properties": properties,
+                    "body": body,
+                    "force": force,
+                });
+                let request_id = resolve_create_request_id(request_id, &body);
+                body["request_id"] = serde_json::json!(request_id);
+                let value: serde_json::Value = client.post_json("/decisions", &body).await?;
                 print_json(&value)
             }
         }
@@ -2540,20 +2533,17 @@ fn cmd_architecture(home: &Home, cmd: ArchitectureCmd) -> Result<()> {
                 let properties: std::collections::BTreeMap<String, String> =
                     parse_key_values(properties)?.into_iter().collect();
                 let id = id.filter(|id| !id.trim().is_empty());
-                client
-                    .post_json(
-                        "/architecture",
-                        &serde_json::json!({
-                            "project": project,
-                            "request_id": request_id,
-                            "id": id,
-                            "title": title,
-                            "properties": properties,
-                            "body": body,
-                            "force": force,
-                        }),
-                    )
-                    .await?
+                let mut body = serde_json::json!({
+                    "project": project,
+                    "id": id,
+                    "title": title,
+                    "properties": properties,
+                    "body": body,
+                    "force": force,
+                });
+                let request_id = resolve_create_request_id(request_id, &body);
+                body["request_id"] = serde_json::json!(request_id);
+                client.post_json("/architecture", &body).await?
             }
         };
         print_json(&value)
@@ -2605,6 +2595,47 @@ fn path_with_project_query(path: &str, project: Option<String>) -> String {
         Some(project) if !project.is_empty() => format!("{path}?project={project}"),
         _ => path.to_string(),
     }
+}
+
+/// Derive a stable default `--request-id` from a canonical JSON serialization
+/// of the create payload when the caller omits one (TASK-N4TGD). Explicit ids win.
+fn resolve_create_request_id(
+    request_id: Option<String>,
+    payload: &serde_json::Value,
+) -> Option<String> {
+    if let Some(id) = request_id.filter(|value| !value.trim().is_empty()) {
+        return Some(id);
+    }
+    Some(default_create_request_id(payload))
+}
+
+fn default_create_request_id(payload: &serde_json::Value) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = canonical_json_bytes(payload);
+    let digest = Sha256::digest(&bytes);
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("create-{}", &hex[..32.min(hex.len())])
+}
+
+fn canonical_json_bytes(value: &serde_json::Value) -> Vec<u8> {
+    fn sort_value(value: &serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Object(map) => {
+                let mut keys: Vec<_> = map.keys().cloned().collect();
+                keys.sort();
+                let mut out = serde_json::Map::new();
+                for key in keys {
+                    out.insert(key.clone(), sort_value(&map[&key]));
+                }
+                serde_json::Value::Object(out)
+            }
+            serde_json::Value::Array(items) => {
+                serde_json::Value::Array(items.iter().map(sort_value).collect())
+            }
+            other => other.clone(),
+        }
+    }
+    serde_json::to_vec(&sort_value(value)).unwrap_or_default()
 }
 
 fn print_json(value: &serde_json::Value) -> Result<()> {
@@ -3036,4 +3067,45 @@ fn parse_key_values(items: Vec<String>) -> Result<Vec<(String, String)>> {
             Ok((k.to_string(), v.to_string()))
         })
         .collect::<Result<_>>()
+}
+
+#[cfg(test)]
+mod create_request_id_tests {
+    use super::{default_create_request_id, resolve_create_request_id};
+
+    #[test]
+    fn default_request_id_stable_for_identical_payload() {
+        let a = serde_json::json!({
+            "project": "orgasmic",
+            "title": "Vertical Slice",
+            "properties": { "CANONICAL": "Vertical Slice" },
+            "force": false,
+        });
+        let b = serde_json::json!({
+            "force": false,
+            "project": "orgasmic",
+            "properties": { "CANONICAL": "Vertical Slice" },
+            "title": "Vertical Slice",
+        });
+        assert_eq!(default_create_request_id(&a), default_create_request_id(&b));
+    }
+
+    #[test]
+    fn default_request_id_differs_when_payload_changes() {
+        let a = serde_json::json!({ "title": "One", "force": false });
+        let b = serde_json::json!({ "title": "Two", "force": false });
+        assert_ne!(default_create_request_id(&a), default_create_request_id(&b));
+    }
+
+    #[test]
+    fn explicit_request_id_wins() {
+        let payload = serde_json::json!({ "title": "X" });
+        assert_eq!(
+            resolve_create_request_id(Some("explicit-1".into()), &payload).as_deref(),
+            Some("explicit-1")
+        );
+        let derived = resolve_create_request_id(None, &payload).unwrap();
+        assert!(derived.starts_with("create-"));
+        assert_ne!(derived, "explicit-1");
+    }
 }
