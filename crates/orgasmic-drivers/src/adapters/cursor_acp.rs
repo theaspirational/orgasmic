@@ -38,6 +38,10 @@ pub struct CursorAcpAdapter {
     session_id: Option<String>,
     terminal_emitted: bool,
     active_tools: HashSet<String>,
+    /// Cursor can answer `session/prompt` before the final update for a tool
+    /// it has already announced. Keep that turn boundary pending until every
+    /// announced tool reaches a terminal update.
+    pending_stop_response: Option<Value>,
     /// Structured model catalog from the live `session/new` JSON-RPC result.
     runtime_catalog: Option<RuntimeOptionsCatalog>,
 }
@@ -51,6 +55,7 @@ impl CursorAcpAdapter {
             session_id: None,
             terminal_emitted: false,
             active_tools: HashSet::new(),
+            pending_stop_response: None,
             runtime_catalog: None,
         }
     }
@@ -130,6 +135,7 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             session_id: self.session_id.clone(),
             terminal_emitted: self.terminal_emitted,
             active_tools: self.active_tools.clone(),
+            pending_stop_response: self.pending_stop_response.clone(),
             runtime_catalog: self.runtime_catalog.clone(),
         })
     }
@@ -606,6 +612,13 @@ impl CursorAcpAdapter {
                     seq: self.next_seq(),
                 })
                 .await;
+            if self.active_tools.is_empty() {
+                if let Some(response) = self.pending_stop_response.take() {
+                    for event in self.stop_response_events(&response) {
+                        let _ = events.send(event).await;
+                    }
+                }
+            }
         } else {
             let _ = events
                 .send(DriverEvent::TextChunk {
@@ -626,6 +639,10 @@ impl CursorAcpAdapter {
             .or_else(|| response.get("stop_reason"))
             .and_then(Value::as_str)
             .unwrap_or("end_turn");
+        if reason != "cancelled" && !self.active_tools.is_empty() {
+            self.pending_stop_response = Some(response.clone());
+            return Vec::new();
+        }
         let seq = self.next_seq();
         let terminal = match reason {
             "end_turn" | "max_tokens" => {
@@ -1772,6 +1789,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn captured_prompt_response_waits_for_active_tool_completion() {
+        let mut adapter = CursorAcpAdapter::new();
+        let captured: Vec<Value> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cursor_acp_prompt_response_before_tool_completion.json"
+        )))
+        .unwrap();
+
+        let call = adapter.parse_event(captured[0].clone()).await;
+        assert!(matches!(
+            &call[0],
+            DriverEvent::ToolCall { call_id, .. } if call_id == "captured-pwd-call"
+        ));
+
+        let progress = adapter.parse_event(captured[1].clone()).await;
+        assert!(matches!(
+            &progress[0],
+            DriverEvent::TextChunk {
+                stream: TextStream::System,
+                ..
+            }
+        ));
+
+        let deferred = adapter
+            .on_ws_response("session/prompt", captured[2]["result"].clone())
+            .await
+            .unwrap();
+        assert!(deferred.is_empty());
+        assert!(!adapter.terminal_emitted());
+
+        let completed = adapter.parse_event(captured[3].clone()).await;
+        assert!(matches!(
+            &completed[0],
+            DriverEvent::ToolResult { call_id, ok: true, .. } if call_id == "captured-pwd-call"
+        ));
+        assert!(matches!(
+            &completed[1],
+            DriverEvent::AgentTurnComplete { .. }
+        ));
+        assert!(matches!(&completed[2], DriverEvent::RunComplete { .. }));
+        assert!(adapter.terminal_emitted());
+    }
+
+    #[tokio::test]
     async fn permission_request_allow_and_reject_paths() {
         let mut adapter = CursorAcpAdapter::new();
         adapter.ctx = Some(ctx());
@@ -1957,6 +2018,15 @@ mod tests {
     #[tokio::test]
     async fn cancelled_stop_is_terminal_without_fabricated_turn() {
         let mut adapter = CursorAcpAdapter::new();
+        adapter
+            .parse_event(json!({
+                "method": "session/update",
+                "params": {"update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCall": {"id": "cancelled-tool", "kind": "execute", "title": "execute"}
+                }}
+            }))
+            .await;
         let events = adapter
             .on_ws_response("session/prompt", json!({"stopReason": "cancelled"}))
             .await
