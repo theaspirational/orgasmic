@@ -51,7 +51,7 @@ fn serve_with_closed_stdout_still_handles_requests_and_writes_log_file() {
         command.process_group(0);
     }
     let mut child = command.spawn().expect("spawn orgasmic serve");
-    let mut child_stdout = child.stdout.take().expect("child stdout");
+    let child_stdout = child.stdout.take().expect("child stdout");
     let mut child_stderr = child.stderr.take().expect("child stderr");
     let _child = ChildGuard(child);
 
@@ -62,10 +62,9 @@ fn serve_with_closed_stdout_still_handles_requests_and_writes_log_file() {
         assert!(Instant::now() < deadline, "daemon did not bind within 15s");
         std::thread::sleep(Duration::from_millis(25));
     }
-    // Drain whatever boot lines are already buffered, then drop the reader
-    // (closes the pipe → child stdout becomes a dead mirror).
-    let mut drained = Vec::new();
-    let _ = child_stdout.read(&mut drained);
+    // The successful connect establishes the post-bind point in the timeline;
+    // dropping the reader then closes the pipe and makes stdout a dead mirror.
+    // Do not attempt a false "drain" with an empty Vec (which reads no bytes).
     drop(child_stdout);
 
     let token = std::fs::read_to_string(home.auth_token())

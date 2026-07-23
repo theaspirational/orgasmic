@@ -907,8 +907,6 @@ const ENTRY_DEFAULT_WORKFLOW_SECTION: &str = "** Default workflow";
 const ENTRY_SCAFFOLD_VERSION: &str = "1";
 
 fn main() -> Result<()> {
-    // Before any log write can hit a closed stdout/stderr pipe (TASK-FZF2D).
-    orgasmic_daemon::ignore_sigpipe();
     let cli = Cli::parse();
     if let Cmd::ExecPinned {
         target,
@@ -919,6 +917,10 @@ fn main() -> Result<()> {
     {
         return cmd_exec_pinned(target, *dev, *ino, args);
     }
+    // Before any log write can hit a closed stdout/stderr pipe (TASK-FZF2D).
+    // Keep the pinned-exec boundary untouched: it immediately replaces this
+    // process and must not inherit a CLI-specific signal disposition change.
+    orgasmic_daemon::ignore_sigpipe();
     let home = Home::from_env()?;
     // `serve` must take the daemon instance lock before config reads or other
     // boot work. Daemon::run initializes its configured filter after locking.
