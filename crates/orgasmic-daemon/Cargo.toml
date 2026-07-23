@@ -31,11 +31,11 @@ rand.workspace = true
 sha2.workspace = true
 include_dir.workspace = true
 libc = "0.2"
+reqwest.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
-reqwest.workspace = true
 tokio-tungstenite.workspace = true
 
 [lib]

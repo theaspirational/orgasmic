@@ -8,9 +8,12 @@
 //! `parse_errors` map (AC #2 + dec_022).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::tx::{parse_tx_file, TxEntry, TxError};
@@ -22,6 +25,8 @@ use orgasmic_core::{
     ParentTreeNode, SandboxAllowlist, TaskHeading,
 };
 use serde::{Serialize, Serializer};
+use tokio::io::AsyncReadExt;
+use tokio::process::Command;
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -408,6 +413,9 @@ impl IndexSnapshot {
 pub struct Index {
     inner: Arc<RwLock<IndexSnapshot>>,
     home: Home,
+    repo_url_refresh_enabled: Arc<AtomicBool>,
+    #[cfg(test)]
+    git_spawn_attempts: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl Index {
@@ -415,6 +423,9 @@ impl Index {
         Self {
             inner: Arc::new(RwLock::new(IndexSnapshot::default())),
             home,
+            repo_url_refresh_enabled: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            git_spawn_attempts: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
@@ -446,17 +457,95 @@ impl Index {
     /// Rebuild from disk. Called at boot before the daemon serves normal
     /// reads (arch_006 / AC #1) and on watcher-driven refresh.
     pub async fn rebuild(&self) {
-        let mut snap = IndexSnapshot {
+        self.rebuild_with_timeout(Duration::from_secs(5)).await;
+    }
+
+    async fn rebuild_with_timeout(&self, timeout: Duration) {
+        // Home-owned state is small and must remain available even when one
+        // registered project is on a filesystem that stalls. Move project
+        // traversal to the blocking pool and bound the wait so boot can bind.
+        // A live rebuild starts a fresh snapshot, so carry Git-backed metadata
+        // forward explicitly until its post-bind refresh can replace it.
+        let prior_repo_urls: BTreeMap<String, String> = self
+            .inner
+            .read()
+            .await
+            .projects
+            .iter()
+            .map(|(id, project)| (id.clone(), project.repo_url.clone()))
+            .collect();
+        let mut base = IndexSnapshot {
             rebuilt_at: Some(Utc::now()),
             ..IndexSnapshot::default()
         };
-        self.load_board(&mut snap);
-        self.load_home_tx(&mut snap);
-        let board = snap.board.clone();
+        self.load_board(&mut base);
+        self.load_home_tx(&mut base);
+        let board = base.board.clone();
+        let mut snap = base;
         for entry in board {
-            self.load_project(&entry, &mut snap);
+            let scan_index = self.clone();
+            let scan_seed = snap.clone();
+            let scan_entry = entry.clone();
+            let prior_repo_url = prior_repo_urls.get(&entry.id).cloned();
+            let scan = tokio::task::spawn_blocking(move || {
+                let mut next = scan_seed;
+                scan_index.load_project(&scan_entry, &mut next, prior_repo_url);
+                next
+            });
+            match tokio::time::timeout(timeout, scan).await {
+                Ok(Ok(next)) => snap = next,
+                Ok(Err(error)) => {
+                    warn!(
+                        project = %entry.id,
+                        path = %entry.path.display(),
+                        error = %error,
+                        "project index scan task failed; omitting project from this index pass"
+                    );
+                }
+                Err(_) => {
+                    warn!(
+                        project = %entry.id,
+                        path = %entry.path.display(),
+                        timeout_secs = timeout.as_secs_f64(),
+                        "project index scan timed out; omitting project so daemon boot can continue"
+                    );
+                    warn_macos_files_access_timeout(std::slice::from_ref(&entry.path));
+                }
+            }
         }
+        rebuild_all_activity_indexes(&mut snap);
         *self.inner.write().await = snap;
+        if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
+            self.spawn_repo_url_refreshes();
+        }
+    }
+
+    /// Enable and resolve repository metadata after the listener is bound.
+    /// Until this method is called, neither boot scans nor watcher refreshes
+    /// may spawn Git.
+    pub fn spawn_repo_url_refresh(&self) {
+        self.repo_url_refresh_enabled.store(true, Ordering::Release);
+        self.spawn_repo_url_refreshes();
+    }
+
+    fn spawn_repo_url_refreshes(&self) {
+        let index = self.clone();
+        tokio::spawn(async move {
+            index.refresh_repo_urls().await;
+        });
+    }
+
+    async fn refresh_repo_urls(&self) {
+        let targets: Vec<(String, PathBuf)> = {
+            let snap = self.inner.read().await;
+            snap.projects
+                .iter()
+                .map(|(id, project)| (id.clone(), project.root.clone()))
+                .collect()
+        };
+        for (project_id, project_root) in targets {
+            self.refresh_repo_url(&project_id, &project_root).await;
+        }
     }
 
     /// Refresh one project after a watcher event. Preserves the rest of the
@@ -473,8 +562,33 @@ impl Index {
         snap.tx
             .retain(|r| r.project_id.as_deref() != Some(project_id));
         let entry = prior_board.clone();
-        self.load_project(&entry, &mut snap);
+        self.load_project(&entry, &mut snap, None);
+        let project_root = entry.path.clone();
+        drop(snap);
+        if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
+            self.refresh_repo_url(project_id, &project_root).await;
+        }
         Ok(())
+    }
+
+    async fn refresh_repo_url(&self, project_id: &str, project_root: &Path) {
+        if !project_root.join(".git").exists() {
+            return;
+        }
+        #[cfg(test)]
+        self.git_spawn_attempts.fetch_add(1, Ordering::Relaxed);
+        let repo_url = git_remote_origin_url_with_program(
+            project_root,
+            OsStr::new("git"),
+            Duration::from_secs(3),
+        )
+        .await;
+        let Some(repo_url) = repo_url else {
+            return;
+        };
+        if let Some(project) = self.inner.write().await.projects.get_mut(project_id) {
+            project.repo_url = repo_url;
+        }
     }
 
     pub async fn refresh_board(&self) {
@@ -535,11 +649,25 @@ impl Index {
         }
     }
 
-    fn load_project(&self, board_entry: &BoardEntry, snap: &mut IndexSnapshot) {
+    fn load_project(
+        &self,
+        board_entry: &BoardEntry,
+        snap: &mut IndexSnapshot,
+        prior_repo_url: Option<String>,
+    ) {
+        let prior_repo_url = prior_repo_url.unwrap_or_else(|| {
+            snap.projects
+                .get(&board_entry.id)
+                .map(|project| project.repo_url.clone())
+                .unwrap_or_default()
+        });
         let project = ProjectIndex {
             project_id: board_entry.id.clone(),
             root: board_entry.path.clone(),
-            repo_url: git_remote_origin_url(&board_entry.path).unwrap_or_default(),
+            // Git is authoritative for config syntax, includes, and worktree
+            // layout. Initial resolution happens asynchronously after bind;
+            // watcher scans retain the last known value until Git responds.
+            repo_url: prior_repo_url,
             branch: board_entry.branch.clone(),
             status: board_entry.status.clone(),
             tasks: Vec::new(),
@@ -1347,20 +1475,119 @@ fn read_org(path: &Path) -> Result<OrgFile, String> {
     OrgFile::parse(raw, path.to_string_lossy()).map_err(|e| e.to_string())
 }
 
-fn git_remote_origin_url(project_root: &Path) -> Option<String> {
-    let output = Command::new("git")
+async fn git_remote_origin_url_with_program(
+    project_root: &Path,
+    program: &OsStr,
+    timeout: Duration,
+) -> Option<String> {
+    let mut child = Command::new(program)
         .args(["config", "--get", "remote.origin.url"])
         .current_dir(project_root)
-        .output()
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
         .ok()?;
-    if !output.status.success() {
+    let mut stdout = child.stdout.take()?;
+    let stdout_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).await.map(|_| bytes)
+    });
+    let status = match tokio::time::timeout(timeout, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => {
+            warn!(
+                project = %project_root.display(),
+                error = %error,
+                "git remote origin lookup failed"
+            );
+            if let Err(kill_error) = child.start_kill() {
+                warn!(
+                    project = %project_root.display(),
+                    error = %kill_error,
+                    "failed to kill errored git remote origin child"
+                );
+            }
+            if let Err(wait_error) = child.wait().await {
+                warn!(
+                    project = %project_root.display(),
+                    error = %wait_error,
+                    "failed to reap errored git remote origin child"
+                );
+            }
+            let _ = stdout_reader.await;
+            return None;
+        }
+        Err(_) => {
+            warn!(
+                project = %project_root.display(),
+                timeout_secs = timeout.as_secs_f64(),
+                "git remote origin lookup timed out; killing child and leaving repo_url empty"
+            );
+            if let Err(error) = child.start_kill() {
+                warn!(
+                    project = %project_root.display(),
+                    error = %error,
+                    "failed to kill timed-out git remote origin child"
+                );
+            }
+            if let Err(error) = child.wait().await {
+                warn!(
+                    project = %project_root.display(),
+                    error = %error,
+                    "failed to reap timed-out git remote origin child"
+                );
+            }
+            let _ = stdout_reader.await;
+            return None;
+        }
+    };
+    let output = stdout_reader.await.ok()?.ok()?;
+    if !status.success() {
         return None;
     }
-    let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let value = String::from_utf8_lossy(&output).trim().to_string();
     if value.is_empty() {
         None
     } else {
         Some(value)
+    }
+}
+
+fn macos_files_access_hint(path: &Path, user_home: &Path) -> Option<String> {
+    let protected = [
+        ("Documents", user_home.join("Documents")),
+        ("Desktop", user_home.join("Desktop")),
+        ("Downloads", user_home.join("Downloads")),
+    ];
+    protected.into_iter().find_map(|(folder, root)| {
+        path.starts_with(root).then(|| {
+            format!(
+                "project scan timed out at {} under ~/{}; grant the orgasmic daemon Files and Folders access for {} in System Settings > Privacy & Security, then restart the daemon",
+                path.display(),
+                folder,
+                folder
+            )
+        })
+    })
+}
+
+fn warn_macos_files_access_timeout(paths: &[PathBuf]) {
+    #[cfg(target_os = "macos")]
+    {
+        let Some(user_home) = std::env::var_os("HOME").map(PathBuf::from) else {
+            return;
+        };
+        for path in paths {
+            if let Some(hint) = macos_files_access_hint(path, &user_home) {
+                warn!(project = %path.display(), "{hint}");
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = paths;
     }
 }
 
@@ -1783,6 +2010,273 @@ mod tests {
         write(
             &sprint,
             "#+title: x sprint\n#+orgasmic_version: 1\n\n* BACKLOG TASK-001 Do a thing :work:\n:PROPERTIES:\n:ID:               TASK-001\n:PRIORITY:         P1\n:END:\n\n** Description\nSeeded detail.\n\n** Acceptance Criteria\n- [ ] Body fields load.\n",
+        );
+    }
+
+    #[tokio::test]
+    async fn repo_url_resolution_is_disabled_until_post_bind_refresh() {
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        std::fs::create_dir_all(project.join(".git")).unwrap();
+        let index = Index::new(home);
+
+        index.rebuild().await;
+        assert_eq!(index.snapshot().await.projects["project"].repo_url, "");
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
+
+        // Watcher refreshes can happen during boot. They must preserve the
+        // no-Git-before-bind invariant too.
+        index.refresh_project("project").await.unwrap();
+        assert_eq!(index.snapshot().await.projects["project"].repo_url, "");
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
+
+        index
+            .repo_url_refresh_enabled
+            .store(true, Ordering::Release);
+        index.refresh_repo_urls().await;
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 1);
+
+        // A watcher scan must not erase the last Git-backed value while the
+        // repository metadata is temporarily unavailable.
+        index
+            .inner
+            .write()
+            .await
+            .projects
+            .get_mut("project")
+            .unwrap()
+            .repo_url = "ssh://git@example.com/org/project.git".to_string();
+        std::fs::rename(project.join(".git"), project.join(".git-hidden")).unwrap();
+        index.refresh_project("project").await.unwrap();
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            "ssh://git@example.com/org/project.git"
+        );
+    }
+
+    #[tokio::test]
+    async fn live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh() {
+        fn git(cwd: &Path, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("project");
+        seed_project(&project);
+        seed_board(&home, &project, "project");
+        git(&project, &["init", "--quiet"]);
+        git(
+            &project,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "ssh://git@example.com/org/project.git",
+            ],
+        );
+        let index = Index::new(home);
+
+        // Boot's pre-bind rebuild never invokes Git.
+        index.rebuild().await;
+        assert_eq!(index.git_spawn_attempts.load(Ordering::Relaxed), 0);
+
+        index
+            .repo_url_refresh_enabled
+            .store(true, Ordering::Release);
+        index.refresh_repo_urls().await;
+        let expected = "ssh://git@example.com/org/project.git";
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
+        );
+        let attempts_before_rebuild = index.git_spawn_attempts.load(Ordering::Relaxed);
+
+        // POST /reindex follows this same live-rebuild path. Publishing the
+        // new snapshot must retain its known URL while Git refreshes it again.
+        index.rebuild().await;
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
+        );
+        assert!(index.repo_url_refresh_enabled.load(Ordering::Acquire));
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while index.git_spawn_attempts.load(Ordering::Relaxed) <= attempts_before_rebuild {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("live rebuild did not schedule a post-bind Git refresh");
+        assert_eq!(
+            index.snapshot().await.projects["project"].repo_url,
+            expected
+        );
+    }
+
+    #[tokio::test]
+    async fn git_resolves_quoted_included_origin_from_linked_worktree() {
+        fn git(cwd: &Path, args: &[&str]) {
+            let status = std::process::Command::new("git")
+                .args(args)
+                .current_dir(cwd)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git {args:?} failed");
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let worktree = tmp.path().join("linked-worktree");
+        std::fs::create_dir_all(&main).unwrap();
+        git(&main, &["init", "--quiet"]);
+        write(&main.join("tracked"), "seed\n");
+        git(&main, &["add", "tracked"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "--quiet",
+                "-m",
+                "seed",
+            ],
+        );
+        let included = tmp.path().join("origin.inc");
+        write(
+            &included,
+            "[remote \"origin\"]\n\turl = \"ssh://git@example.com/org/quoted.git\"\n",
+        );
+        git(
+            &main,
+            &[
+                "config",
+                "include.path",
+                included.to_str().expect("UTF-8 temp path"),
+            ],
+        );
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "--detach",
+                worktree.to_str().expect("UTF-8 temp path"),
+                "HEAD",
+            ],
+        );
+
+        let repo_url = git_remote_origin_url_with_program(
+            &worktree,
+            OsStr::new("git"),
+            Duration::from_secs(3),
+        )
+        .await;
+
+        assert_eq!(
+            repo_url.as_deref(),
+            Some("ssh://git@example.com/org/quoted.git")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn blocking_git_origin_child_is_killed_and_reaped_on_timeout() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let fake_git = tmp.path().join("git");
+        write(&fake_git, "#!/bin/sh\nexec sleep 30\n");
+        let mut permissions = std::fs::metadata(&fake_git).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&fake_git, permissions).unwrap();
+
+        let started = std::time::Instant::now();
+        let value = git_remote_origin_url_with_program(
+            &project,
+            fake_git.as_os_str(),
+            Duration::from_millis(500),
+        )
+        .await;
+
+        assert_eq!(value, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "hung git child was not bounded"
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn blocked_project_scan_times_out_without_blocking_the_index() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let (tmp, home) = make_home();
+        let project = tmp.path().join("blocked-project");
+        seed_project(&project);
+        seed_board(&home, &project, "blocked-project");
+        let task_file = project.join(".orgasmic/tasks/backlog.org");
+        std::fs::remove_file(&task_file).unwrap();
+        let task_file_c = std::ffi::CString::new(task_file.as_os_str().as_bytes()).unwrap();
+        let rc = unsafe { libc::mkfifo(task_file_c.as_ptr(), 0o600) };
+        assert_eq!(rc, 0, "create blocking task fifo");
+        let index = Index::new(home);
+
+        let started = std::time::Instant::now();
+        index.rebuild_with_timeout(Duration::from_millis(50)).await;
+
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "project scan timeout did not bound rebuild"
+        );
+        let snapshot = index.snapshot().await;
+        assert_eq!(snapshot.board.len(), 1);
+        assert!(
+            !snapshot.projects.contains_key("blocked-project"),
+            "timed-out project should be omitted from the pass"
+        );
+
+        // Release the abandoned blocking-pool scan before the tempdir is
+        // removed. Unlink the FIFO after pairing its blocked reader, replace
+        // the path with a regular file for any later reads in the same scan,
+        // then close the old pipe. The timed-out result is ignored.
+        let mut fifo_writer = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&task_file)
+            .unwrap();
+        std::fs::remove_file(&task_file).unwrap();
+        std::fs::write(&task_file, "#+title: tasks\n#+orgasmic_version: 1\n\n").unwrap();
+        std::io::Write::write_all(
+            &mut fifo_writer,
+            b"#+title: tasks\n#+orgasmic_version: 1\n\n",
+        )
+        .unwrap();
+        drop(fifo_writer);
+    }
+
+    #[test]
+    fn protected_folder_timeout_hint_is_path_specific_and_actionable() {
+        let user_home = Path::new("/Users/example");
+        let project = user_home.join("Documents/work/orgasmic");
+        let hint = macos_files_access_hint(&project, user_home).unwrap();
+
+        assert!(hint.contains(&project.display().to_string()));
+        assert!(hint.contains("Files and Folders"));
+        assert!(hint.contains("System Settings > Privacy & Security"));
+        assert_eq!(
+            macos_files_access_hint(Path::new("/tmp/project"), user_home),
+            None
         );
     }
 

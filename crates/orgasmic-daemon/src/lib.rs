@@ -29,6 +29,8 @@ pub mod watcher;
 pub mod writer;
 pub mod ws;
 
+use std::fs::{File, OpenOptions};
+use std::io::{Seek, SeekFrom, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,6 +40,7 @@ use anyhow::{Context, Result};
 use axum::Router;
 use orgasmic_core::Home;
 use orgasmic_drivers::modes::tmux;
+use serde::Deserialize;
 use tokio::net::TcpListener;
 use tracing::{info, warn};
 use tracing_subscriber::EnvFilter;
@@ -79,6 +82,44 @@ pub struct RunningDaemon {
     // Keep the sender alive; dropping it closes command_loop and drops notify.
     _watcher: WatcherHandle,
 }
+
+#[derive(Debug, Clone)]
+pub struct DaemonAlreadyRunning {
+    pub addr: SocketAddr,
+    pub boot_id: String,
+    pub pid: u32,
+}
+
+impl fmt::Display for DaemonAlreadyRunning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "orgasmic daemon already running at http://{} (pid={}, boot_id={})",
+            self.addr, self.pid, self.boot_id
+        )
+    }
+}
+
+impl error::Error for DaemonAlreadyRunning {}
+
+#[derive(Debug, Clone)]
+pub struct DaemonInstanceLockHeld {
+    pub path: PathBuf,
+    pub detail: String,
+}
+
+impl fmt::Display for DaemonInstanceLockHeld {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "daemon instance lock {} is held, but the incumbent is not healthy: {}. Refusing to start a competing daemon",
+            self.path.display(),
+            self.detail
+        )
+    }
+}
+
+impl error::Error for DaemonInstanceLockHeld {}
 
 #[derive(Debug, Clone)]
 pub struct HistoricalTxStartupError {
@@ -151,7 +192,9 @@ pub struct DaemonOptions {
 impl Default for DaemonOptions {
     fn default() -> Self {
         let actor = std::env::var("USER").unwrap_or_else(|_| "unknown".into());
-        let machine = hostname().unwrap_or_else(|| "unknown".into());
+        // `DaemonOptions::default()` is built before `Daemon::run` can take the
+        // single-instance lock, so machine discovery must never spawn.
+        let machine = resolve_machine_name(std::env::var("HOSTNAME").ok(), os_machine_name);
         Self {
             bind_override: None,
             port_override: None,
@@ -164,6 +207,178 @@ impl Default for DaemonOptions {
             trusted_exec_wrapper_override: None,
         }
     }
+}
+
+fn resolve_machine_name(
+    hostname_env: Option<String>,
+    os_source: impl FnOnce() -> Option<String>,
+) -> String {
+    hostname_env
+        .filter(|name| !name.trim().is_empty())
+        .or_else(os_source)
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(unix)]
+fn os_machine_name() -> Option<String> {
+    let mut buffer = [0_u8; 256];
+    // SAFETY: `buffer` is valid for its full length and `gethostname` writes
+    // at most that many bytes.
+    if unsafe { libc::gethostname(buffer.as_mut_ptr().cast(), buffer.len()) } != 0 {
+        return None;
+    }
+    let end = buffer
+        .iter()
+        .position(|byte| *byte == 0)
+        .unwrap_or(buffer.len());
+    Some(String::from_utf8_lossy(&buffer[..end]).trim().to_string())
+}
+
+#[cfg(not(unix))]
+fn os_machine_name() -> Option<String> {
+    std::env::var("COMPUTERNAME").ok()
+}
+
+const INCUMBENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+#[derive(Debug, Deserialize)]
+struct IncumbentStatus {
+    boot_id: String,
+    pid: u32,
+    home: PathBuf,
+}
+
+fn daemon_lock_path(home: &Home) -> PathBuf {
+    home.root.join("daemon.lock")
+}
+
+fn open_and_try_lock_daemon(home: &Home) -> Result<std::result::Result<File, PathBuf>> {
+    std::fs::create_dir_all(&home.root)
+        .with_context(|| format!("create {}", home.root.display()))?;
+    let path = daemon_lock_path(home);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .with_context(|| format!("open {}", path.display()))?;
+    match fs2::FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            file.set_len(0)
+                .with_context(|| format!("truncate {}", path.display()))?;
+            file.seek(SeekFrom::Start(0))
+                .with_context(|| format!("seek {}", path.display()))?;
+            writeln!(file, "{}", std::process::id())
+                .with_context(|| format!("write {}", path.display()))?;
+            file.sync_data()
+                .with_context(|| format!("sync {}", path.display()))?;
+            Ok(Ok(file))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(Err(path)),
+        Err(error) => Err(error).with_context(|| format!("lock {}", path.display())),
+    }
+}
+
+async fn acquire_daemon_lock(
+    home: &Home,
+    opts: &DaemonOptions,
+) -> Result<std::result::Result<File, DaemonAlreadyRunning>> {
+    let lock_path = match open_and_try_lock_daemon(home)? {
+        Ok(file) => return Ok(Ok(file)),
+        Err(path) => path,
+    };
+
+    let mut cfg = DaemonConfig::load(home).map_err(|error| DaemonInstanceLockHeld {
+        path: lock_path.clone(),
+        detail: format!("cannot load incumbent address from config: {error}"),
+    })?;
+    if let Some(bind) = opts.bind_override {
+        cfg = cfg.with_bind(bind);
+    }
+    if let Some(port) = opts.port_override {
+        cfg = cfg.with_port(port);
+    }
+    let probe_host = if cfg.bind.is_unspecified() {
+        if cfg.bind.is_ipv4() {
+            "127.0.0.1".parse().expect("valid IPv4 loopback")
+        } else {
+            "::1".parse().expect("valid IPv6 loopback")
+        }
+    } else {
+        cfg.bind
+    };
+    let addr = SocketAddr::new(probe_host, cfg.port);
+    let token = std::fs::read_to_string(home.auth_token())
+        .ok()
+        .map(|token| token.trim().to_string())
+        .filter(|token| !token.is_empty());
+    let Some(token) = token else {
+        return Err(DaemonInstanceLockHeld {
+            path: lock_path,
+            detail: "the incumbent has not created an auth token yet (it may still be booting)"
+                .to_string(),
+        }
+        .into());
+    };
+    if cfg.port == 0 {
+        return Err(DaemonInstanceLockHeld {
+            path: lock_path,
+            detail: "the configured port is 0, so the incumbent address cannot be probed"
+                .to_string(),
+        }
+        .into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(INCUMBENT_PROBE_TIMEOUT)
+        .build()
+        .context("build incumbent daemon probe client")?;
+    let response = client
+        .get(format!("http://{addr}/api/daemon/status"))
+        .bearer_auth(token)
+        .send()
+        .await;
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            return Err(DaemonInstanceLockHeld {
+                path: lock_path,
+                detail: format!("HTTP health probe at http://{addr} failed: {error}"),
+            }
+            .into())
+        }
+    };
+    if !response.status().is_success() {
+        return Err(DaemonInstanceLockHeld {
+            path: lock_path,
+            detail: format!(
+                "HTTP health probe at http://{addr} returned {}",
+                response.status()
+            ),
+        }
+        .into());
+    }
+    let status: IncumbentStatus = response
+        .json()
+        .await
+        .context("parse incumbent daemon status")?;
+    if status.home != home.root {
+        return Err(DaemonInstanceLockHeld {
+            path: lock_path,
+            detail: format!(
+                "HTTP health probe reached a daemon for {}, not {}",
+                status.home.display(),
+                home.root.display()
+            ),
+        }
+        .into());
+    }
+    Ok(Err(DaemonAlreadyRunning {
+        addr,
+        boot_id: status.boot_id,
+        pid: status.pid,
+    }))
 }
 
 fn bind_delay_for_tests() -> Option<std::time::Duration> {
@@ -199,19 +414,14 @@ async fn bind_listener_with_retry(addr: SocketAddr) -> std::io::Result<TcpListen
     }
 }
 
-fn hostname() -> Option<String> {
-    std::process::Command::new("hostname")
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-}
-
 pub struct Daemon;
 
 impl Daemon {
     pub async fn run(home: Home, opts: DaemonOptions) -> Result<RunningDaemon> {
+        let instance_lock = match acquire_daemon_lock(&home, &opts).await? {
+            Ok(lock) => lock,
+            Err(incumbent) => return Err(incumbent.into()),
+        };
         home.ensure().context("ensure orgasmic home")?;
         let mut cfg = DaemonConfig::load(&home)?;
         if let Some(bind) = opts.bind_override {
@@ -362,6 +572,10 @@ impl Daemon {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let writer_for_shutdown = writer.clone();
         let join = tokio::spawn(async move {
+            // The exclusive home lock must outlive every daemon-owned task and
+            // listener. Keeping it in the serve task releases it only after
+            // graceful shutdown has completed.
+            let _instance_lock = instance_lock;
             let serve = axum::serve(listener, app).with_graceful_shutdown(async move {
                 let _ = shutdown_rx.await;
                 // Wake long-lived connection tasks before draining connections.
@@ -372,6 +586,7 @@ impl Daemon {
             }
             writer_for_shutdown.shutdown().await;
         });
+        index.spawn_repo_url_refresh();
 
         Ok(RunningDaemon {
             addr: local_addr,
@@ -393,6 +608,23 @@ pub fn default_home_tx_path(home: &Home) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn machine_name_uses_non_spawning_os_source_when_hostname_is_absent() {
+        let machine = resolve_machine_name(None, || Some("stable-os-machine".to_string()));
+
+        assert_eq!(machine, "stable-os-machine");
+        assert_ne!(machine, "unknown");
+    }
+
+    #[test]
+    fn machine_name_prefers_explicit_environment_value() {
+        let machine = resolve_machine_name(Some("explicit-machine".to_string()), || {
+            panic!("OS source must not replace an explicit machine name")
+        });
+
+        assert_eq!(machine, "explicit-machine");
+    }
 
     #[tokio::test]
     async fn daemon_boots_and_status_reports_boot_id() {
@@ -426,6 +658,46 @@ mod tests {
         assert_eq!(body["boot_id"].as_str().unwrap(), boot_id);
         assert!(body["pid"].as_u64().is_some());
 
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn second_start_preserves_healthy_lock_owner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = reservation.local_addr().unwrap().port();
+        drop(reservation);
+        std::fs::write(
+            home.config(),
+            format!("bind_host: 127.0.0.1\nbind_port: {port}\n"),
+        )
+        .unwrap();
+        let options = DaemonOptions {
+            fs_watcher_enabled: false,
+            ..DaemonOptions::default()
+        };
+        let running = Daemon::run(home.clone(), options.clone())
+            .await
+            .expect("boot first daemon");
+
+        let started = std::time::Instant::now();
+        let error = match Daemon::run(home, options).await {
+            Ok(_) => panic!("second daemon must not boot"),
+            Err(error) => error,
+        };
+        let incumbent = error
+            .downcast_ref::<DaemonAlreadyRunning>()
+            .expect("healthy incumbent classification");
+
+        assert_eq!(incumbent.addr, running.addr);
+        assert_eq!(incumbent.boot_id, running.boot_id);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "second start did not fail closed quickly"
+        );
         let _ = running.shutdown.send(());
         let _ = running.join.await;
     }

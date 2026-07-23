@@ -418,8 +418,11 @@ fn preflight_daemon(home: &Home) -> Result<bool> {
         }
         LocalDaemonState::Starting(starting) => {
             bail!(
-                "daemon is still starting (pid {}); retry update after it is ready",
-                starting.pid
+                "daemon is still starting{}; retry update after it is ready",
+                starting
+                    .pid
+                    .map(|pid| format!(" (pid {pid})"))
+                    .unwrap_or_default()
             )
         }
         LocalDaemonState::Unauthorized => {

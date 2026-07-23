@@ -917,13 +917,11 @@ fn main() -> Result<()> {
         return cmd_exec_pinned(target, *dev, *ino, args);
     }
     let home = Home::from_env()?;
-    let log_default = match &cli.cmd {
-        Cmd::Serve { .. } => orgasmic_daemon::DaemonConfig::load(&home)
-            .map(|cfg| cfg.log_level)
-            .unwrap_or_else(|_| "info".to_string()),
-        _ => "info".to_string(),
-    };
-    orgasmic_daemon::init_tracing(&log_default);
+    // `serve` must take the daemon instance lock before config reads or other
+    // boot work. Daemon::run initializes its configured filter after locking.
+    if !matches!(&cli.cmd, Cmd::Serve { .. }) {
+        orgasmic_daemon::init_tracing("info");
+    }
     match cli.cmd {
         Cmd::Init => cmd_init(&home),
         Cmd::Entry => cmd_entry(&home),
@@ -1769,7 +1767,18 @@ fn cmd_serve(home: &Home, bind: Option<IpAddr>, port: Option<u16>) -> Result<()>
     let home_clone = home.clone();
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async move {
-        let running = Daemon::run(home_clone, opts).await?;
+        let running = match Daemon::run(home_clone, opts).await {
+            Ok(running) => running,
+            Err(error) => {
+                if let Some(incumbent) =
+                    error.downcast_ref::<orgasmic_daemon::DaemonAlreadyRunning>()
+                {
+                    println!("✓ {incumbent}");
+                    return Ok(());
+                }
+                return Err(error);
+            }
+        };
         println!(
             "✓ orgasmic daemon listening on http://{} (boot_id={})",
             running.addr, running.boot_id
@@ -1935,7 +1944,7 @@ fn print_start_outcome(home: &Home, outcome: &daemon_lifecycle::DaemonStartOutco
         }
         daemon_lifecycle::DaemonStartOutcome::StillBooting(starting) => {
             println!("daemon still booting — check `orgasmic daemon status` shortly");
-            println!("  pid:     {}", starting.pid);
+            print_starting_pid(starting);
         }
     }
 }
@@ -1945,6 +1954,13 @@ fn yes_no(value: bool) -> &'static str {
         "yes"
     } else {
         "no"
+    }
+}
+
+fn print_starting_pid(starting: &daemon_lifecycle::DaemonStarting) {
+    match starting.pid {
+        Some(pid) => println!("  pid:     {pid}"),
+        None => println!("  pid:     (lock owner has not published its pid yet)"),
     }
 }
 
@@ -1959,7 +1975,7 @@ fn cmd_daemon_status(home: &Home) -> Result<()> {
         daemon_lifecycle::LocalDaemonState::Starting(starting) => {
             println!("starting");
             print_daemon_persistence(home);
-            println!("  pid:     {}", starting.pid);
+            print_starting_pid(&starting);
         }
         daemon_lifecycle::LocalDaemonState::Down => {
             println!("stopped");
