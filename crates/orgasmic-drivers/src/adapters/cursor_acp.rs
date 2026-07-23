@@ -774,8 +774,11 @@ impl CursorAcpAdapter {
     }
 
     fn shell_command_allowed(&self, args: &Value) -> bool {
-        let Some(command) = shell_command_arg(args).or_else(|| cursor_execute_title_command(args))
-        else {
+        let (command, title_only) = if let Some(command) = shell_command_arg(args) {
+            (command, false)
+        } else if let Some(command) = cursor_execute_title_command(args) {
+            (command, true)
+        } else {
             return false;
         };
         let words = split_policy_command(command);
@@ -794,6 +797,7 @@ impl CursorAcpAdapter {
                     "git" => self.git_c_command_allowed(&words),
                     "grep" | "rg" => self.grep_command_allowed(&words),
                     "find" => self.find_command_allowed(&words),
+                    "pwd" => title_only && command == "pwd",
                     "orgasmic" => self.orgasmic_workflow_command_allowed(&words),
                     _ => false,
                 }
@@ -1842,11 +1846,29 @@ mod tests {
     }
 
     #[test]
+    fn nested_cursor_execute_title_authorizes_only_standalone_workspace_probe() {
+        let mut adapter = CursorAcpAdapter::new();
+        adapter.ctx = Some(ctx());
+        let captured: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cursor_acp_nested_pwd_permission.json"
+        )))
+        .unwrap();
+
+        assert!(adapter.permission_allowed(&captured, &SandboxAllowlist::default()));
+    }
+
+    #[test]
     fn cursor_execute_title_rejects_shell_control_foreign_and_destructive_commands() {
         let mut adapter = CursorAcpAdapter::new();
         adapter.ctx = Some(ctx());
         let cwd = std::env::current_dir().unwrap();
         let unsafe_titles = [
+            "`pwd `",
+            "`pwd /tmp`",
+            "`pwd; curl https://example.invalid`",
+            "`env HOME=/tmp pwd`",
+            "`$(pwd)`",
             "`orgasmic entry; rm -rf /`",
             "`orgasmic entry && curl https://example.invalid`",
             "`curl https://example.invalid`",
@@ -1871,6 +1893,10 @@ mod tests {
                     "input": {"command": format!("orgasmic dispatch finalize --summary-file {} --sha forged", cwd.join("report.md").display())}
                 }
             }),
+            &SandboxAllowlist::default()
+        ));
+        assert!(!adapter.permission_allowed(
+            &json!({"kind": "execute", "input": {"command": "pwd"}}),
             &SandboxAllowlist::default()
         ));
     }
