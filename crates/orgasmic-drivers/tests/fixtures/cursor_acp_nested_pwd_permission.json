@@ -1,0 +1,18 @@
+{
+  "options": [
+    { "kind": "allow_once", "name": "Allow once", "optionId": "allow-once" },
+    { "kind": "allow_always", "name": "Allow always", "optionId": "allow-always" },
+    { "kind": "reject_once", "name": "Reject", "optionId": "reject-once" }
+  ],
+  "sessionId": "3a215661-b14e-42c2-b37d-5f2e3a13acd3",
+  "toolCall": {
+    "content": [{
+      "content": { "text": "Not in allowlist: pwd", "type": "text" },
+      "type": "content"
+    }],
+    "kind": "execute",
+    "status": "pending",
+    "title": "`pwd`",
+    "toolCallId": "call-bb12b644-c9bd-444e-a9cc-e365cb000cee-5\nfc_7e7baed7-be52-9990-bd79-3c7600b5177e_0"
+  }
+}
