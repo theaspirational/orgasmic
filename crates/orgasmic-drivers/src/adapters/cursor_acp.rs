@@ -967,11 +967,23 @@ fn legacy_model_alias_matches(requested: &str, option: &SessionModelOption) -> b
         .split(',')
         .filter_map(|pair| pair.split_once('='))
         .collect::<BTreeMap<_, _>>();
-    !suffix.is_empty()
-        && suffix.split('-').all(|part| {
-            attributes.values().any(|value| *value == part)
-                || attributes.get(part).is_some_and(|value| *value == "true")
-        })
+    let requested_parts = suffix.split('-').collect::<Vec<_>>();
+    if requested_parts.is_empty() || requested_parts.iter().any(|part| part.is_empty()) {
+        return false;
+    }
+
+    // A legacy suffix must name every advertised discriminator. Otherwise an
+    // alias such as `grok-4.5-high` could silently select `fast=true`.
+    let mut matched = HashSet::new();
+    for part in requested_parts {
+        let Some((key, _)) = attributes.iter().find(|(key, value)| {
+            !matched.contains(*key) && (**value == part || (**key == part && **value == "true"))
+        }) else {
+            return false;
+        };
+        matched.insert(*key);
+    }
+    matched.len() == attributes.len()
 }
 
 /// Parse the structured `models` / `configOptions` block from a live
@@ -1449,6 +1461,20 @@ mod tests {
         assert!(
             matches!(result, Err(DriverError::InvalidConfig(message)) if message.contains("not a unique"))
         );
+    }
+
+    #[test]
+    fn under_specified_legacy_alias_does_not_select_extra_attributes() {
+        let result = resolve_session_model(
+            &json!({
+                "models": { "availableModels": [{
+                    "modelId": "grok-4.5[effort=high,fast=true]",
+                    "name": "grok-4.5"
+                }] }
+            }),
+            "cursor-grok-4.5-high",
+        );
+        assert!(matches!(result, Err(DriverError::InvalidConfig(_))));
     }
 
     #[tokio::test]

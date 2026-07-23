@@ -38,6 +38,34 @@ pub fn response_matches(value: &Value, id: u64) -> bool {
     value.get("id") == Some(&json!(id))
 }
 
+const RPC_ERROR_DATA_MAX_BYTES: usize = 3 * 1024;
+
+/// Render server-provided JSON-RPC error data without allowing it to dominate
+/// durable driver-error artifacts. The marker reports bytes omitted from the
+/// serialized value; the retained prefix always ends at a UTF-8 boundary.
+fn bounded_error_data(data: Option<&Value>) -> String {
+    let serialized = data.unwrap_or(&Value::Null).to_string();
+    if serialized.len() <= RPC_ERROR_DATA_MAX_BYTES {
+        return serialized;
+    }
+
+    // The marker length depends on the omitted-byte count, so converge on the
+    // prefix budget before slicing. It stabilizes once the digit count does.
+    let mut marker_len = "[... 0 bytes omitted]".len();
+    loop {
+        let mut prefix_len = RPC_ERROR_DATA_MAX_BYTES.saturating_sub(marker_len);
+        while !serialized.is_char_boundary(prefix_len) {
+            prefix_len -= 1;
+        }
+        let omitted = serialized.len() - prefix_len;
+        let marker = format!("[... {omitted} bytes omitted]");
+        if marker.len() == marker_len {
+            return format!("{}{marker}", &serialized[..prefix_len]);
+        }
+        marker_len = marker.len();
+    }
+}
+
 pub fn rpc_result(method: &str, mut value: Value) -> Result<Value, DriverError> {
     if let Some(error) = value.get("error") {
         let code = error.get("code").cloned().unwrap_or(Value::Null);
@@ -45,7 +73,7 @@ pub fn rpc_result(method: &str, mut value: Value) -> Result<Value, DriverError> 
             .get("message")
             .and_then(Value::as_str)
             .unwrap_or("JSON-RPC request failed");
-        let data = error.get("data").cloned().unwrap_or(Value::Null);
+        let data = bounded_error_data(error.get("data"));
         return Err(DriverError::Transport(format!(
             "{method} RPC error: code={code} message={message} data={data}"
         )));
@@ -438,6 +466,115 @@ mod tests {
         .unwrap_err();
         assert!(matches!(error, DriverError::Transport(message)
             if message == "session/set_config_option RPC error: code=-32602 message=Invalid params data={\"message\":\"Invalid model value: cursor-grok-4.5-high-fast\"}"));
+    }
+
+    #[test]
+    fn bounded_error_data_preserves_small_json_values_and_null() {
+        assert_eq!(bounded_error_data(Some(&json!("small"))), "\"small\"");
+        assert_eq!(
+            bounded_error_data(Some(&json!({"reason": "small"}))),
+            "{\"reason\":\"small\"}"
+        );
+        assert_eq!(
+            bounded_error_data(Some(&json!(["small", 1]))),
+            "[\"small\",1]"
+        );
+        assert_eq!(bounded_error_data(Some(&Value::Null)), "null");
+        assert_eq!(bounded_error_data(None), "null");
+    }
+
+    #[test]
+    fn bounded_error_data_elides_oversized_ascii_object() {
+        let rendered = bounded_error_data(Some(&json!({ "payload": "x".repeat(10_000) })));
+
+        assert!(rendered.len() <= RPC_ERROR_DATA_MAX_BYTES);
+        assert!(rendered.starts_with("{\"payload\":\""));
+        assert!(rendered.ends_with("bytes omitted]"));
+        assert!(rendered.contains("[... "));
+    }
+
+    #[test]
+    fn bounded_error_data_elides_at_a_multibyte_boundary() {
+        let rendered = bounded_error_data(Some(&json!("€".repeat(2_000))));
+        let marker_start = rendered.find("[... ").unwrap();
+
+        assert!(rendered.len() <= RPC_ERROR_DATA_MAX_BYTES);
+        assert!(rendered[..marker_start].ends_with('€'));
+        assert!(rendered.ends_with("bytes omitted]"));
+    }
+
+    #[tokio::test]
+    async fn ambiguous_cursor_alias_fails_before_config_or_prompt() {
+        let (tx, _rx) = mpsc::channel(8);
+        let mut transport = ChannelTransport {
+            incoming: std::collections::VecDeque::from(vec![
+                json!({"jsonrpc": "2.0", "id": 1, "result": {}}),
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "sessionId": "sess-fixture",
+                        "configOptions": [{
+                            "id": "model",
+                            "options": [
+                                {
+                                    "value": "grok-4.5[effort=high,fast=true]",
+                                    "name": "grok-4.5"
+                                },
+                                {
+                                    "value": "grok-4.5[mode=high,fast=true]",
+                                    "name": "grok-4.5"
+                                }
+                            ]
+                        }]
+                    }
+                }),
+            ]),
+            outgoing: Vec::new(),
+        };
+        let ctx = crate::r#trait::DriverContext {
+            identity: orgasmic_core::RuntimeIdentity::new("run-fixture", "boot-fixture"),
+            run_kind: crate::r#trait::RunKind::Worker,
+            task_id: "TASK-YK3G8".into(),
+            worker_id: "fixture".into(),
+            project_id: Some("orgasmic".into()),
+            worktree: None,
+            babysitter_target: None,
+        };
+        let mut adapter = crate::adapters::CursorAcpAdapter::new();
+        let init = adapter
+            .stdio_session_init(
+                &ctx,
+                &crate::r#trait::DriverConfig::from_value(json!({
+                    "model": "cursor-grok-4.5-high-fast"
+                })),
+            )
+            .unwrap();
+        let mut ids = RpcIds::new();
+
+        let result = run_jsonrpc_handshake(
+            &mut transport,
+            &mut ids,
+            "fixture",
+            init,
+            &tx,
+            &mut adapter,
+            &SandboxAllowlist::default(),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(DriverError::InvalidConfig(_))),
+            "unexpected result: {result:?}"
+        );
+        assert_eq!(
+            transport
+                .outgoing
+                .iter()
+                .map(|request| request["method"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["initialize", "session/new"]
+        );
     }
 
     struct PostSessionAdapter;
