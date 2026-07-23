@@ -241,6 +241,8 @@ fn os_machine_name() -> Option<String> {
 }
 
 const INCUMBENT_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+const DAEMON_LOCK_RETRY_BUDGET: std::time::Duration = std::time::Duration::from_millis(125);
+const DAEMON_LOCK_RETRY_STEP: std::time::Duration = std::time::Duration::from_millis(10);
 
 #[derive(Debug, Deserialize)]
 struct IncumbentStatus {
@@ -285,9 +287,13 @@ async fn acquire_daemon_lock(
     home: &Home,
     opts: &DaemonOptions,
 ) -> Result<std::result::Result<File, DaemonAlreadyRunning>> {
-    let lock_path = match open_and_try_lock_daemon(home)? {
-        Ok(file) => return Ok(Ok(file)),
-        Err(path) => path,
+    let deadline = std::time::Instant::now() + DAEMON_LOCK_RETRY_BUDGET;
+    let lock_path = loop {
+        match open_and_try_lock_daemon(home)? {
+            Ok(file) => return Ok(Ok(file)),
+            Err(path) if std::time::Instant::now() >= deadline => break path,
+            Err(_) => tokio::time::sleep(DAEMON_LOCK_RETRY_STEP).await,
+        }
     };
 
     let mut cfg = DaemonConfig::load(home).map_err(|error| DaemonInstanceLockHeld {
@@ -700,6 +706,65 @@ mod tests {
         );
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn daemon_lock_retries_a_transient_probe_hold() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let lock_path = daemon_lock_path(&home);
+        let held_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&held_lock).unwrap();
+
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            fs2::FileExt::unlock(&held_lock).unwrap();
+        });
+
+        let acquired = acquire_daemon_lock(&home, &DaemonOptions::default())
+            .await
+            .expect("transient lock hold must not fail daemon acquisition")
+            .expect("transient lock hold must not classify as an incumbent");
+        release.await.unwrap();
+        fs2::FileExt::unlock(&acquired).unwrap();
+    }
+
+    #[tokio::test]
+    async fn daemon_lock_continuously_held_fails_closed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        std::fs::create_dir_all(&home.root).unwrap();
+        let lock_path = daemon_lock_path(&home);
+        let held_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(lock_path)
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&held_lock).unwrap();
+
+        let started = std::time::Instant::now();
+        let error = acquire_daemon_lock(&home, &DaemonOptions::default())
+            .await
+            .expect_err("continuously held lock must not be bypassed");
+
+        assert!(
+            started.elapsed() >= DAEMON_LOCK_RETRY_BUDGET,
+            "lock acquisition must retry before failing closed"
+        );
+        assert!(
+            error.downcast_ref::<DaemonInstanceLockHeld>().is_some(),
+            "continuously held lock must retain incumbent handling: {error:#}"
+        );
+        fs2::FileExt::unlock(&held_lock).unwrap();
     }
 
     #[tokio::test]
