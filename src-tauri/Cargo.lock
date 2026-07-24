@@ -2512,11 +2512,12 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-core"
-version = "0.0.8"
+version = "0.0.14"
 dependencies = [
  "anyhow",
  "chrono",
  "fs2",
+ "libc",
  "rand 0.8.6",
  "serde",
  "serde_json",
@@ -2528,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "orgasmic-desktop"
-version = "0.0.7"
+version = "0.0.8"
 dependencies = [
  "jni 0.22.4",
  "orgasmic-core",
