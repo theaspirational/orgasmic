@@ -1688,3 +1688,417 @@ The interactive-loop rail (dec_S02E2). Artifactor runs launch as long-lived rmux
 :END:
 
 The rmux mode is a version-locked SDK transport whose external CLI and hidden daemon must match RMUX_REQUIRED_VERSION. macOS service startup installs orgasmic.rmux.plist and rmux-launchd.conf before orgasmic.daemon.plist, giving the hidden daemon an independent launchd coalition and keeping it alive between sessions. Cursor acquisition first proves Keychain usability through a bounded disposable rmux pane. Worker panes retain their exit state so EOF becomes a single terminal driver event: code 0 maps to RunComplete; non-zero code, signal, missing exit state, or Keychain preflight failure maps to fatal DriverError. CLI, hidden daemon, and rmux-sdk must be upgraded as one exact release; a protocol upgrade may stop the dedicated LaunchAgent only as an explicit migration.
+
+* arch_EAVPP Provider-agnostic progress detection contract
+:PROPERTIES:
+:ID: arch_EAVPP
+:IMPLEMENTS: TASK-41B0T
+:REVIEW_VERDICT: SHIP_WITH_FIXES_CLOSED
+:SOURCE_HEAD: 07a5b5a
+:STATUS: accepted
+:END:
+
+# TASK-41B0T — Provider-agnostic progress runtime design
+
+**Role:** implementer design report (no source changes this round)
+**Worker:** implementer-cursor-agent-rmux / Cursor Grok 4.5 high-fast
+**HEAD inspected:** `07a5b5a` on branch `task-41b0t-design-r1`
+**Date (UTC):** 2026-07-23
+
+**Related:** TASK-2D0EJ (Bound worker command-session polling; DONE — supervisor timeouts deliberately unchanged); TASK-HQR91 (stale unified-exec poll incident that motivated both).
+
+---
+
+## 1. Findings: current model and exact ambiguity
+
+### 1.1 What the runtime does today
+
+Evidence anchors:
+
+| Concern | Location | Behavior |
+|---|---|---|
+| Stall clock | `RunRecord.last_driver_event_at` in `crates/orgasmic-daemon/src/supervisor.rs` | Updated on **every** drained `DriverEvent` via `apply_driver_event_to_record` |
+| Stall release | `timed_out_run` | `now - last_driver_event_at > stall_timeout` → reason `stall_timeout_exceeded` |
+| Absolute ceiling | `run_started_at` / `max_run_duration` | Independent wall from acquire/reattach |
+| Idle release | `max(last_input_at, last_driver_event_at)` | Opt-in; artifactor hot-session only |
+| Heartbeats | `DriverEvent::Heartbeat` from `acp_stdio.rs` (~30s) | Documented purpose: reset stall so quiet-but-working runs survive (`session.rs` + TASK-100.3 comments) |
+| “Work” flag | `driver_event_counts_as_work` | Excludes `Ready`, `DriverError`, `Heartbeat` for early-exit classification only — **does not** drive timeouts |
+| Babysitter buffer | `update_babysitter_buffer` | Already treats `Heartbeat` + `AgentTurnComplete` as non-substantive |
+| Defaults | `DEFAULT_STALL_TIMEOUT=600s`, `DEFAULT_MAX_RUN_DURATION=14400s` | `None` → default; `Some(0)` → disabled |
+| Interactive manager | `manager.launch:*` / `stall_timeout_secs: Some(0)` | Stall + max disabled |
+| Reattach / recovery | `reattach` / `acquire_recovery` | **Resets** `last_driver_event_at`, `run_started_at`, `last_input_at` to `Instant::now()` |
+| Explicit terminal authority | `requires_worker_finalize`, `terminal_declaration`, `explicit_release_in_progress`, `pending_cancel` | Finalize/cancel/timeout races already have precedence rules; must be preserved |
+| Agent-side mitigation | `command_session_policy` (TASK-2D0EJ) | Bounds worker polling of vanished subprocesses; **no runtime enforcement** |
+
+### 1.2 The ambiguity (HQR91 class)
+
+The supervisor has **one transport-liveness clock** labeled as a stall detector:
+
+1. ACP heartbeats intentionally refresh `last_driver_event_at`.
+2. Repeated empty / no-progress tool polls emit `ToolCall` / `ToolResult`, which also refresh that clock.
+3. Therefore a run can remain “healthy” indefinitely while:
+   - the worker process is alive,
+   - the ACP/transport is emitting heartbeats or poll events,
+   - and **no assigned work advances** (including a yielded command whose OS subprocess is gone while the tool token still says running).
+
+`stall_timeout_secs` today means “no `DriverEvent` of any kind,” not “no useful progress.” Heartbeats were added precisely so transport silence is not mistaken for a hang — and that fix erased the ability to detect semantic stalls.
+
+TASK-2D0EJ correctly pushed bounded polling into the prompt contract and left supervisor semantics alone. That leaves a residual hole whenever the worker **does not** obey the policy (bug, model drift, provider tool loop).
+
+### 1.3 What the daemon can and cannot prove today
+
+| Claim | Provable by daemon? | Evidence |
+|---|---|---|
+| Worker transport child alive | Yes (ACP heartbeat gate + early-exit PID watcher) | `acp_stdio` `child.try_wait`; supervisor early-exit watcher |
+| Driver event stream alive | Yes | event drain + heartbeats |
+| Assigned work advanced | **No** (variant-level only; no progress class) | All non-heartbeat events look equal to stall |
+| Yielded tool subprocess alive | **No** | Subprocess is inside harness; token “running” ≠ OS evidence |
+| Operator intentionally waiting | Partial | `last_input_at` / idle path; permission waits not modeled as wait class |
+| Worker finalize / cancel intent | Yes | explicit finalize + cancel paths |
+
+---
+
+## 2. Revised contract: positive normalized progress only
+
+### 2.1 Types and boundary
+
+`ActivityClass` is carried by the driver-event envelope, not inferred by the
+supervisor. The policy input is deliberately provider-neutral:
+
+```rust
+enum ActivityClass {
+    Transport,
+    Progress { key: ProgressEvidenceKey, advance: ProgressAdvance },
+    WaitEnter { wait_id: WaitId, gate: WaitGate },
+    WaitExit { wait_id: WaitId, outcome: WaitOutcome },
+}
+enum DriverObservation { StaleYield { invocation: InvocationKey, pid: u32, pgid: Option<u32> } }
+```
+
+`ProgressEvidenceKey` is a versioned BLAKE3 digest of a canonical,
+provider-neutral tuple: `(progress-v1, run_id, normalized stage, advance kind,
+stable subject identity, normalized payload)`. `normalized payload` removes
+timestamps, elapsed durations, PIDs, cursor/spinner frames, call IDs, thinking
+text, log sequence numbers, and other volatile fields. It is persisted in a
+bounded per-run LRU/dedup set. A fresh provider call ID, changed bytes, or a new
+event sequence number is **not** a valid key by itself.
+
+`ProgressAdvance` is intentionally minimal and positive:
+
+| Advance | Required evidence | Credit rule |
+|---|---|---|
+| `Transition { from, to }` | normalized workflow/task state changes and `from != to` | first transition key only |
+| `InvocationStarted { invocation }` | normalized tool/action name + canonical arguments; not a poll/await | first key while not already open |
+| `InvocationSettled { invocation, result }` | terminal/result for a previously open normalized invocation | first matching completion key only |
+| `ArtifactCommitted { artifact, revision }` | normalized artifact identity and monotonic revision/digest | strictly new revision only |
+| `Terminal { outcome }` | existing terminal event | terminal path remains authoritative; it never needs a progress timeout credit |
+
+All other traffic is `Transport`: `Heartbeat`, `Ready`, `AgentTurnComplete`,
+assistant/thinking text, byte counters, spinners, elapsed-time changes, raw log
+lines, empty polls, and tool results that do not settle an open invocation or
+advance a normalized state. Thus no output novelty can repeatedly refresh the
+progress deadline.
+
+`StaleYield` is an additional observation, never a credit. It requires both a
+still-running yield token and an OS observation that the recorded owned PID/PGID
+is gone. The supervisor consumes only the normalized observation; it does not
+parse provider strings or infer process ownership.
+
+### 2.2 Exact support boundary
+
+Structured adapters that can construct the evidence above may opt in. The
+terminal-scrape `rmux` and `tmux` modes cannot reliably distinguish poll intent,
+construct stable invocation/state identities, or observe the yielded child PID;
+they emit `Transport` for non-terminal scraped output and cannot emit
+`StaleYield`. A progress timeout request for those transports must be
+rejected at acquire validation (not silently enabled with weak classification).
+
+Consequently, Slice B closes HQR91 only for a progress-enabled structured
+transport that supplies `StaleYield` with owned OS-process evidence. It does
+**not** claim HQR91 closed for terminal-scrape transports; their mitigation
+remains TASK-2D0EJ's bounded worker polling plus the existing transport timeout.
+Scraped terminal completion still follows its existing terminal/finalize path,
+but is not evidence of intermediate progress.
+
+### 2.3 Clocks and bounded wait lifecycle
+
+Add these fields to `RunRecord`; the existing `semantic_turn_count` remains the
+unrelated `AgentTurnComplete` max-iteration counter and is not touched.
+
+| Field | Updated by |
+|---|---|
+| `last_transport_at`, `transport_event_count` | every drained event, preserving `last_driver_event_at` behavior |
+| `last_progress_at`, `progress_event_count`, `seen_progress_keys` | accepted `Progress` only |
+| `progress_state` | derived observation state below |
+| `active_progress_wait: Option<ActiveProgressWait>` | matching `WaitEnter` / `WaitExit` only |
+| `progress_deadline`, `progress_wait_credit_used` | materialized deadline plus actual wait time, capped over the whole run |
+
+`ActiveProgressWait { wait_id, entered_at, gate }` is opened only by a
+normalized permission/approval gate and closed only by its matching resolve,
+cancel, or terminal event. An accepted `send_input` continues to update the
+existing `last_input_at` idle clock, but never opens, refreshes, or extends this
+wait. This removes the rolling-grace loophole.
+
+On fresh acquire, `run_started_at = now`. If a supported transport has a
+positive `progress_stall_timeout_secs`, initialize
+`last_progress_at = run_started_at`, `progress_deadline = run_started_at +
+progress_stall_timeout_secs`, `progress_event_count = 0`, an empty
+`seen_progress_keys`, `active_progress_wait = None`,
+`progress_wait_credit_used = 0`, and `progress_state = Healthy`. That means a
+run which never produces progress is eligible at precisely its first strict
+post-deadline sweep. If progress is disabled, initialize the same counters and
+wait/key state empty but set `progress_deadline = None` and `progress_state =
+Disabled`; it has no progress candidate.
+
+On accepted `Progress`, first close any matching wait, then set
+`last_progress_at = now` and `progress_deadline = now +
+progress_stall_timeout_secs`; previously granted wait time does not leak into a
+new progress epoch. On `WaitEnter`, leave the stored deadline unchanged. While
+the matching wait is open, its *effective* deadline is
+`progress_deadline + min(now - entered_at, remaining_wait_budget)`. On
+`WaitExit`, materialize that same capped amount into `progress_deadline` and
+increment `progress_wait_credit_used` once. Duplicate enter/exit IDs are
+idempotent. Once the absolute run-level budget is exhausted, an open wait
+suppresses nothing. `send_input` cannot affect either value. Transport and
+max-run clocks are never suppressed.
+
+### 2.4 One release authority and exact ordering
+
+`timed_out_run` is the sole release authority. The progress state machine is
+observability only and cannot release, extend, or reset a deadline. When
+`progress_stall_timeout_secs` is positive, it contributes one candidate:
+
+`deadline` is the stored `progress_deadline`, plus only the unmaterialized
+capped credit of an actively open matching wait described in §2.3.
+
+A candidate is due under the existing strict rule `now > deadline`. Construct
+the existing stall, max, and idle candidates unchanged; choose the smallest
+deadline, with equal-deadline rank **stall (0), max (1), idle (2), progress (3)**.
+This preserves today's three-way tie behavior. `progress_stall_timeout_exceeded`
+therefore loses every exact tie to an established reason.
+
+Existing terminal/finalize/cancel precedence remains before candidate selection:
+terminal outcome, worker finalization, pending cancel, and terminal-drain state
+return no progress candidate; an in-flight artifactor lifecycle defers and the
+candidate is revalidated under lock after the await gap. A winning progress
+candidate uses the same Failed/orphan release path as the other timeouts and
+never invents `Completed`.
+
+---
+
+## 3. Classification and state observation
+
+| Raw normalized input | Class / observation | Progress credit |
+|---|---|---|
+| Heartbeat, Ready, AgentTurnComplete, text/thinking, spinner, elapsed time, any poll output | `Transport` | never |
+| New normalized state transition | `Progress::Transition` | once per key |
+| First non-poll normalized invocation | `Progress::InvocationStarted` | once while open |
+| First matching terminal result for an open invocation | `Progress::InvocationSettled` | once |
+| New committed artifact revision | `Progress::ArtifactCommitted` | once per increasing revision |
+| Permission/approval gate opens or resolves | `WaitEnter` / `WaitExit` | no |
+| Running yield + owned PID/PGID gone | `Transport` + `StaleYield` | never; enters Probe observation |
+| RunComplete/RunFail/fatal error | existing terminal handling | no timeout credit required |
+
+Legacy JSONL with no class is replayed as `Transport`, never guessed as
+progress. This conservative rule is required so an upgrade cannot create credit
+from historical byte differences.
+
+The observation state is derived, not a second deadline mechanism:
+
+For these comparisons, `effective progress age =
+progress_stall_timeout_secs + now - effective_deadline` (with signed duration
+arithmetic saturated at zero); it is therefore zero immediately after accepted
+progress and increases normally once any bounded wait credit is consumed.
+
+| State | Exact condition | Effect |
+|---|---|---|
+| `Healthy` | effective progress age is at most `progress_suspect_secs` | record clocks |
+| `SuspectedProgressStall` | effective progress age is above suspect, before probe | lifecycle event only |
+| `EvidenceProbe` | effective progress age is above `progress_probe_after_secs` or `StaleYield` seen | lifecycle event only; see §6.3 |
+| `Escalate` | progress candidate wins `timed_out_run` | Failed release path |
+
+`progress_suspect_secs <= progress_probe_after_secs <=
+progress_stall_timeout_secs` is validated at acquire time. There is no unnamed
+"dwell": every transition has a named threshold, and neither threshold changes
+the release deadline.
+
+---
+
+## 4. Configuration, persistence, and compatibility
+
+### 4.1 Opt-in configuration
+
+| Field | `None` / `0` | Positive value |
+|---|---|---|
+| `progress_stall_timeout_secs` | disabled (default) | enables the sole progress release deadline |
+| `progress_suspect_secs` | derived as timeout / 2 | observation threshold |
+| `progress_probe_after_secs` | derived as suspect threshold | observation threshold |
+| `progress_wait_budget_secs` | no wait credit | absolute total cap for all explicit waits |
+
+Only an explicit positive `progress_stall_timeout_secs` enables the feature.
+Existing `stall_timeout_secs`, `max_run_duration_secs`, and `idle_timeout_secs`
+retain their current resolution rules and behavior. Manager/interactive roles
+remain off. Shipped role conventions may later opt in only for transports that
+pass support validation.
+
+### 4.2 Restart schema and backward-clock-safe restoration
+
+Write a versioned `Lifecycle::ProgressCheckpoint` on each accepted progress
+event, wait enter/exit, state transition, and before recovery handoff:
+
+```text
+version, snapshot_wall,
+run_age_at_snapshot, transport_age_at_snapshot, progress_age_at_snapshot,
+progress_deadline_offset_ms_at_snapshot (signed),
+wait_credit_used, active_wait { id, gate, age_at_snapshot }?,
+progress_state, progress_event_count, seen_progress_key_digest_set,
+resolved_progress_config
+```
+
+For every restored monotonic clock, compute:
+
+`wall_delta = max(0, wall_now - snapshot_wall)` and
+`effective_age = persisted_age.saturating_add(wall_delta)`;
+then set `last = now_mono - effective_age`. The non-negative clamp means a
+backward wall-clock step contributes zero time and can never rejuvenate a stale
+run. Persisted age is never discarded. Store the deadline as a signed offset
+from the snapshot (so an already-expired deadline remains expired), and restore
+it with the same non-negative wall delta: `now_mono +
+progress_deadline_offset - wall_delta`, using a small saturating signed-duration
+helper. Restore an open wait using the same clamped elapsed-time calculation,
+then recompute its remaining absolute credit without granting a new budget.
+
+Reattach is binary and never creates a fresh progress clock. With a valid
+`ProgressCheckpoint`, restore the resolved config, clocks, deadline, dedup set,
+wait state, credit, and derived state exactly as above; a supported,
+progress-enabled run therefore continues toward its prior deadline. With no
+checkpoint, an unsupported/old checkpoint, or a failed checkpoint validation,
+retain only the existing transport recovery behavior and set
+`last_progress_at = None`, `progress_deadline = None`,
+`progress_state = Disabled`, empty the transient progress key/wait state, and
+set `progress_event_count = 0` and `progress_wait_credit_used = 0`; create no
+progress candidate for that recovered run. The next fresh acquire is the only
+way to opt it into progress enforcement.
+
+### 4.3 Reason authority
+
+Create `crates/orgasmic-core/src/release_reason.rs`, exported by core, with
+`ReleaseReason::ProgressStallTimeout` / `PROGRESS_STALL_TIMEOUT_EXCEEDED` and
+the single `is_timeout_release_reason(&str)` predicate. `supervisor.rs` uses the
+constant. These are all current consumers that must use the shared predicate:
+
+| Current consumer | Change |
+|---|---|
+| `crates/orgasmic-daemon/src/api.rs:4938` `anomalous_without_finalize_release_reason` | call core predicate for timeout reasons |
+| `crates/orgasmic-daemon/src/api.rs:4969` test helper | remove duplicate list; test imported core predicate |
+| `crates/orgasmic-daemon/src/api.rs:4982` orphan-without-finalize helper | compose core predicate with its two non-timeout cases |
+| `crates/orgasmic-cli/src/manager.rs:1739` `is_stall_sweep_release_reason` | call core predicate so CLI emits `StallSweep`, not `Unrecognized` |
+
+The shared predicate is the one source for all four timeout reasons; tests assert
+each established reason and the new progress reason at both API and CLI paths.
+
+---
+
+## 5. Observability and ownership
+
+`RunSummary` exposes `last_transport_age_secs`, `last_progress_age_secs`,
+`progress_wait_credit_remaining_secs`, `progress_state`, event counts, and the
+resolved `progress_*` configuration. Lifecycle names are
+`progress_stall_suspected`, `progress_evidence_probe`,
+`progress_stall_timeout_exceeded`, and `stale_yield_observed`; metrics use the
+same `progress_*` family.
+
+The daemon owns clocks, deadline math, state observation, and timeout release.
+The worker/adapter owns raw-to-class normalization and may emit `StaleYield` only
+with owned OS evidence. The daemon may reap the worker group through existing
+paths, but never kills a yielded subprocess by name. Rescue/re-dispatch remains
+manager policy.
+
+### 5.1 Slice-B EvidenceProbe is delay-only
+
+Slice B sends no probe RPC, no babysitter instruction, and collects no new
+evidence. `EvidenceProbe` is an observable, rate-limited lifecycle label entered
+at `progress_probe_after_secs` or an already-supplied `StaleYield`; it does not
+pause, extend, or otherwise alter the sole progress deadline. An active evidence
+probe is a later, separately designed feature and must name its command, reply,
+ownership, and timeout before it changes policy.
+
+---
+
+## 6. Deterministic implementation matrix
+
+| # | Scenario | Required result |
+|---|---|---|
+| R0 | fresh supported acquire, no progress events | start initializes zero credit/empty key set and deadline at `run_started_at + timeout`; strict first post-deadline sweep releases |
+| R1 | heartbeats/spinners/varying poll text forever; progress enabled | transport stays live; no credit; progress timeout releases |
+| R2 | same traffic, default config | no progress release; today’s behavior unchanged |
+| R3 | stale running yield plus owned PID/PGID gone on structured adapter | `StaleYield`, immediate Probe observation, no credit, bounded release |
+| R4 | changed bytes, fresh call IDs, thinking text, elapsed time | all classify Transport; cannot keep Healthy |
+| R5 | transition/start/settle/artifact repeated with same evidence key | first accepted; replay is idempotent and grants no extra credit |
+| R6 | permission wait enter, repeated `send_input`, then exit | only matching wait lifecycle consumes at most absolute budget; input never refreshes it |
+| R7 | terminal/finalize/cancel ties progress deadline | existing terminal/cancel precedence wins; progress loses all equal-deadline ties |
+| R8 | checkpoint says stale for 601s; restart wall moves 300s backward | restored age remains at least 601s; it is not Healthy |
+| R9 | old JSONL lacks checkpoint | progress disabled; transport recovery behavior unchanged |
+| R10 | equivalent raw structured fixtures across adapters | same `ActivityClass`, `ProgressAdvance`, and evidence key; same supervisor transition |
+| R11 | `rmux`/`tmux` non-terminal scrape and requested progress timeout | all scrape traffic is Transport; acquire rejects progress timeout; no HQR91 closure claim |
+| R12 | supervisor policy source guard | extracted progress policy contains no provider/harness identifiers or branches |
+| R13 | artifactor lifecycle in flight at winning deadline | defer then lock-revalidate, matching timeout behavior |
+
+Adapter tests live in a new `crates/orgasmic-drivers/tests/activity_classification.rs`:
+each adapter feeds its own raw fixture into its normalizer, then asserts equality
+of the public class/advance/key result. Supervisor tests construct only the
+provider-neutral envelope. A source-boundary test extracts the progress-policy
+helpers and rejects provider/harness names; the type boundary also gives those
+helpers no provider field to inspect.
+
+---
+
+## 7. Staged exact file map and rollout gates
+
+### Slice A — classification and observability, release off
+
+| Seam | Files |
+|---|---|
+| envelope types, serde defaults, checkpoint schema | `crates/orgasmic-core/src/session.rs` |
+| reason constants/predicate | `crates/orgasmic-core/src/release_reason.rs`, `crates/orgasmic-core/src/lib.rs` |
+| clocks, key LRU, state derivation, `RunSummary`, source guard | `crates/orgasmic-daemon/src/supervisor.rs` |
+| API projection and core-predicate adoption | `crates/orgasmic-daemon/src/api.rs` |
+| CLI tombstone adoption | `crates/orgasmic-cli/src/manager.rs` |
+| raw normalizers and explicit scrape support declaration | `crates/orgasmic-drivers/src/adapters/*.rs`, `crates/orgasmic-drivers/src/modes/{acp_stdio,subprocess_stream_json,rmux,tmux}.rs` |
+| raw-input equivalence cases | `crates/orgasmic-drivers/tests/activity_classification.rs` |
+
+Gate: default config produces no new reason; R0/R2/R4/R5/R9/R10/R11/R12 pass;
+all current timeout reason consumers use core.
+
+### Slice B — opt-in deadline and recovery
+
+Add acquire validation/config plumbing in `supervisor.rs` and `api.rs`,
+checkpoint writing/restoration in the supervisor session writer and
+`reattach`/`acquire_recovery`, plus the role-convention property parser. Add
+R0/R1/R3/R6/R7/R8/R13. Gate: only a positive `progress_stall_timeout_secs` on a
+supported structured transport may release `progress_stall_timeout_exceeded`.
+Keep rollout per-role and monitor observed Suspected/Probe counts before enabling
+another role.
+
+### Rejected alternatives
+
+| Alternative | Rejection |
+|---|---|
+| bytes/log diffing or new call IDs as progress | volatile novelty reopens HQR91 |
+| provider branches in supervisor | violates the normalized policy boundary |
+| rolling input grace | lets unrelated input suppress detection indefinitely |
+| state-machine release plus flat deadline | two authorities and ambiguous timing |
+| implicit terminal-scrape support | OS evidence and normalized advancement are unavailable |
+| progress timeout default-on | breaks backward compatibility |
+
+## 8. Residual limitations
+
+- Progress enforcement intentionally covers only supported structured adapters; terminal-scrape modes remain outside the HQR91 closure boundary until they gain owned OS-process evidence and stable normalization.
+- The contract detects lack of normalized state advance, not the intrinsic usefulness of a model’s reasoning; a bad adapter can under-credit and cause a conservative timeout, which is why rollout is opt-in and gated by equivalence fixtures.
+- Slice B’s Probe is visibility-only. It cannot establish new OS evidence or rescue a run.
+- Wall-clock forward jumps age restored runs conservatively; backward jumps cannot rejuvenate them. A future policy may cap extreme forward aging only if it preserves the no-rejuvenation invariant.
+
+## Changed and verification
+
+- Revised this stable design report only; no source, durable `.orgasmic` state, daemon, commit, merge, or push action was performed.
+- Read anchors include `supervisor.rs` timeout/reattach/clock paths, `session.rs`, driver modes, `api.rs`, and `manager.rs` reason consumers. This is a design-only revision; no build or test was run.

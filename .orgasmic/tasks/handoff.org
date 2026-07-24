@@ -5,22 +5,28 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:GOAL_ID:          —
-:LIVENESS:         d4492a2
-:LIVENESS_AT:      [2026-07-22 Wed]
-:UPDATED_AT:       [2026-07-22 Wed]
+:GOAL_ID:          goal-20260724-publish-stable-runtime
+:LIVENESS:         07a5b5a6433be984a5309e1d2e5b830eb90c9b61
+:LIVENESS_AT:      [2026-07-23 Thu]
+:UPDATED_AT:       [2026-07-23 Thu]
 :END:
 
 Completed goal goal-20260722-close-afe5q-and. QPKCD, AFE5Q, SZEWA, TASK-41B0T, and DZ5NM are closed; the worker-template hard cutover is merged on main at d4492a2. No worker or related dispatch remains live.
 
 ** Done so far
-- Reconciled and pruned the QPKCD recovery stream; merged recovery authority and closed its stale review records.\n- Completed TASK-83WS2, repaired and merged AFE5Q at e29e4e3/6f7ad70, then closed its records.\n- Rebased, repaired, verified, and merged SZEWA at 57174e3; closed TASK-0SVR3 and its related tasks and pruned their worktrees.\n- Completed TASK-41B0T polling hardening at 3bbd958/61dbe37.\n- Completed TASK-DZ5NM at d4492a2: deleted worker templates/content APIs/CLI aliases, moved dispatch to explicit addresses, retired persona/rules slots, and added warn-and-ignore behavior for leftover user/workers.\n- Closed the active goal after all reached-when conditions were satisfied.
+- The hardening backlog is drained through source HEAD 07a5b5a; TASK-41B0T design is accepted as arch_EAVPP.
+- Operator requested all remaining project/UI state committed and a full stable runtime + apps release.
 
 ** Next likely actions
-1. Refresh the installed orgasmic runtime from the current source/release before using live runtime behavior as evidence.\n2. Investigate the external rmux plus cursor-agent macOS keychain crash (SecItemCopyMatching -50, exit 139) separately from the now-green source gates.\n3. Select a new backlog goal; this goal has no remaining implementation item.
+1. Verify and commit all current tracked/untracked changes, including daemon-owned project state and the task-description UI compatibility regression.
+2. Bump runtime 0.0.13 to 0.0.14 and apps 0.0.7 to 0.0.8, update matching metadata, commit, and push main.
+3. Run stable runtime and apps dry-runs sequentially.
+4. Review release notes item by item, publish runtime then apps, sync approved metadata, and verify manifests/releases.
 
 ** In flight
-None. TASK-DZ5NM is DONE, the goal is CLEARED, and all related worktrees and dispatches are closed.
+Manager is preparing the stable runtime + apps release. No worker dispatch is active.
 
 ** Divergence / Risks
-- The installed daemon/runtime is 0.0.12-nightly.20260713 and predates current main; update it before runtime validation.\n- The live rmux/cursor-agent probe still crashes in the external Cursor process with macOS keychain error SecItemCopyMatching -50; source-level addressing and lifecycle gates are green.\n- The daemon lib matrix passed 472 of 474 in one full shared run; the two load-sensitive tests were hardened and each passes in isolation. CLI, core, integration, workspace check, strict clippy, format, UI tests, and UI build pass.\n- The operator-owned untracked screenshot remains untouched.
+- The foreground daemon at PID 15304 / boot d43b38ae-a23d-4b75-91a3-e5ef3066a58a is authorized for Documents and must not be restarted. Every new daemon under Documents may prompt again.
+- Stable publication requires patch bumps, a clean pushed tree, successful dry-runs, and reviewed notes. Runtime and app publishers must run sequentially.
+- Windows runtime cannot be rebuilt locally from macOS; existing Windows stable assets remain unless the dedicated workflow is run.

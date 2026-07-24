@@ -12531,3 +12531,155 @@ Acceptance:
 - terminal exit/disappearance ends the run immediately, including signal 11/exit 139.
 - deterministic unit/integration tests cover version mismatch, preflight failure, and terminal propagation.
 - cargo fmt --all --check, cargo test --workspace, cargo clippy --workspace --all-targets -- -D warnings pass.
+
+* DONE TASK-25HSE TASK-35TK4 fix: preserve machine identity and Git config truth :fix:daemon:
+:PROPERTIES:
+:ID: TASK-25HSE
+:READ_SCOPE: .orgasmic/gotchas.org crates/orgasmic-daemon crates/orgasmic-cli
+:TEST_CMD: cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
+:WRITE_SCOPE: crates/orgasmic-daemon crates/orgasmic-cli Cargo.toml Cargo.lock
+:PARENT_TASK: TASK-35TK4
+:FIX_SUBTASK: t
+:END:
+
+Manager pre-merge review found two blocking regressions in candidate 714bf09.
+
+Acceptance:
+- Preserve stable daemon machine identity without spawning a subprocess before the instance lock. On macOS/Unix where HOSTNAME is not exported, normal tx/status paths must not fall back to unknown; use a bounded/non-spawning OS source or resolve after lock while respecting explicit DaemonOptions overrides. Add a deterministic regression with HOSTNAME absent.
+- Do not make a hand-written partial Git-config parser authoritative for repo_url. Preserve git config semantics for quoted values, includes, and worktrees while keeping every git subprocess strictly post-bind, bounded, killed, and reaped. Prefer asynchronous git-backed resolution after bind over duplicating Git syntax. Add regressions for a quoted origin and the no-pre-bind-spawn invariant.
+- Re-run focused boot/index tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings. Baseline watcher refresh tests currently fail identically on b18808c and must be reported distinctly, not attributed to this fix.
+** Notes
+Landed in bd3d7bd as part of the reviewed TASK-35TK4 slice. Independent Claude Opus 4.8/high review returned SHIP; focused daemon and CLI boot tests passed. Baseline watcher-refresh failures were reproduced on b18808c and were not attributed to this fix.
+
+* DONE TASK-35TK4 Daemon boot hardening: timeout/async the project scan, single-instance lock before boot work :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-35TK4
+:PRIORITY: high
+:READ_SCOPE: .orgasmic/project.org .orgasmic/gotchas.org Cargo.toml crates/orgasmic-core crates/orgasmic-daemon crates/orgasmic-cli
+:WRITE_SCOPE: Cargo.toml Cargo.lock crates/orgasmic-daemon crates/orgasmic-cli
+:TEST_CMD:    cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
+:END:
+
+Evidence (2026-07-23, operator Mac): launchd-spawned daemons hung forever in pre-bind boot because index.rebuild() runs before bind (lib.rs "AC #1") and git_remote_origin_url (index.rs:1350) spawns `git config --get remote.origin.url` with .output() and no timeout — the child wedged in getcwd/open on a ~/Documents project (launchd-context TCC Files-access stall). Meanwhile launchd respawned instances that each spent minutes in boot work and only then died on EADDRINUSE (the lib.rs:194 retry budget covers only a releasing predecessor), and CLI autostart spawned additional racers; daemon.err.log filled with bind failures across two days. Fix set: (1) wrap the git spawn in tokio::time::timeout (2-5s), kill the child on expiry, degrade repo_url to None; better, resolve repo_url lazily/async after bind and cache it — boot must never depend on spawning git. (2) On macOS, when a scan under ~/Documents, ~/Desktop or ~/Downloads times out, log an actionable hint naming the path and likely missing Files-and-Folders (TCC) access. (3) Take an exclusive flock on $ORGASMIC_HOME/daemon.lock BEFORE any boot work; if held, probe the incumbent over HTTP: healthy incumbent means exit 0 "already running" (keeps launchd quiet), unhealthy/stale means report, never race. Lock-first also moves port/instance conflict detection from after-minutes-of-rebuild to milliseconds. Regressions: hung-git fixture (a fake git that blocks), double-start under launchd KeepAlive, CLI autostart against a booting incumbent.
+** Acceptance Criteria
+- Acquire an exclusive $ORGASMIC_HOME/daemon.lock before index rebuild, project scanning, git probes, or bind work. A healthy incumbent makes a second start exit cleanly as already running; an unhealthy/stale incumbent produces a bounded actionable error and no racing daemon.
+- Boot cannot block indefinitely on git remote discovery: the child has a 2-5 second bound, is killed and reaped on expiry, and repo_url degrades to None. Prefer post-bind lazy/async discovery when it stays inside task scope.
+- A timed-out scan under macOS Documents, Desktop, or Downloads logs an actionable Files-and-Folders/TCC hint naming the affected path.
+- Deterministic regressions cover a blocking fake git, double-start/KeepAlive behavior, and CLI autostart while an incumbent is still booting.
+- cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings pass.
+** Notes
+Independent Claude Opus 4.8/high review of b18808c..bd3d7bd returned SHIP. Focused daemon and CLI boot tests passed. The reviewer transport could not finalize because the daemon run-list endpoint hung, so the verdict was rescued from the completed Claude scratchpad and the dispatch was closed manually with tx evidence. Its one new medium lock-probe overlap finding was subsequently implemented by Codex gpt-5.6-terra/high under TASK-870YX in 4c0a151, merged as e4b6b7b, and independently reverified with focused daemon/CLI regressions.
+
+* DONE TASK-870YX TASK-35TK4 fix: tolerate transient CLI daemon-lock probes :fix:daemon:
+:PROPERTIES:
+:FIXES: TASK-35TK4
+:ID: TASK-870YX
+:END:
+
+Claude Opus review of b18808c..bd3d7bd found a narrow new boot race: starting_from_daemon_lock briefly takes the exclusive flock while the daemon makes one single-shot acquisition attempt. Add a bounded daemon-side retry window for WouldBlock, preserve fail-closed behavior for a continuously held lock, add deterministic transient-hold and stable-incumbent regressions, and run the focused lock/autostart/double-serve gates plus fmt, clippy, and diff-check. Implement only the scoped fix described in .orgasmic/tmp/dispatch/task-35tk4-lock-race-fix-brief.md.
+** Notes
+Implemented by Codex gpt-5.6-terra/high in 4c0a151 and merged to main as e4b6b7b. Manager independently reran the two daemon-lock regressions, CLI boot-owner regression, and double-serve regression; all passed. git diff --check only reported trailing blank lines in daemon-managed task files, not source changes from this fix.
+
+* DONE TASK-YK3G8 TASK-PMVC7 fix: bound Cursor ACP error logging and ambiguity coverage :fix:cursor:driver:
+:PROPERTIES:
+:ID: TASK-YK3G8
+:PRIORITY: high
+:END:
+
+Claude Opus 4.8/high review of e4b6b7b..c1dccd1 returned SHIP with one medium gap: crates/orgasmic-drivers/src/modes/jsonrpc.rs renders the full server-controlled error.data into DriverError::Transport, which is copied into durable session JSONL and last artifacts without a size bound. The same review found a missing ambiguous-alias regression and low-risk subset semantics in legacy_model_alias_matches.
+
+Acceptance: cap serialized error.data at a small deterministic byte/character budget with an explicit elision marker while preserving method, code, and message; keep output valid UTF-8 and deterministic for strings/objects/arrays; add regressions for below-limit and oversized/multibyte data. Add an ambiguity regression with two matching advertised model variants and prove InvalidConfig before prompting. Tighten legacy alias matching so under-specified aliases cannot silently select extra distinguishing attributes, while cursor-grok-4.5-high-fast still resolves to grok-4.5[effort=high,fast=true]. Keep scope to Cursor ACP/JSON-RPC tests and code.
+** Notes
+Implemented by Codex gpt-5.6-terra/high in 4a59743 and merged to main as 559add1. The delta bounds server-controlled JSON-RPC error.data at 3 KiB with UTF-8-safe deterministic elision, covers small/oversized/multibyte data, rejects under-specified legacy aliases, and proves ambiguous aliases fail before any config or prompt write. Manager independently reran 13 Cursor ACP tests and 8 JSON-RPC tests; all passed, with fmt and delta diff-check clean.
+
+* DONE TASK-PMVC7 Cursor ACP: live session prompt rejected with Invalid params :driver:cursor:
+:PROPERTIES:
+:ID: TASK-PMVC7
+:PRIORITY: high
+:END:
+
+Evidence on 2026-07-23: two acp-stdio/cursor-agent implementer dispatches reached live session/new successfully (simulated=false) but the first session prompt was rejected immediately with driver transport unavailable: Invalid params. This reproduces with model grok-4.5/high and with the known harness-native cursor-grok-4.5-high-fast/high identifier. Runs: run-20260723T160534-79aa3fe66ca3469eaa17adec7ca07c68 and run-20260723T160811-3cfa31b5bddb44328dd28862e3f0e88b. No work envelopes or edits were produced.
+
+Acceptance: inspect the current cursor-agent ACP session/prompt schema from the live protocol, align the adapter request without scraping CLI text, preserve the structured session/new model catalog, add a fixture regression for the rejected parameter shape, and prove a real non-simulated prompt yields at least one work envelope for cursor-grok-4.5-high-fast/high. Do not restart the shared runtime while unrelated workers are active.
+** Notes
+Codex gpt-5.6-terra/high implemented the transport repair in c1dccd1. A real isolated cursor-agent ACP probe proved session/new advertised grok-4.5[effort=high,fast=true], set_config_option accepted it, and session/prompt produced work envelopes. Claude Opus 4.8/high independently reviewed e4b6b7b..c1dccd1 as SHIP; its one medium logging-hardening finding and low ambiguity gap were fixed by Codex in 4a59743. The complete reviewed/fixed slice landed on main as 559add1. Five driver integration failures were reproduced identically on e4b6b7b and remain baseline/environment debt. Installed runtime deployment and a real manager-dispatch canary are still required before TASK-2YZDJ resumes.
+
+* DONE TASK-MB7G9 Fix boot progress semantics, atomic publication race, and regression matrix
+:PROPERTIES:
+:ID: TASK-MB7G9
+:END:
+
+Fix the Claude Opus 4.8 review findings for TASK-2YZDJ. Restore the bounded non-error StillBooting return for explicit daemon start; distinguish timer liveness from meaningful progress and add a finite stalled/absolute backstop; make boot-state temp paths unique per publication; add deterministic CLI tests for progressing, frozen, dead-pid, malformed, ownership-safe, and slow-boot paths. Preserve lock-before-boot and no-Git-before-bind invariants. P3 async dead-pid specificity and retire double-clear are optional only if surgical.
+
+* DONE TASK-2YZDJ CLI readiness: boot-phase heartbeat instead of the flat 20s spawn timeout :cli:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-2YZDJ
+:PRIORITY: medium
+:RELATES_TO: TASK-35TK4
+:END:
+
+Evidence (2026-07-23): daemon_lifecycle.rs:513 gives up with "daemon process exited before becoming ready after 20s" while a daemon can legitimately spend minutes in pre-bind boot on a large board — the operator-facing effect was repeated spawn attempts, racing instances, and a misleading error (the process had not exited; it was booting). Fix: the daemon writes a phase heartbeat next to the lockfile (phase, started_at, pid, refreshed periodically — e.g. "scanning projects"); the CLI autostart/status path reads it and distinguishes "booting since <ts>, phase <p>, be patient or inspect" from "dead, check logs". The 20s budget then applies only to a pid with no heartbeat progress. Depends on the daemon.lock introduced by TASK-35TK4. Regressions: slow-boot fixture where the CLI reports phase instead of timing out; stale-heartbeat (killed -9) detection.
+** Notes
+Blocked before implementation by the requested Cursor ACP transport. Attempt 1 run-20260723T160534-79aa3fe66ca3469eaa17adec7ca07c68 used generic grok-4.5/high: Cursor session/new succeeded (simulated false), then prompt failed with Invalid params. The single retry run-20260723T160811-3cfa31b5bddb44328dd28862e3f0e88b used the proven harness-native cursor-grok-4.5-high-fast/high identifier: session/new again succeeded, then prompt failed identically. Both isolated worktrees are clean at e4b6b7b and produced no work envelopes or edits. No third retry under manager policy. Resume after the Cursor ACP session/prompt parameter contract is repaired.
+Transport blocker repaired and independently reviewed: c1dccd1 + 4a59743 landed as 559add1. Source runtime is active under an interactive foreground daemon (boot 35358fe3-22bb-4292-96b8-ccf904480f4f) because launchd still hangs in pre-bind project scanning. Resuming as a fresh post-repair Cursor canary/implementation run.
+Post-repair run run-20260723T165635-a8f0a0d8196d4dd48ff137411fa7ce2e proved the real Cursor ACP canary: session/new resolved cursor-grok-4.5-high-fast/high to native grok-4.5[effort=high,fast=true] and produced real tool calls. TASK-2YZDJ itself remains unimplemented: Cursor ended its work turn after an invalid task:__subagent_task request and later could not run the required project workflow because the approval policy rejected its shell command. Clean worktree at 559add1; route the permission-policy defect separately, then resume with a brief that forbids Cursor subagent tools.
+
+* DONE TASK-G6BCK Prove request-time log-drop isolation and clean up the closed-pipe regression :daemon:fix:
+:PROPERTIES:
+:ID: TASK-G6BCK
+:END:
+
+Claude Opus 4.8 review of TASK-FZF2D found one required proof gap: the daemon test increments the dropped-write counter with a pre-request probe and only checks >= after a status request that emits no log. Add a request-time logging route/probe so a successful request and strict counter increase are causally linked. Also replace the CLI test zero-length read with a real bounded drain or remove the misleading claim. Scope SIGPIPE to after ExecPinned if this can be done without weakening daemon startup hardening; Rust already ignores it by default, so do not expand scope.
+
+* DONE TASK-FZF2D Logging sink failures must never affect request handling (SIGPIPE/EPIPE hardening) :daemon:hardening:
+:PROPERTIES:
+:ID: TASK-FZF2D
+:PRIORITY: medium
+:END:
+
+Evidence (2026-07-23): `orgasmic serve | head -100` left the daemon half-dead once head exited — every request that logged hit EPIPE on stdout and failed intermittently, in one case AFTER the write committed to disk but BEFORE the HTTP response was delivered, which caused a client retry to double-create a glossary node (duplicate "Vertical Slice" term in the orsl project, removed by hand for lack of a delete surface). grep shows no SIGPIPE/EPIPE handling anywhere in crates/. Fix: ignore SIGPIPE at startup; make the tracing writer swallow-and-count sink write errors (a dead log sink costs log lines, never requests); default serve logging to a file under $ORGASMIC_HOME/logs with stdout as best-effort mirror. Regression: request succeeds and logs are counted-dropped while stdout is a closed pipe.
+
+* DONE TASK-A7JFG Repair create idempotency domains, cached response identity, and delete safety :daemon:cli:fix:
+:PROPERTIES:
+:ID: TASK-A7JFG
+:END:
+
+Fix every actionable finding from the TASK-N4TGD Claude Opus 4.8 BLOCK review: domain-separate default create request ids by operation/layer and resolved project; return the original real task id on retry; carry mutation identity in the writer idempotency cache so recovery never depends on a lagging index; reject deletion with inbound references unless an explicit safe force policy is added; make task delete tx/event semantics accurate or refuse task deletion; correct glossary normalization claim/implementation; add cross-layer, cross-project, task retry identity, race-safe recovery, and inbound-reference delete regressions.
+** Evidence
+Codex GPT-5.6 Terra/high implemented the Opus BLOCK fixes in 1c07f17; manager merged as 07a5b5a. Default create IDs now include operation and resolved project, task and graph retries return writer-cached original identities without index recovery, cache-scope reuse fails closed, inbound references block deletion, and generic task deletion is refused. Manager independently verified duplicate_write 5/5, create_request_id_tests 4/4, daemon writer/unit library 496/496, fmt, diff-check, and CLI+daemon clippy with warnings denied. The broader daemon integration sweep also exposed three pre-existing dispatch tests coupled to the checkout worker configuration; they are outside this mutation patch.
+
+* DONE TASK-N4TGD Close the duplicate-write hole: per-project glossary uniqueness, node delete surface, default request-id :daemon:cli:hardening:
+:PROPERTIES:
+:ID: TASK-N4TGD
+:PRIORITY: medium
+:RELATES_TO: TASK-FZF2D
+:END:
+
+Evidence (2026-07-23): a lost HTTP response (see TASK-FZF2D) plus a client retry created two glossary terms with identical title/canonical ("Vertical Slice") in the orsl project; the write-time guards (marker substrings, dangling-reference checks) have no uniqueness rule, and no CLI delete surface exists for any node kind — repairing the corruption required exactly the hand-edit the conventions forbid, which is a tooling gap, not an operator failure. Fix set: (1) write-time uniqueness guard on glossary canonical/title per project at the existing guard choke point (reject with the surviving node id in the error; --force to override for deliberate homonyms). (2) `orgasmic node delete <id>` (or per-kind delete subcommands) through the daemon with OCC + a tx record, so corruption repair stays inside the CLI-only convention. (3) CLI derives a default --request-id from a content hash of the create payload when the caller omits one, making blind retries idempotent by default. Regressions: retry-after-lost-response creates exactly one node; delete records a tx and survives reindex; forced homonym still possible.
+** Evidence
+Claude Opus 4.8 returned BLOCK on the initial 813dd17 implementation. Fix subtask TASK-A7JFG closed every actionable finding in 1c07f17, merged as 07a5b5a: domain-separated default IDs, original task identity on retry, writer-owned mutation identity, fail-closed cache scope reuse, inbound-reference delete guard, and refusal of unsafe generic task deletion. Manager acceptance gates are green.
+
+* DONE TASK-636D8 Resolve semantic-progress design review findings :design:fix:
+:PROPERTIES:
+:ID: TASK-636D8
+:END:
+
+Revise the TASK-41B0T implementation-ready design to resolve every Claude Opus 4.8 SHIP WITH FIXES finding: positive provider-neutral progress evidence instead of varying-byte novelty; complete shared reason migration; explicit bounded interactive wait; one authoritative deadline/state machine; backward-clock-safe recovery; adapter-equivalence and terminal-scrape coverage boundaries; concrete delay-only probe semantics; and progress_* naming. Report-only, no source changes.
+** Evidence
+Codex GPT-5.6 Terra/high revised the stable TASK-41B0T report against all eight Claude Opus 4.8 findings. Manager acceptance added exact fresh-acquire initialization and no-checkpoint recovery semantics. The accepted contract is persisted as arch_EAVPP.
+
+* DONE TASK-41B0T Design semantic progress detection for worker runs :design:
+:PROPERTIES:
+:ID: TASK-41B0T
+:PRIORITY: medium
+:RELATES_TO: TASK-2D0EJ
+:END:
+
+TASK-2D0EJ deliberately leaves supervisor timeout semantics unchanged. Design a provider-agnostic runtime contract that separates transport activity (ACP heartbeats and tool poll events) from useful worker progress, so a stale yielded command token cannot keep a run healthy indefinitely. Preserve explicit finalize, cancellation, recovery authority, and existing timeout compatibility. Specify observables, configuration/migration, escalation ownership, and deterministic regressions for live heartbeats plus a vanished subprocess before implementation.
+** Notes
+2026-07-23 manager audit: keep open. Commits 3bbd958 and 61dbe37 implement bounded manager command-session polling (TASK-2D0EJ), but they do not satisfy this task broader provider-agnostic semantic-progress runtime design, observables/configuration/migration/escalation contract, or its requested heartbeat-plus-vanished-process regression design. The prior handoff statement that TASK-41B0T was closed was inaccurate. Schedule after the urgent boot/reliability chain.
+** Reviewer Pass
+Claude Code rmux / Opus 4.8 high returned SHIP WITH FIXES. It required a positive normalized progress predicate, complete timeout-reason migration, explicit bounded wait lifecycle, one deadline authority, backward-clock-safe recovery, adapter equivalence coverage, concrete delay-only Probe semantics, and progress_* naming. TASK-636D8 resolved every finding; manager independently accepted the revised contract.
+** Evidence
+Cursor Grok 4.5 high-fast produced the source-backed design report. Claude Opus 4.8 high reviewed it as SHIP WITH FIXES. Codex GPT-5.6 Terra high resolved all findings, including exact fresh-acquire and recovery behavior. The reviewed provider-neutral contract, compatibility rules, observability schema, deterministic matrix, rollout gates, and explicit rmux/tmux limitation are persisted as arch_EAVPP.
+

@@ -2,6 +2,37 @@
 #+orgasmic_version: 1
 #+scope: project
 
+* GOAL Publish stable runtime and apps :goal:
+:PROPERTIES:
+:ID:               goal-20260724-publish-stable-runtime
+:SET_AT:           [2026-07-24 Fri]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:END:
+
+** Statement
+Commit every current uncommitted project and UI change, advance stable runtime and app patch versions, push the release commit, preview and publish the stable runtime and all stable app targets, and attach reviewed release notes. Preserve the authorized Documents-hosted daemon without restart.
+
+** Reached When
+The combined tree is committed and pushed; runtime stable and apps-stable dry-runs pass; approved notes are attached; stable runtime and apps releases target the release commit with versions newer than their prior published versions; git is clean; handoff records final evidence.
+
+* CLEARED Drain the current hardening backlog :goal:
+:PROPERTIES:
+:ID:               goal-20260723-drain-the-current
+:SET_AT:           [2026-07-23 Thu]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-23 Thu]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
+:END:
+
+** Statement
+Drain the five open backlog records one at a time. First reconcile TASK-41B0T against its already-landed polling hardening and close or re-scope it with evidence. Then implement TASK-35TK4, followed by its dependent TASK-2YZDJ, then TASK-FZF2D, then TASK-N4TGD. Preserve operator-owned uncommitted UI work, keep all source changes worktree-isolated, and file any newly discovered defects instead of silently expanding a task.
+
+** Reached When
+TASK-41B0T, TASK-35TK4, TASK-2YZDJ, TASK-FZF2D, and TASK-N4TGD are DONE or explicitly cancelled/re-scoped with evidence; each implemented task has its required deterministic regressions, project verification gates, manager integration review, and independent ship verdict; todo, in_progress, in_review, and backlog contain no unresolved task from this queue; no related dispatch or worktree remains; orgasmic status reports parse_errors 0.
+
 * CLEARED Close AFE5Q and SZEWA, then remove worker content :goal:
 :PROPERTIES:
 :ID:               goal-20260722-close-afe5q-and

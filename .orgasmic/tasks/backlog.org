@@ -1,11 +1,34 @@
 #+title: Backlog
 #+orgasmic_version: 1
 
-* BACKLOG TASK-41B0T Design semantic progress detection for worker runs    :design:
+* BACKLOG TASK-P19ZM Daemon boot follow-ups from TASK-35TK4 review    :daemon:hardening:
 :PROPERTIES:
-:ID: TASK-41B0T
+:ID: TASK-P19ZM
 :PRIORITY: medium
-:RELATES_TO: TASK-2D0EJ
 :END:
 
-TASK-2D0EJ deliberately leaves supervisor timeout semantics unchanged. Design a provider-agnostic runtime contract that separates transport activity (ACP heartbeats and tool poll events) from useful worker progress, so a stale yielded command token cannot keep a run healthy indefinitely. Preserve explicit finalize, cancellation, recovery authority, and existing timeout compatibility. Specify observables, configuration/migration, escalation ownership, and deterministic regressions for live heartbeats plus a vanished subprocess before implementation.
+Independent review of b18808c..bd3d7bd found additional non-blocking follow-ups outside the shipped slice: pre-bind project filesystem work remains unbounded; timed-out Git lookup should surface an actionable macOS Files-and-Folders hint; live reindex currently drops a project when its scan times out; daemon KeepAlive/restart semantics deserve an end-to-end regression; daemon-home comparison should avoid raw path-string equality; and repo_url should clear when a remote origin is removed.
+
+Acceptance: split or address these findings with focused regressions, preserving the lock-first and no-pre-bind-Git-spawn invariants. Keep TASK-RRVX0 separate because it is the new CLI lock-probe overlap risk.
+
+* BACKLOG TASK-4DTBZ rmux review transport must survive auth-shadow and daemon disconnects    :drivers:rmux:claude:hardening:
+:PROPERTIES:
+:ID: TASK-4DTBZ
+:PRIORITY: high
+:RELATES_TO: TASK-QSX56
+:END:
+
+Two consecutive TASK-QSX56 reviewer dispatches blocked the required Opus verdict for different transport reasons. Attempt 1 inherited a stale ANTHROPIC_AUTH_TOKEN from the foreground daemon and native Claude returned 401 even though the stored claude.ai login was healthy. After restarting the daemon with provider auth overrides removed, attempt 2 reached real Claude Opus 4.8/high and performed substantive analysis, then the rmux daemon closed the pane-output-cursor transport after 4m25s; the worker released protocol_end_without_finalize and no report was preserved. Define explicit provider-auth environment precedence/scrubbing for rmux launches, and make a daemon-side rmux disconnect preserve or reattach the native Claude session/report rather than losing the review. Add deterministic regressions for stale auth shadowing and rmux daemon disconnect during an active reviewer session.
+
+* BACKLOG TASK-QSX56 Cursor ACP must authorize scoped project workflow commands and finalize :drivers:cursor:acp:hardening:
+:PROPERTIES:
+:ID: TASK-QSX56
+:PRIORITY: high
+:RELATES_TO: TASK-2YZDJ
+:END:
+
+A real non-simulated cursor-agent/acp-stdio TASK-2YZDJ run reached native grok-4.5[effort=high,fast=true], read project files, and emitted tool envelopes, but the adapter returned reject_once for the worker shell probe `which orgasmic; orgasmic entry; echo "EXIT_CODE=$?"`. The request payload had nested toolCall.kind=execute and only title/content, with no structured input; current shell_command_allowed accepts only a narrow git/grep/find grammar and cannot authorize the mandatory `orgasmic entry` / `orgasmic dispatch finalize` workflow. Implement a bounded, injection-resistant authorization path for the exact project workflow commands needed by a Cursor worker, using the nested ACP payload actually emitted. Preserve worktree/path confinement and fail closed for unsafe shell controls/unknown commands. Add fixture regressions for the captured payload, permitted entry/finalize commands, and unsafe compound/foreign commands. Prove a real Cursor canary can run entry and finalize. Do not widen into TASK-2YZDJ feature implementation.
+** Evidence
+Codex gpt-5.6-terra/high implemented the bounded title-only Cursor ACP permission path in 8e3854e. The captured nested payload remains rejected as a compound command; standalone `orgasmic entry` and worker-bound `orgasmic dispatch finalize` are authorized, while shell control, foreign/destructive commands, task/run mismatches, and path escapes fail closed. Worker gates: drivers lib 208 pass, driver clippy/fmt/diff-check green, live legacy Cursor bridge green. Manager independently reran both new focused regressions, fmt, and diff-check before landing. Merged as aa4bb55; rebuilt source daemon boot 43ee051a-2ee7-476c-86aa-98d0dcbb484b is serving the patch. Live ACP workflow proof and independent Claude review remain.
+Independent review is not yet complete. First rmux/Opus attempt never reached code because a stale inherited ANTHROPIC_AUTH_TOKEN caused 401; stored claude.ai auth was healthy. After restarting without provider auth overrides, the single retry reached real Claude Opus 4.8/high and inspected the security-sensitive routing, but rmux closed the pane-output-cursor transport before a verdict. Partial transcript identified no bypass before interruption, but it is not a SHIP verdict. TASK-4DTBZ tracks the rmux reliability defect; TASK-QSX56 stays IN_REVIEW.
+
