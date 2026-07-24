@@ -160,7 +160,7 @@ function TaskDialogBody({
         onToggleMode={() => setMode((current) => (current === 'edit' ? 'view' : 'edit'))}
         onClose={onClose}
       />
-      <div className="grid min-h-0 grid-cols-1 md:grid-cols-[16rem_1fr_20rem]">
+      <div className="grid min-h-0 grid-cols-1 md:grid-cols-[16rem_minmax(0,1fr)_20rem]">
         <SubtaskRail
           parent={parent}
           subtasks={subtasks}
@@ -413,7 +413,7 @@ function MainPane({
   if (!task) return null;
   return (
     <ScrollArea className="min-h-0">
-      <div className="px-5 py-5">
+      <div className="px-5 py-5 [overflow-wrap:anywhere]">
         <NodeDocEditor
           projectId={projectId}
           nodeId={task.id}

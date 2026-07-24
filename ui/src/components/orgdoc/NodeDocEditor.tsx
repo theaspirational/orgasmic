@@ -60,7 +60,17 @@ function joinTokens(tokens: string[], separator: ChipSeparator): string {
  *  when `dynamicSections` is set — a prose field for every document section not
  *  already bound by a static field, in document order. */
 function effectiveFields(descriptor: NodeDescriptor, doc: OrgNodeDoc): NodeFieldDescriptor[] {
-  const fields = [...descriptor.fields];
+  const sectionTitles = new Set(doc.sections.map((section) => section.title));
+  const fields = descriptor.fields.map((field) => {
+    if (
+      field.fallbackToBody &&
+      field.binding.kind === 'section' &&
+      !sectionTitles.has(field.binding.title)
+    ) {
+      return { ...field, binding: { kind: 'body' } as const };
+    }
+    return field;
+  });
   if (descriptor.dynamicSections) {
     const bound = new Set(
       fields.flatMap((f) => (f.binding.kind === 'section' ? [f.binding.title] : [])),

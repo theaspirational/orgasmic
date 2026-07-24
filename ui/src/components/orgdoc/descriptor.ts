@@ -29,6 +29,9 @@ export type NodeFieldDescriptor = {
   label: string;
   binding: FieldBinding;
   editor: FieldEditor;
+  /** For section-bound prose that also has a legacy/direct-body representation:
+   *  keep the named section when it exists, otherwise read and write doc.body. */
+  fallbackToBody?: boolean;
   /** For chips bound to a property: token separator. Default 'space'. */
   separator?: ChipSeparator;
   /** Chips that reference other nodes — show resolved labels, navigate on click. */
@@ -139,7 +142,7 @@ export const TASK_DESCRIPTOR: NodeDescriptor = {
   kind: 'task',
   editableTitle: true,
   fields: [
-    { label: 'Description', binding: { kind: 'section', title: 'Description' }, editor: 'prose', placeholder: 'Describe the task...' },
+    { label: 'Description', binding: { kind: 'section', title: 'Description' }, editor: 'prose', fallbackToBody: true, placeholder: 'Describe the task...' },
     { label: 'Acceptance Criteria', binding: { kind: 'section', title: 'Acceptance Criteria' }, editor: 'prose', placeholder: 'Add concrete acceptance criteria...' },
     { label: 'Evidence', binding: { kind: 'section', title: 'Evidence' }, editor: 'prose', placeholder: 'Record verification evidence...', hideWhenEmpty: true },
     { label: 'Notes', binding: { kind: 'section', title: 'Notes' }, editor: 'prose', placeholder: 'Add implementation notes...', hideWhenEmpty: true },
