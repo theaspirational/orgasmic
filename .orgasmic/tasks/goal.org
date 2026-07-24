@@ -2,12 +2,15 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Publish stable runtime and apps :goal:
+* CLEARED Publish stable runtime and apps :goal:
 :PROPERTIES:
 :ID:               goal-20260724-publish-stable-runtime
 :SET_AT:           [2026-07-24 Fri]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         —
+:STATUS:           cleared
+:CLEARED_AT:       [2026-07-24 Fri]
+:CLEARED_BY:       theaspirational@users.noreply.github.com
 :END:
 
 ** Statement

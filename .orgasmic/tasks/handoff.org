@@ -5,30 +5,28 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:GOAL_ID:          goal-20260724-publish-stable-runtime
-:LIVENESS:         197cd19fe2aeaa02182e6cb4b870c695ebfbff4d
+:LIVENESS:         40f70591a323ebb8fbbeb2a4caa31d81138e106c
 :LIVENESS_AT:      [2026-07-24 Fri]
-:UPDATED_AT:       [2026-07-23 Thu]
+:UPDATED_AT:       [2026-07-24 Fri]
 :END:
 
-Completed goal goal-20260722-close-afe5q-and. QPKCD, AFE5Q, SZEWA, TASK-41B0T, and DZ5NM are closed; the worker-template hard cutover is merged on main at d4492a2. No worker or related dispatch remains live.
+Stable runtime 0.0.14 and apps 0.0.8 are published from source commit 40f70591a323ebb8fbbeb2a4caa31d81138e106c. The hardening backlog remains drained and no worker dispatch is active.
 
 ** Done so far
-- Backlog and UI compatibility work are committed in 697feb0 and 54dcb10.
-- Stable versions are bumped and verified in 197cd19: runtime 0.0.14 and apps 0.0.8.
-- Pre-release gates pass: Rust compile and format, UI typecheck, focused compatibility tests, and isolated reruns of all load-sensitive full-suite failures.
+- Published runtime 0.0.14 to https://github.com/theaspirational/orgasmic/releases/tag/stable with four refreshed macOS/Linux targets and the existing Windows 0.0.7 target preserved.
+- Published apps 0.0.8 to https://github.com/theaspirational/orgasmic/releases/tag/apps-stable with macOS updater/DMG assets and an Android aarch64 APK.
+- Attached approved release notes to both releases and verified both tags target 40f70591a323ebb8fbbeb2a4caa31d81138e106c.
+- Downloaded and verified runtime-latest.json, latest.json, and android-latest.json versions, commit provenance, target inventory, and hashes.
 
 ** Next likely actions
-1. Commit this release checkpoint and push main.
-2. Run stable runtime and apps dry-runs sequentially from the clean pushed tree.
-3. Review release-note items with the operator and obtain final Ship it approval.
-4. Publish runtime then apps, sync approved metadata, and verify releases and manifests.
+1. Begin the next round from clean synchronized main.
+2. Update or launch a fresh runtime 0.0.14 process only when ready to handle the macOS Documents permission prompt.
+3. Run the dedicated Windows stable workflow when a Windows runtime newer than retained 0.0.7 is required.
 
 ** In flight
-Stable runtime 0.0.14 and apps 0.0.8 are prepared at 197cd19. No worker dispatch is active; release dry-runs are next.
+None. Runtime and app stable releases are published and verified; no worker dispatch is active.
 
 ** Divergence / Risks
-- The foreground daemon at PID 15304 / boot d43b38ae-a23d-4b75-91a3-e5ef3066a58a is authorized for Documents and must not be restarted. Every new daemon under Documents may prompt again.
-- The full Rust suite passed except four load-sensitive process/git timing tests; every one passed immediately in exact isolated reruns. One UI Mermaid test similarly passed on isolated rerun after a five-second timeout in the concurrent full run.
-- Stable publication requires a clean pushed tree, successful sequential dry-runs, reviewed notes, and final Ship it approval.
-- Windows runtime cannot be rebuilt locally from macOS; existing Windows stable assets remain unless the dedicated workflow is run.
+- The foreground daemon at PID 15304 / boot d43b38ae-a23d-4b75-91a3-e5ef3066a58a intentionally remains on runtime 0.0.13 and was not restarted. Every newly launched daemon under Documents may prompt for access again.
+- The Windows stable runtime remains 0.0.7 because Windows cannot be built locally from macOS.
+- The macOS app publisher produced updater signatures but skipped Apple notarization because notarization credentials were not present in the environment.
