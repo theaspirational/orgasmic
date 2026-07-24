@@ -6,27 +6,29 @@
 :PROPERTIES:
 :ID:               handoff-current
 :GOAL_ID:          goal-20260724-publish-stable-runtime
-:LIVENESS:         07a5b5a6433be984a5309e1d2e5b830eb90c9b61
-:LIVENESS_AT:      [2026-07-23 Thu]
+:LIVENESS:         197cd19fe2aeaa02182e6cb4b870c695ebfbff4d
+:LIVENESS_AT:      [2026-07-24 Fri]
 :UPDATED_AT:       [2026-07-23 Thu]
 :END:
 
 Completed goal goal-20260722-close-afe5q-and. QPKCD, AFE5Q, SZEWA, TASK-41B0T, and DZ5NM are closed; the worker-template hard cutover is merged on main at d4492a2. No worker or related dispatch remains live.
 
 ** Done so far
-- The hardening backlog is drained through source HEAD 07a5b5a; TASK-41B0T design is accepted as arch_EAVPP.
-- Operator requested all remaining project/UI state committed and a full stable runtime + apps release.
+- Backlog and UI compatibility work are committed in 697feb0 and 54dcb10.
+- Stable versions are bumped and verified in 197cd19: runtime 0.0.14 and apps 0.0.8.
+- Pre-release gates pass: Rust compile and format, UI typecheck, focused compatibility tests, and isolated reruns of all load-sensitive full-suite failures.
 
 ** Next likely actions
-1. Verify and commit all current tracked/untracked changes, including daemon-owned project state and the task-description UI compatibility regression.
-2. Bump runtime 0.0.13 to 0.0.14 and apps 0.0.7 to 0.0.8, update matching metadata, commit, and push main.
-3. Run stable runtime and apps dry-runs sequentially.
-4. Review release notes item by item, publish runtime then apps, sync approved metadata, and verify manifests/releases.
+1. Commit this release checkpoint and push main.
+2. Run stable runtime and apps dry-runs sequentially from the clean pushed tree.
+3. Review release-note items with the operator and obtain final Ship it approval.
+4. Publish runtime then apps, sync approved metadata, and verify releases and manifests.
 
 ** In flight
-Manager is preparing the stable runtime + apps release. No worker dispatch is active.
+Stable runtime 0.0.14 and apps 0.0.8 are prepared at 197cd19. No worker dispatch is active; release dry-runs are next.
 
 ** Divergence / Risks
 - The foreground daemon at PID 15304 / boot d43b38ae-a23d-4b75-91a3-e5ef3066a58a is authorized for Documents and must not be restarted. Every new daemon under Documents may prompt again.
-- Stable publication requires patch bumps, a clean pushed tree, successful dry-runs, and reviewed notes. Runtime and app publishers must run sequentially.
+- The full Rust suite passed except four load-sensitive process/git timing tests; every one passed immediately in exact isolated reruns. One UI Mermaid test similarly passed on isolated rerun after a five-second timeout in the concurrent full run.
+- Stable publication requires a clean pushed tree, successful sequential dry-runs, reviewed notes, and final Ship it approval.
 - Windows runtime cannot be rebuilt locally from macOS; existing Windows stable assets remain unless the dedicated workflow is run.
