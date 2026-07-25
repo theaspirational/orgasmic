@@ -285,17 +285,24 @@ an error that names the wrong file and reads like a missing artifact rather than
 an unsupported target. This file is maintained as a source file in dispatch
 WRITE_SCOPE instead, which is why it is edited directly.
 
-** A stale index makes projects vanish from node routes while `status` still counts them
-Observed 2026-07-25. =orgasmic status= reported =projects: 5= with
-=parse_errors: 0=, and =orgasmic project list= showed all five, yet every
-=orgasmic node= route answered =404 {"error":"project orgasmic"}= for two of
-them (orgasmic and ddd). Task routes kept working throughout, because
-=locate_task= scans the snapshot while =select_project= looks up
-=snap.projects[id]= - so the failure is invisible until something addresses a
-project by id.
+** A project can be registered, listed, and still absent from the index
+Observed 2026-07-25 (TASK-MRJRK). Ten minutes after a daemon restart, every
+=orgasmic node= route answered =404 {"error":"project orgasmic"}= for two of the
+five registered projects (orgasmic and ddd), while =orgasmic project list= kept
+showing all five. =orgasmic reindex= fixed it immediately.
 
-=orgasmic reindex= fixed it immediately. The trap is the diagnosis: =status= and
-=project list= both answer from board registration, not from the index snapshot,
-so neither can tell you the snapshot is missing a project. When a node route
-404s on a project you can see in =project list=, reindex before believing the
-project is misconfigured.
+The trap is the error message. =select_project= looks up =snap.projects[id]= and
+reports a miss as ="project <id>"=, which reads as "no such project" - so the
+obvious next move is to check registration, which is fine, and the actual
+problem (the id is not in the index snapshot) is never suggested. Worse, the
+=404= comes from the CLI's *base_version GET*, before any edit, so it looks like
+a read failure on a node rather than a stale index.
+
+When a node route 404s on a project you can see in =project list=, reindex
+before believing anything is misconfigured.
+
+What is NOT established, so do not repeat it as fact: =status= does not read
+board registration - =projects= is =snap.projects.len()=, the same map the
+lookup missed. So =status= should have reported the smaller count during the
+window; it was simply never checked at that moment. Whether the two projects
+were dropped after boot, never loaded, or keyed differently is open.
