@@ -27337,3 +27337,16 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-25 Sat 17:06:47 task.created TASK-6HJYT
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2813
+:TIME:         [2026-07-25 Sat 17:06:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6HJYT
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       control-path fence should not depend on classifying unrelated historical runs; get_run already applies this reasoning, the list endpoint does not
+:END:
