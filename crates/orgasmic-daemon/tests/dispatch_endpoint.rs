@@ -6,7 +6,9 @@ use std::time::Duration;
 mod common;
 
 use common::{assert_path_free_error, assert_path_free_error_response};
-use orgasmic_core::{read_session_file, Home, Lifecycle, SandboxAllowlist, SessionEventKind};
+use orgasmic_core::{
+    read_session_file, Home, Lifecycle, SandboxAllowlist, SessionEventKind, WorkerKind,
+};
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use orgasmic_drivers::{allowlist_from_driver_config, DriverConfig};
 
@@ -61,25 +63,15 @@ fn read_token(home: &Home) -> String {
         .to_string()
 }
 
-fn seed_worker(home: &Home, id: &str, driver: &str, harness: &str, provider: &str, _model: &str) {
-    seed_worker_kind(home, id, "implementer", driver, harness, provider, _model);
-}
-
-fn seed_worker_kind(
-    home: &Home,
-    id: &str,
-    kind: &str,
-    driver: &str,
-    harness: &str,
-    provider: &str,
-    _model: &str,
-) {
-    write(
-        &home.user().join(format!("workers/{id}.org")),
-        format!(
-            "* WORKER {id}\n:PROPERTIES:\n:ID:                          {id}\n:KIND:                        {kind}\n:DRIVER:                      {driver}\n:HARNESS:                     {harness}\n:PROVIDERS:                   {provider}\n:DEFAULT_PROVIDER:            {provider}\n:LINKED_SKILLS:\n:APPLICABLE_STATES:           working, done, blocked, cancelled\n:MAX_ITERATIONS:              1\n:CONTEXT_BUDGET:              4000\n:VERSION:                     1\n:END:\n\n** Persona\nTest dispatch worker.\n\n** Operating Rules\n- Keep the test run minimal.\n"
-        ),
-    );
+/// The label the daemon will mint for a dispatch address.
+///
+/// There is nothing to seed: worker templates were retired, `user/workers/` is
+/// ignored at boot, and `DispatchRequest` has no `worker_id` field. The label
+/// on the response, the tx record, and the run inventory is derived from
+/// `(kind, mode, harness)` alone, so tests derive it the same way rather than
+/// hardcoding a name that can silently stop matching.
+fn worker_label(kind: WorkerKind, mode: &str, harness: &str) -> String {
+    orgasmic_daemon::addressing::compatibility_worker_id(kind, mode, harness)
 }
 
 fn seed_project(
@@ -231,6 +223,10 @@ fn dispatch_body(
     stdout: &Path,
     worker_id: Option<&str>,
 ) -> serde_json::Value {
+    // `worker_id` selects the transport the caller wants and names the label
+    // the daemon will mint back. It is deliberately NOT sent: `DispatchRequest`
+    // has no such field, so a `worker_id` in the body is silently dropped —
+    // which is how these tests came to assert a name nothing produced.
     let (mode, harness) = transport_for_worker_label(worker_id);
     serde_json::json!({
         "kind": kind,
@@ -240,7 +236,6 @@ fn dispatch_body(
         "worktree_path": worktree,
         "last_path": last,
         "stdout_path": stdout,
-        "worker_id": worker_id,
         "branch": "task-dispatch-impl",
         "liveness": "deadbeef",
         "reason": "dispatch endpoint test",
@@ -303,6 +298,45 @@ fn terminate_pid(pid: u64) {
         .status();
 }
 
+/// Pins every label this file asserts on to the daemon's own naming rule.
+///
+/// These tests previously named workers that `user/workers/` was expected to
+/// supply. Templates were retired, the directory is ignored at boot, and the
+/// assertions kept passing a name the daemon never mints — so three tests
+/// failed on every run for a reason unrelated to what they were testing. This
+/// test fails first, and loudly, if the rule moves again.
+#[test]
+fn asserted_worker_labels_match_the_daemons_naming_rule() {
+    for (label, kind, mode, harness) in [
+        (
+            "implementer-codex-acp-ws",
+            WorkerKind::Implementer,
+            "acp-ws",
+            "codex",
+        ),
+        (
+            "implementer-codex-acp-stdio",
+            WorkerKind::Implementer,
+            "acp-stdio",
+            "codex",
+        ),
+        (
+            "implementer-cursor-agent-subprocess-stream-json",
+            WorkerKind::Implementer,
+            "subprocess-stream-json",
+            "cursor-agent",
+        ),
+        (
+            "reviewer-codex-acp-ws",
+            WorkerKind::Reviewer,
+            "acp-ws",
+            "codex",
+        ),
+    ] {
+        assert_eq!(worker_label(kind, mode, harness), label);
+    }
+}
+
 #[tokio::test]
 async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created() {
     let tmp = tempfile::tempdir().unwrap();
@@ -310,9 +344,8 @@ async fn dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-CODEX";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -368,13 +401,12 @@ async fn dispatch_endpoint_auto_spawns_babysitter_jsonl() {
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-BABYSITTER-SPAWN";
     write(
         &home.config(),
         "dispatch:\n  implementer:\n    babysitter:\n      mode: acp-ws\n      harness: codex\n",
     );
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -610,18 +642,9 @@ async fn state_flip_to_in_progress_does_not_spawn_worker() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let pipeline_worker = "implementer-codex-appserver";
+    let pipeline_worker = "implementer-codex-acp-ws";
     let task_worker = "pinned-implementer";
     let task_id = "TASK-NO-AUTOSPAWN";
-    seed_worker(
-        &home,
-        pipeline_worker,
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
-    seed_worker(&home, task_worker, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project_with_task_worker(
         &home,
         &project_root,
@@ -684,18 +707,13 @@ async fn dispatch_with_task_worker_property_still_spawns_via_explicit_path() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let pipeline_worker = "implementer-codex-appserver";
+    let pipeline_worker = "implementer-codex-acp-ws";
+    // A stale `:WORKER:` pin left on the task. It is a label the task carries,
+    // never routing authority — the dispatch address decides, and the run must
+    // come back under the address-derived id, not this one.
     let task_worker = "pinned-implementer";
+    let dispatched_label = "implementer-codex-acp-ws";
     let task_id = "TASK-WORKER-PIN";
-    seed_worker(
-        &home,
-        pipeline_worker,
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
-    seed_worker(&home, task_worker, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project_with_task_worker(
         &home,
         &project_root,
@@ -734,11 +752,15 @@ async fn dispatch_with_task_worker_property_still_spawns_via_explicit_path() {
         response.status()
     );
     let body: serde_json::Value = response.json().await.unwrap();
-    assert_eq!(body["worker_id"], task_worker);
+    assert_eq!(
+        body["worker_id"], dispatched_label,
+        "the task's :WORKER: pin must not override the dispatch address"
+    );
+    assert_ne!(body["worker_id"], task_worker);
     assert!(!body["run_id"].as_str().unwrap().is_empty());
     assert!(PathBuf::from(body["session_path"].as_str().unwrap()).exists());
 
-    let raw = wait_for_run_created(&project_root, task_worker).await;
+    let raw = wait_for_run_created(&project_root, dispatched_label).await;
     assert!(raw.contains("cli_dispatch"));
     assert!(!raw.contains("auto_spawn"));
 
@@ -760,7 +782,7 @@ async fn dispatch_endpoint_accepts_task_sandbox_override() {
     home.ensure().unwrap();
     symlink_repo_source(&home);
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-SANDBOX-OVERRIDE";
     write(
         &home.user().join(format!("workers/{worker_id}.org")),
@@ -900,9 +922,8 @@ async fn dispatch_endpoint_lease_held_returns_409() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-LEASE";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -972,16 +993,8 @@ async fn dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-CURSOR";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -1042,9 +1055,8 @@ async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-stdio";
+    let worker_id = "implementer-codex-acp-stdio";
     let task_id = "TASK-CODEX-STDIO";
-    seed_worker(&home, worker_id, "acp-stdio", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -1099,9 +1111,8 @@ async fn dispatch_unsupported_transport_is_path_free() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-UNSUPPORTED-TRANSPORT";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = project_root.join("brief.txt");
     write(&brief, "unsupported transport dispatch brief\n");
@@ -1148,9 +1159,8 @@ async fn dispatch_rejects_missing_worktree_with_sanitized_error() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-MISSING-WT";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let missing_worktree = tmp.path().join("missing-worktree");
@@ -1197,9 +1207,8 @@ async fn dispatch_rejects_file_worktree_with_sanitized_error() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-FILE-WT";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let file_worktree = tmp.path().join("not-a-dir");
@@ -1247,9 +1256,8 @@ async fn dispatch_override_off_list_model_passes_through_with_warn() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-OVERRIDE";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -1476,16 +1484,8 @@ async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_emp
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-LAST";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree");
@@ -1543,16 +1543,8 @@ async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-DELAYED-ARTIFACTS";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-delayed.md");
     let worktree = tmp.path().join("worktree-delayed");
@@ -1613,16 +1605,8 @@ async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-CURSOR-SHAPED";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-cursor-shaped.md");
     let worktree = tmp.path().join("worktree-cursor-shaped");
@@ -1696,16 +1680,8 @@ async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-CLEAN";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief.md");
     let worktree = tmp.path().join("worktree-clean");
@@ -1861,19 +1837,9 @@ async fn dispatch_back_to_back_implementer_and_reviewer_emit_dispatch_started_an
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
-    let reviewer_worker_id = "reviewer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
+    let reviewer_worker_id = "reviewer-codex-acp-ws";
     let task_id = "TASK-BACKTOBACK";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
-    seed_worker_kind(
-        &home,
-        reviewer_worker_id,
-        "reviewer",
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
     seed_dual_kind_project(
         &home,
         &project_root,
@@ -2027,9 +1993,8 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
         "dispatch:\n  implementer:\n    linked_skills:\n      - missing-skill\n",
     );
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-SKILL-BEFORE-BRIEF";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let missing_brief = tmp.path().join("missing-brief.md");
     let worktree = tmp.path().join("worktree");
@@ -2083,16 +2048,8 @@ async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-SYSTEM-ONLY-STDOUT";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-system-only.md");
     let worktree = tmp.path().join("worktree-system-only");
@@ -2168,9 +2125,8 @@ async fn dispatch_grace_path_writes_artifacts_without_terminal_session_marker() 
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-stdio";
+    let worker_id = "implementer-codex-acp-stdio";
     let task_id = "TASK-GRACE-PATH";
-    seed_worker(&home, worker_id, "acp-stdio", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-grace-path.md");
     let worktree = tmp.path().join("worktree-grace-path");
@@ -2252,9 +2208,8 @@ async fn dispatch_started_tx_empty_reason_has_no_trailing_whitespace() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
+    let worker_id = "implementer-codex-acp-ws";
     let task_id = "TASK-EMPTY-REASON";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-empty-reason.md");
     let worktree = tmp.path().join("worktree-empty-reason");
@@ -2487,8 +2442,7 @@ async fn get_project_invalid_task_returns_404_quickly_without_paths() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-codex-appserver";
-    seed_worker(&home, worker_id, "acp-ws", "codex", "openai", "gpt-5.5");
+    let worker_id = "implementer-codex-acp-ws";
     seed_project(
         &home,
         &project_root,
@@ -2555,16 +2509,8 @@ async fn dispatch_response_pid_is_inner_subprocess_child() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-WATCH-PID";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-watch-pid.md");
     let worktree = tmp.path().join("worktree-watch-pid");
@@ -2638,16 +2584,8 @@ async fn dispatch_response_pid_prefers_worker_server_child() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-WORKER-SERVER-PID";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-worker-server-pid.md");
     let worktree = tmp.path().join("worktree-worker-server-pid");
@@ -2715,16 +2653,8 @@ async fn dispatch_early_exit_auto_releases_stuck_lease() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-EARLY-EXIT";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-early-exit.md");
     let worktree = tmp.path().join("worktree-early-exit");
@@ -2932,16 +2862,8 @@ async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
     let project_root = tmp.path().join("proj");
-    let worker_id = "implementer-cursor";
+    let worker_id = "implementer-cursor-agent-subprocess-stream-json";
     let task_id = "TASK-SYNTHETIC-RC";
-    seed_worker(
-        &home,
-        worker_id,
-        "subprocess-stream-json",
-        "cursor-agent",
-        "cursor",
-        "composer-2.5-fast",
-    );
     seed_project(&home, &project_root, "proj-dispatch", worker_id, task_id);
     let brief = tmp.path().join("brief-synthetic-rc.md");
     let worktree = tmp.path().join("worktree-synthetic-rc");
@@ -3065,19 +2987,11 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
     std::fs::create_dir_all(&project_root).unwrap();
     let project_id = "proj-dispatch";
     let task_id = "TASK-CLEANUP-EP";
-    seed_worker(
-        &home,
-        "implementer-codex-appserver",
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
     seed_project(
         &home,
         &project_root,
         project_id,
-        "implementer-codex-appserver",
+        "implementer-codex-acp-ws",
         task_id,
     );
     write(
@@ -3167,7 +3081,7 @@ async fn dispatch_cleanup_releases_worker_and_deletes_worktree_branch() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-appserver"),
+        Some("implementer-codex-acp-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
     dispatch["branch"] = serde_json::json!("task-cleanup-ep-impl");
@@ -3242,19 +3156,11 @@ async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
     std::fs::create_dir_all(&project_root).unwrap();
     let project_id = "proj-dispatch";
     let task_id = "TASK-CLEANUP-BRANCH";
-    seed_worker(
-        &home,
-        "implementer-codex-appserver",
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
     seed_project(
         &home,
         &project_root,
         project_id,
-        "implementer-codex-appserver",
+        "implementer-codex-acp-ws",
         task_id,
     );
     write(
@@ -3330,7 +3236,7 @@ async fn dispatch_cleanup_branch_mismatch_returns_conflict() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-appserver"),
+        Some("implementer-codex-acp-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
     dispatch["branch"] = serde_json::json!(branch);
@@ -3393,19 +3299,11 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
     std::fs::create_dir_all(&project_root).unwrap();
     let project_id = "proj-dispatch";
     let task_id = "TASK-FINALIZE-EP";
-    seed_worker(
-        &home,
-        "implementer-codex-appserver",
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
     seed_project(
         &home,
         &project_root,
         project_id,
-        "implementer-codex-appserver",
+        "implementer-codex-acp-ws",
         task_id,
     );
     write(
@@ -3496,7 +3394,7 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-appserver"),
+        Some("implementer-codex-acp-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt);
     dispatch["branch"] = serde_json::json!(branch);
@@ -3561,19 +3459,11 @@ async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
     std::fs::create_dir_all(&project_root).unwrap();
     let project_id = "proj-dispatch";
     let task_id = "TASK-CLEANUP-LIVE";
-    seed_worker(
-        &home,
-        "implementer-codex-appserver",
-        "acp-ws",
-        "codex",
-        "openai",
-        "gpt-5.5",
-    );
     seed_project(
         &home,
         &project_root,
         project_id,
-        "implementer-codex-appserver",
+        "implementer-codex-acp-ws",
         task_id,
     );
     write(
@@ -3664,7 +3554,7 @@ async fn dispatch_cleanup_token_mismatch_while_live_worker_survives() {
         &worktree,
         &last,
         &stdout,
-        Some("implementer-codex-appserver"),
+        Some("implementer-codex-acp-ws"),
     );
     dispatch["dispatch_attempt_token"] = serde_json::json!(attempt_b);
     dispatch["branch"] = serde_json::json!(branch);

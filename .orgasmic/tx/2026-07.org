@@ -27519,3 +27519,16 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-07-25 Sat 21:59:37 task.created TASK-5T575
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2826
+:TIME:         [2026-07-25 Sat 21:59:37]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5T575
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       filed from a measured 3-test failure on HEAD; fix landing in the same commit
+:END:
