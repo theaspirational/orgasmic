@@ -220,6 +220,17 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Harness-specific readiness probe backing [`WorkerDriver::preflight`].
+    ///
+    /// Readiness is a property of the harness and its credentials, not of the
+    /// transport carrying them, so the mode drivers all delegate here rather
+    /// than each reimplementing the same question. The rules that make a probe
+    /// worth trusting — and its cost budget — are documented on
+    /// [`WorkerDriver::preflight`]; read them before implementing this.
+    async fn preflight(&mut self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
+        Preflight::Unsupported
+    }
+
     /// Subprocess invocation for the acp-stdio mode pairing.
     /// Returns `None` when this adapter does not participate in stdio mode.
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
@@ -441,6 +452,21 @@ impl Clone for Box<dyn HarnessEventAdapter> {
     }
 }
 
+/// Run a mode driver's preflight against the harness adapter it carries.
+///
+/// Every mode holds a `Box<dyn HarnessEventAdapter>` and every mode's answer to
+/// "could a worker start?" is the adapter's answer, so this exists once instead
+/// of five times. The probe gets a fresh clone for the same reason `acquire`
+/// does: the shared adapter is a template, and a probe must not leave state on
+/// it that a later launch would inherit.
+pub(crate) async fn preflight_via_adapter(
+    adapter: &dyn HarnessEventAdapter,
+    ctx: &DriverContext,
+    config: &DriverConfig,
+) -> Preflight {
+    adapter.clone_box().preflight(ctx, config).await
+}
+
 /// A live driver instance the supervisor can talk to.
 #[async_trait]
 pub trait WorkerDriver: Send + Sync + 'static {
@@ -467,22 +493,41 @@ pub trait WorkerDriver: Send + Sync + 'static {
     /// Called after configuration is resolved and before any lease, session, or
     /// dispatch record exists, so a definitive failure costs nothing to undo.
     ///
-    /// Two rules make this worth doing at all:
+    /// Three rules make this worth doing at all:
     ///
     /// - The default is [`Preflight::Unsupported`], never a cheerful `Ok`. A
     ///   driver that has not implemented a probe must not be able to claim
     ///   readiness it never checked.
-    /// - An implementation must exercise the same execution context the worker
-    ///   will use — the same binary, the same argv, the same environment — not
-    ///   the harness's ambient opinion of itself. Measured 2026-07-25:
-    ///   `claude auth status` reported `loggedIn: true` while the very same
-    ///   binary invoked with the dispatch's own flags answered "Not logged in"
-    ///   in 39 ms. A preflight that asked the harness whether it was logged in
-    ///   would have passed and still produced the failure it exists to prevent.
+    /// - **An implementation must resolve the same credential mode the worker
+    ///   will resolve, and then check the credential that mode actually
+    ///   consumes.** This rule replaces an earlier, blunter one ("always
+    ///   exercise the worker's exact argv"), which was written from a real
+    ///   observation before its cause was understood. The observation:
+    ///   `claude auth status` reported `loggedIn: true` while the same binary
+    ///   invoked with the dispatch's own flags answered "Not logged in" in
+    ///   39 ms. The cause, measured 2026-07-25: `auth status` reports only the
+    ///   claude.ai/keychain login and is blind to `ANTHROPIC_API_KEY`, while
+    ///   the dispatch's argv carried `--bare`, whose contract is that OAuth and
+    ///   the keychain are never read. The two were answering about different
+    ///   credentials, so they could disagree without either being wrong. Once
+    ///   the probe resolves the mode first, `auth status` is exactly the right
+    ///   question for native login and exactly the wrong one for `--bare`.
+    /// - A probe runs on every dispatch, so its price is part of its design.
+    ///   Measured on claude 2.1.220: submitting a real turn — the only way to
+    ///   get the harness itself to rule on the credential — cost $0.0994 and
+    ///   24.5k tokens for a one-character prompt, because the request writes
+    ///   the harness's system prompt, tools and skills to cache before any
+    ///   answer comes back. Cancelling early does not refund it: the failure
+    ///   verdict and the outbound request are simultaneous (0.326 s vs
+    ///   0.390 s). A check that silently bills a tenth of a dollar per dispatch
+    ///   is not a check worth having, so prefer a local, zero-cost interrogation
+    ///   of the resolved credential and return [`Preflight::Unsupported`] where
+    ///   only a billed turn could reach a verdict.
     ///
     /// It must never prompt. A harness answering "run /login" is a definitive
     /// failure to report, not an interactive flow to enter: nobody is attached
-    /// to a dispatched worker to answer it.
+    /// to a dispatched worker to answer it. Give any child process a null
+    /// stdin so an interactive fallback cannot block instead of answering.
     async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
         Preflight::Unsupported
     }

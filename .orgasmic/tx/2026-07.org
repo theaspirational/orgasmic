@@ -27350,3 +27350,32 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       control-path fence should not depend on classifying unrelated historical runs; get_run already applies this reasoning, the list endpoint does not
 :END:
+
+
+* TX 2026-07-25 Sat 18:05:58 task.edited TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2814
+:TIME:         [2026-07-25 Sat 18:05:58]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-TJKFC
+:NODE_ID:      TASK-TJKFC
+:END:
+
+* TX 2026-07-25 Sat 18:06:12 task.edited TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2815
+:TIME:         [2026-07-25 Sat 18:06:12]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-TJKFC
+:NODE_ID:      TASK-TJKFC
+:END:

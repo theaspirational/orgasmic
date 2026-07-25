@@ -9,6 +9,9 @@ use async_trait::async_trait;
 
 pub mod adapters;
 pub mod modes;
+/// Shared readiness-probe machinery. Internal: adapters implement
+/// `preflight`, callers consume [`r#trait::Preflight`].
+pub(crate) mod preflight;
 pub mod runtime_options;
 pub mod sandbox;
 pub mod r#trait;

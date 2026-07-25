@@ -25,9 +25,11 @@ use tokio::sync::mpsc;
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::modes::tmux::claude_session_path;
+use crate::preflight::{classify_api_key, read_status_output};
 use crate::r#trait::{
     BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, RunKind, StdioSpawn, TransitionRequest,
+    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight, RunKind, StdioSpawn,
+    TransitionRequest,
 };
 
 const TRANSPORT: &str = "claude-acp";
@@ -236,6 +238,71 @@ impl HarnessEventAdapter for ClaudeAdapter {
         ))?))
     }
 
+    /// Rule on this worker's credentials before the dispatch commits anything.
+    ///
+    /// The probe resolves the credential mode through the same
+    /// [`resolve_credentials`] the launch uses, then asks about the credential
+    /// *that mode* consumes — the distinction the trait doc explains, and the
+    /// reason this costs nothing. Measured on claude 2.1.220: 0.28 s and $0.
+    ///
+    /// What it cannot prove, stated plainly so nobody reads `Ready` as a
+    /// guarantee: a login that exists can still be expired or rate-limited
+    /// server-side, and an API key that is present can still be rejected.
+    /// Establishing either requires submitting a real turn, which was measured
+    /// at $0.0994 per dispatch and rejected on that ground.
+    async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+        let Ok(cfg) = serde_json::from_value::<ClaudeAcpConfig>(config.0.clone()) else {
+            return Preflight::Unsupported;
+        };
+        if simulate_override() {
+            // Nothing will present a credential, so there is nothing to rule on
+            // and nothing that could fail at startup.
+            return Preflight::Unsupported;
+        }
+        // Deliberately not the full `simulation_reason` check, for two reasons.
+        //
+        // It would call `claude_available()`, a *blocking* `claude --version`,
+        // on the async path — the hazard TASK-KKGKM was about, where one
+        // synchronous call inside a future stalls the task mid-poll. It also
+        // does not need to: a missing binary makes the status command
+        // unspawnable, which `read_status_output` already reports as
+        // inconclusive.
+        //
+        // And an empty endpoint must *not* skip the probe. It makes this
+        // adapter compose a simulated request, but acp-stdio then upgrades that
+        // into a real subprocess whenever the binary is present
+        // (`upgrades_simulated_to_subprocess`) — a real subprocess presenting a
+        // real credential that can fail at startup. Skipping there would have
+        // exempted the most common dispatch shape there is.
+        let Ok(resolved) = resolve_credentials(&cfg) else {
+            // A misconfigured `api_key_env` is already `validate`'s rejection
+            // and reaches the operator as a config error, not a readiness one.
+            return Preflight::Unsupported;
+        };
+        let verdict = match resolved.mode {
+            ClaudeCredentialMode::BareApiKey => classify_bare_api_key(resolved.api_key.as_deref()),
+            ClaudeCredentialMode::NativeLogin => {
+                // Ask the same binary the launch will spawn.
+                let command = self
+                    .stdio_spawn()
+                    .map(|spawn| spawn.command)
+                    .unwrap_or_else(|| "claude".to_string());
+                match read_status_output(&command, &["auth", "status"]).await {
+                    // Claude answers in JSON on stdout; parsing a stream the
+                    // harness may also use for warnings would be fragile.
+                    Some(status) => classify_native_login(&status.stdout),
+                    None => Preflight::Unsupported,
+                }
+            }
+        };
+        tracing::debug!(
+            credential_mode = resolved.mode.as_str(),
+            rejects = verdict.rejects_dispatch().is_some(),
+            "claude preflight: resolved verdict"
+        );
+        verdict
+    }
+
     fn compose_request(
         &mut self,
         ctx: &DriverContext,
@@ -244,24 +311,10 @@ impl HarnessEventAdapter for ClaudeAdapter {
         let cfg: ClaudeAcpConfig = serde_json::from_value(config.0.clone())
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
         self.validate_config(config)?;
-        let explicit_simulate = std::env::var("ORGASMIC_DRIVER_SIMULATE")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        let endpoint_empty = cfg.endpoint.as_deref().map(str::is_empty).unwrap_or(true);
-        let simulated = if explicit_simulate {
-            tracing::warn!(
-                "claude-acp: ORGASMIC_DRIVER_SIMULATE=1 is set; using simulated mode (explicit override)"
-            );
-            true
-        } else if !claude_available() {
-            tracing::warn!(
-                "claude-acp: 'claude' binary not found on PATH; using simulated mode (binary not detectable)"
-            );
-            true
-        } else {
-            endpoint_empty
-        };
-        if simulated {
+        if let Some(reason) = simulation_reason(&cfg) {
+            if let Some(warning) = reason.warning() {
+                tracing::warn!("{warning}");
+            }
             return Ok(HarnessRequest::Simulated {
                 events: simulated_start_events(ctx, &cfg),
             });
@@ -278,22 +331,8 @@ impl HarnessEventAdapter for ClaudeAdapter {
 
         // Resolve credentials first: the mode decides which isolation flags are
         // even available (see `ClaudeCredentialMode`).
-        let mut env = BTreeMap::new();
-        let mode = match cfg.api_key_env.as_deref() {
-            Some(env_name) => {
-                let api_key = std::env::var(env_name).map_err(|_| {
-                    DriverError::InvalidConfig(format!(
-                        "api_key_env '{env_name}' not set but endpoint is configured"
-                    ))
-                })?;
-                env.insert("ANTHROPIC_API_KEY".into(), api_key);
-                ClaudeCredentialMode::BareApiKey
-            }
-            None if std::env::var_os("ANTHROPIC_API_KEY").is_some() => {
-                ClaudeCredentialMode::BareApiKey
-            }
-            None => ClaudeCredentialMode::NativeLogin,
-        };
+        let resolved = resolve_credentials(&cfg)?;
+        let (mode, env) = (resolved.mode, resolved.env);
 
         let mut args = Vec::with_capacity(spawn.args.len() + 8);
         match mode {
@@ -424,6 +463,142 @@ fn claude_available() -> bool {
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
+}
+
+/// Why a run would take the simulated path instead of spawning `claude`.
+///
+/// Named rather than inlined because two callers must agree on it: the launch
+/// short-circuits to canned events, and the preflight has nothing to probe. A
+/// probe that reported on credentials a simulated run will never present would
+/// be reporting on a process that is not going to exist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SimulationReason {
+    /// `ORGASMIC_DRIVER_SIMULATE=1`.
+    ExplicitOverride,
+    /// No `claude` binary is detectable.
+    BinaryMissing,
+    /// No endpoint configured, so there is no real wire to speak.
+    EndpointEmpty,
+}
+
+impl SimulationReason {
+    /// The launch path warns for the two surprising reasons and stays quiet for
+    /// the ordinary one; the probe reuses the classification without the noise.
+    fn warning(self) -> Option<&'static str> {
+        match self {
+            Self::ExplicitOverride => Some(
+                "claude-acp: ORGASMIC_DRIVER_SIMULATE=1 is set; using simulated mode (explicit override)",
+            ),
+            Self::BinaryMissing => Some(
+                "claude-acp: 'claude' binary not found on PATH; using simulated mode (binary not detectable)",
+            ),
+            Self::EndpointEmpty => None,
+        }
+    }
+}
+
+/// The operator's explicit "do not touch a real harness" switch.
+fn simulate_override() -> bool {
+    std::env::var("ORGASMIC_DRIVER_SIMULATE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+}
+
+fn simulation_reason(cfg: &ClaudeAcpConfig) -> Option<SimulationReason> {
+    if simulate_override() {
+        return Some(SimulationReason::ExplicitOverride);
+    }
+    if !claude_available() {
+        return Some(SimulationReason::BinaryMissing);
+    }
+    if cfg.endpoint.as_deref().map(str::is_empty).unwrap_or(true) {
+        return Some(SimulationReason::EndpointEmpty);
+    }
+    None
+}
+
+/// The credential a launched `claude` will actually present.
+struct ResolvedCredentials {
+    mode: ClaudeCredentialMode,
+    /// Environment overrides for the child, beyond what it inherits.
+    env: BTreeMap<String, String>,
+    /// The API key the child will present, whether it came from the configured
+    /// `api_key_env` or from an inherited `ANTHROPIC_API_KEY`. `None` in
+    /// native-login mode, where the harness reads its own keychain.
+    ///
+    /// Never log or surface this: it is a secret, and preflight reasons reach
+    /// durable task evidence.
+    api_key: Option<String>,
+}
+
+/// Decide how a launched `claude` would authenticate.
+///
+/// Extracted from `compose_request` so the probe and the launch cannot drift.
+/// That is the whole guarantee behind the preflight: a check that resolved the
+/// credential mode by its own reasoning could confidently interrogate a
+/// credential the worker was never going to use — which is precisely how
+/// `claude auth status` produced a passing answer for a run that could not
+/// start (see [`crate::WorkerDriver::preflight`]).
+fn resolve_credentials(cfg: &ClaudeAcpConfig) -> Result<ResolvedCredentials, DriverError> {
+    let mut env = BTreeMap::new();
+    let (mode, api_key) = match cfg.api_key_env.as_deref() {
+        Some(env_name) => {
+            let api_key = std::env::var(env_name).map_err(|_| {
+                DriverError::InvalidConfig(format!(
+                    "api_key_env '{env_name}' not set but endpoint is configured"
+                ))
+            })?;
+            env.insert("ANTHROPIC_API_KEY".into(), api_key.clone());
+            (ClaudeCredentialMode::BareApiKey, Some(api_key))
+        }
+        None => match std::env::var("ANTHROPIC_API_KEY") {
+            Ok(inherited) => (ClaudeCredentialMode::BareApiKey, Some(inherited)),
+            Err(_) => (ClaudeCredentialMode::NativeLogin, None),
+        },
+    };
+    Ok(ResolvedCredentials { mode, env, api_key })
+}
+
+/// Turn `claude auth status` output into a verdict about a native-login worker.
+///
+/// Separated from the subprocess so the classification is testable without
+/// putting a stub on `PATH`; process-global `PATH` mutation is shared by every
+/// test in the binary (`.orgasmic/gotchas.org`).
+///
+/// Claude is the one harness of the three that answers in JSON, so this reads a
+/// boolean field instead of matching a sentence — a contract far less likely to
+/// shift under a version bump than the prose the others emit.
+fn classify_native_login(stdout: &str) -> Preflight {
+    // Parse first, without consulting the exit status: measured 2026-07-25,
+    // `claude auth status` exits 1 precisely when it is logged out, so the
+    // non-zero exit accompanies the answer rather than replacing it.
+    let Ok(status) = serde_json::from_str::<Value>(stdout) else {
+        return Preflight::Unsupported;
+    };
+    // Read exactly one field. The payload also carries the operator's email,
+    // org and subscription tier, and a preflight reason is durable evidence.
+    match status.get("loggedIn").and_then(Value::as_bool) {
+        Some(true) => Preflight::Ready,
+        Some(false) => Preflight::fatal(
+            "claude is not logged in. This worker authenticates through the harness's own \
+             login (no ANTHROPIC_API_KEY is set), so it cannot start until you run `claude` \
+             and complete /login on this machine.",
+        ),
+        None => Preflight::Unsupported,
+    }
+}
+
+/// Verdict for a worker that will present an API key under `--bare`.
+///
+/// `--bare` reads no credential but the key, so an empty one is a certain
+/// failure worth rejecting for free; see [`classify_api_key`] for why a
+/// non-empty key is nonetheless not evidence of a working worker.
+fn classify_bare_api_key(api_key: Option<&str>) -> Preflight {
+    classify_api_key(
+        api_key,
+        "the ANTHROPIC_API_KEY this worker would present is empty, and `--bare` reads no \
+         other credential source. Set a real key, or unset it to use the harness's own login.",
+    )
 }
 
 fn build_spawn_prompt(ctx: &DriverContext, cfg: &ClaudeAcpConfig) -> String {
@@ -952,6 +1127,266 @@ mod tests {
         );
     }
 
+    // ---- preflight (TASK-TJKFC) ---------------------------------------
+
+    /// The exact payload shape `claude auth status` emits, captured from
+    /// claude 2.1.220 on 2026-07-25. Kept verbatim rather than minimised: the
+    /// fields this probe must *not* read are as much a part of the contract as
+    /// the one it does.
+    fn auth_status_payload(logged_in: bool) -> String {
+        if logged_in {
+            json!({
+                "loggedIn": true,
+                "authMethod": "claude.ai",
+                "apiProvider": "firstParty",
+                "email": "operator@example.com",
+                "orgId": "5cfb7ac5-4f69-4a41-8435-bc905f0f36fd",
+                "orgName": "Example Org",
+                "subscriptionType": "max"
+            })
+        } else {
+            // The logged-out answer is genuinely this short — it names no
+            // operator because there is none.
+            json!({
+                "loggedIn": false,
+                "authMethod": "none",
+                "apiProvider": "firstParty"
+            })
+        }
+        .to_string()
+    }
+
+    /// `claude auth status` exits 1 when logged out and 0 when logged in
+    /// (measured 2026-07-25). The stub reproduces that, because an earlier
+    /// version of this probe gated on a zero exit and so read the rejection it
+    /// exists to catch as "no answer".
+    fn auth_status_exit_code(logged_in: bool) -> u8 {
+        if logged_in {
+            0
+        } else {
+            1
+        }
+    }
+
+    #[test]
+    fn a_logged_out_harness_is_a_definitive_rejection_with_a_remedy() {
+        let verdict = classify_native_login(&auth_status_payload(false));
+        let reason = verdict
+            .rejects_dispatch()
+            .expect("a harness that says it is logged out must reject the dispatch");
+        // The operator reading this in a failed dispatch needs to know what to
+        // do, not merely that something was wrong.
+        assert!(reason.contains("/login"), "{reason}");
+    }
+
+    /// A forward guard, not a description of today's payload: the real
+    /// logged-out answer happens to carry no identity, but the logged-in one
+    /// carries the operator's email, org and plan, and a plausible future
+    /// rejection ("logged in, token expired") would carry both. Preflight
+    /// reasons reach tx records and task evidence, which are committed and may
+    /// be published (see the entry router's contributing discipline), so the
+    /// reason must stay a constant rather than echo what the harness said.
+    #[test]
+    fn a_preflight_reason_never_carries_the_operator_identity() {
+        let identity_bearing_rejection = json!({
+            "loggedIn": false,
+            "authMethod": "claude.ai",
+            "email": "operator@example.com",
+            "orgId": "5cfb7ac5-4f69-4a41-8435-bc905f0f36fd",
+            "orgName": "Example Org",
+            "subscriptionType": "max"
+        })
+        .to_string();
+        let verdict = classify_native_login(&identity_bearing_rejection);
+        let reason = verdict.rejects_dispatch().expect("fatal");
+        for secret in ["operator@example.com", "Example Org", "5cfb7ac5", "max"] {
+            assert!(
+                !reason.contains(secret),
+                "preflight reason leaked {secret:?}: {reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_logged_in_harness_is_ready() {
+        assert_eq!(
+            classify_native_login(&auth_status_payload(true)),
+            Preflight::Ready
+        );
+    }
+
+    /// Every way of failing to *get* an answer is inconclusive, never fatal.
+    /// Rejecting a dispatch because the probe itself broke would turn a
+    /// safeguard into a new outage.
+    #[test]
+    fn an_unanswerable_probe_never_rejects_a_dispatch() {
+        let inconclusive = [
+            // Not JSON at all — an older or newer harness, or an error banner.
+            classify_native_login("claude: unknown command 'auth'"),
+            // JSON without the field this probe reads.
+            classify_native_login(r#"{"authMethod":"claude.ai"}"#),
+            // Empty output.
+            classify_native_login(""),
+        ];
+        for verdict in inconclusive {
+            assert_eq!(verdict, Preflight::Unsupported, "{verdict:?}");
+            assert!(verdict.rejects_dispatch().is_none());
+        }
+    }
+
+    #[test]
+    fn an_empty_api_key_is_fatal_and_a_present_one_is_merely_unchecked() {
+        assert!(classify_bare_api_key(Some("")).rejects_dispatch().is_some());
+        assert!(classify_bare_api_key(Some("   "))
+            .rejects_dispatch()
+            .is_some());
+        // Present but unverified. `Ready` would claim the API accepted a key
+        // nobody presented to it; only a billed turn could establish that.
+        assert_eq!(
+            classify_bare_api_key(Some("sk-ant-not-real")),
+            Preflight::Unsupported
+        );
+        assert_eq!(classify_bare_api_key(None), Preflight::Unsupported);
+    }
+
+    /// The guarantee the whole probe rests on: it must rule on the credential
+    /// the launch will actually present. Asserted jointly — one env, both code
+    /// paths — because a probe that resolved the mode by its own reasoning
+    /// could confidently interrogate a credential the worker never uses, which
+    /// is exactly how `claude auth status` passed a run that could not start.
+    #[tokio::test]
+    async fn the_probe_and_the_launch_resolve_the_same_credential() {
+        let _guard = env_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+        std::env::set_var("ANTHROPIC_API_KEY", "");
+
+        let (args, _) = composed_args(subprocess_config());
+        let verdict = ClaudeAdapter::new()
+            .preflight(
+                &ctx("run-preflight-agree", RunKind::Worker),
+                &DriverConfig(subprocess_config()),
+            )
+            .await;
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        // The launch commits to `--bare`, whose only credential is the key…
+        assert!(
+            args.iter().any(|a| a == "--bare"),
+            "an ANTHROPIC_API_KEY, even an empty one, selects the bare path: {args:?}"
+        );
+        // …so the probe must rule on the key, not on the operator's login.
+        assert!(
+            verdict.rejects_dispatch().is_some(),
+            "an empty key under --bare cannot start a worker, so preflight must \
+             reject it rather than defer to the harness's own login: {verdict:?}"
+        );
+    }
+
+    /// A simulated run spawns nothing and presents no credentials. Probing one
+    /// would rule on a process that is never going to exist.
+    #[tokio::test]
+    async fn a_simulated_run_is_never_preflighted() {
+        let _guard = env_lock().lock().await;
+        std::env::set_var("ORGASMIC_DRIVER_SIMULATE", "1");
+        let verdict = ClaudeAdapter::new()
+            .preflight(
+                &ctx("run-preflight-sim", RunKind::Worker),
+                &simulated_config(),
+            )
+            .await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        assert_eq!(verdict, Preflight::Unsupported);
+    }
+
+    /// End to end through the transport the 2026-07-25 incident used: a
+    /// logged-out harness must reach the supervisor as a rejection, not as a
+    /// worker that dies 1.2 s after acquiring a lease and a worktree.
+    #[tokio::test]
+    async fn acp_stdio_rejects_a_dispatch_for_a_logged_out_claude() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        make_auth_status_stub(dir.path(), false);
+
+        let _guard = env_lock().lock().await;
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        // Prepend rather than replace: a bare tempdir as the whole PATH breaks
+        // every other test in this binary that spawns a real tool
+        // (`.orgasmic/gotchas.org`).
+        std::env::set_var("PATH", format!("{}:{}", dir.path().display(), saved_path));
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let verdict = driver
+            .preflight(
+                &ctx("run-preflight-stdio", RunKind::Worker),
+                &DriverConfig(subprocess_config()),
+            )
+            .await;
+
+        std::env::set_var("PATH", saved_path);
+        assert!(
+            verdict.rejects_dispatch().is_some(),
+            "acp-stdio must carry the harness's verdict through to the supervisor: {verdict:?}"
+        );
+    }
+
+    /// An empty endpoint is not a reason to skip the probe: acp-stdio upgrades
+    /// that config into a real `claude` subprocess whenever the binary exists,
+    /// so the credential is just as real as with an endpoint set.
+    #[tokio::test]
+    async fn an_empty_endpoint_still_gets_a_verdict_because_it_still_spawns_claude() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        make_auth_status_stub(dir.path(), false);
+
+        let _guard = env_lock().lock().await;
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{}", dir.path().display(), saved_path));
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        let verdict = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()))
+            .preflight(
+                &ctx("run-preflight-no-endpoint", RunKind::Worker),
+                // No endpoint at all — the shape most dispatches use.
+                &DriverConfig(json!({})),
+            )
+            .await;
+
+        std::env::set_var("PATH", saved_path);
+        assert!(
+            verdict.rejects_dispatch().is_some(),
+            "an endpoint-less config still launches a real claude, so it must be \
+             ruled on: {verdict:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn acp_stdio_accepts_a_dispatch_for_a_logged_in_claude() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        make_auth_status_stub(dir.path(), true);
+
+        let _guard = env_lock().lock().await;
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{}", dir.path().display(), saved_path));
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let verdict = driver
+            .preflight(
+                &ctx("run-preflight-stdio-ok", RunKind::Worker),
+                &DriverConfig(subprocess_config()),
+            )
+            .await;
+
+        std::env::set_var("PATH", saved_path);
+        assert_eq!(verdict, Preflight::Ready);
+    }
+
     #[tokio::test]
     async fn every_mode_persists_a_locatable_native_session() {
         let _guard = env_lock().lock().await;
@@ -1171,6 +1606,40 @@ mod tests {
     fn env_lock() -> &'static tokio::sync::Mutex<()> {
         static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
         LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    /// A `claude` that answers `--version` (so the adapter sees a real binary
+    /// rather than falling back to simulation) and `auth status` with a chosen
+    /// login state. Anything else exits non-zero: a preflight test that
+    /// accidentally launched a worker should fail loudly, not silently pass.
+    fn make_auth_status_stub(dir: &std::path::Path, logged_in: bool) {
+        let stub = dir.join("claude");
+        std::fs::write(
+            &stub,
+            format!(
+                r#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+  exit 0
+fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  printf '%s\n' '{payload}'
+  exit {status_exit}
+fi
+echo "unexpected stub invocation: $*" >&2
+exit 3
+"#,
+                payload = auth_status_payload(logged_in),
+                status_exit = auth_status_exit_code(logged_in)
+            ),
+        )
+        .expect("write auth status stub");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&stub, perms).unwrap();
+        }
     }
 
     fn make_claude_stub(dir: &std::path::Path) {

@@ -1857,3 +1857,80 @@ async fn an_instruction_to_log_in_is_fatal_rather_than_something_to_wait_on() {
     .await;
     assert!(matches!(verdict, Preflight::Fatal { .. }));
 }
+
+/// The probes must reach a verdict against the harnesses actually installed
+/// here — the property no unit test can establish, because a unit test supplies
+/// the answer it then classifies.
+///
+/// Asserts a verdict, not a *particular* verdict: `Ready` on a logged-in
+/// machine and `Fatal` on a logged-out one are both the probe working. What
+/// would mean it is broken is `Unsupported` from a harness that is present and
+/// answering — that is the probe failing to recognise the reply it was built
+/// around, which is exactly what a harness version bump would cause.
+#[tokio::test]
+async fn installed_harnesses_answer_their_own_readiness_probe() {
+    struct Case {
+        binary: &'static str,
+        driver: Box<dyn WorkerDriver>,
+        config: serde_json::Value,
+    }
+
+    let cases = vec![
+        Case {
+            binary: "claude",
+            driver: Box::new(AcpStdioDriver::new(Box::new(
+                orgasmic_drivers::adapters::claude::ClaudeAdapter::new(),
+            ))),
+            // A non-empty endpoint keeps this off the simulated path, where
+            // there are no credentials to rule on.
+            config: serde_json::json!({"endpoint": "stdio://claude"}),
+        },
+        Case {
+            binary: "cursor-agent",
+            driver: Box::new(AcpStdioDriver::new(Box::new(
+                orgasmic_drivers::adapters::cursor_acp::CursorAcpAdapter::new(),
+            ))),
+            config: serde_json::json!({}),
+        },
+        Case {
+            binary: "codex",
+            driver: Box::new(AcpStdioDriver::new(Box::new(
+                orgasmic_drivers::adapters::codex::CodexAdapter::new(),
+            ))),
+            config: serde_json::json!({}),
+        },
+    ];
+
+    let mut exercised = 0;
+    for case in cases {
+        if which(case.binary).is_none() {
+            eprintln!("skipping {}: not installed", case.binary);
+            continue;
+        }
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        let verdict = case
+            .driver
+            .preflight(&ctx(), &DriverConfig(case.config))
+            .await;
+        eprintln!("{} -> {verdict:?}", case.binary);
+        assert_ne!(
+            verdict,
+            Preflight::Unsupported,
+            "{} is installed and answering, so its probe must reach a verdict; \
+             `Unsupported` here means the harness's reply no longer matches what \
+             the probe was built around",
+            case.binary
+        );
+        exercised += 1;
+    }
+    eprintln!("preflight exercised against {exercised} installed harness(es)");
+}
+
+/// Resolve a binary on `PATH` without mutating the process environment, which
+/// is shared by every test in this binary (`.orgasmic/gotchas.org`).
+fn which(binary: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(binary))
+        .find(|candidate| candidate.is_file())
+}

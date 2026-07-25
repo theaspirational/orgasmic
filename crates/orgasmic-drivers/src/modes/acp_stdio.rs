@@ -25,10 +25,10 @@ use crate::modes::subprocess_stream_json::{
     finalize_subprocess_exit, reap_process_group, SubprocessExitSummary, SubprocessStreamJsonDriver,
 };
 use crate::r#trait::{
-    AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl,
-    DriverError, DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest,
-    NativeRuntimeMeta, RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck,
-    UserInputRequest, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
+    DriverContext, DriverControl, DriverError, DriverSession, HarnessControlOutcome,
+    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight, RunKind, StdioSpawn,
+    TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 use crate::runtime_options::{
     RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc, RuntimeOptionsRequest,
@@ -385,6 +385,12 @@ impl WorkerDriver for AcpStdioDriver {
 
     fn validate(&self, config: &DriverConfig) -> Result<(), DriverError> {
         self.adapter.validate_config(config)
+    }
+
+    /// Readiness is the harness's question, not the transport's (see
+    /// [`preflight_via_adapter`]).
+    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+        preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 
     async fn acquire(

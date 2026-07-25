@@ -36,9 +36,9 @@ use tokio::task::JoinHandle;
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
 use crate::r#trait::{
-    AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext,
-    DriverControl, DriverError, DriverSession, HarnessEventAdapter, NativeRuntimeMeta, RunKind,
-    TransitionAck, TransitionRequest, WorkerDriver,
+    preflight_via_adapter, AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig,
+    DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
+    NativeRuntimeMeta, Preflight, RunKind, TransitionAck, TransitionRequest, WorkerDriver,
 };
 
 const MODE: &str = "tmux";
@@ -173,6 +173,12 @@ impl WorkerDriver for TmuxDriver {
             ));
         }
         Ok(())
+    }
+
+    /// Readiness is the harness's question, not the transport's (see
+    /// [`preflight_via_adapter`]).
+    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+        preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 
     async fn acquire(

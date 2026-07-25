@@ -16,10 +16,22 @@ use tokio::sync::mpsc;
 
 use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
 
+use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
     AcpWsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, StdioSpawn, TransitionRequest,
-    UserInputRequest, WireMessage,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, StdioSpawn,
+    TransitionRequest, UserInputRequest, WireMessage,
+};
+
+/// How `codex login status` reports each login state.
+///
+/// Both observed on 2026-07-25, the logged-out state by pointing `CODEX_HOME`
+/// at an empty directory rather than by logging the operator out. It exits 0
+/// either way, so the sentence is the only signal there is — see
+/// [`classify_prose_login`] for why that is safe here.
+const CODEX_LOGIN_PHRASES: ProseLogin = ProseLogin {
+    logged_out: "Not logged in",
+    logged_in: "Logged in",
 };
 use crate::runtime_options::{
     dedupe_non_empty, RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
@@ -96,6 +108,28 @@ impl HarnessEventAdapter for CodexAdapter {
             }
         }
         Ok(())
+    }
+
+    /// Rule on this worker's credentials before the dispatch commits anything.
+    ///
+    /// Codex carries no API-key config of its own, so there is one credential
+    /// to ask about and `codex login status` is the question that asks about
+    /// it.
+    async fn preflight(&mut self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
+        let command = self
+            .stdio_spawn()
+            .map(|spawn| spawn.command)
+            .unwrap_or_else(|| "codex".to_string());
+        match read_status_output(&command, &["login", "status"]).await {
+            Some(status) => classify_prose_login(
+                // codex answers on stderr, not stdout.
+                &status.combined,
+                &CODEX_LOGIN_PHRASES,
+                "codex is not logged in on this machine, so this worker cannot start. \
+                 Run `codex login` and try the dispatch again.",
+            ),
+            None => Preflight::Unsupported,
+        }
     }
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {

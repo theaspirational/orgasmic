@@ -18,9 +18,10 @@ use tokio::sync::mpsc;
 
 use orgasmic_core::{BabysitterTool, DriverEvent, SandboxAllowlist, TextStream};
 
+use crate::preflight::{classify_api_key, classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
     implementer_tool_is_allowed, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, RunKind, StdioSpawn,
     TransitionRequest, UserInputRequest, WireMessage,
 };
 use crate::runtime_options::{
@@ -29,6 +30,17 @@ use crate::runtime_options::{
 use crate::sandbox::ApprovalResponse;
 
 const HARNESS: &str = "cursor-agent";
+
+/// How `cursor-agent status` reports each login state.
+///
+/// Both observed on 2026-07-25 (cursor-agent as installed on this machine), the
+/// logged-out state by pointing `HOME` at an empty directory rather than by
+/// logging the operator out. It exits 0 either way, so the sentence is the only
+/// signal there is — see [`classify_prose_login`] for why that is safe here.
+const CURSOR_LOGIN_PHRASES: ProseLogin = ProseLogin {
+    logged_out: "Not logged in",
+    logged_in: "Logged in as",
+};
 // orgasmic:TASK-SZEWA, dec_WDR5K — no orgasmic-owned model default.
 
 pub struct CursorAcpAdapter {
@@ -151,6 +163,37 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             }
         }
         Ok(())
+    }
+
+    /// Rule on this worker's credentials before the dispatch commits anything.
+    ///
+    /// Same rule as every probe: resolve the credential the launch will present
+    /// first, then ask about *that* credential. `cursor-agent status` reports
+    /// the ambient login and knows nothing about a `CURSOR_API_KEY` supplied
+    /// through config, so a run carrying its own key must not be judged by it.
+    async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+        let Ok(cfg) = serde_json::from_value::<CursorAcpConfig>(config.0.clone()) else {
+            return Preflight::Unsupported;
+        };
+        if let Some(env_name) = cfg.api_key_env.as_deref() {
+            return classify_api_key(
+                std::env::var(env_name).ok().as_deref(),
+                "the CURSOR_API_KEY this worker would present is empty",
+            );
+        }
+        let command = self
+            .stdio_spawn()
+            .map(|spawn| spawn.command)
+            .unwrap_or_else(|| "cursor-agent".to_string());
+        match read_status_output(&command, &["status"]).await {
+            Some(status) => classify_prose_login(
+                &status.combined,
+                &CURSOR_LOGIN_PHRASES,
+                "cursor-agent is not logged in on this machine, so this worker cannot start. \
+                 Run `cursor-agent login` and try the dispatch again.",
+            ),
+            None => Preflight::Unsupported,
+        }
     }
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
@@ -1542,6 +1585,26 @@ mod tests {
             worktree: Some(std::env::current_dir().unwrap()),
             babysitter_target: None,
         }
+    }
+
+    /// The rule the claude incident taught, applied here: a run that carries
+    /// its own `CURSOR_API_KEY` must be judged on that key, not on the ambient
+    /// `cursor-agent status` login — which on a developer's own machine is
+    /// almost always healthy and would wave the run straight through.
+    #[tokio::test]
+    async fn a_configured_api_key_is_judged_instead_of_the_ambient_login() {
+        // A uniquely named variable so this cannot collide with another test in
+        // the shared process.
+        const VAR: &str = "ORGASMIC_TEST_CURSOR_KEY_EMPTY";
+        std::env::set_var(VAR, "");
+        let verdict = CursorAcpAdapter::new()
+            .preflight(&ctx(), &DriverConfig(json!({ "api_key_env": VAR })))
+            .await;
+        std::env::remove_var(VAR);
+        assert!(
+            verdict.rejects_dispatch().is_some(),
+            "an empty configured key cannot start a worker: {verdict:?}"
+        );
     }
 
     #[test]

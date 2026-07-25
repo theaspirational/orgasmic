@@ -237,3 +237,65 @@ path to the stable location does cost exactly one grant, as the installer says.
 The difference from the 2026-07-25 outage is that the daemon now stays bound and
 answerable while it is missing (TASK-KKGKM), so the operator can see the reason
 instead of finding a wedged runtime. Durable invariant as of 0.0.15-dev.1.
+
+** Harness status commands disagree about stream and exit code
+Measured 2026-07-25 while writing the TASK-TJKFC readiness probes, against the
+three harnesses installed here. Nothing about their answers is uniform:
+
+- =claude auth status= writes JSON to stdout and exits *1* when logged out,
+  0 when logged in.
+- =codex login status= writes its answer to *stderr*, leaves stdout empty, and
+  exits 0 in both states.
+- =cursor-agent status= writes prose to stdout and exits 0 in both states.
+
+Both defaults a reader reaches for are wrong. Reading only stdout classified a
+logged-in codex as "no answer"; gating on a zero exit classified a logged-out
+claude the same way - the single case the probe exists to catch. Read both
+streams, and let the *recognisability of the answer* decide whether a verdict
+was reached, never the exit status.
+
+Caught by =installed_harnesses_answer_their_own_readiness_probe=, which asserts
+against the real binaries precisely because a unit test supplies the answer it
+then classifies and so can never find this. To capture a logged-out answer
+without logging the operator out, point =HOME= (and =CODEX_HOME=) at an empty
+directory.
+
+** Asking a harness to prove it can work costs real money
+Measured 2026-07-25 on claude 2.1.220. The only way to make the harness itself
+rule on a credential is to submit a turn, and a one-character prompt cost
+$0.0994 and 24.5k tokens - the request writes the system prompt, tools and
+skills to cache before any answer comes back. Cancelling early does not refund
+it: the failure verdict and the outbound request are simultaneous (0.326 s vs
+0.390 s), so no deadline is short enough to catch the former and miss the
+latter.
+
+A check that silently bills a tenth of a dollar on every dispatch is not a check
+worth having. Interrogate the resolved credential locally instead ($0, 0.28 s)
+and return an inconclusive verdict where only a billed turn could reach a real
+one. The corollary is worth stating where operators read it: a preflight that
+answers "ready" claims less than it sounds like - it proves a credential exists,
+not that the provider accepts it.
+
+** `orgasmic node` cannot write gotchas.org
+There is no gotchas node layer: =NodeLayer= covers decision, architecture,
+glossary, project, task, goal and handoff only, and =NodeLayer::for_id= falls
+back to *glossary* for any unrecognised id. So
+=orgasmic node body append gotchas ...= fails with "glossary file not found" -
+an error that names the wrong file and reads like a missing artifact rather than
+an unsupported target. This file is maintained as a source file in dispatch
+WRITE_SCOPE instead, which is why it is edited directly.
+
+** A stale index makes projects vanish from node routes while `status` still counts them
+Observed 2026-07-25. =orgasmic status= reported =projects: 5= with
+=parse_errors: 0=, and =orgasmic project list= showed all five, yet every
+=orgasmic node= route answered =404 {"error":"project orgasmic"}= for two of
+them (orgasmic and ddd). Task routes kept working throughout, because
+=locate_task= scans the snapshot while =select_project= looks up
+=snap.projects[id]= - so the failure is invisible until something addresses a
+project by id.
+
+=orgasmic reindex= fixed it immediately. The trap is the diagnosis: =status= and
+=project list= both answer from board registration, not from the index snapshot,
+so neither can tell you the snapshot is missing a project. When a node route
+404s on a project you can see in =project list=, reindex before believing the
+project is misconfigured.

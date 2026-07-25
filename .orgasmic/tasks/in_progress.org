@@ -61,6 +61,104 @@ NOT LANDED, and this matters for reading the task's status honestly
 Note on the original incident: its specific cause was fixed separately in
 61b9b7f — orgasmic's own =--bare= argv, not an operator credential problem.
 This task remains worth finishing for the class, not that instance.
+
+PROBES LANDED (2026-07-25, manager-implementer). All three installed harnesses
+now rule on their own credentials before a dispatch commits anything. The
+atomic-abort half is still open; see NOT LANDED below.
+
+The design question this task flagged is decided, and the answer is the opposite
+of what the original evidence implied. Both halves were measured, not reasoned:
+
+1. What a truthful probe costs. Making the harness itself rule on a credential
+   means submitting a turn. Measured on claude 2.1.220, a ONE-CHARACTER prompt
+   cost $0.0994 and 24.5k tokens, because the request writes the system prompt,
+   tools and skills to cache before any answer returns. Cancelling early does
+   not refund it: the failure verdict lands at 0.390 s and the outbound request
+   at 0.326 s, so no deadline separates them. A check that silently bills a
+   tenth of a dollar per dispatch is not a check worth having. Rejected.
+
+2. Why `claude auth status` was actually wrong. The task recorded it as an
+   ambient self-report that lied. It is not. Measured: `auth status` reports
+   ONLY the claude.ai/keychain login and is blind to ANTHROPIC_API_KEY, while
+   the failing dispatch carried `--bare`, whose contract is that OAuth and the
+   keychain are never read. The two were answering about DIFFERENT CREDENTIALS,
+   so they could disagree without either being wrong.
+
+So the rule on `WorkerDriver::preflight` is rewritten. It was "exercise the
+worker's exact argv"; it is now "resolve the same credential mode the worker
+will resolve, then check the credential THAT MODE consumes". Once the mode is
+resolved first, `auth status` is exactly the right question for native login
+and exactly the wrong one for `--bare`. Cost: $0 and 0.28 s.
+
+The guarantee behind it is structural, not documentary: `resolve_credentials`
+was extracted out of `compose_request`, so the probe and the launch cannot
+resolve different modes. A probe that reasoned its way to a mode independently
+could confidently interrogate a credential the worker was never going to use,
+which is precisely the failure above.
+
+WHAT EACH ADAPTER NOW DOES
+- claude: native login -> `claude auth status`, reads the `loggedIn` boolean.
+  `--bare` -> the key it will present; an empty one is fatal, a present one is
+  reported as unchecked (only the API can accept a key, and asking is the
+  billed turn above).
+- cursor-agent: a configured `api_key_env` is judged on the key; otherwise
+  `cursor-agent status`.
+- codex: `codex login status`.
+- everything else: unchanged default `Unsupported`.
+
+All five mode drivers delegate through one `preflight_via_adapter`, since
+readiness is the harness's property and not the transport's.
+
+VERIFIED LIVE, BOTH DIRECTIONS
+- Healthy machine: Ready from claude, cursor-agent and codex.
+- Credential-less machine (HOME/CODEX_HOME pointed at an empty directory, so no
+  operator was logged out): Fatal from all three, each naming its remedy.
+
+TWO BUGS THE LIVE TEST CAUGHT THAT UNIT TESTS COULD NOT
+Both are recorded in gotchas.org, because both are the kind of thing a
+reasonable person assumes.
+1. codex writes its status answer to STDERR and leaves stdout empty. Reading
+   stdout classified a logged-in codex as "no probe".
+2. `claude auth status` EXITS 1 when logged out. Gating the verdict on a zero
+   exit turned the one answer this mechanism exists to catch into
+   "inconclusive" - the same defect this task is about, reproduced inside its
+   own fix. Exit status is now ignored entirely; what decides whether a verdict
+   was reached is whether the harness said something recognisable.
+This is why `installed_harnesses_answer_their_own_readiness_probe` asserts
+against real binaries: a unit test supplies the answer it then classifies, so it
+can never find either.
+
+DELIBERATE ASYMMETRIES, so a later reader does not "fix" them
+- cursor and codex answer in prose, so only an exactly-observed logged-out
+  phrase may reject. Anything unrecognised is `Unsupported`. A harness that
+  rewords its message costs us the safeguard, never a working dispatch - the
+  only direction worth being wrong in.
+- An empty endpoint does NOT skip the probe. acp-stdio upgrades that config into
+  a real subprocess whenever the binary is present, so the credential is just as
+  real; skipping would have exempted the most common dispatch shape there is.
+- The probe does not call `claude_available()`. That is a blocking
+  `claude --version` on the async path - the TASK-KKGKM hazard - and is
+  unnecessary, because a missing binary makes the status command unspawnable,
+  which already reads as inconclusive.
+- Fatal reasons are constants, never echoes of harness output. `auth status`
+  answers with the operator's email, org and plan, and these reasons reach tx
+  records and task evidence.
+
+STILL NOT LANDED
+- The atomic-abort half is untouched. A fatal driver event AFTER startup has
+  been accepted still leaves an open dispatch record, and the race test this
+  task asks for (fatal emitted before dispatch bookkeeping completes) does not
+  exist.
+- No end-to-end test drives a fake provider through the daemon and asserts the
+  absence of a lease and session. The reject-before-commit ordering is proven by
+  construction and by the routing test; the absence assertion is not written.
+- hermes has no probe. Its auth surface was not measured, and inventing one
+  would mean guessing a logged-out string - the one guess that can block a
+  dispatch rather than merely fail to save one.
+Reading order: the earlier NOT LANDED list is superseded by the block above.
+Its items 1 (no adapter implements preflight) and 2 (the claude probe's design
+question is open) are both now false; item 3 (atomic abort) and item 4 (the
+end-to-end absence test) remain open and are restated under STILL NOT LANDED.
 ** Evidence
 Live reproduction 2026-07-25, dispatching a reviewer for TASK-KWSTJ. This is the abstract problem statement happening end to end, with timings.
 
