@@ -26839,3 +26839,77 @@
 :REASON:       edited task node TASK-VB9DQ
 :NODE_ID:      TASK-VB9DQ
 :END:
+
+
+* TX 2026-07-25 Sat 13:01:36 task.edited TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2778
+:TIME:         [2026-07-25 Sat 13:01:36]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-Z8WEJ
+:NODE_ID:      TASK-Z8WEJ
+:END:
+
+* TX 2026-07-25 Sat 13:01:36 task.state_transitioned TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2779
+:TIME:         [2026-07-25 Sat 13:01:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       implemented in 61b9b7f; items 4 and 6 still open
+:FROM_STATE:   todo
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-25 Sat 13:01:57 task.edited TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2780
+:TIME:         [2026-07-25 Sat 13:01:57]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-VB9DQ
+:NODE_ID:      TASK-VB9DQ
+:END:
+
+* TX 2026-07-25 Sat 13:01:57 task.state_transitioned TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2781
+:TIME:         [2026-07-25 Sat 13:01:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       implemented in 61b9b7f; item 5 still open
+:FROM_STATE:   todo
+:TO_STATE:     in_review
+:END:
+
+
+* TX 2026-07-25 Sat 14:13:05 task.edited TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2782
+:TIME:         [2026-07-25 Sat 14:13:05]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-KWSTJ
+:NODE_ID:      TASK-KWSTJ
+:END:

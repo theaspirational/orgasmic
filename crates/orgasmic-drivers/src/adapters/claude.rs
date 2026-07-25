@@ -52,13 +52,17 @@ enum ClaudeCredentialMode {
     BareApiKey,
     /// No `--bare`; the harness reads its own login (keychain/OAuth) exactly as
     /// it does for an interactive operator. Isolation comes from
-    /// `--strict-mcp-config` and a minimal `--settings` instead.
+    /// `--strict-mcp-config`.
     ///
     /// Known gap, measured rather than assumed: this mode CANNOT suppress the
     /// operator's hooks. `--settings '{}'` and `--settings '{"hooks":{}}'` both
     /// still ran SessionStart hooks; `--bare` is the only flag that skips them,
     /// and `--include-hook-events` governs reporting, not execution. So a
     /// native-login worker executes whatever hooks the operator has configured.
+    /// A minimal `--settings '{}'` was tried and dropped: the flag does accept
+    /// inline JSON, but an empty object overrides nothing, so passing it only
+    /// implied an isolation it never delivered.
+    ///
     /// MCP is fully suppressed (`mcp_servers: []`, versus nine servers without
     /// the flag on the machine this was measured on), which is the larger half
     /// of "light". Accepted deliberately: the alternative is that
@@ -300,8 +304,6 @@ impl HarnessEventAdapter for ClaudeAdapter {
                 // `mcp_servers: []` (measured); without it this machine loaded
                 // nine MCP servers into a worker that wants none.
                 args.push("--strict-mcp-config".to_string());
-                args.push("--settings".to_string());
-                args.push("{}".to_string());
             }
         }
         args.extend(spawn.args.iter().cloned());
@@ -922,10 +924,10 @@ mod tests {
         // Isolation is rebuilt from narrower flags: measured, --strict-mcp-config
         // alone yields `mcp_servers: []`.
         assert!(args.iter().any(|a| a == "--strict-mcp-config"), "{args:?}");
-        assert!(
-            args.windows(2).any(|w| w == ["--settings", "{}"]),
-            "{args:?}"
-        );
+        // Deliberately no `--settings {}`: the flag accepts inline JSON, but an
+        // empty object overrides nothing, so passing it would only imply an
+        // isolation this mode does not provide.
+        assert!(!args.iter().any(|a| a == "--settings"), "{args:?}");
     }
 
     #[tokio::test]

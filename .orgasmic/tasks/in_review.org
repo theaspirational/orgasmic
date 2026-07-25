@@ -43,4 +43,150 @@ Regression added, `crates/orgasmic-daemon/tests/run_inventory_wire.rs` (raw HTTP
 Gates: `cargo fmt` clean, `cargo clippy --workspace --all-targets` clean, `git diff --check` clean, `npm run typecheck` clean. orgasmic-core 132 lib + 26 fixture tests pass (plus one opt-in ignored real-corpus measurement). orgasmic-daemon lib 500 tests and every integration binary pass. orgasmic-cli dispatch 39 tests pass. Pre-existing failures unrelated to this change, verified identical on clean `main` by stashing: `orgasmic-drivers` `simulated_acquire_emits_deterministic_flow`, and the three `dispatch_endpoint` tests that need a stub `codex` on PATH. Under full-parallel load the daemon and CLI suites also show load flakes (tmux/git/daemon-connect timing) that all pass when rerun serially; the same class of flake was present before this change. One stale assertion from the TASK-JN5Q1 patch was corrected: `manager_session_after_restart_is_recovered_not_lost` now expects the `does not support runtime reattach` reason that acp-stdio records instead of a driver probe.
 
 No operator session history was deleted or rewritten.
+** Reviewer pass
+Production-shape verification, 2026-07-25, against an APFS copy-on-write clone of the real 200-file / 2.404 GB session corpus in an isolated scratch `ORGASMIC_HOME` on port 4899. The clone makes the measurement non-mutating by construction: writes cannot reach the originals, and the installed runtime was never involved.
+
+Same corpus, same endpoint, three requests each:
+
+| build | ttfb req1 | req2 | req3 |
+| installed 0.0.14 (pre-fix) | 24.695 s | 24.809 s | 24.840 s |
+| source build (fix)         | 0.105 s  | 0.096 s | 0.097 s |
+
+Roughly 255x faster, and inside the 250 ms warm p95 acceptance target with margin. The endpoint's own reported metrics for the fixed build: 200 session files, 2,404,437,937 bytes on disk, 28,016,305 bytes inspected (86x reduction), 135 truncated scans, 1 attach probe started and 0 timed out, duration_ms 95.
+
+Correctness, which matters more than the latency: the two builds were compared run-by-run across every classification bucket.
+
+- runs classified: old 200, new 200
+- present only in old: 0
+- present only in new: 0
+- classification differences: 0
+
+So the bounded prefix/tail scan produces an identical classification of the entire production corpus while reading 86x fewer bytes, including across the 135 files where the middle region was skipped. This is the evidence the reviewer brief asked for under "attack the bounded-window premise" — the premise holds on real data, not just on fixtures.
+
+Earlier live-daemon numbers for context: the same endpoint on the running 0.0.14 daemon with all five projects registered took 35.205 s to first byte. The scratch measurement is lower (24.7 s) because it carries one project rather than five; the order of magnitude and the conclusion are unchanged.
+
+Not established by this measurement: behaviour under concurrent load, and the boot path, which still reads whole session files and is TASK-5P60H's scope.
+
+* IN_REVIEW TASK-Z8WEJ Select the claude credential mode instead of hardcoding --bare :drivers:dispatch:bug:
+:PROPERTIES:
+:ID: TASK-Z8WEJ
+:PRIORITY: P0
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:136` hardcodes `--bare` in the claude stdio argv. Per the CLI's own help, `--bare` means "Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read)". An operator authenticated through a claude.ai subscription therefore cannot dispatch a claude worker at all: the credential exists, `claude auth status` reports `loggedIn: true, authMethod: claude.ai, subscriptionType: max`, and the dispatch still dies 1.2 s after acquire with "Not logged in - Please run /login" (observed TASK-KWSTJ reviewer dispatch, run-20260725T073841).
+
+`--bare` is wanted and should stay available: it skips hooks, LSP, plugin sync, auto-memory, background prefetches and CLAUDE.md auto-discovery, which is the right shape for a worker. The defect is that it is unconditional, and it silently carries a credential policy that a subscription operator cannot satisfy.
+
+Measured channel matrix, same binary and prompt, obviously-fake credential values (2026-07-25, claude 2.1.220):
+
+Under `--bare`:
+- no credential -> "Not logged in - Please run /login"
+- `ANTHROPIC_API_KEY=<fake>` -> "Invalid API key - Fix external API key" (channel LIVE)
+- `CLAUDE_CODE_OAUTH_TOKEN=<fake>` -> "Not logged in" (channel DEAD; the token is ignored)
+- `apiKeyHelper` via `--settings` -> "Invalid API key" (channel LIVE)
+
+Without `--bare`:
+- keychain OAuth -> authenticates and completes
+- `--strict-mcp-config` + empty `--mcp-config` + minimal `--settings` -> authenticates, `mcp_servers: []`, 30 tools, 2.0 s round trip
+
+Critical negative result: `CLAUDE_CODE_SIMPLE=1` on its own, with no `--bare` flag, also fails with "Not logged in". The lightweight behaviour and the credential policy are the same switch, so there is no way to keep bare-mode lightness while reading the keychain. Any design that assumes they can be separated is wrong.
+
+Both live `--bare` channels want an API key, not an OAuth credential, and a subscription's keychain credential is not an API key. So "`--bare` plus the user's keychain auth" is not achievable, by the flag's contract rather than by oversight.
+
+Work:
+1. Make the claude adapter select a credential mode instead of hardcoding one. At minimum: bare+API key (preferred, lightest) when an API key or apiKeyHelper is configured; non-bare with narrow isolation when auth is OAuth/subscription.
+2. Build the fallback tier explicitly rather than by dropping flags: `--strict-mcp-config` with an empty `--mcp-config`, a minimal `--settings`, and the existing `--no-session-persistence`. Verify it suppresses MCP, hooks, and CLAUDE.md discovery — do not assume the narrow flags cover everything `--bare` did, and record what is not covered.
+3. Detect, do not guess. `claude auth status` is non-interactive and returns structured JSON with `authMethod`; use it to choose the tier. Note it is necessary but not sufficient — see 5.
+4. Let the manager override the tier per dispatch, and record which tier was used in the run's RunMeta so a failure is diagnosable from the session JSONL alone.
+5. Feeds TASK-TJKFC: a generic auth probe is not enough. `claude auth status` reports `loggedIn: true` while the `--bare` invocation fails. The preflight must exercise the argv the worker will actually run.
+6. Consider whether the same credential-mode question exists for codex, cursor-agent, and hermes, or whether this is claude-specific. Do not generalise without checking.
+
+Acceptance:
+- a subscription-authenticated operator can dispatch a claude worker with no API key
+- an API-key operator still gets the light `--bare` path
+- the selected credential mode is visible in RunMeta
+- a mode that cannot authenticate is rejected before a worktree, lease, or dispatch record is created
+** Evidence
+Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+
+`adapters/claude.rs` now resolves a `ClaudeCredentialMode` in `compose_request` rather than hardcoding flags in `stdio_spawn`:
+- `BareApiKey` when `api_key_env` resolves or `ANTHROPIC_API_KEY` is present — keeps the light `--bare` path, which is the one credential channel `--bare` accepts.
+- `NativeLogin` otherwise — drops `--bare` so the harness reads its own keychain/OAuth login, and rebuilds isolation from `--strict-mcp-config` plus a minimal `--settings`.
+
+`stdio_spawn` now returns the credential-agnostic wire flags only; mode flags and the pinned session id are added where the run context is available.
+
+Item 2's instruction to verify rather than assume the narrow flags cover everything `--bare` did produced one negative result worth recording. Measured against claude 2.1.220:
+- MCP is fully suppressed: `--strict-mcp-config` alone yields `mcp_servers: []`, against nine servers loaded without it on the measurement machine.
+- Hooks are NOT suppressible. `--settings '{}'` and `--settings '{"hooks":{}}'` both still executed SessionStart hooks; `--include-hook-events` governs reporting, not execution; `--bare` is the only flag that skips them.
+
+So native-login workers execute whatever hooks the operator has configured. This is accepted deliberately — the alternative is that subscription-authenticated operators cannot dispatch claude at all — and is documented on the `NativeLogin` variant rather than left for a later reader to rediscover. It surfaced through a real test failure (`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events` began comparing nondeterministic hook uuids), not through inspection.
+
+Item 4 remains open: the resolved mode is logged at debug but is not yet recorded in RunMeta, so a failure is not yet diagnosable from the session JSONL alone. Item 6 also remains open — codex, cursor-agent and hermes have not been checked for the same credential-mode question.
+
+Gates: `cargo fmt`, `cargo clippy --workspace --all-targets`, `git diff --check` clean. orgasmic-drivers 213 lib tests pass; `driver_modes` returns to its pre-change baseline of 20 passed / 4 failed, those four being pre-existing codex failures verified identical on the clean branch by stashing. orgasmic-core 132 pass.
+
+Not verified end to end: the running daemon is the installed 0.0.14 build, so a live dispatch still uses the old adapter. Proving this against a real dispatch needs a daemon rebuild and restart, which is an operator decision.
+
+* IN_REVIEW TASK-VB9DQ Persist native session evidence for acp-stdio claude runs :drivers:recovery:evidence:
+:PROPERTIES:
+:ID: TASK-VB9DQ
+:PRIORITY: P1
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:144` passes `--no-session-persistence` on every acp-stdio claude run, and the adapter never passes `--session-id` or emits a `NativeRuntime` lifecycle event. The consequence is that acp-stdio claude runs leave no harness-native evidence of any kind.
+
+Measured 2026-07-25 (claude 2.1.220, counting files under `~/.claude/projects`):
+- run with `--no-session-persistence`: 0 new native transcripts
+- identical run without it: 1 new native transcript
+
+Confirmed by inspection:
+- `NativeRuntimeMeta` appears only in `modes/rmux.rs` and `modes/tmux.rs`; `adapters/claude.rs` never emits it
+- the acp-stdio reviewer run `run-20260725T073841` recorded lifecycle phases `acquire, run_meta, release` only — no `native_runtime`
+
+Contrast the TUI path, which already does this correctly. A real rmux run recorded:
+- `launch_argv: [claude, --dangerously-skip-permissions, --model, claude-sonnet-5, --session-id, a9fe25ff-...]`
+- `resume_argv: [claude, --resume, a9fe25ff-..., --fork-session, --dangerously-skip-permissions]`
+- `session_id: a9fe25ff-...`
+
+It passes an orgasmic-minted session id up front, so correlation is deterministic rather than discovered. acp-stdio should follow that pattern.
+
+Three consequences, all currently live:
+
+1. TASK-VBSG2 is impossible for this transport. Its slice A resolves "verified NativeRuntime provider/session/path metadata" and parses "Claude native JSONL". Neither exists for acp-stdio runs, so retro over an arbitrary past claude run cannot work no matter how good the materializer is.
+
+2. dec_WDR5K item 7 is violated in effect. TUI screen capture was removed on the premise that "session transcripts come from harness-native JSONL located by per-harness transcript finder adapters". For acp-stdio claude the finder adapter has nothing to find, so those runs have no transcript at all — not a lossy one, none. The decision's own sequencing constraint (finders must land before capture removal, or runs lose their session inputs) is satisfied in letter and broken in substance here.
+
+3. Recovery is degraded. `resolve_recovery_actions` offers `resume_native_fork` only when `session_native_runtime` yields a validated claude session id. acp-stdio records none, so that action can never be offered for this transport; recovery falls through to a fresh run even when resuming was possible.
+
+Work:
+1. Drop `--no-session-persistence` from the acp-stdio claude argv, or make it a deliberate per-dispatch option rather than a hardcoded default.
+2. Mint and pass an explicit `--session-id`, matching the TUI path, so correlation never depends on discovery heuristics.
+3. Emit a `NativeRuntime` lifecycle event from the acp-stdio path with provider, session id, launch argv, and resume argv, so recovery and retro read one shape regardless of transport.
+4. Weigh and record the retention tradeoff rather than assuming it away. Persisting worker sessions grows `~/.claude/projects` without bound (446 transcripts already present on this machine), and the retro contract holds vendor JSONL to be vendor-owned and immutable — so orgasmic may not prune it. Decide explicitly whether that is acceptable, whether worker sessions should be distinguishable from operator sessions, and record the answer.
+5. Check the same three properties for codex, cursor-agent, and hermes under acp-stdio. Do not assume this is claude-specific.
+
+Coordinates with TASK-Z8WEJ: both change `stdio_spawn` in the same adapter and should land together.
+
+Acceptance:
+- an acp-stdio claude run leaves a native transcript that the existing transcript finder resolves
+- its session id is recorded in a NativeRuntime lifecycle event, not discovered after the fact
+- `resume_native_fork` is offered for a recoverable acp-stdio claude run
+- the retention tradeoff is a recorded decision, not an implicit one
+** Notes
+Item 4's retention tradeoff is now settled by dec_Y5MPK: retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites or expires a vendor file; its obligation is visibility (per-harness counts, total size, age distribution through `doctor`). So this task does not need to solve growth — it needs to stop suppressing persistence, mint the session id, and emit NativeRuntime. The doctor reporting is separate work.
+** Evidence
+Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+
+- `--no-session-persistence` removed from the claude stdio argv. Verified beforehand that it was the sole cause: an otherwise identical run wrote one new file under `~/.claude/projects` without it and zero with it. Also verified that `--bare` does not suppress persistence, so both credential modes keep evidence.
+- `--session-id` is now pinned to the run's `runtime_id`, matching `modes/tmux.rs`. Verified that `-p` mode honours it and that the vendor transcript lands at exactly `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, the path `claude_session_path` computes. Correlation is minted, not discovered (dec_Y5MPK item 3).
+- `HarnessEventAdapter::native_runtime` added, defaulting to `None`. The claude adapter populates it while composing the request; `AcpStdioComposeAdapter` delegates it; `modes/acp_stdio.rs` reads it immediately after composing and carries it onto the `DriverSession` in place of the previous hardcoded `native_runtime: None`.
+- `claude_session_path` promoted to `pub(crate)` in `modes/tmux.rs` rather than duplicating the cwd-encoding rule in a second place.
+
+`resume_argv` is recorded as `[claude, --resume, <session-id>, --fork-session]`. Note it deliberately omits `--dangerously-skip-permissions`, which the TUI path includes: the stdio path never passed that flag at launch, and a resume argv should reproduce the original run's permission posture rather than widen it.
+
+Regression `every_mode_persists_a_locatable_native_session` asserts no `--no-session-persistence`, a pinned session id, and NativeRuntime whose `session_id` and `resume_argv` both target it.
+
+Still open from this task's work list: item 5, whether codex, cursor-agent and hermes need the same treatment. Codex is known to persist natively without orgasmic asking — a run that died on a provider 503 still wrote `~/.codex/sessions/2026/07/25/rollout-...jsonl` — so the question there is session-id correlation, not persistence.
+
+Gates as recorded on TASK-Z8WEJ. Not verified end to end: the running daemon is the installed 0.0.14 build, so proving this against a live dispatch needs a daemon rebuild and restart.
 
