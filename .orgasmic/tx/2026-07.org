@@ -27504,3 +27504,18 @@
 :REASON:       edited task node TASK-TJKFC
 :NODE_ID:      TASK-TJKFC
 :END:
+
+* TX 2026-07-25 Sat 21:49:10 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2825
+:TIME:         [2026-07-25 Sat 21:49:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       preflight probes, atomic abort, race test and end-to-end absence test all landed; the auto-close clause was deliberately declined with reasons recorded in the body
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
