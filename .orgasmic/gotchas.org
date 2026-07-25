@@ -218,3 +218,22 @@ cause: =manager::tests::local_dispatch_rollback_keeps_branch_when_worktree_valid
 Keep the system dirs on any test PATH — =format!("{local_bin}:/usr/bin:/bin")= —
 and prefer absolute paths for system tools in production code. Fixed 2026-07-25
 under TASK-9P810.
+
+** A successful reindex does not prove the daemon has permission
+Measured 2026-07-25 during the TASK-9P810 migration. Immediately after the
+executed path moved to =~/.orgasmic/bin/orgasmic=, every project scan timed out
+at boot and =status= reported =projects: 0=. Running =orgasmic reindex= then
+succeeded in 1.3 s and loaded all five projects with zero parse errors — which
+reads as proof that permissions are fine. It is not.
+
+Restarting with the grant actually in place produced zero scan timeouts and
+=projects: 5= directly from boot. The boot warning naming Files-and-Folders
+access was right; the reindex was the red herring. Do not treat a later
+successful scan as evidence against a permission problem: compare a *boot* with
+and without the grant, because the boot scan is the bounded one that gives up.
+
+Corollary for TASK-9P810 migrations: the first install that moves the executed
+path to the stable location does cost exactly one grant, as the installer says.
+The difference from the 2026-07-25 outage is that the daemon now stays bound and
+answerable while it is missing (TASK-KKGKM), so the operator can see the reason
+instead of finding a wedged runtime. Durable invariant as of 0.0.15-dev.1.

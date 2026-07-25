@@ -12765,3 +12765,221 @@ Earlier live-daemon numbers for context: the same endpoint on the running 0.0.14
 
 Not established by this measurement: behaviour under concurrent load, and the boot path, which still reads whole session files and is TASK-5P60H's scope.
 
+* DONE TASK-9P810 Install the runtime to a stable, identity-checked path so TCC grants survive upgrades :install:runtime:macos:
+:PROPERTIES:
+:ID: TASK-9P810
+:PRIORITY: P0
+:END:
+
+Problem: every runtime version costs the operator a macOS permission approval. Measured 2026-07-25 on one machine: 16 distinct runtime paths have been granted, 37 TCC rows in total, since 2026-06-18 — 0.0.1, 0.99.601, 0.0.3, 0.0.6, 0.0.7, three separate 0.0.8 nightlies, and so on through 0.0.13 and 0.0.14. Each one is a System Settings dialog the operator had to find and click, and a daemon that does not work until they do.
+
+Cause: TCC keys a grant to the resolved executable path. The install layout is `~/.orgasmic/runtimes/<version>/bin/orgasmic`, reached through `~/.orgasmic/bin/orgasmic -> ../current/bin/orgasmic -> runtimes/<version>/...`. TCC resolves the symlinks, so it records the versioned path and every release is a new client with no permissions.
+
+The signature is not the problem, and that is the useful part. The designated requirement is identity-based, not byte-based:
+
+  identifier "com.theaspirational.orgasmic" and certificate root = H"a70531007cd128ff081597cb27bee0816613d86d"
+
+A rebuilt binary re-signed with the same `orgasmic dev codesign` certificate satisfies that requirement, so content changes at a fixed path should inherit the grant. The two halves together are the fix: hold the path still and hold the identity still, and one approval covers every future version.
+
+Work:
+1. Make the executed binary a real file at a stable path (`~/.orgasmic/bin/orgasmic`) that install/update replaces in place. Keep versioned directories as rollback artifacts, but stop routing execution through a per-version path.
+2. Replace with a fresh inode, never overwrite in place — an in-use codesigned binary overwritten in place is silently SIGKILLed on every later exec (existing gotchas entry).
+3. Re-sign each installed binary with the pinned identity, so the designated requirement continues to match.
+4. Refuse the install when the incoming binary's designated requirement differs from the incumbent's, naming both. This is the guard for item 3: a mis-signed binary should be a rejected install, not a daemon that boots without permissions. Observed 2026-07-25 — an ad-hoc `codesign --force --sign -` replaced the certificate root and cost the operator two separate GUI grants to recover.
+5. Decide what `update` does about the LaunchAgent's `ProgramArguments`, which currently names `~/.orgasmic/bin/orgasmic`. If that becomes the real binary the plist may not need rewriting at all, which is its own win.
+6. Migration: existing installs already have grants against versioned paths. Decide whether the first stable-path install needs one final approval and say so in the update output, rather than letting the operator discover a dead daemon.
+
+Not in scope: Developer ID signing and notarization. That would anchor the requirement to Apple and a Team ID and is the right answer for distributing to other people, but the operator has deliberately deferred it; this task must work with the existing self-signed identity.
+
+Acceptance:
+- upgrading between two runtime versions requires no new permission approval
+- a binary signed by a different identity is refused at install time with both requirements named
+- the executed binary is replaced by fresh inode, never overwritten in place
+- rollback to a prior version still works
+
+IMPLEMENTATION EVIDENCE (2026-07-25, manager-implementer)
+Implemented manager-direct. New =crates/orgasmic-cli/src/managed_binary.rs= owns
+the single publish path; =update.rs=, =path_env.rs=, =doctor=, =daemon_service=
+and =scripts/install.sh= all route through it.
+
+Root cause confirmed, and it differs from the one assumed when this was filed.
+The LaunchAgent already named =~/.orgasmic/bin/orgasmic=, so the plist was never
+the problem: =env::current_exe()= on macOS returns the *invocation* path (probed
+directly), and the kernel resolves the symlink at =exec=. =codesign -d= on the
+link confirms it, printing =Executable=.../runtimes/0.0.14-darwin-aarch64/...=.
+So item 5 resolves to "no plist rewrite needed" — but =service_spec= now names
+the managed binary explicitly, because starting the daemon from a versioned path
+would have pinned the service to a directory that retention later prunes.
+
+Item 3 also resolves differently. A release bundle is already signed with the
+pinned identity by =package-runtime.sh=, and the signature is embedded in the
+Mach-O, so copying preserves it — verified: installing the real 0.0.14 binary
+into a scratch home reproduces
+=identifier "com.theaspirational.orgasmic" and certificate root = H"a705...d86d"=
+byte for byte, and a second install of the same identity reports grants as
+preserved. Re-signing at install time is therefore opt-in
+(=$ORGASMIC_CODESIGN_IDENTITY=) and exists for contributor source builds, which
+carry a linker signature that would otherwise be refused. Operators do not need
+the signing key.
+
+A real bug was caught before shipping. The first requirement parser missed
+ad-hoc signatures, which =codesign= prints *commented out* (=# designated =>=),
+reading them as "identity unknown" and waving them through — i.e. it would have
+permitted the exact 2026-07-25 accident this guard exists to stop. Covered now
+by a hermetic test that ad-hoc-signs a Mach-O and asserts the refusal end to
+end, including that a refused install leaves the incumbent byte-identical.
+
+=codesign= is invoked as =/usr/bin/codesign=, not through PATH: it decides
+whether a binary keeps the operator's grants, so a shadowing binary must not be
+able to answer for it.
+
+Acceptance:
+- no approval between versions — proven at the identity level: same requirement
+  in and out, =preserves_grants()= true on re-install
+- different identity refused with both requirements named — hermetic test
+- fresh inode never in-place — inode compared across an upgrade
+- rollback still works — restores from the previous runtime dir and bypasses the
+  guard by design, since it restores what the operator already approved
+
+Migration (item 6) is explicit rather than discovered: the first stable-path
+install prints that the executed path changed and one final prompt is expected.
+=orgasmic doctor= now reports a surviving symlink as a warning naming the cost,
+and =doctor --fix= performs the migration instead of only describing it.
+
+Not done here: nothing. Developer ID signing stays out of scope as filed.
+
+Incidental fix, unrelated to the task but blocking confidence in it:
+=path_env='s tests set process-global PATH to a bare tempdir, so any concurrent
+test spawning a PATH-resolved tool died with a bare =NotFound=.
+=manager::tests::local_dispatch_rollback_keeps_branch_when_worktree_validation_fails=
+failed ~3 runs in 4 and passed alone every time. Pre-existing (the PATH-setting
+tests date to 94e98f2). Fixed by keeping system dirs on the test PATH; 5/5 green
+after, 206 CLI assertions passing.
+
+LIVE MIGRATION RESULT (2026-07-25, operator machine, 0.0.15-dev.1)
+Installed from a locally packaged bundle signed with the pinned identity. The
+incoming and incumbent designated requirements were compared before installing
+and matched exactly:
+=identifier "com.theaspirational.orgasmic" and certificate root = H"a705...d86d"=.
+
+After install, =codesign -d= resolves =Executable=/Users/aspirational/.orgasmic/bin/orgasmic=
+— a path with no version in it, which is the whole point. Previously it resolved
+to =runtimes/0.0.14-darwin-aarch64/bin/orgasmic=.
+
+The migration cost exactly one permission grant, as the installer predicted and
+printed. Measured on both sides of it:
+- without the grant: every project scan timed out at boot, =projects: 0=
+- with the grant: zero timeouts, =projects: 5= from boot, zero parse errors
+
+The important difference from the 2026-07-25 outage is that the daemon stayed
+bound and fully answerable the entire time it lacked the grant — =status=, the
+API and the CLI all worked and named the reason. That is TASK-KKGKM protecting
+the operator during TASK-9P810's own installation.
+
+One caution recorded in gotchas: an =orgasmic reindex= run while the grant was
+missing succeeded in 1.3 s and loaded all five projects, which looks like proof
+that permissions are fine. It is not — only comparing a boot with and without
+the grant settles it. That red herring cost a wrong diagnosis in this session.
+
+Also fixed while installing: =scripts/install.sh='s =replace_symlink= let =mv=
+follow the =current= symlink and drop the new link inside the OLD runtime
+directory, so an upgrade printed "install complete" while still pointing at the
+previous runtime. First installs never show it. Commit d455051.
+
+* DONE TASK-KKGKM A project the daemon cannot read must not prevent it from binding :daemon:boot:resilience:
+:PROPERTIES:
+:ID: TASK-KKGKM
+:PRIORITY: P0
+:RELATES_TO: TASK-3R3EZ TASK-5P60H
+:END:
+
+Problem: when the daemon lacks filesystem permission for a registered project's path, it does not degrade — it dies. Reproduced 2026-07-25 after a runtime binary swap invalidated the macOS TCC grant for `~/Documents`:
+
+- boot logged `starting pre-bind boot work`, then only `project scan timed out` warnings, then nothing
+- the process sat at 0% CPU for minutes, never reaching `listening`
+- `lsof` showed no project files open at all, only its own log, lock and binary — consistent with a permission-gated `open()` blocking in the kernel before a descriptor exists
+- launchd `KeepAlive` kept spawning replacements, each refusing with `daemon instance lock is held, but the incumbent is not healthy`, so the machine churned without recovering
+- the only operator-visible signal was a WARN line in a log file nobody was watching; `orgasmic status` simply hung
+
+The daemon never bound, so every CLI verb, the UI, and the app were dead. A permission problem affecting a subset of projects took down the whole runtime.
+
+The scan timeout works as designed — it logs "omitting project so daemon boot can continue" — but something after it blocks anyway. Find that, and make the whole class non-fatal.
+
+Work:
+1. Bind first, or at minimum guarantee that no per-project filesystem work can prevent binding. An operator must always be able to reach `status` and the UI to learn why the runtime is unhealthy.
+2. Give a project whose files cannot be read a durable `unavailable` state with the reason, rather than retrying it into a hang. This is the same state TASK-3R3EZ introduces for missing project roots; reuse it rather than inventing a parallel one.
+3. Report the condition where an operator will actually see it: `orgasmic status` and `orgasmic doctor` should name the affected projects and the exact remedy, not just emit a WARN into `daemon.out.log`.
+4. Identify what blocks after the index scan completes. Boot reattach reads every session JSONL and is the leading suspect, but it was not confirmed — no fd was open at the time of sampling. Confirm before fixing.
+5. Bound the launchd churn: repeated replacements refusing on the instance lock is noise that hides the real fault. Relates to TASK-5P60H's backoff work.
+6. Regression: a registered project whose path is unreadable must still leave the daemon bound, reporting that project as unavailable.
+
+Acceptance:
+- an unreadable project cannot prevent the daemon from binding
+- `status` and `doctor` name the affected project and the remedy
+- the daemon stays useful for every other project
+- a regression covers the unreadable-project case
+
+ITEM 4 CONFIRMED (2026-07-25) — the task said confirm before fixing, so it was
+reproduced rather than assumed.
+
+Built an isolated throwaway ORGASMIC_HOME with two registered projects and
+planted a FIFO where a session JSONL belongs. A FIFO with no writer blocks
+inside open() before a descriptor exists, which is the same shape as the
+permission-gated open in the original incident, and it is deterministic without
+touching TCC.
+
+Baseline with both projects healthy: bound in 44 ms.
+With the blocking session file present:
+- never reached listening; curl exit 7 (connection refused) indefinitely
+- daemon.boot froze at {"phase": "reattaching runs", "seq": 7}, refreshed_at
+  stuck at the boot instant while wall clock advanced 33 s
+- 0% CPU, and lsof showed zero descriptors on the blocking file — exactly the
+  "no fd was open when the process was sampled" observation from the incident,
+  now explained: the process is blocked *inside* open(), before an fd exists
+- stack sample:
+    tokio::runtime::park::CachedParkThread::block_on
+      orgasmic_daemon::api::reattach_live_runs_on_boot
+        orgasmic_core::session::read_session_file
+          std::fs::read_to_string
+
+So the leading suspect was right, and there is a second finding the task did not
+anticipate: the scan runs synchronously on the main thread inside block_on, so
+it also starves the boot-progress refresh task. That is why the operator's only
+liveness signal froze and `orgasmic status` simply hung — the heartbeat could
+not advance even to report the phase it was stuck in.
+
+FIX
+1. Boot auto-reattach now runs after the listener is bound, in a spawned task.
+   It is best-effort recovery; answering status is what an operator needs in
+   order to diagnose anything at all.
+2. Its file reads moved to spawn_blocking, so a wedged read costs one blocking
+   thread instead of a runtime worker.
+3. Session paths that are not regular files are refused by shape with a named
+   warning, rather than discovered by hanging.
+
+Verified end to end on the same isolated home: binds in ~50 ms with the
+blocking file still present, /api/daemon/status answers in 1.6 ms, and the
+warning names the offending path.
+
+REGRESSION
+crates/orgasmic-daemon/tests/boot_resilience.rs covers both the blocking-open
+case and an unreadable project directory. Both were verified to fail against the
+reverted fix, not merely to pass against the current one.
+
+The first version of that test used tokio::time::timeout and hung forever
+instead of failing: a synchronous block inside a future stalls the task
+mid-poll, so the timer fires but the task can never be woken to observe it. It
+now boots on an owned thread and waits on a channel deadline, and a reverted fix
+reports itself cleanly at 20.02 s with a message stating the invariant.
+
+NOT DONE HERE, and why:
+- Item 2 (durable `unavailable` project state) is the state model TASK-3R3EZ
+  introduces. The task says to reuse it rather than invent a parallel one, and
+  3R3EZ has not landed, so inventing it here would be something 3R3EZ has to
+  unpick.
+- Item 3 (status/doctor naming the affected project) depends on that state
+  existing to report.
+- Item 5 (bounding launchd churn) belongs with TASK-5P60H's backoff work.
+- Boot reattach still reads whole session files. That is cost, not a hang, now
+  that it is off the critical path; filed as TASK-7QM8M with the correctness
+  subtlety that blocks a naive swap to the bounded scanner.

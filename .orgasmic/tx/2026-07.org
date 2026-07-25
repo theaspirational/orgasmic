@@ -27279,3 +27279,48 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+
+* TX 2026-07-25 Sat 16:50:51 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2809
+:TIME:         [2026-07-25 Sat 16:50:51]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:
+
+* TX 2026-07-25 Sat 16:50:57 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2810
+:TIME:         [2026-07-25 Sat 16:50:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       verified live: executed path is now version-free, identity preserved, migration cost the one predicted grant
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-25 Sat 16:50:58 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2811
+:TIME:         [2026-07-25 Sat 16:50:58]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       verified live: daemon stayed bound and answerable throughout the permission gap during 9P810's install
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
