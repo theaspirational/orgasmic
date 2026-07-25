@@ -27206,3 +27206,18 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       a permanently red suite cannot answer whether a change broke something; cost two 13-minute runs to rule out during TASK-KKGKM
 :END:
+
+* TX 2026-07-25 Sat 15:55:16 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2804
+:TIME:         [2026-07-25 Sat 15:55:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       bind-first fix landed with a regression verified against the reverted code; items 2/3/5 deferred with dependencies named
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:

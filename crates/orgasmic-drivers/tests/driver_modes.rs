@@ -8,8 +8,9 @@ use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
 use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
     CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter, RunKind, StdioSpawn,
-    SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, HARNESSES, MODES, SUPPORTED,
+    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter,
+    RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, HARNESSES, MODES,
+    SUPPORTED,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -60,6 +61,29 @@ impl HarnessEventAdapter for MockAdapter {
             cwd: None,
             env: Vec::new(),
         })
+    }
+}
+
+/// Read events until the run's terminal event, tolerating the turn boundary
+/// that precedes it.
+///
+/// `AgentTurnComplete` marks the end of one agent turn; `RunComplete` marks the
+/// end of the run. A driver that supports multi-turn sessions emits the former
+/// before the latter, so a test asserting "the next event is RunComplete"
+/// encodes a single-turn assumption rather than the contract. These four
+/// assertions were left behind when the turn boundary was introduced
+/// (TASK-K05MX) and had been failing on main ever since.
+async fn expect_run_complete(session: &mut DriverSession) -> DriverEvent {
+    loop {
+        let event = timeout(Duration::from_secs(2), session.events.recv())
+            .await
+            .expect("driver went quiet before completing the run")
+            .expect("driver channel closed before completing the run");
+        match event {
+            DriverEvent::AgentTurnComplete { .. } => continue,
+            DriverEvent::RunComplete { .. } => return event,
+            other => panic!("expected the run to complete, got {other:?}"),
+        }
     }
 }
 
@@ -538,10 +562,7 @@ done
     .await
     .expect("turn/interrupt not observed on mock peer stdin");
 
-    let complete = timeout(Duration::from_secs(2), session.events.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let complete = expect_run_complete(&mut session).await;
     assert!(matches!(complete, DriverEvent::RunComplete { .. }));
 
     if let Ok(Some(event)) = timeout(Duration::from_millis(300), session.events.recv()).await {
@@ -1119,10 +1140,7 @@ async fn run_codex_stdio_approval_handshake(
         .unwrap();
     assert!(matches!(tool, DriverEvent::ToolCall { .. }));
 
-    let complete = timeout(Duration::from_secs(2), session.events.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let complete = expect_run_complete(&mut session).await;
     assert!(matches!(complete, DriverEvent::RunComplete { .. }));
 
     (stdin_log, approval_log)
@@ -1306,10 +1324,7 @@ async fn codex_turn_start_terminal_notification_does_not_emit_followup_error() {
         .unwrap();
     assert!(matches!(ready, DriverEvent::Ready { .. }));
 
-    let complete = timeout(Duration::from_secs(2), session.events.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let complete = expect_run_complete(&mut session).await;
     assert!(matches!(complete, DriverEvent::RunComplete { .. }));
 
     if let Ok(Some(event)) = timeout(Duration::from_millis(300), session.events.recv()).await {
