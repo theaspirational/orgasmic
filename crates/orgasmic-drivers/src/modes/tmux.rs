@@ -373,10 +373,13 @@ impl WorkerDriver for TmuxDriver {
     ) -> Result<AttachOutcome, DriverError> {
         let cfg: TmuxTuiConfig = serde_json::from_value(config.0.clone())
             .map_err(|e| DriverError::InvalidConfig(e.to_string()))?;
-        if cfg.force_inert || !tmux_available() {
+        if cfg.force_inert {
             return Ok(AttachOutcome::NotReattachable);
         }
 
+        // The async, kill-on-drop has-session command is both the availability
+        // and liveness proof. Avoid the synchronous `tmux -V` discovery used
+        // by acquisition so a bounded inventory probe cannot pin its executor.
         let session_name = tmux_session_name(&ctx.identity);
         if !has_tmux_session(&session_name).await? {
             return Ok(AttachOutcome::NotReattachable);
@@ -627,7 +630,9 @@ pub fn tmux_session_exists(session: &str) -> bool {
 }
 
 async fn has_tmux_session(session: &str) -> Result<bool, DriverError> {
-    let status = tokio::process::Command::new("tmux")
+    let mut command = tokio::process::Command::new("tmux");
+    command.kill_on_drop(true);
+    let status = command
         .args(["has-session", "-t", session])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())

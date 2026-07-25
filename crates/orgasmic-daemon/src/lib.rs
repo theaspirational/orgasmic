@@ -563,6 +563,7 @@ impl Daemon {
             dispatch_response_delay: opts.dispatch_response_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
             trusted_claude_binary: api::pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
         };

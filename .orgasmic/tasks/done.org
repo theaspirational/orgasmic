@@ -12683,3 +12683,18 @@ Claude Code rmux / Opus 4.8 high returned SHIP WITH FIXES. It required a positiv
 ** Evidence
 Cursor Grok 4.5 high-fast produced the source-backed design report. Claude Opus 4.8 high reviewed it as SHIP WITH FIXES. Codex GPT-5.6 Terra high resolved all findings, including exact fresh-acquire and recovery behavior. The reviewed provider-neutral contract, compatibility rules, observability schema, deterministic matrix, rollout gates, and explicit rmux/tmux limitation are persisted as arch_EAVPP.
 
+* DONE TASK-JN5Q1 Bound run enumeration when recovery records reference dead workers :daemon:recovery:cli:
+:PROPERTIES:
+:ID: TASK-JN5Q1
+:END:
+
+Reproduce and fix GET /api/runs exceeding the CLI HTTP deadline when durable failed/open run sessions trigger serial driver attach probes.
+
+Acceptance:
+- failed terminal tombstones do not perform meaningless liveness attach probes
+- genuine attach proofs have a bounded deadline and multiple probes cannot stack beyond the run-list client budget
+- GET /api/runs returns a complete classified response when one driver probe is unresponsive
+- manager dispatch-close releases its recorded run id directly and no longer requires GET /runs
+- focused regressions plus daemon/CLI gates pass
+
+Out of scope: boot transaction replay duration and concurrent daemon restart bind races.

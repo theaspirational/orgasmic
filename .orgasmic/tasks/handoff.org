@@ -8,9 +8,24 @@
 :LIVENESS:         40f70591a323ebb8fbbeb2a4caa31d81138e106c
 :LIVENESS_AT:      [2026-07-24 Fri]
 :UPDATED_AT:       [2026-07-24 Fri]
+:GOAL_ID:          goal-20260725-harden-the-manager
 :END:
 
-Stable runtime 0.0.14 and apps 0.0.8 are published from source commit 40f70591a323ebb8fbbeb2a4caa31d81138e106c. The hardening backlog remains drained and no worker dispatch is active.
+TASK-KWSTJ is implemented and in review, uncommitted, with no independent reviewer pass. The agenda is reprioritised: the process defect that produced it outranks the remaining run-storage work, because every task still queued has the same P0/P1 multi-crate shape that slipped through.
+
+What went wrong, recorded so it is not relitigated: the manager read the resolved `default` workflow, registered that manager-implementer is sanctioned, and never classified the work as trivial / ordinary / risky at all. ~900 lines of daemon-recovery code across four crates landed with no tier decision and no reviewer. The workflow states the rule but imposes only a reading obligation; nothing forces an output before the first source edit, so skipping it is silent and leaves no audit trace.
+
+Reprioritised order:
+1. TASK-KWSTJ — commit to a branch, then dispatch an independent reviewer against that ref. A reviewer cannot see uncommitted source, so committing first is the precondition, not a formality.
+2. TASK-YGB1R (P1) — make the tier floor derivable from the task heading. Pure text in `shipped/workflows/default.org` and `shipped/entry/router.org`. Cheapest, and it defines the vocabulary the other two need.
+3. TASK-TW3N3 (P1) — document and optionally guard the commit-before-dispatch precondition, folding in the known `.orgasmic/` worktree blindspot as one constraint.
+4. TASK-3CM0Q (P1, depends on TASK-YGB1R) — the recorded `manager tier` declaration and the inverted default (no tier stated means no manager-direct source edits).
+5. TASK-FZB6T (P1) — compact run catalog; the bounded legacy fallback it needs already exists as `scan_session_lifecycle`.
+6. TASK-TJKFC (P1) — harness/auth preflight and atomic rollback.
+7. TASK-5P60H (P1) — slow-start/single-owner tests and launchd backoff; carries the boot-reattach handoff from TASK-KWSTJ.
+8. TASK-3R3EZ (P2) and TASK-VBSG2 (P1) — both gated on the catalog.
+
+The retro contract is unchanged: no automatic native transcript conversion, no automatic retro runs, vendor JSONL stays vendor-owned and immutable, conversion produces bounded versioned derived-only evidence, and retro accepts selected runs, tasks, or an ordered task sequence.
 
 ** Done so far
 - Published runtime 0.0.14 to https://github.com/theaspirational/orgasmic/releases/tag/stable with four refreshed macOS/Linux targets and the existing Windows 0.0.7 target preserved.

@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use reqwest::header::AUTHORIZATION;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -66,6 +67,103 @@ async fn boot_with_options(home: Home, options: DaemonOptions) -> RunningDaemon 
     home.ensure().unwrap();
     std::fs::write(home.config(), "bind_host: 127.0.0.1\nbind_port: 65533\n").unwrap();
     Daemon::run(home, options).await.expect("boot daemon")
+}
+
+struct RunsRejectingProxy {
+    addr: std::net::SocketAddr,
+    paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    shutdown: Option<tokio::sync::oneshot::Sender<()>>,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for RunsRejectingProxy {
+    fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
+        self.join.abort();
+    }
+}
+
+async fn start_runs_rejecting_proxy(backend: std::net::SocketAddr) -> RunsRejectingProxy {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind runs-rejecting proxy");
+    let addr = listener.local_addr().unwrap();
+    let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded_paths = paths.clone();
+    let (shutdown, mut shutdown_rx) = tokio::sync::oneshot::channel();
+    let join = tokio::spawn(async move {
+        loop {
+            let accepted = tokio::select! {
+                _ = &mut shutdown_rx => break,
+                accepted = listener.accept() => accepted,
+            };
+            let Ok((mut inbound, _)) = accepted else {
+                break;
+            };
+            let request_paths = recorded_paths.clone();
+            tokio::spawn(async move {
+                let mut request = Vec::new();
+                let mut chunk = [0_u8; 4096];
+                while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = inbound.read(&mut chunk).await.expect("read proxy request");
+                    if read == 0 {
+                        return;
+                    }
+                    request.extend_from_slice(&chunk[..read]);
+                    assert!(
+                        request.len() <= 64 * 1024,
+                        "proxy request headers too large"
+                    );
+                }
+                let first_line = request
+                    .split(|byte| *byte == b'\n')
+                    .next()
+                    .and_then(|line| std::str::from_utf8(line).ok())
+                    .unwrap_or_default();
+                let path = first_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                request_paths.lock().unwrap().push(path.clone());
+                if path == "/api/runs" {
+                    let body = b"runs list disabled";
+                    let response = format!(
+                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    inbound.write_all(response.as_bytes()).await.unwrap();
+                    inbound.write_all(body).await.unwrap();
+                    return;
+                }
+
+                let mut upstream = tokio::net::TcpStream::connect(backend)
+                    .await
+                    .expect("connect proxy backend");
+                let header_end = request
+                    .windows(4)
+                    .position(|window| window == b"\r\n\r\n")
+                    .expect("complete proxy request headers");
+                let mut forwarded = Vec::with_capacity(request.len() + 19);
+                forwarded.extend_from_slice(&request[..header_end + 2]);
+                forwarded.extend_from_slice(b"Connection: close\r\n");
+                forwarded.extend_from_slice(&request[header_end + 2..]);
+                upstream
+                    .write_all(&forwarded)
+                    .await
+                    .expect("forward proxy request");
+                let _ = tokio::io::copy_bidirectional(&mut inbound, &mut upstream).await;
+            });
+        }
+    });
+    RunsRejectingProxy {
+        addr,
+        paths,
+        shutdown: Some(shutdown),
+        join,
+    }
 }
 
 fn write(path: &Path, contents: impl AsRef<str>) {
@@ -2399,6 +2497,98 @@ async fn dispatch_close_fails_when_liveness_probe_unreachable() {
     let _ = running.join.await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_close_with_recorded_run_id_does_not_enumerate_runs() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/direct-close-brief.md");
+    write(&brief, "direct close without run enumeration");
+    let worktree = tmp.path().join("worktrees/direct-close");
+
+    let running = boot(home.clone()).await;
+    let dispatched = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            worktree.to_str().unwrap(),
+            "--branch",
+            "task-direct-close",
+        ],
+    );
+    assert!(dispatched.contains("dispatched: TASK-DISPATCH implementer pid="));
+
+    let proxy = start_runs_rejecting_proxy(running.addr).await;
+    let output = run_orgasmic_output_with_daemon_url(
+        &home,
+        &format!("http://{}", proxy.addr),
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--codex-commit",
+            &head,
+            "--reason",
+            "direct close regression",
+        ],
+        &[],
+    );
+    assert!(
+        output.status.success(),
+        "recorded-id close must succeed while /api/runs is unavailable\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let paths = proxy.paths.lock().unwrap().clone();
+    assert!(
+        !paths.iter().any(|path| path == "/api/runs"),
+        "recorded-id close must not enumerate runs: {paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| path.starts_with("/api/runs/") && path.ends_with("/release")),
+        "recorded-id close must release the exact run: {paths:?}"
+    );
+
+    drop(proxy);
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// Extract the `last=<path>` suffix `orgasmic dispatch finalize` prints on
 /// success (see `cmd_dispatch_finalize`'s `println!`).
 fn finalized_last_path(stdout: &str) -> PathBuf {
@@ -3857,9 +4047,10 @@ async fn stage_grill_finalize_from_orgasmic_run_id_on_main() {
         "grill finalize from main via ORGASMIC_RUN_ID",
     );
 
-    let stdout = run_orgasmic_output_with_env(
+    let proxy = start_runs_rejecting_proxy(running.addr).await;
+    let stdout = run_orgasmic_output_with_daemon_url(
         &home,
-        &running,
+        &format!("http://{}", proxy.addr),
         &project_root,
         &path_env,
         &[
@@ -3885,7 +4076,19 @@ async fn stage_grill_finalize_from_orgasmic_run_id_on_main() {
         std::fs::read_to_string(&last_path).unwrap(),
         "grill finalize from main via ORGASMIC_RUN_ID"
     );
+    let paths = proxy.paths.lock().unwrap().clone();
+    assert!(
+        !paths.iter().any(|path| path == "/api/runs"),
+        "explicit-id finalize must not enumerate runs: {paths:?}"
+    );
+    assert!(
+        paths
+            .iter()
+            .any(|path| path == &format!("/api/runs/{run_id}")),
+        "explicit-id finalize must resolve the exact run: {paths:?}"
+    );
 
+    drop(proxy);
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }

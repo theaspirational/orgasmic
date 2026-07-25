@@ -132,3 +132,23 @@ and adding an observer whose prompt is tuned for implementer sessions rather tha
 all rmux roles. Operators should not expect companion babysitters for
 =*-rmux.org= workers unless a future task designs a dedicated rmux babysitter
 policy and template. Durable policy as of TASK-GD0W1.
+
+** Session JSONL is transcript-shaped, and lifecycle lives at both ends
+On a real 198-file board, 2.239 GiB of session JSONL was almost entirely
+=text_chunk= driver events; only a few hundred lines across all files carried
+lifecycle meaning. Two traps follow.
+
+=SessionWriter::append= does =flush= + =sync_all= on every line, so building a
+multi-megabyte fixture through it takes tens of seconds. Write the JSONL
+directly with =serde_json::to_string(&SessionEnvelope { .. })= instead.
+
+Lifecycle truth clusters at both ends of a file: =acquire=, =run_meta=,
+=native_runtime= and the first =ready= sit within the first tens of KiB
+(observed worst case 56 KiB), and =release=, the terminal driver event, and
+appended =recovery_origin= links sit within the last few KiB (observed worst
+case 13 KiB). Everything between is =reattach= markers and transcript, which no
+classifier consumes. That is why =scan_session_lifecycle= can answer recovery
+questions from a bounded prefix/tail window — and why any *new* mid-file
+lifecycle event would be invisible to run enumeration unless
+=SessionScanBudget= or the retention rule in =line_is_lifecycle_relevant=
+changes with it. Durable invariant as of TASK-KWSTJ.

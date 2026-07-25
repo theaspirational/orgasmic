@@ -732,9 +732,12 @@ impl WorkerDriver for RmuxDriver {
             .session(session_name)
             .await
             .map_err(|e| DriverError::Transport(format!("rmux attach session: {e}")))?;
-        let rmux_bin = probe_rmux_binary()
-            .path
-            .unwrap_or_else(|| RMUX_BINARY.to_string());
+        // Recovery already proved a compatible, live rmux daemon through the
+        // SDK. Do not run the synchronous `rmux -V` discovery on this bounded
+        // attach path; the configured daemon binary (or PATH name) is enough
+        // for the best-effort mouse option command below.
+        let rmux_bin =
+            std::env::var(RMUX_SDK_DAEMON_BINARY_ENV).unwrap_or_else(|_| RMUX_BINARY.to_string());
         if let Err(err) = enable_rmux_mouse(&rmux_bin, &session_name_str).await {
             tracing::warn!(
                 ?err,
@@ -1153,7 +1156,9 @@ async fn run_rmux_cli_with_owner(
             })
             .await
     } else {
-        let child = tokio::process::Command::new(bin)
+        let mut command = tokio::process::Command::new(bin);
+        command.kill_on_drop(true);
+        let child = command
             .args(args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -1284,7 +1289,9 @@ async fn paste_text_and_submit(
 }
 
 async fn rmux_session_alive(bin: &str, session: &str) -> bool {
-    tokio::process::Command::new(bin)
+    let mut command = tokio::process::Command::new(bin);
+    command.kill_on_drop(true);
+    command
         .args(["has-session", "-t", session])
         .stdout(Stdio::null())
         .stderr(Stdio::null())

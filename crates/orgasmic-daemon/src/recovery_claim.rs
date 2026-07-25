@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use orgasmic_core::home::Home;
 use orgasmic_core::session::{Lifecycle, SessionEnvelope, SessionEventKind};
-use orgasmic_core::RuntimeIdentity;
+use orgasmic_core::{RuntimeIdentity, SessionLifecycleScan, SessionScanBudget};
 use orgasmic_drivers::modes::tmux::{tmux_session_exists, tmux_session_name};
 use orgasmic_drivers::NativeRuntimeMeta;
 use serde::{Deserialize, Serialize};
@@ -589,6 +589,17 @@ impl SessionDirectory {
         self.open_path(path, false)?.read_checked()
     }
 
+    /// Bounded lifecycle read through the same pinned-directory, identity-
+    /// validated handle as [`Self::read_path`]. Origin indexing only needs
+    /// lifecycle envelopes, so it must not pay transcript bytes.
+    fn scan_path(
+        &self,
+        path: &Path,
+        budget: SessionScanBudget,
+    ) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+        self.open_path(path, false)?.scan_lifecycle_checked(budget)
+    }
+
     pub(crate) fn open_path(
         &self,
         path: &Path,
@@ -671,6 +682,19 @@ impl SessionFile {
         file.read_to_string(&mut raw)
             .map_err(RecoveryClaimError::Io)?;
         parse_session_raw(&raw)
+    }
+
+    /// [`Self::read_checked`] restricted to lifecycle envelopes and a byte
+    /// budget. Identity is validated identically before any read.
+    pub(crate) fn scan_lifecycle_checked(
+        &self,
+        budget: SessionScanBudget,
+    ) -> Result<SessionLifecycleScan, RecoveryClaimError> {
+        self.validate_current()?;
+        let mut file = self.file.try_clone().map_err(RecoveryClaimError::Io)?;
+        let file_bytes = file.metadata().map_err(RecoveryClaimError::Io)?.len();
+        orgasmic_core::scan_session_lifecycle_reader(&mut file, file_bytes, budget)
+            .map_err(|_| RecoveryClaimError::CorruptClaim)
     }
 
     pub(crate) fn validate_current(&self) -> Result<(), RecoveryClaimError> {
@@ -1020,32 +1044,49 @@ fn session_prompt_draft(envelopes: &[SessionEnvelope]) -> Option<String> {
     })
 }
 
+/// Result of one bounded origin-index pass over a session file.
+#[derive(Debug, Default)]
+pub struct IndexedRecoveryOrigins {
+    pub links: Vec<IndexedRecoveryOrigin>,
+    /// Bytes read to produce `links`, reported as an inventory stage metric.
+    pub bytes_inspected: u64,
+}
+
 pub fn index_recovery_origins_in_session(
     home: &Home,
     project_root: &Path,
     session_path: &Path,
     containing_project_id: &str,
-) -> Vec<IndexedRecoveryOrigin> {
+) -> IndexedRecoveryOrigins {
+    // Recovery-origin links are lifecycle envelopes appended after the run
+    // ended. Reading them must not cost the run's transcript.
+    let budget = SessionScanBudget::DEFAULT;
     #[cfg(unix)]
     let Ok(session_dir) = SessionDirectory::open(project_root) else {
-        return Vec::new();
+        return IndexedRecoveryOrigins::default();
     };
     #[cfg(unix)]
-    let Ok(envelopes) = session_dir.read_path(session_path) else {
-        return Vec::new();
+    let Ok(scan) = session_dir.scan_path(session_path, budget) else {
+        return IndexedRecoveryOrigins::default();
     };
     #[cfg(not(unix))]
-    let Ok(envelopes) = orgasmic_core::session::read_session_file(session_path) else {
-        return Vec::new();
+    let Ok(scan) = orgasmic_core::scan_session_lifecycle(session_path, budget) else {
+        return IndexedRecoveryOrigins::default();
     };
+    let mut bytes_inspected = scan.bytes_inspected;
+    let empty = || IndexedRecoveryOrigins {
+        links: Vec::new(),
+        bytes_inspected,
+    };
+    let envelopes = scan.envelopes;
     let Some(first) = envelopes.first() else {
-        return Vec::new();
+        return empty();
     };
     let Some(run_meta_project) = session_run_meta_project(&envelopes) else {
-        return Vec::new();
+        return empty();
     };
     if run_meta_project != containing_project_id {
-        return Vec::new();
+        return empty();
     }
     let draft_prompt = session_prompt_draft(&envelopes);
     let mut links = Vec::new();
@@ -1122,15 +1163,17 @@ pub fn index_recovery_origins_in_session(
                 continue;
             }
             #[cfg(unix)]
-            let Ok(origin_envelopes) = session_dir.read_path(&origin_session_path) else {
+            let Ok(origin_scan) = session_dir.scan_path(&origin_session_path, budget) else {
                 continue;
             };
             #[cfg(not(unix))]
-            let Ok(origin_envelopes) =
-                orgasmic_core::session::read_session_file(&origin_session_path)
+            let Ok(origin_scan) =
+                orgasmic_core::scan_session_lifecycle(&origin_session_path, budget)
             else {
                 continue;
             };
+            bytes_inspected += origin_scan.bytes_inspected;
+            let origin_envelopes = origin_scan.envelopes;
             if origin_envelopes
                 .first()
                 .is_none_or(|origin| origin.run_id != origin_run_id)
@@ -1155,7 +1198,10 @@ pub fn index_recovery_origins_in_session(
             });
         }
     }
-    links
+    IndexedRecoveryOrigins {
+        links,
+        bytes_inspected,
+    }
 }
 
 pub fn reconstruct_claim_from_origin(link: &IndexedRecoveryOrigin) -> RecoveryClaim {
@@ -2401,13 +2447,17 @@ mod tests {
             &project_root,
             &first.replacement_session_path,
             "orgasmic",
+        )
+        .links;
+        links.extend(
+            index_recovery_origins_in_session(
+                &home,
+                &project_root,
+                &second.replacement_session_path,
+                "orgasmic",
+            )
+            .links,
         );
-        links.extend(index_recovery_origins_in_session(
-            &home,
-            &project_root,
-            &second.replacement_session_path,
-            "orgasmic",
-        ));
         assert_eq!(links.len(), 2, "both daemon-authenticated links must index");
         let resolved = resolve_authoritative_recovery_claim(
             &home,
@@ -2845,7 +2895,8 @@ mod tests {
         drop(writer);
 
         let links =
-            index_recovery_origins_in_session(&home, &project_root, &replacement_path, "orgasmic");
+            index_recovery_origins_in_session(&home, &project_root, &replacement_path, "orgasmic")
+                .links;
         let resolved = resolve_authoritative_recovery_claim(
             &home,
             &project_root,
@@ -3099,6 +3150,7 @@ mod tests {
             &replacement_path,
             "orgasmic"
         )
+        .links
         .is_empty());
     }
 }
