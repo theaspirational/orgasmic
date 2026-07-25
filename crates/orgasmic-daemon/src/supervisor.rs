@@ -3522,6 +3522,32 @@ fn terminal_event_releases_transport(transport: &str) -> bool {
     matches!(transport, "tmux" | "tmux-tui" | "rmux")
 }
 
+/// A terminal event that declares *failure* releases the transport on every
+/// transport, not only the mux ones.
+///
+/// The asymmetry with success is deliberate. Leaving a subprocess transport to
+/// shut itself down is a bet that the harness will exit once it has nothing
+/// left to do. On the success path that bet is sound — exiting is part of
+/// completing normally. On the failure path it is a bet that a harness which
+/// just declared itself broken will nonetheless behave correctly, and that is
+/// exactly the bet that lost on 2026-07-25 (TASK-TJKFC).
+///
+/// From that run's own session JSONL: `run_fail` at 07:38:45.175, then nothing
+/// for **seventy minutes**. `claude -p --input-format stream-json` holds stdin
+/// open and waits for another turn that is never coming, so the stream never
+/// ended, the release never fired, the lease stayed held, and the dispatch
+/// stayed open with a live pid that `dispatch-status` reported as `[pid-alive]`
+/// — i.e. as work in progress. A fatal startup that leaves a live process is
+/// worse than a crash, because it is indistinguishable from work.
+///
+/// Releasing here reaps the process group (`reap_process_group`: TERM, then
+/// KILL), so the failure costs 0.4 s instead of running until an operator
+/// notices. Artifact draining is unaffected — `artifactor_lifecycle_in_flight`
+/// still defers the release through `pending_terminal_drain`.
+fn terminal_failure_releases_any_transport(outcome: Option<ReleaseOutcome>) -> bool {
+    matches!(outcome, Some(ReleaseOutcome::Failed))
+}
+
 /// Whether a live run record matches the cleanup request's attempt identity.
 fn dispatch_cleanup_identity_matches(
     rec: &RunRecord,
@@ -3824,7 +3850,11 @@ fn take_driver_terminal_release(
     let should_release = inner
         .runs
         .get(run_id)
-        .map(|rec| force_transport_shutdown || terminal_event_releases_transport(&rec.transport))
+        .map(|rec| {
+            force_transport_shutdown
+                || terminal_event_releases_transport(&rec.transport)
+                || terminal_failure_releases_any_transport(rec.terminal_outcome)
+        })
         .unwrap_or(false);
     if !should_release {
         return None;
@@ -4850,6 +4880,108 @@ mod tests {
     }
 
     /// Emits Ready then a fatal DriverError and closes the stream.
+    /// The 2026-07-25 incident, reproduced from its own session JSONL: a
+    /// harness that declares the run failed and then *keeps its stream open*.
+    ///
+    /// This is the shape `claude -p --input-format stream-json` actually has —
+    /// it holds stdin waiting for another turn — and it is why the real run sat
+    /// there for seventy minutes. Every pre-existing fatal-path test drops the
+    /// sender as soon as it has emitted, so stream end rescues them and none of
+    /// them can see this.
+    ///
+    /// The sender lives in the *control* rather than the emitting task, so the
+    /// only thing that can end this stream is a release. That mirrors the real
+    /// transport, where releasing reaps the process group and the harness's
+    /// exit is what closes the channel.
+    struct FatalThenSilentDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for FatalThenSilentDriver {
+        fn transport(&self) -> &'static str {
+            // The incident's transport. A mux transport would already release.
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            let held = tx.clone();
+            tokio::spawn(async move {
+                let _ = tx
+                    .send(DriverEvent::Ready {
+                        protocol_version: "claude-code-stream-json/1".into(),
+                        capabilities: json!({"simulated": false}),
+                    })
+                    .await;
+                // The harness's own words, before any work: an instruction to
+                // start an interactive flow nobody is attached to answer.
+                let _ = tx
+                    .send(DriverEvent::TextChunk {
+                        stream: orgasmic_core::TextStream::Assistant,
+                        chunk: "Not logged in \u{b7} Please run /login".into(),
+                        seq: 1,
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::DriverError {
+                        message: "claude authentication_failed".into(),
+                        fatal: true,
+                    })
+                    .await;
+                let _ = tx
+                    .send(DriverEvent::RunFail {
+                        error_code: "claude_result_error".into(),
+                        error_markdown: "Not logged in \u{b7} Please run /login".into(),
+                    })
+                    .await;
+                // The emitting task ends, but `held` keeps the stream open —
+                // the real harness did not exit either.
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(FatalThenSilentControl { held: Some(held) }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+    }
+
+    /// Holds the only remaining sender; releasing drops it, which is how a real
+    /// transport's reap ends the stream.
+    struct FatalThenSilentControl {
+        held: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for FatalThenSilentControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            self.held = None;
+            Ok(())
+        }
+    }
+
     struct FatalDriverErrorDriver;
 
     #[async_trait::async_trait]
@@ -8731,6 +8863,45 @@ mod tests {
         assert_release(&path, "protocol_end_without_finalize", "failed");
         assert_eq!(release_count(&path), 1);
         assert!(driver_event_count(&path) >= 2);
+    }
+
+    /// A declared failure must end the run on its own, without waiting for the
+    /// harness to exit. TASK-TJKFC.
+    ///
+    /// Before this, `terminal_event_releases_transport` allowlisted only the
+    /// mux transports, so on acp-stdio a `run_fail` set the outcome and
+    /// released nothing. The real run's lease stayed held and its process
+    /// stayed alive for seventy minutes, which `dispatch-status` reported as
+    /// `[pid-alive]` — indistinguishable from work in progress.
+    ///
+    /// The two-second bound is the whole assertion: this driver's stream never
+    /// ends, so before the fix the wait could only ever time out.
+    #[tokio::test]
+    async fn a_declared_failure_releases_without_waiting_for_the_harness_to_exit() {
+        let (sup, dir, _w) = make_supervisor();
+        let resp = sup
+            .acquire(
+                &FatalThenSilentDriver,
+                dispatch_impl_req("TASK-STARTUP-FATAL", dir.path()),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-STARTUP-FATAL.jsonl");
+
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+
+        assert_release(&path, "protocol_end_without_finalize", "failed");
+        assert_eq!(release_count(&path), 1, "exactly one release");
+        // The lease must be free again, or the next dispatch for this task is
+        // refused by a run that has already failed.
+        assert!(
+            !sup.snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == resp.run_id),
+            "the failed run must not still hold its lease"
+        );
     }
 
     fn test_run_record_shell() -> RunRecord {

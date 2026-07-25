@@ -159,6 +159,89 @@ Reading order: the earlier NOT LANDED list is superseded by the block above.
 Its items 1 (no adapter implements preflight) and 2 (the claude probe's design
 question is open) are both now false; item 3 (atomic abort) and item 4 (the
 end-to-end absence test) remain open and are restated under STILL NOT LANDED.
+
+ATOMIC ABORT, PART 1 (2026-07-25, manager-implementer). The seventy-minute
+orphan is fixed. The dispatch record is deliberately NOT auto-closed, and the
+reason is below - it contradicts this task's own acceptance wording.
+
+The incident's session JSONL was still on disk
+(.orgasmic/tmp/sessions/dispatch-TASK-KWSTJ-reviewer-20260725T073841.jsonl) and
+it settles what actually happened. Read in order:
+
+  07:38:44.754  lifecycle acquire
+  07:38:45.166  driver_error  fatal: true   "claude authentication_failed"
+  07:38:45.175  driver_event  run_fail      "claude_result_error"
+  ...           nothing at all, for seventy minutes
+  08:49:23.536  driver_error  "claude exited with status exit status: 143"
+  08:49:23.542  lifecycle release  outcome failed, finalized_by_worker false
+
+The 143 is SIGTERM - the operator killing it. So the run did not end when it
+failed; it ended when a human intervened, and everything in between was the
+system waiting.
+
+ROOT CAUSE, and it is one line. `terminal_event_releases_transport`
+(supervisor.rs) allow-listed `tmux | tmux-tui | rmux`. On every other transport
+a terminal event set `rec.terminal_outcome` and released nothing, leaving the
+release to stream end. That is a bet that the harness will exit once it has
+nothing left to do - sound on the success path, where exiting is part of
+completing normally, and unsound on the failure path, because
+`claude -p --input-format stream-json` holds stdin open waiting for a turn that
+is never coming. The stream never ended, so the lease stayed held and the pid
+stayed alive, which `dispatch-status` reported as `[pid-alive]`: a fatal startup
+that leaves a live process is indistinguishable from work in progress.
+
+FIX. A terminal event whose outcome is Failed now releases on every transport
+(`terminal_failure_releases_any_transport`). Releasing reaps the process group -
+`reap_process_group` sends TERM then KILL - so the failure now costs 0.4 s
+instead of running until someone notices. Artifact draining is untouched:
+`artifactor_lifecycle_in_flight` still defers through `pending_terminal_drain`.
+
+The test is `a_declared_failure_releases_without_waiting_for_the_harness_to_exit`
+and its shape is the point. Every pre-existing fatal-path test drops the driver
+sender as soon as it has emitted, so stream end rescues it and none of them can
+see this defect. The new stub keeps the sender in its *control* and drops it
+only on release, which is what a real transport does - the reap is what closes
+the channel. Its stream therefore never ends on its own, so the two-second
+bound can only be met by the fix. Verified by mutation: with the new clause
+disabled the test times out; restored, it passes in 0.14 s.
+
+WHY THE DISPATCH RECORD IS STILL NOT AUTO-CLOSED
+This task's acceptance says a fatal startup must "close any open dispatch". That
+is the wrong instruction for the daemon to follow, and it took reading the CLI
+to see why.
+
+A dispatch is closed by `implementer.done` / `reviewer.done` /
+`architector.done` / `manager.dispatch_aborted` (`scan_open_dispatches`);
+`manager.dispatch_orphaned`, which the watcher does write, is not in that set.
+So the obvious fix is to have the daemon write `dispatch_aborted` instead. But
+closing is not a bookkeeping act: `cmd_dispatch_close` also runs
+`cleanup_dispatch` - it removes the worktree, deletes the branch, and records
+`CLEANUP_STATUS` on the closing tx so `close_tx_ran_cleanup` can tell that the
+resources are gone. The daemon cannot do that half. It is a git operation on the
+operator's repository.
+
+A daemon-written close would therefore mark the dispatch closed with no
+`CLEANUP_STATUS`, and `dispatch-status` would stop listing it - while the 15 MB
+worktree and the branch stayed on disk with nothing left pointing at them. That
+converts a visible orphan into an invisible one, which is strictly worse than
+the state this task set out to fix.
+
+So the open-until-acknowledged record is correct, and the thing that was
+genuinely broken about it is already fixed elsewhere: `dispatch-close --status
+aborted` used to die at 10.03 s against the pre-TASK-KWSTJ `/api/runs`, so the
+documented remedy did not work. It does now.
+
+If auto-close is still wanted, it is a different and larger piece of work -
+the daemon would have to own worktree and branch removal - and it should be
+argued on its own merits rather than inherited from this task's wording.
+
+STILL NOT LANDED
+- The race test this task asks for (a fatal event emitted before dispatch
+  bookkeeping completes) does not exist. Note the preflight gate makes the
+  common case unreachable rather than handled, which is not the same thing.
+- No end-to-end test drives a fake provider through the daemon and asserts the
+  absence of a lease and session.
+- hermes still has no readiness probe.
 ** Evidence
 Live reproduction 2026-07-25, dispatching a reviewer for TASK-KWSTJ. This is the abstract problem statement happening end to end, with timings.
 
