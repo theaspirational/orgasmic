@@ -17,6 +17,7 @@ use crate::daemon_lifecycle::{self, LocalDaemonState};
 use crate::daemon_runtime;
 use crate::home::Home;
 use crate::install_state::{self, InstallMode, InstallState};
+use crate::managed_binary;
 
 const DEFAULT_RELEASE_REPO: &str = "theaspirational/orgasmic";
 const REQUIRED_RUNTIME_FILES: &[&str] = &[
@@ -603,12 +604,34 @@ fn swap_runtime_links(home: &Home, runtime: &Path) -> Result<()> {
         Path::new("runtimes").join(runtime_name),
     )?;
     replace_symlink(&home.source(), Path::new("current"))?;
-    std::fs::create_dir_all(home.bin())
-        .with_context(|| format!("create {}", home.bin().display()))?;
-    replace_symlink(
-        &home.bin_orgasmic(),
-        Path::new("..").join("current").join("bin").join("orgasmic"),
-    )?;
+    // `bin/orgasmic` is a real file, not a link into the versioned runtime dir:
+    // macOS keys permission grants to the path the kernel resolves at exec time,
+    // so a link here made every release a new client. TASK-9P810.
+    publish_managed_binary(home, &runtime.join("bin").join("orgasmic"))?;
+    Ok(())
+}
+
+/// Publish `binary` as `bin/orgasmic`, reporting what it means for the
+/// operator's existing macOS permission grants. The identity guard is enforced:
+/// a runtime signed by anything other than the incumbent's identity is a
+/// rejected install, not a daemon that boots without permissions.
+fn publish_managed_binary(home: &Home, binary: &Path) -> Result<()> {
+    let installed = managed_binary::install(home, binary, managed_binary::IdentityGuard::Enforce)?;
+    if installed.migrated_from_symlink {
+        println!(
+            "  {} is now a real binary rather than a link into the versioned runtime",
+            installed.path.display()
+        );
+        println!(
+            "  macOS grants were keyed to the old per-version path, so expect one final \
+             permission prompt; later updates will reuse it"
+        );
+    } else if installed.preserves_grants() {
+        println!("  kept the installed code identity; macOS permission grants carry over");
+    }
+    if installed.resigned {
+        println!("  re-signed with $ORGASMIC_CODESIGN_IDENTITY");
+    }
     Ok(())
 }
 
@@ -620,10 +643,32 @@ fn rollback_bundle_swap(
     if let Some(previous_current) = previous_current {
         replace_symlink(&home.current_runtime(), previous_current)?;
         replace_symlink(&home.source(), Path::new("current"))?;
-        replace_symlink(
-            &home.bin_orgasmic(),
-            Path::new("..").join("current").join("bin").join("orgasmic"),
-        )?;
+        // Restoring what the operator was already running: the identity guard
+        // exists to protect their grants, and this binary is the one those
+        // grants were approved against, so it must not be able to refuse.
+        //
+        // Best-effort on purpose. Every caller rolls back while already holding
+        // a failure it intends to report, so returning an error here would
+        // replace the cause with a symptom. A retention prune can legitimately
+        // have removed the previous runtime, which leaves `bin/orgasmic` newer
+        // than `current` — worth saying out loud, not worth hiding the original
+        // error for.
+        let previous_binary = home
+            .root
+            .join(previous_current)
+            .join("bin")
+            .join("orgasmic");
+        if let Err(error) =
+            managed_binary::install(home, &previous_binary, managed_binary::IdentityGuard::Skip)
+        {
+            eprintln!(
+                "warning: rolled back runtime links but could not restore the binary from {}: \
+                 {error}\n  {} still holds the newer runtime; re-run `orgasmic update` or \
+                 reinstall to reconcile them.",
+                previous_binary.display(),
+                home.bin_orgasmic().display()
+            );
+        }
         let _ = refresh_agent_skill(home);
     }
     if let Some(previous_state) = previous_state {
@@ -956,6 +1001,36 @@ mod tests {
         std::fs::set_permissions(path, permissions).unwrap();
     }
 
+    /// `bin/orgasmic` must be a real, executable file carrying the new
+    /// runtime's bytes — never a link into the versioned runtime dir, whose
+    /// per-version path costs a macOS permission approval per release
+    /// (TASK-9P810).
+    #[track_caller]
+    fn assert_managed_binary(home: &Home, marker: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = home.bin_orgasmic();
+        let meta = std::fs::symlink_metadata(&bin)
+            .unwrap_or_else(|error| panic!("stat {}: {error}", bin.display()));
+        assert!(
+            !meta.file_type().is_symlink(),
+            "{} must be a real file, not a link into a per-version runtime path",
+            bin.display()
+        );
+        assert!(meta.is_file(), "{} must be a regular file", bin.display());
+        assert_ne!(
+            meta.permissions().mode() & 0o111,
+            0,
+            "{} must stay executable",
+            bin.display()
+        );
+        assert_eq!(
+            std::fs::read_to_string(&bin).unwrap(),
+            format!("#!/bin/sh\necho {marker}\n"),
+            "{} must carry the installed runtime's bytes",
+            bin.display()
+        );
+    }
+
     fn write_runtime_payload(root: &Path, marker: &str) {
         write(
             &root.join("bin/orgasmic"),
@@ -1110,10 +1185,7 @@ mod tests {
             std::fs::read_link(home.source()).unwrap(),
             PathBuf::from("current")
         );
-        assert_eq!(
-            std::fs::read_link(home.bin_orgasmic()).unwrap(),
-            PathBuf::from("../current/bin/orgasmic")
-        );
+        assert_managed_binary(&home, "new");
         assert!(skills_dir.join("orgasmic/SKILL.md").exists());
         assert_eq!(
             std::fs::read_to_string(home.user().join("overrides/example.org")).unwrap(),
@@ -1185,10 +1257,7 @@ mod tests {
             daemon_runtime::read(&home).unwrap().is_none(),
             "bundle update must return daemon starts to the managed runtime"
         );
-        assert_eq!(
-            std::fs::read_link(home.bin_orgasmic()).unwrap(),
-            PathBuf::from("../current/bin/orgasmic")
-        );
+        assert_managed_binary(&home, "new");
     }
 
     #[test]

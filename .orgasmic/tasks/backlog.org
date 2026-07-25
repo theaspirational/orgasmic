@@ -32,3 +32,243 @@ A real non-simulated cursor-agent/acp-stdio TASK-2YZDJ run reached native grok-4
 Codex gpt-5.6-terra/high implemented the bounded title-only Cursor ACP permission path in 8e3854e. The captured nested payload remains rejected as a compound command; standalone `orgasmic entry` and worker-bound `orgasmic dispatch finalize` are authorized, while shell control, foreign/destructive commands, task/run mismatches, and path escapes fail closed. Worker gates: drivers lib 208 pass, driver clippy/fmt/diff-check green, live legacy Cursor bridge green. Manager independently reran both new focused regressions, fmt, and diff-check before landing. Merged as aa4bb55; rebuilt source daemon boot 43ee051a-2ee7-476c-86aa-98d0dcbb484b is serving the patch. Live ACP workflow proof and independent Claude review remain.
 Independent review is not yet complete. First rmux/Opus attempt never reached code because a stale inherited ANTHROPIC_AUTH_TOKEN caused 401; stored claude.ai auth was healthy. After restarting without provider auth overrides, the single retry reached real Claude Opus 4.8/high and inspected the security-sensitive routing, but rmux closed the pane-output-cursor transport before a verdict. Partial transcript identified no bypass before interruption, but it is not a SHIP verdict. TASK-4DTBZ tracks the rmux reliability defect; TASK-QSX56 stays IN_REVIEW.
 
+* BACKLOG TASK-CQM2X Crash-safe run inventory, bounded history, and manual retro foundation    :daemon:recovery:retro:plan:
+:PROPERTIES:
+:ID: TASK-CQM2X
+:IMPLEMENTS: arch_RN73Z
+:DEPENDS_ON: TASK-KWSTJ TASK-FZB6T TASK-VBSG2 TASK-5P60H TASK-3R3EZ TASK-TJKFC
+:END:
+
+Umbrella plan for the 2026-07-23/25 incident family. The live 0.0.14 daemon reproduces authenticated `GET /api/runs` with no headers or body before a 12-second timeout; unauthenticated 401 and other routes return immediately. The purported complete output file in the follow-up report is not evidence of response framing because curl reported zero downloaded bytes and a fresh output path remained absent. Source inspection shows inventory reconstructs classifications from every historical session JSONL, performs driver attach work, revalidates missing worktrees, and historically rebuilt a whole-board recovery-origin index per failed tombstone.
+
+Measured production evidence: 197 orgasmic session files occupy 2,404,385,576 bytes (2.239 GiB); the largest is 114.7 MB. Legacy Claude/rmux files contain thousands of rendered TUI redraw chunks. `/api/runs` polling also causes repeated missing `ddd/.orgasmic/project.org` warnings. Current source already contains uncommitted TASK-JN5Q1 work for bounded attach probes and exact-run close/finalize; preserve and verify it rather than replacing it.
+
+Execute the child tasks independently in priority order. P0 restores and proves the control plane. P1 separates current lifecycle inventory from historical evidence and bounds retained event volume. Service and registry hardening follow without blocking P0. Manual retro materialization is a separate explicit feature built on the bounded evidence architecture; it is not required for `/api/runs` to work and must not become an automatic startup/completion hook.
+
+Done only when the production-shaped wire regression completes inside its deadline, exact-run close/finalize do not enumerate history, run enumeration cost is independent of historical transcript bytes, default storage cannot recreate rendered-TUI growth, stale/missing records stop producing recurring warnings, and an explicit multi-run retro can analyze selected Claude sessions through derived bounded evidence.
+
+* BACKLOG TASK-FZB6T P1 compact run catalog and bounded semantic session retention    :storage:recovery:sessions:
+:PROPERTIES:
+:DEPENDS_ON: TASK-KWSTJ
+:ID: TASK-FZB6T
+:PRIORITY: P1
+:END:
+
+Separate operational lifecycle inventory from transcript/evidence storage so run enumeration and daemon recovery scale with record count, not transcript bytes. This task follows the P0 wire repair and owns the durable shape rather than adding more per-request scans.
+
+Design and implementation:
+1. Maintain a compact per-run catalog entry containing identity, project/task/kind, driver/harness, verified native metadata reference, worktree authority state, lifecycle classification, terminal outcome/time, and replacement/claim link. Update it through the existing session writer/supervisor boundary; rebuild legacy entries once with bounded prefix/tail parsing and cache them by file identity.
+2. `/api/runs` serves actionable live/recoverable records plus a bounded recent terminal window from the catalog. Older terminal history is paged or queried explicitly; it is never reclassified on every poll. Missing/pruned worktrees become a stable tombstoned authority state, not an eternal ambiguous attach candidate.
+3. Lock future storage: rendered tmux/rmux redraw or scrollback events remain forbidden; add a regression proving a long TUI session does not grow orgasmic JSONL from screen repaint traffic. For structured ACP/subprocess events, retain lifecycle and compact semantic tool/progress events needed for recovery and retrospective analysis, but cap individual text/tool-result/thinking payloads and replace overflow with digest, byte count, and source reference. Never copy harness-native JSONL automatically.
+4. Add `run history inspect` and an explicit dry-run-first maintenance command to compact or archive legacy rendered-TUI payloads. It must report files/bytes by driver+harness+event class, preserve lifecycle/native correlation, write recoverably, and require explicit operator confirmation before deletion or irreversible compaction. No automatic cleanup of existing 2.239 GiB.
+5. Define default retention by authority: lifecycle/catalog kept; compact semantic events retained within a documented budget; derived retro evidence cache is disposable; vendor-native history remains vendor-owned.
+
+Acceptance: inventory latency and boot reconciliation are independent of payload bytes after the one-time legacy index; 197-file production-shaped history yields the same actionable classifications before/after catalog migration; current TUI generates zero persisted redraw chunks; ACP/tool evidence remains sufficient to count calls/results/retries/latencies while oversized outputs are bounded; dry run exactly accounts for reclaimable legacy bytes and changes nothing. Include migration rollback and corruption tests.
+** Notes
+Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls for already exists as `orgasmic_core::scan_session_lifecycle` (prefix/tail byte window, transcript lines rejected from raw bytes without parsing, `truncated` and `final_envelope_retained` flags for conservative classification). Measured on the real 198-file / 2.239 GiB board: 26.67 MiB inspected in 95.3 ms versus 3.08 s for a full read. The durable catalog can be built by caching that scan's result by file identity rather than by inventing a second reader. `InventoryStageMetrics` on `GET /api/runs` gives the before/after signal for the catalog work.
+
+* BACKLOG TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch    :retro:claude:evidence:
+:PROPERTIES:
+:DEPENDS_ON: TASK-FZB6T
+:ID: TASK-VBSG2
+:IMPLEMENTS: arch_RN73Z
+:PRIORITY: P1
+:END:
+
+Implement the smallest end-to-end slice of arch_RN73Z after operational run storage is bounded. This is an explicit diagnostic feature, not part of normal dispatch, completion, startup, recovery, or run listing.
+
+Slice A — materializer:
+- expose `orgasmic run evidence materialize --run <id>` and one equivalent daemon/agent-callable function
+- reuse verified NativeRuntime provider/session/path metadata and the existing native-transcript resolver; fail closed when correlation is missing or ambiguous
+- parse Claude native JSONL through a Claude-local adapter into the existing DriverEvent/activity vocabulary, including tool_use, tool_result, timestamps, token/context fields when present, and terminal signals
+- write an idempotent, versioned `derived_native` cache keyed by source digest + converter version under `.orgasmic/tmp/retro/evidence`; enforce per-event/per-run limits and return a compact summary + reference, never the full transcript
+- prove derived events cannot enter supervisor recovery/liveness/finalization paths
+
+Slice B — manual retro:
+- add `orgasmic manager retro` accepting repeated run ids, task ids, or an explicit ordered task sequence
+- resolve those selectors once into an immutable scope manifest with run ordering, task/dispatch links, source digests, missing evidence, and requested questions
+- dispatch a read-only retrospector that starts from catalog summaries, lazily calls the materializer for only needed runs, and reports evidence-linked bottlenecks: repeated equivalent tool calls, retries/failures, tool latency, idle/auth/permission waits, redundant reads, context resets, circular reasoning, output volume, token use, and progress per wall time/token
+- restrict writes to the derived evidence directory and report artifact; no task transitions, cleanup, lease/recovery action, dispatch closure, source/vendor mutation, or code edits
+
+Use a backlog-to-done task with multiple implementer/reviewer/recovery runs as the integration fixture. Assert a second materialization is a cache hit, a source change creates a new digest entry, an ambiguous transcript is refused, and a retro spanning several runs produces cross-run findings without injecting raw transcript volume. Routine scheduling is explicitly deferred: a future routine must call this same manager path and be user configured; do not add an automatic trigger here.
+** Notes
+Blocked in practice for the acp-stdio transport by TASK-VB9DQ. Measured 2026-07-25: the acp-stdio claude adapter passes `--no-session-persistence` and writes zero native transcripts (0 new files under `~/.claude/projects` versus 1 for an otherwise identical run), never passes `--session-id`, and never emits a `NativeRuntime` lifecycle event. Slice A's materializer resolves verified NativeRuntime metadata and parses Claude native JSONL, so for acp-stdio runs there is nothing to resolve and nothing to parse. The rmux/tmux transport is unaffected — it mints an explicit session id and records launch/resume argv. Land TASK-VB9DQ first, or scope this task to TUI-transport runs and say so explicitly.
+
+* BACKLOG TASK-5P60H Harden launchd boot backoff and prove single-owner slow startup    :daemon:launchd:recovery:
+:PROPERTIES:
+:DEPENDS_ON: TASK-KWSTJ
+:ID: TASK-5P60H
+:PRIORITY: P1
+:END:
+
+Treat the crash-loop report as a regression audit of the now-present lock-first boot protocol, not as proof that all suggested redesigns are still needed. Current source already acquires the home lock before project scanning, publishes boot-state heartbeats, makes explicit start return `StillBooting` after 20 seconds, lets autostart follow live heartbeats up to a finite backstop, retries bind for 8 seconds, and the current 3,118-tx daemon reached listening in about 8.45 seconds. Preserve those semantics.
+
+Work:
+1. Add a deterministic service-level test with an artificially slow project scan longer than the old readiness timeout and concurrent `daemon start`/autostart attempts. Assert exactly one lock owner and one eventual listener, callers observe the same pid/boot phase, no competitor reaches bind, and no healthy boot is killed/restarted.
+2. Add an explicit `ThrottleInterval` to the generated macOS LaunchAgent and verify install/update rewrites existing plists. Keep restart policy intentional and test repeated abnormal exits use launchd backoff.
+3. Correlate `daemon.lock`, boot-state owner, pid liveness, and authenticated status in diagnostics. A lock-held pre-bind owner with fresh heartbeat is `starting`, not unhealthy; a dead owner is stale and may be replaced only after the OS lock is actually released. Never break a live file lock based only on HTTP failure.
+4. Capture phase durations and tx/project counts for config, project scan, session migration/catalog load, watcher attach, reattach, and bind. Optimize or make replay incremental only if measurement still exceeds the accepted startup budget after the run-catalog work; do not expose normal API reads from a partially rebuilt index merely to make health green. A tiny early health responder is allowed only if it cannot serve normal routes and tests prove the handoff to the full router.
+5. Make the no-progress/absolute readiness budgets configurable only if production measurement shows current heartbeat behavior insufficient; preserve a finite backstop.
+
+Acceptance: the slow-start matrix produces no alternating Address-in-use/instance-lock errors, launchd does not hot-loop, one daemon becomes ready, and normal routes see a fully rebuilt index. Include a real generated-plist assertion and a macOS smoke or launchctl transcript where available.
+** Notes
+Handoff from TASK-KWSTJ: `GET /api/runs` now classifies from a bounded prefix/tail lifecycle scan, but `reattach_live_runs_on_boot` still calls `read_session_file` on every session JSONL — on the reported board that is 2.239 GiB read at boot before the daemon can serve. It was left alone deliberately: boot reattach takes the *last* Acquire/RunMeta rather than the first, so switching it to the bounded scan is a semantic change that belongs with the slow-start work, not with the request-path repair. `orgasmic_core::scan_session_lifecycle` is ready to reuse.
+
+* BACKLOG TASK-3R3EZ Quarantine missing project/worktree records, warn once, and add project remove    :daemon:project:recovery:
+:PROPERTIES:
+:DEPENDS_ON: TASK-FZB6T
+:ID: TASK-3R3EZ
+:PRIORITY: P2
+:END:
+
+Fix the repeated missing `ddd/.orgasmic/project.org` warning at its actual source: run-inventory polling revalidates historical RunMeta worktrees and logs on every request. Also complete board lifecycle so an operator can intentionally deregister a project.
+
+Behavior:
+1. The run catalog stores worktree/project authority as verified, missing, invalid, or unavailable with the observation time and file identity. Missing/pruned worktrees for pid-gone terminal history become stable tombstoned metadata and are not attach candidates. Inventory reads do not touch or warn about the same missing path repeatedly.
+2. A registered project whose root or `.orgasmic/project.org` disappears transitions to `unavailable`; emit one structured warning/event per transition, retain last-good read state where safe, stop project refresh/repo-url/session scans, and unwatch paths that still have a watch. Reappearance triggers revalidation and a recovery event. Do not silently deregister on one ENOENT because removable volumes and temporary renames are valid.
+3. Add `orgasmic project remove <id>` through the daemon writer. It removes only the board registration/watch/index entry, never the repository or its `.orgasmic` files. Default output previews the target identity/path; support idempotency and require an explicit confirmation or force flag in noninteractive use. Refuse when live runs/leases still belong to the project unless an explicit safe cleanup flow resolves them first.
+4. Board refresh must diff added and removed entries: start watches/load added projects, unwatch/drop removed projects, and never leave stale index entries.
+
+Regression: poll `/api/runs` repeatedly with several records pointing at one pruned worktree and assert zero repeated filesystem reads/warnings after the first classification; remove a board project and assert its watch/index vanish while files remain; simulate temporary disappearance/reappearance and assert one unavailable and one recovered event. Measure warning volume, not only return values.
+
+* BACKLOG TASK-TJKFC Preflight harness readiness and atomically abort fatal startup dispatches    :P1:
+:PROPERTIES:
+:DEPENDS_ON: TASK-KWSTJ
+:ID: TASK-TJKFC
+:PRIORITY: P0
+:END:
+
+Problem: dispatch can create a worktree and enter the daemon before provider or harness authentication is known to be usable. A fatal startup DriverError can then leave an open dispatch record and resources that block later work. Add a bounded non-interactive preflight at the provider-local driver boundary after configuration is resolved but before lease, session, or manager.dispatch_started ownership is committed. The default capability must be explicit unsupported, not false success; supported adapters return ready or a typed fatal reason. Claude and ACP implementations must test the same execution context used by the worker and must never prompt. A definitive preflight failure returns a normal rejected dispatch so the existing CLI rollback restores lifecycle state and removes the newly created worktree and branch. Also make dispatch attempt creation atomic with the earliest driver events: a fatal event during the startup gate must record an aborted attempt, close any open dispatch, release the lease, and safely clean only attempt-owned resources. Once startup has been accepted and meaningful work has occurred, later failures retain normal failed-run history and inspection artifacts. Acceptance: fake-provider tests prove auth failure creates no lease, session, or open dispatch and CLI rollback removes attempt resources; a race test emits fatal before dispatch bookkeeping and proves no orphan; supported-preflight success reaches running; unsupported preflight preserves current drivers; a post-start fatal remains a failed historical run and does not erase work. Provider-specific parsing stays inside the driver adapter; manager and supervisor consume only typed readiness/startup outcomes.
+** Evidence
+Live reproduction 2026-07-25, dispatching a reviewer for TASK-KWSTJ. This is the abstract problem statement happening end to end, with timings.
+
+Dispatch `tx-20260725-orgasmic-2741`, run `run-20260725T073841-ef292c73d0e344edb7d475148a3f0c56`, worker `reviewer-claude-acp-stdio`, mode `acp-stdio`, harness `claude`. From the run's own session JSONL:
+
+- 07:38:44 acquire, then run_meta — worktree, lease, and dispatch record all committed
+- 07:38:45.158 driver_event text_chunk, stream system: "claude status: requesting"
+- 07:38:45.162 driver_event text_chunk, stream assistant: "Not logged in - Please run /login"
+- 07:38:45.166 driver_event driver_error, fatal: true, "claude authentication_failed"
+- 07:38:45.175 driver_event run_fail, error_code claude_result_error
+
+The run was fatally unusable 1.2 seconds after acquire, for a reason knowable before any resource was committed. CORRECTION (2026-07-25, after root-cause analysis): the harness WAS authenticated. `claude auth status` reports `loggedIn: true, authMethod: claude.ai, subscriptionType: max`. Orgasmic's own argv caused the failure — the claude adapter hardcodes `--bare`, whose contract is that OAuth and keychain are never read (see TASK-Z8WEJ). Do not read this evidence as an operator credential problem. What the failure left behind:
+
+- an open dispatch record, still listed by `manager dispatch-status` 70 minutes later
+- a 15 MB worktree at `.orgasmic/tmp/dispatch/task-kwstj-review/`
+- a branch `task-kwstj-review`
+- zero-byte `last.txt` and `stdout.log`
+- the harness process (pid 52741, `claude --bare -p --input-format stream-json ...`) still alive 70 minutes after emitting a fatal error, reported by dispatch-status as `[pid-alive] [run-gone]` — supervisor had dropped the run while the process persisted
+
+The manager treated `[pid-alive]` as "review in progress" and reported it as running to the operator. A fatal startup error that leaves a live process is worse than a crash: it is indistinguishable from work.
+
+Second finding, and the reason this is not merely cosmetic: cleanup was blocked by the very defect TASK-KWSTJ fixes. `orgasmic manager dispatch-close --status aborted` on the installed 0.0.14 CLI fails after exactly 10.03 s with "daemon request failed ... /api/runs — is the daemon reachable?". The pre-fix CLI takes the legacy liveness fence through `GET /api/runs`, which on this board needs 35.2 s to first byte, against a 10 s client deadline. So a dispatch that failed at startup cannot be closed by the documented verb until the bounded-inventory fix ships. The two defects compound: startup leaves the mess, and enumeration prevents cleaning it.
+
+Preflight design note this supports, sharpened by the root cause: the check must exercise the exact argv the worker will run, not merely the harness's ambient credential state. Measured here: `claude auth status` returns `loggedIn: true` while the very same binary invoked with the dispatch's own flags returns "Not logged in" in 39 ms. A preflight that asked the harness whether it was logged in would have passed and still produced this failure. The 39 ms cost of the real probe is also the argument for doing it: it is cheaper than the worktree it prevents.
+
+Also relevant to the preflight's non-interactive requirement: the harness's own answer here was "Please run /login", i.e. an instruction to start an interactive flow. A preflight must classify that as a definitive fatal reason and reject the dispatch, never surface it into a worker that then waits on a prompt nobody will answer.
+
+* BACKLOG TASK-CM5KV Evaluate real ACP as an orgasmic transport    :drivers:research:
+:PROPERTIES:
+:ID: TASK-CM5KV
+:PRIORITY: P2
+:DEPENDS_ON: TASK-XCJYC
+:END:
+
+Evaluate adding the Agent Client Protocol as a real orgasmic transport, once TASK-XCJYC frees the name.
+
+ACP is an open standard from Zed Industries (August 2025, Apache-licensed): JSON-RPC 2.0 over stdio for local agents, HTTP/WebSocket for remote (work in progress). It standardises the editor-to-agent boundary; MCP standardises tool access beneath it. Adopted by JetBrains, Google and GitHub, with 25+ agents.
+
+The draw is consolidation. Zed's ACP Registry already lists Claude Agent, Codex, Gemini CLI, OpenCode, Copilot, Cursor and Pi Coding Agent. Orgasmic currently maintains a bespoke adapter per harness — `adapters/claude.rs` (stream-json), `adapters/codex.rs` (app-server), `adapters/cursor_acp.rs`, `adapters/hermes.rs` — each with its own event mapping, session identity story and transcript-finder strategy. One ACP transport could in principle serve several of them through a single event mapping.
+
+Open questions to answer before committing to it:
+1. Does ACP expose what orgasmic's supervisor actually needs — terminal declaration, tool-call visibility, stall signals, and a resumable native session identity? A protocol built for editor UX may not carry the lifecycle facts recovery depends on.
+2. Does an ACP-launched agent still write its vendor-native transcript, or does the adapter layer hide it? The retro contract depends on vendor JSONL existing and being resumable (see dec on transcript ownership).
+3. Is the ACP adapter an extra process between orgasmic and the harness, and what does that mean for the startup preflight (TASK-TJKFC) and for credential handling (TASK-Z8WEJ)?
+4. Would it replace the bespoke adapters or sit alongside them? A fifth transport that duplicates four existing ones is a cost, not a saving.
+
+This is deliberately a research-and-decide task, not an implementation commitment. If the answer is that ACP does not carry orgasmic's lifecycle needs, recording that is a complete and useful result.
+
+Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
+
+* BACKLOG TASK-7QM8M Bound the bytes boot auto-reattach reads per session file    :daemon:boot:performance:
+:PROPERTIES:
+:ID: TASK-7QM8M
+:PRIORITY: P1
+:END:
+
+Boot auto-reattach reads every session file whole. It calls
+=read_session_file= -> =std::fs::read_to_string=, so a project with large TUI
+transcripts pays their full size at every daemon start. This is the same
+unbounded read TASK-KWSTJ removed from =GET /api/runs=, still present on the
+boot path; measured there, a 2.4 GB board cost 24.7 s and the bounded scanner
+reduced it to 28 MB inspected.
+
+TASK-KKGKM moved this scan after bind and onto a blocking thread, so it can no
+longer stop the daemon serving, and it is no longer on the critical path. What
+remains is cost and latency: reattachment of the operator's live manager
+terminal is delayed by however long the read takes.
+
+=boot_reattach_candidate= consumes only lifecycle-class events — acquire,
+run_meta, release, the terminal driver event, and the external-registration
+marker — which is exactly what =scan_session_lifecycle= retains, so the
+substitution should be direct.
+
+One correctness subtlety must be handled explicitly rather than assumed. The
+function calls =latest_run_segment=, which picks the newest contiguous run
+segment by run_id. On a truncated scan the prefix may hold one segment's
+acquire while the tail holds a later segment's end, so the two windows can
+describe different runs. =classify_session_files= already guards this with
+=scan.final_envelope_retained= before trusting =release_outcome=; reattach needs
+an equivalent rule. Getting it wrong means a live run is silently not
+reattached, which looks like the run vanished.
+
+Acceptance:
+- boot reattach inspects bounded bytes per session file, not file size
+- a truncated scan cannot combine two run segments into one candidate
+- a still-live run in a multi-segment session file is still reattached
+- measured against a production-shaped board, as TASK-KWSTJ was
+
+* BACKLOG TASK-STWVB Four daemon tests fail on every full-suite run and pass alone    :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB
+:PRIORITY: P1
+:END:
+
+Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
+and each passes alone:
+
+- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
+- api::tests::recovery_inventory_waits_for_atomic_claim_commit
+- api::tests::recovery_reattaches_tmux_session_when_handle_exists
+- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
+
+Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
+unrelated change stashed out. They only fail under full-suite parallelism, not
+in a filtered subset, so the trigger is cross-test interference rather than any
+one test's logic.
+
+Why this is worth fixing rather than tolerating: a suite that always fails four
+tests cannot answer "did my change break something?". Establishing that these
+four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
+stash-and-compare that every future change to this crate has to repeat. A red
+suite is also indistinguishable from a red suite with one new real failure in
+it.
+
+Leads, not conclusions:
+- These tests share process-global state: `live_session_guard()` and static
+  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
+  tests against each other but not against everything that observes the same
+  state.
+- The same class of bug was found and fixed in the CLI crate on the same day:
+  `path_env`'s tests set process-global PATH to a bare tempdir, so any
+  concurrently running test spawning a PATH-resolved tool failed with a bare
+  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
+  shared-environment dependency before assuming a timing race.
+- Two of the four are tmux/mux-dependent, so a real external session leaking
+  between tests is also plausible.
+
+Acceptance:
+- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
+  parallelism
+- the cause is named per test, not worked around by serializing the whole suite
+- if any test genuinely requires exclusive global state, it says so and enforces
+  it, rather than depending on scheduling luck

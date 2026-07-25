@@ -495,6 +495,12 @@ pub struct BabysitterSummaryChunk {
 
 /// Read every envelope from a JSONL file. Skips empty lines but returns an
 /// error on the first malformed line. Used by boot reconciliation and tests.
+///
+/// This reads and parses the whole transcript. Callers that only need
+/// lifecycle facts (run enumeration, recovery classification, origin
+/// indexing) must use [`scan_session_lifecycle`] instead: a single TUI run
+/// can persist hundreds of megabytes of `text_chunk` driver events, and
+/// answering "did this run release?" must not cost transcript bytes.
 pub fn read_session_file(path: impl AsRef<Path>) -> Result<Vec<SessionEnvelope>, SessionError> {
     let contents = std::fs::read_to_string(path)?;
     let mut out = Vec::new();
@@ -507,10 +513,476 @@ pub fn read_session_file(path: impl AsRef<Path>) -> Result<Vec<SessionEnvelope>,
     Ok(out)
 }
 
+/// Byte budget for a bounded lifecycle scan.
+///
+/// Lifecycle truth clusters at both ends of a session file: `acquire`,
+/// `run_meta`, `native_runtime` and the first `ready` are written before any
+/// work happens, and `release` / terminal driver events plus appended
+/// `recovery_origin` links are written after it. Everything between is
+/// transcript.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionScanBudget {
+    pub prefix_bytes: u64,
+    pub tail_bytes: u64,
+}
+
+impl SessionScanBudget {
+    /// Default inventory budget. Measured against a 198-file / 2.2 GiB real
+    /// board, the furthest a lifecycle-deciding line ever sat from the start
+    /// was 56 KiB and from the end 13 KiB, so these windows carry roughly 2x
+    /// and 5x headroom while keeping a whole-board pass at tens of megabytes.
+    pub const DEFAULT: Self = Self {
+        prefix_bytes: 128 * 1024,
+        tail_bytes: 64 * 1024,
+    };
+
+    fn window_bytes(&self) -> u64 {
+        self.prefix_bytes.saturating_add(self.tail_bytes)
+    }
+}
+
+impl Default for SessionScanBudget {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Result of a bounded lifecycle scan over one session JSONL.
+#[derive(Debug, Clone, Default)]
+pub struct SessionLifecycleScan {
+    /// Retained lifecycle-relevant envelopes in file order. Transcript
+    /// payloads are dropped without being parsed.
+    pub envelopes: Vec<SessionEnvelope>,
+    /// Size of the file on disk.
+    pub file_bytes: u64,
+    /// Bytes actually read from disk.
+    pub bytes_inspected: u64,
+    /// The middle of the file was skipped because it exceeded the budget.
+    /// Callers must treat anything not provable from the retained envelopes
+    /// as unknown rather than absent.
+    pub truncated: bool,
+    /// The file's final line was retained. When false, the last retained
+    /// envelope is NOT the last event of the run, so terminal decisions that
+    /// depend on "the last envelope" must not be made from it.
+    pub final_envelope_retained: bool,
+    /// Lines dropped by the transcript filter, never parsed.
+    pub skipped_transcript_lines: u64,
+}
+
+/// Driver events that carry lifecycle meaning. Everything else in the
+/// `driver_event` stream is transcript and is dropped unparsed.
+const LIFECYCLE_DRIVER_EVENT_TYPES: [&[u8]; 4] =
+    [b"ready", b"run_complete", b"run_fail", b"run_error"];
+
+/// How far into a line the envelope's own keys can be. `seq`, `time`,
+/// `run_id`, `runtime_id`, `boot_id` and `kind` all precede `event`, and all
+/// are short identifiers. Bounding the search keeps the filter O(1) per line
+/// instead of O(transcript payload), which is the whole point.
+const ENVELOPE_HEADER_PROBE_BYTES: usize = 1024;
+
+/// Longest `driver_event` line that can still be a lifecycle-bearing control
+/// frame. Driver events are stored as JSON objects with sorted keys, so the
+/// `"type"` tag has no fixed offset and the line must be searched — bounding
+/// that search is what keeps a transcript line cheap to reject. The largest
+/// such frame observed on a real 2.2 GiB board was an 18 KiB `ready`; a run
+/// whose control frame somehow exceeded this reads as non-terminal and
+/// therefore stays visible as recoverable, never silently dropped.
+const LIFECYCLE_DRIVER_EVENT_MAX_LINE_BYTES: usize = 64 * 1024;
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || haystack.len() < needle.len() {
+        return None;
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+/// Read the JSON string value following `key` inside `probe`.
+fn probe_string_value<'a>(probe: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
+    let start = find_bytes(probe, key)? + key.len();
+    let rest = &probe[start..];
+    let end = rest.iter().position(|byte| *byte == b'"')?;
+    Some(&rest[..end])
+}
+
+/// True when a raw line must be parsed to answer lifecycle questions.
+///
+/// Conservative by construction: a line whose envelope shape cannot be read
+/// from its bounded header probe is retained (and therefore surfaces as a
+/// parse error, as before) rather than silently dropped. Because both probes
+/// are anchored to envelope keys and length-bounded, transcript text that
+/// merely *contains* `"kind":"lifecycle"` cannot forge retention.
+fn line_is_lifecycle_relevant(line: &[u8]) -> bool {
+    let header = &line[..line.len().min(ENVELOPE_HEADER_PROBE_BYTES)];
+    if probe_string_value(header, b"\"kind\":\"") != Some(b"driver_event") {
+        return true;
+    }
+    if line.len() > LIFECYCLE_DRIVER_EVENT_MAX_LINE_BYTES {
+        return false;
+    }
+    // Every `"type":"…"` in the line is tested, not just the first: transcript
+    // text can contain the same key, and the real tag may follow it. A false
+    // positive only costs one retained envelope that no consumer matches.
+    const TYPE_KEY: &[u8] = b"\"type\":\"";
+    let mut cursor = 0;
+    while let Some(found) = find_bytes(&line[cursor..], TYPE_KEY) {
+        let start = cursor + found + TYPE_KEY.len();
+        let rest = &line[start..];
+        let Some(end) = rest.iter().position(|byte| *byte == b'"') else {
+            return true;
+        };
+        if LIFECYCLE_DRIVER_EVENT_TYPES
+            .iter()
+            .any(|known| *known == &rest[..end])
+        {
+            return true;
+        }
+        cursor = start + end;
+    }
+    false
+}
+
+/// Read only the lifecycle-relevant envelopes of a session JSONL, inspecting
+/// at most `budget` bytes.
+///
+/// Files within the budget are read whole and the result is exactly
+/// [`read_session_file`] filtered down to lifecycle-relevant lines. Larger
+/// files are read as a prefix window plus a tail window; partial lines at the
+/// window edges are discarded, and [`SessionLifecycleScan::truncated`] is set
+/// so callers can classify the gap conservatively.
+///
+/// Returns an error on the first malformed lifecycle-relevant line, matching
+/// [`read_session_file`]'s strictness for the lines that decide recovery.
+pub fn scan_session_lifecycle(
+    path: impl AsRef<Path>,
+    budget: SessionScanBudget,
+) -> Result<SessionLifecycleScan, SessionError> {
+    let mut file = File::open(path.as_ref())?;
+    let file_bytes = file.metadata()?.len();
+    scan_session_lifecycle_reader(&mut file, file_bytes, budget)
+}
+
+/// [`scan_session_lifecycle`] over an already-open handle.
+///
+/// Callers that must keep a retained, identity-validated file descriptor
+/// (recovery claim reconciliation opens session files through a pinned
+/// directory fd and re-checks device/inode) use this instead of reopening by
+/// pathname. The handle is seeked; its cursor position on entry is ignored.
+pub fn scan_session_lifecycle_reader<R: std::io::Read + std::io::Seek>(
+    file: &mut R,
+    file_bytes: u64,
+    budget: SessionScanBudget,
+) -> Result<SessionLifecycleScan, SessionError> {
+    use std::io::SeekFrom;
+
+    file.seek(SeekFrom::Start(0))?;
+    let mut scan = SessionLifecycleScan {
+        file_bytes,
+        ..SessionLifecycleScan::default()
+    };
+
+    let (prefix, tail) = if file_bytes <= budget.window_bytes() {
+        let mut whole = Vec::with_capacity(file_bytes as usize);
+        file.read_to_end(&mut whole)?;
+        scan.bytes_inspected = whole.len() as u64;
+        (whole, Vec::new())
+    } else {
+        scan.truncated = true;
+        let mut prefix = vec![0_u8; budget.prefix_bytes as usize];
+        file.read_exact(&mut prefix)?;
+        // Drop the partial line straddling the prefix boundary.
+        match prefix.iter().rposition(|byte| *byte == b'\n') {
+            Some(end) => prefix.truncate(end + 1),
+            None => prefix.clear(),
+        }
+
+        let mut tail = vec![0_u8; budget.tail_bytes as usize];
+        file.seek(SeekFrom::Start(file_bytes - budget.tail_bytes))?;
+        file.read_exact(&mut tail)?;
+        // Drop the partial line straddling the tail boundary.
+        match tail.iter().position(|byte| *byte == b'\n') {
+            Some(start) => {
+                tail.drain(..=start);
+            }
+            None => tail.clear(),
+        }
+
+        scan.bytes_inspected = budget.window_bytes();
+        (prefix, tail)
+    };
+
+    let mut final_line_retained = false;
+    for window in [prefix.as_slice(), tail.as_slice()] {
+        for line in window.split(|byte| *byte == b'\n') {
+            let line = line.strip_suffix(b"\r").unwrap_or(line);
+            if line.iter().all(u8::is_ascii_whitespace) {
+                continue;
+            }
+            if !line_is_lifecycle_relevant(line) {
+                scan.skipped_transcript_lines += 1;
+                final_line_retained = false;
+                continue;
+            }
+            scan.envelopes.push(serde_json::from_slice(line)?);
+            final_line_retained = true;
+        }
+    }
+    // A truncated scan whose tail window held no complete line proves nothing
+    // about the file's final envelope, whatever the prefix ended with.
+    scan.final_envelope_retained = final_line_retained && !(scan.truncated && tail.is_empty());
+
+    Ok(scan)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Write a production-shaped session: lifecycle head, a bulky
+    /// `text_chunk` transcript body, and a lifecycle/terminal tail.
+    ///
+    /// Written directly rather than through [`SessionWriter`], whose
+    /// per-append `sync_all` makes megabyte fixtures take tens of seconds.
+    fn write_bulky_session(path: &Path, run_id: &str, transcript_bytes: usize, released: bool) {
+        let mut seq = 0;
+        let mut out = String::new();
+        let mut push = |kind: SessionEventKind, event: Value, out: &mut String| {
+            let envelope = SessionEnvelope {
+                seq,
+                time: Utc::now(),
+                run_id: run_id.to_string(),
+                runtime_id: format!("runtime-{run_id}"),
+                boot_id: "boot-scan".to_string(),
+                kind,
+                event,
+            };
+            out.push_str(&serde_json::to_string(&envelope).unwrap());
+            out.push('\n');
+            seq += 1;
+        };
+
+        push(
+            SessionEventKind::Lifecycle,
+            json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-SCAN", "worker_id": "implementer-claude-rmux"}),
+            &mut out,
+        );
+        push(
+            SessionEventKind::DriverEvent,
+            json!({"type": "ready", "protocol_version": "tmux-tui/1"}),
+            &mut out,
+        );
+        let chunk = "x".repeat(4096);
+        let mut written = 0;
+        while written < transcript_bytes {
+            push(
+                SessionEventKind::DriverEvent,
+                json!({"type": "text_chunk", "stream": "stdout", "text": chunk}),
+                &mut out,
+            );
+            written += chunk.len();
+        }
+        if released {
+            push(
+                SessionEventKind::DriverEvent,
+                json!({"type": "run_complete", "ok": true}),
+                &mut out,
+            );
+            push(
+                SessionEventKind::Lifecycle,
+                json!({"phase": "release", "outcome": "completed", "reason": "done"}),
+                &mut out,
+            );
+        }
+        std::fs::write(path, out).unwrap();
+    }
+
+    #[test]
+    fn lifecycle_scan_skips_transcript_bytes_on_a_huge_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-bulky.jsonl");
+        write_bulky_session(&path, "run-bulky", 8 * 1024 * 1024, true);
+
+        let budget = SessionScanBudget::DEFAULT;
+        let scan = scan_session_lifecycle(&path, budget).unwrap();
+
+        assert!(scan.truncated, "an 8 MiB session must exceed the budget");
+        assert!(scan.file_bytes > 8 * 1024 * 1024);
+        assert_eq!(
+            scan.bytes_inspected,
+            budget.prefix_bytes + budget.tail_bytes
+        );
+        assert!(
+            scan.envelopes.len() < 64,
+            "only lifecycle-relevant envelopes are retained: {}",
+            scan.envelopes.len()
+        );
+        // Only lines inside the two windows are even seen; the skipped middle
+        // is never read, which is the point of the budget.
+        assert!(
+            scan.skipped_transcript_lines > 10,
+            "window transcript lines must be rejected without parsing: {}",
+            scan.skipped_transcript_lines
+        );
+        assert!(scan.final_envelope_retained);
+
+        let first = scan.envelopes.first().unwrap();
+        assert_eq!(first.seq, 0);
+        assert_eq!(
+            first.event.get("phase").and_then(|v| v.as_str()),
+            Some("acquire")
+        );
+        let last = scan.envelopes.last().unwrap();
+        assert_eq!(
+            last.event.get("outcome").and_then(|v| v.as_str()),
+            Some("completed")
+        );
+        assert!(scan
+            .envelopes
+            .iter()
+            .any(|e| e.event.get("type").and_then(|v| v.as_str()) == Some("ready")));
+        assert!(
+            !scan
+                .envelopes
+                .iter()
+                .any(|e| e.event.get("type").and_then(|v| v.as_str()) == Some("text_chunk")),
+            "transcript payloads must never be retained"
+        );
+    }
+
+    #[test]
+    fn lifecycle_scan_reads_small_sessions_whole_without_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-small.jsonl");
+        write_bulky_session(&path, "run-small", 4096, true);
+
+        let scan = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT).unwrap();
+        assert!(!scan.truncated);
+        assert_eq!(scan.bytes_inspected, scan.file_bytes);
+        assert!(scan.final_envelope_retained);
+
+        let full = read_session_file(&path).unwrap();
+        let retained: Vec<u64> = scan.envelopes.iter().map(|e| e.seq).collect();
+        let expected: Vec<u64> = full
+            .iter()
+            .filter(|e| {
+                e.kind != SessionEventKind::DriverEvent
+                    || e.event.get("type").and_then(|v| v.as_str()) != Some("text_chunk")
+            })
+            .map(|e| e.seq)
+            .collect();
+        assert_eq!(retained, expected);
+    }
+
+    #[test]
+    fn lifecycle_scan_reports_unretained_final_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-open.jsonl");
+        write_bulky_session(&path, "run-open", 8 * 1024 * 1024, false);
+
+        let scan = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT).unwrap();
+        assert!(scan.truncated);
+        assert!(
+            !scan.final_envelope_retained,
+            "a session still emitting transcript has no retained final envelope"
+        );
+    }
+
+    #[test]
+    fn lifecycle_scan_ignores_transcript_text_that_mimics_lifecycle_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-mimic.jsonl");
+        let id = RuntimeIdentity::new("run-mimic", "boot-scan");
+        let mut writer = SessionWriter::open(&path, id).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-MIMIC", "worker_id": "implementer-claude-rmux"}),
+            )
+            .unwrap();
+        // A worker printing session JSON into its own transcript must not be
+        // able to forge a lifecycle envelope.
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                json!({"type": "text_chunk", "text": "{\"kind\":\"lifecycle\",\"event\":{\"phase\":\"release\",\"outcome\":\"completed\"}}"}),
+            )
+            .unwrap();
+        drop(writer);
+
+        let scan = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT).unwrap();
+        assert_eq!(scan.envelopes.len(), 1);
+        assert_eq!(scan.skipped_transcript_lines, 1);
+        assert!(!scan.final_envelope_retained);
+    }
+
+    /// Opt-in measurement against a real, unmodified session directory:
+    ///
+    /// ```sh
+    /// ORGASMIC_REAL_SESSIONS_DIR=/path/to/.orgasmic/tmp/sessions \
+    ///   cargo test -p orgasmic-core --lib real_session_shape -- --ignored --nocapture
+    /// ```
+    ///
+    /// Read-only: it opens each file, never writes, and never touches the
+    /// daemon. Kept ignored so the suite has no machine-specific dependency.
+    #[test]
+    #[ignore = "requires ORGASMIC_REAL_SESSIONS_DIR; measurement, not a gate"]
+    fn real_session_shape_scan_is_bounded() {
+        let Ok(dir) = std::env::var("ORGASMIC_REAL_SESSIONS_DIR") else {
+            panic!("set ORGASMIC_REAL_SESSIONS_DIR to a real .orgasmic/tmp/sessions directory");
+        };
+        let mut paths: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .expect("read sessions dir")
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
+            .collect();
+        paths.sort();
+
+        let started = std::time::Instant::now();
+        let (mut file_bytes, mut inspected, mut truncated, mut errors) = (0_u64, 0_u64, 0, 0);
+        for path in &paths {
+            match scan_session_lifecycle(path, SessionScanBudget::DEFAULT) {
+                Ok(scan) => {
+                    file_bytes += scan.file_bytes;
+                    inspected += scan.bytes_inspected;
+                    truncated += u32::from(scan.truncated);
+                }
+                Err(_) => errors += 1,
+            }
+        }
+        let bounded = started.elapsed();
+
+        let started = std::time::Instant::now();
+        let mut full_envelopes = 0_u64;
+        for path in &paths {
+            full_envelopes += read_session_file(path).map(|e| e.len() as u64).unwrap_or(0);
+        }
+        let full = started.elapsed();
+
+        println!(
+            "files={} on_disk={:.3} GiB inspected={:.3} MiB truncated={truncated} errors={errors}\n\
+             bounded_scan={:?}  full_read={:?} ({full_envelopes} envelopes)",
+            paths.len(),
+            file_bytes as f64 / (1024.0 * 1024.0 * 1024.0),
+            inspected as f64 / (1024.0 * 1024.0),
+            bounded,
+            full,
+        );
+        assert!(
+            inspected * 20 < file_bytes,
+            "bounded scan must read a small fraction of transcript bytes"
+        );
+    }
+
+    #[test]
+    fn lifecycle_scan_rejects_malformed_lifecycle_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-torn.jsonl");
+        std::fs::write(&path, "{\"seq\":0,\"kind\":\"lifecycle\"").unwrap();
+        assert!(scan_session_lifecycle(&path, SessionScanBudget::DEFAULT).is_err());
+    }
 
     #[test]
     fn writer_appends_and_reads_back() {

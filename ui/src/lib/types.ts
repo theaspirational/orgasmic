@@ -341,6 +341,27 @@ export type RecoveredRun = {
   recovery_actions?: RecoveryAction[];
 };
 
+/// What one run-inventory pass touched. Counts and byte totals only — never
+/// session contents. Present so the run list can show that enumeration cost
+/// tracks record count rather than transcript size.
+export type InventoryStageMetrics = {
+  session_files: number;
+  session_file_bytes: number;
+  bytes_inspected: number;
+  truncated_scans: number;
+  unreadable_sessions: number;
+  attach_probes_started: number;
+  attach_probes_timed_out: number;
+  origin_index_files: number;
+  origin_index_bytes_inspected: number;
+  interrupted: number;
+  reattached: number;
+  failed_recoverable: number;
+  terminal_noop: number;
+  ambiguous: number;
+  duration_ms: number;
+};
+
 export type RecoveryStatus = {
   boot_id: string;
   acquisition_paused: boolean;
@@ -349,6 +370,7 @@ export type RecoveryStatus = {
   reattached_runs: RecoveredRun[];
   terminal_noop_runs: RecoveredRun[];
   ambiguous_runs: RecoveredRun[];
+  inventory?: InventoryStageMetrics;
   note: string;
 };
 
@@ -412,6 +434,7 @@ export type RunsResponse = {
   reattached: RecoveredRun[];
   terminal_noop: RecoveredRun[];
   ambiguous: RecoveredRun[];
+  inventory?: InventoryStageMetrics;
 };
 
 export type RunDetailResponse = {

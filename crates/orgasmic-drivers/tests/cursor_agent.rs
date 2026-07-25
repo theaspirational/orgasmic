@@ -89,8 +89,18 @@ async fn simulated_acquire_emits_deterministic_flow() {
     assert!(
         matches!(assistant, DriverEvent::TextChunk { chunk, .. } if chunk == "cursor-agent simulated response")
     );
+    // The turn boundary precedes the run boundary: consumers that end a turn
+    // without ending the run depend on seeing both, in this order.
+    let turn_complete = session.events.recv().await.unwrap();
+    assert!(
+        matches!(turn_complete, DriverEvent::AgentTurnComplete { .. }),
+        "expected AgentTurnComplete before RunComplete, got {turn_complete:?}"
+    );
     let complete = session.events.recv().await.unwrap();
-    assert!(matches!(complete, DriverEvent::RunComplete { .. }));
+    assert!(
+        matches!(complete, DriverEvent::RunComplete { .. }),
+        "expected RunComplete, got {complete:?}"
+    );
 }
 
 #[test]

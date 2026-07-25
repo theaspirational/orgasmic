@@ -25807,3 +25807,1417 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-24 Fri 12:02:57 task.created TASK-JN5Q1
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2707
+:TIME:         [2026-07-24 Fri 12:02:57]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JN5Q1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       User-reported production hang on 2026-07-23/24
+:END:
+
+* TX 2026-07-24 Fri 13:11:30 task.state_transitioned TASK-JN5Q1
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2708
+:TIME:         [2026-07-24 Fri 13:11:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JN5Q1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       Bounded run inventory, direct exact-run close/finalize paths, production-sized verification, and independent SHIP review
+:FROM_STATE:   backlog
+:TO_STATE:     done
+:END:
+
+
+* TX 2026-07-24 Fri 21:55:36 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2709
+:TIME:         [2026-07-24 Fri 21:55:36]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_PC6T2
+:NODE_ID:      dec_PC6T2
+:END:
+
+* TX 2026-07-24 Fri 21:55:53 graph.architecture.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2710
+:TIME:         [2026-07-24 Fri 21:55:53]
+:TYPE:         graph.architecture.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       created graph node arch_RN73Z
+:NODE_ID:      arch_RN73Z
+:END:
+
+* TX 2026-07-24 Fri 21:56:10 task.created TASK-CQM2X
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2711
+:TIME:         [2026-07-24 Fri 21:56:10]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CQM2X
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Save source-backed repair plan from four-issue production report and agreed retro policy
+:END:
+
+* TX 2026-07-24 Fri 21:56:47 task.created TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2712
+:TIME:         [2026-07-24 Fri 21:56:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       P0 production control-plane repair after fresh authenticated no-header/no-body reproduction
+:END:
+
+* TX 2026-07-24 Fri 21:57:11 task.created TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2713
+:TIME:         [2026-07-24 Fri 21:57:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Prevent recurrence of 2.239 GiB session growth while preserving recovery and explicit retro evidence
+:END:
+
+* TX 2026-07-24 Fri 21:57:26 task.created TASK-VBSG2
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2714
+:TIME:         [2026-07-24 Fri 21:57:26]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VBSG2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Persist the agreed explicit Claude conversion and multi-run retro workflow
+:END:
+
+* TX 2026-07-24 Fri 21:57:54 task.created TASK-5P60H
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2715
+:TIME:         [2026-07-24 Fri 21:57:54]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5P60H
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Close residual service-loop risk without duplicating lock/heartbeat fixes already in current source
+:END:
+
+* TX 2026-07-24 Fri 21:58:14 task.created TASK-3R3EZ
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2716
+:TIME:         [2026-07-24 Fri 21:58:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3R3EZ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Stop report issue 4 log spam and make project registration lifecycle explicit
+:END:
+
+* TX 2026-07-24 Fri 22:00:09 task.created TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2717
+:TIME:         [2026-07-24 Fri 22:00:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Follow-up from the four-issue report: validate harness readiness before committing a dispatch and self-close fatal startup failures.
+:END:
+
+* TX 2026-07-24 Fri 22:00:59 task.property_updated TASK-CQM2X
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2718
+:TIME:         [2026-07-24 Fri 22:00:59]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CQM2X
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Link the durable umbrella plan to the independently dispatchable implementation slices.
+:DEPENDS_ON:   TASK-KWSTJ TASK-FZB6T TASK-VBSG2 TASK-5P60H TASK-3R3EZ TASK-TJKFC
+:END:
+
+* TX 2026-07-24 Fri 22:25:09 task.state_transitioned TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2719
+:TIME:         [2026-07-24 Fri 22:25:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager-implementer: bounded /api/runs inventory
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+
+* TX 2026-07-24 Fri 23:11:01 task.edited TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2720
+:TIME:         [2026-07-24 Fri 23:11:01]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-KWSTJ
+:NODE_ID:      TASK-KWSTJ
+:END:
+
+* TX 2026-07-24 Fri 23:11:05 task.state_transitioned TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2721
+:TIME:         [2026-07-24 Fri 23:11:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       bounded /api/runs inventory implemented; gates green; wire regression added
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-24 Fri 23:12:04 task.edited TASK-5P60H
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2722
+:TIME:         [2026-07-24 Fri 23:12:04]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5P60H
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-5P60H
+:NODE_ID:      TASK-5P60H
+:END:
+
+* TX 2026-07-24 Fri 23:12:13 task.edited TASK-FZB6T
+:PROPERTIES:
+:TX_ID:        tx-20260724-orgasmic-2723
+:TIME:         [2026-07-24 Fri 23:12:13]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FZB6T
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-FZB6T
+:NODE_ID:      TASK-FZB6T
+:END:
+
+* TX 2026-07-25 Sat 07:26:40 task.created TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2724
+:TIME:         [2026-07-25 Sat 07:26:40]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager-implementer skipped tier classification on TASK-KWSTJ
+:END:
+
+* TX 2026-07-25 Sat 07:26:56 task.created TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2725
+:TIME:         [2026-07-25 Sat 07:26:56]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       trivial/ordinary/risky is too subjective to survive execution momentum
+:END:
+
+* TX 2026-07-25 Sat 07:27:12 task.created TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2726
+:TIME:         [2026-07-25 Sat 07:27:12]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reviewers dispatched against uncommitted work review a tree that does not contain the change
+:END:
+
+* TX 2026-07-25 Sat 07:27:18 task.state_transitioned TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2727
+:TIME:         [2026-07-25 Sat 07:27:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 07:27:18 task.state_transitioned TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2728
+:TIME:         [2026-07-25 Sat 07:27:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 07:27:18 task.state_transitioned TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2729
+:TIME:         [2026-07-25 Sat 07:27:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 07:27:19 task.property_updated TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2730
+:TIME:         [2026-07-25 Sat 07:27:19]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       update properties on TASK-3CM0Q
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 07:27:19 task.property_updated TASK-YGB1R
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2731
+:TIME:         [2026-07-25 Sat 07:27:19]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-YGB1R
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       update properties on TASK-YGB1R
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 07:27:19 task.property_updated TASK-TW3N3
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2732
+:TIME:         [2026-07-25 Sat 07:27:19]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TW3N3
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       update properties on TASK-TW3N3
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 07:27:43 task.property_updated TASK-3CM0Q
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2733
+:TIME:         [2026-07-25 Sat 07:27:43]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-3CM0Q
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       declaration mechanism needs the trigger vocabulary
+:DEPENDS_ON:   TASK-YGB1R
+:END:
+
+* TX 2026-07-25 Sat 07:28:02 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2734
+:TIME:         [2026-07-25 Sat 07:28:02]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       process defect observed on TASK-KWSTJ outranks the remaining P1 runtime work
+:GOAL_ID:      goal-20260725-harden-the-manager
+:REPLACES:     —
+:END:
+
+* TX 2026-07-25 Sat 07:28:03 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2735
+:TIME:         [2026-07-25 Sat 07:28:03]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 07:28:19 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2736
+:TIME:         [2026-07-25 Sat 07:28:19]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 07:37:45 task.created TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2737
+:TIME:         [2026-07-25 Sat 07:37:45]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       agent asked permission to commit to a local branch inside an already-approved plan
+:END:
+
+* TX 2026-07-25 Sat 07:37:49 task.state_transitioned TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2738
+:TIME:         [2026-07-25 Sat 07:37:49]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 07:37:50 task.property_updated TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2739
+:TIME:         [2026-07-25 Sat 07:37:50]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       shares the derivable-trigger framing
+:DEPENDS_ON:   TASK-YGB1R
+:END:
+
+* TX 2026-07-25 Sat 07:37:53 task.property_updated TASK-4YX1K
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2740
+:TIME:         [2026-07-25 Sat 07:37:53]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YX1K
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 07:38:44 manager.dispatch_started TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2741
+:TIME:         [2026-07-25 Sat 07:38:44]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:REASON:
+:KIND:         reviewer
+:MODE:         acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:BRANCH:       task-kwstj-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review-brief.md
+:STARTED_AT:   [2026-07-25 Sat 07:38:44]
+:LIVENESS:     fb7590bb17781383565758d4bd48f9836e5fe8e4
+:NEXT:         reviewer-watch-then-fix-or-close
+:REASON_INITIAL: independent review of bounded run inventory before landing
+:END:
+
+* TX 2026-07-25 Sat 07:38:45 run.created TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2742
+:TIME:         [2026-07-25 Sat 07:38:45]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-KWSTJ-reviewer-20260725T073841.jsonl
+:REASON:       independent review of bounded run inventory before landing
+:RUN_ID:       run-20260725T073841-ef292c73d0e344edb7d475148a3f0c56
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-claude-acp-stdio
+:KIND:         reviewer
+:DRIVER:       acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/review/review-b86a6684a3c84a63b4733f268269e42b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/review/review-b86a6684a3c84a63b4733f268269e42b-stdout.log
+:DISPATCH_ATTEMPT: b86a6684a3c84a63b4733f268269e42b
+:PID:          52741
+:DISPATCH_TX:  tx-20260725-orgasmic-2741
+:END:
+
+* TX 2026-07-25 Sat 08:17:01 task.created TASK-JQARS
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2743
+:TIME:         [2026-07-25 Sat 08:17:01]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQARS
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       router documents a command that does not exist; manager fell back to grepping source order
+:END:
+
+* TX 2026-07-25 Sat 08:17:21 task.created TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2744
+:TIME:         [2026-07-25 Sat 08:17:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       stale user/workers templates produced a confident wrong diagnosis and a proposal to un-retire them
+:END:
+
+* TX 2026-07-25 Sat 08:17:45 task.created TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2745
+:TIME:         [2026-07-25 Sat 08:17:45]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       dec_WDR5K assigns model/effort to manager judgment but gives it no way to learn operator preference
+:END:
+
+* TX 2026-07-25 Sat 08:17:51 task.state_transitioned TASK-JQARS
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2746
+:TIME:         [2026-07-25 Sat 08:17:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQARS
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 08:17:51 task.state_transitioned TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2747
+:TIME:         [2026-07-25 Sat 08:17:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 08:17:51 task.state_transitioned TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2748
+:TIME:         [2026-07-25 Sat 08:17:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 08:17:52 task.property_updated TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2749
+:TIME:         [2026-07-25 Sat 08:17:52]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       selection needs a working transport discovery surface
+:DEPENDS_ON:   TASK-JQARS
+:END:
+
+* TX 2026-07-25 Sat 08:17:59 task.property_updated TASK-JQARS
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2750
+:TIME:         [2026-07-25 Sat 08:17:59]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQARS
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 08:17:59 task.property_updated TASK-8ED6V
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2751
+:TIME:         [2026-07-25 Sat 08:17:59]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8ED6V
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 08:17:59 task.property_updated TASK-0JY7M
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2752
+:TIME:         [2026-07-25 Sat 08:17:59]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0JY7M
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       process-hardening agenda
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 08:18:24 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2753
+:TIME:         [2026-07-25 Sat 08:18:24]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 08:49:23 manager.dispatch_orphaned TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2754
+:TIME:         [2026-07-25 Sat 08:49:23]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-KWSTJ-reviewer-20260725T073841.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260725T073841-ef292c73d0e344edb7d475148a3f0c56
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:END:
+
+* TX 2026-07-25 Sat 08:50:51 task.edited TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2755
+:TIME:         [2026-07-25 Sat 08:50:51]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-TJKFC
+:NODE_ID:      TASK-TJKFC
+:END:
+
+* TX 2026-07-25 Sat 08:50:52 task.property_updated TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2756
+:TIME:         [2026-07-25 Sat 08:50:52]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reproduced live; fatal startup leaves live process, open record, and uncloseable dispatch
+:PRIORITY:     P0
+:END:
+
+* TX 2026-07-25 Sat 08:53:56 manager.dispatch_aborted TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2757
+:TIME:         [2026-07-25 Sat 08:53:56]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:REASON:       reviewer harness claude failed authentication_failed 1.2s after acquire; no review performed (TASK-TJKFC evidence)
+:CLOSED_TX:    tx-20260725-orgasmic-2741
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-25 Sat 09:18:53 manager.dispatch_started TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2758
+:TIME:         [2026-07-25 Sat 09:18:53]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:REASON:
+:KIND:         reviewer
+:MODE:         acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:BRANCH:       task-kwstj-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review-brief.md
+:STARTED_AT:   [2026-07-25 Sat 09:18:53]
+:LIVENESS:     fb7590bb17781383565758d4bd48f9836e5fe8e4
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: independent review of bounded run inventory; codex chosen as a different harness family than the code's author
+:END:
+
+* TX 2026-07-25 Sat 09:18:54 run.created TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2759
+:TIME:         [2026-07-25 Sat 09:18:54]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-KWSTJ-reviewer-20260725T091853.jsonl
+:REASON:       independent review of bounded run inventory; codex chosen as a different harness family than the code's author
+:RUN_ID:       run-20260725T091853-47bb2e1ff6a94a42bd69652c2692bf71
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-acp-stdio
+:KIND:         reviewer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/review/review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/review/review-87401795d65a4ff99ca7708454736ade-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/review/review-87401795d65a4ff99ca7708454736ade-stdout.log
+:DISPATCH_ATTEMPT: 87401795d65a4ff99ca7708454736ade
+:PID:          13306
+:DISPATCH_TX:  tx-20260725-orgasmic-2758
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-07-25 Sat 09:19:39 manager.dispatch_orphaned TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2760
+:TIME:         [2026-07-25 Sat 09:19:39]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-KWSTJ-reviewer-20260725T091853.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260725T091853-47bb2e1ff6a94a42bd69652c2692bf71
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:END:
+
+* TX 2026-07-25 Sat 09:32:52 task.created TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2761
+:TIME:         [2026-07-25 Sat 09:32:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       hardcoded --bare makes the claude harness unusable for subscription-authenticated operators
+:END:
+
+* TX 2026-07-25 Sat 09:33:08 task.state_transitioned TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2762
+:TIME:         [2026-07-25 Sat 09:33:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       claude harness unusable for subscription auth
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 09:33:08 task.property_updated TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2763
+:TIME:         [2026-07-25 Sat 09:33:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       blocks all claude dispatches on this machine
+:PRIORITY:     P0
+:END:
+
+* TX 2026-07-25 Sat 09:33:09 task.edited TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2764
+:TIME:         [2026-07-25 Sat 09:33:09]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-TJKFC
+:NODE_ID:      TASK-TJKFC
+:END:
+
+* TX 2026-07-25 Sat 09:35:42 manager.dispatch_aborted TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2765
+:TIME:         [2026-07-25 Sat 09:35:42]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:REASON:       codex provider outage: 503 biscuit_baker_service_me_circuit_open after 10 retries; no review performed
+:CLOSED_TX:    tx-20260725-orgasmic-2758
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kwstj-review/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-25 Sat 09:45:47 task.created TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2766
+:TIME:         [2026-07-25 Sat 09:45:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       no-session-persistence leaves acp-stdio claude runs with no transcript, no session id, and no retro source
+:END:
+
+* TX 2026-07-25 Sat 09:45:56 task.state_transitioned TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2767
+:TIME:         [2026-07-25 Sat 09:45:56]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       blocks retro and native recovery for acp-stdio
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 09:45:56 task.property_updated TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2768
+:TIME:         [2026-07-25 Sat 09:45:56]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       blocks TASK-VBSG2 for the acp-stdio transport
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 09:45:56 task.edited TASK-VBSG2
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2769
+:TIME:         [2026-07-25 Sat 09:45:56]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VBSG2
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-VBSG2
+:NODE_ID:      TASK-VBSG2
+:END:
+
+* TX 2026-07-25 Sat 12:50:02 task.created TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2770
+:TIME:         [2026-07-25 Sat 12:50:02]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       acp is a specific Zed standard; orgasmic uses the name for stream-json and app-server wires
+:END:
+
+* TX 2026-07-25 Sat 12:50:21 task.state_transitioned TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2771
+:TIME:         [2026-07-25 Sat 12:50:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       naming correctness
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 12:50:22 task.property_updated TASK-XCJYC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2772
+:TIME:         [2026-07-25 Sat 12:50:22]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XCJYC
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       blocks real ACP and misleads every reader
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 12:50:22 task.created TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2773
+:TIME:         [2026-07-25 Sat 12:50:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       one ACP transport could replace several bespoke adapters; needs evaluation first
+:END:
+
+* TX 2026-07-25 Sat 12:50:28 task.property_updated TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2774
+:TIME:         [2026-07-25 Sat 12:50:28]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       consolidation opportunity, not urgent
+:PRIORITY:     P2
+:END:
+
+* TX 2026-07-25 Sat 12:50:29 task.property_updated TASK-CM5KV
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2775
+:TIME:         [2026-07-25 Sat 12:50:29]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-CM5KV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       needs the name freed
+:DEPENDS_ON:   TASK-XCJYC
+:END:
+
+* TX 2026-07-25 Sat 12:51:00 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2776
+:TIME:         [2026-07-25 Sat 12:51:00]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_Y5MPK
+:NODE_ID:      dec_Y5MPK
+:END:
+
+* TX 2026-07-25 Sat 12:51:12 task.edited TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2777
+:TIME:         [2026-07-25 Sat 12:51:12]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-VB9DQ
+:NODE_ID:      TASK-VB9DQ
+:END:
+
+
+* TX 2026-07-25 Sat 13:01:36 task.edited TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2778
+:TIME:         [2026-07-25 Sat 13:01:36]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-Z8WEJ
+:NODE_ID:      TASK-Z8WEJ
+:END:
+
+* TX 2026-07-25 Sat 13:01:36 task.state_transitioned TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2779
+:TIME:         [2026-07-25 Sat 13:01:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       implemented in 61b9b7f; items 4 and 6 still open
+:FROM_STATE:   todo
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-25 Sat 13:01:57 task.edited TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2780
+:TIME:         [2026-07-25 Sat 13:01:57]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-VB9DQ
+:NODE_ID:      TASK-VB9DQ
+:END:
+
+* TX 2026-07-25 Sat 13:01:57 task.state_transitioned TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2781
+:TIME:         [2026-07-25 Sat 13:01:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       implemented in 61b9b7f; item 5 still open
+:FROM_STATE:   todo
+:TO_STATE:     in_review
+:END:
+
+
+* TX 2026-07-25 Sat 14:13:05 task.edited TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2782
+:TIME:         [2026-07-25 Sat 14:13:05]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-KWSTJ
+:NODE_ID:      TASK-KWSTJ
+:END:
+
+* TX 2026-07-25 Sat 14:36:47 task.created TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2783
+:TIME:         [2026-07-25 Sat 14:36:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       16 runtime paths and 37 TCC grants since June; every version bump costs a GUI approval
+:END:
+
+* TX 2026-07-25 Sat 14:37:14 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2784
+:TIME:         [2026-07-25 Sat 14:37:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       recurring operator toil
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 14:37:14 task.property_updated TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2785
+:TIME:         [2026-07-25 Sat 14:37:14]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       every release costs a manual grant
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 14:37:14 task.created TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2786
+:TIME:         [2026-07-25 Sat 14:37:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       a TCC denial on one path hung the whole runtime pre-bind with no actionable signal
+:END:
+
+* TX 2026-07-25 Sat 14:37:31 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2787
+:TIME:         [2026-07-25 Sat 14:37:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       single-project permission fault takes down the runtime
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 14:37:31 task.property_updated TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2788
+:TIME:         [2026-07-25 Sat 14:37:31]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       total outage from a recoverable per-project condition
+:PRIORITY:     P0
+:END:
+
+* TX 2026-07-25 Sat 14:37:32 task.property_updated TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2789
+:TIME:         [2026-07-25 Sat 14:37:32]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       shares unavailable-project state and launchd backoff
+:RELATES_TO:   TASK-3R3EZ TASK-5P60H
+:END:
+
+* TX 2026-07-25 Sat 14:40:54 task.property_updated TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2790
+:TIME:         [2026-07-25 Sat 14:40:54]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       gates safe delivery of the committed runtime fixes; today's install attempt caused an outage
+:PRIORITY:     P0
+:END:
+
+* TX 2026-07-25 Sat 14:40:54 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2791
+:TIME:         [2026-07-25 Sat 14:40:54]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       reprioritised after a session that produced three outages and eight new tasks
+:GOAL_ID:      goal-20260725-land-the-committed
+:REPLACES:     goal-20260725-harden-the-manager
+:END:
+
+* TX 2026-07-25 Sat 14:40:54 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2792
+:TIME:         [2026-07-25 Sat 14:40:54]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 14:41:26 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2793
+:TIME:         [2026-07-25 Sat 14:41:26]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 14:49:54 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2794
+:TIME:         [2026-07-25 Sat 14:49:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager-implementer: stable identity-checked install path
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-25 Sat 15:08:50 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2795
+:TIME:         [2026-07-25 Sat 15:08:50]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_WZFAX.2
+:NODE_ID:      arch_WZFAX.2
+:END:
+
+* TX 2026-07-25 Sat 15:10:55 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2796
+:TIME:         [2026-07-25 Sat 15:10:55]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:
+
+* TX 2026-07-25 Sat 15:11:07 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2797
+:TIME:         [2026-07-25 Sat 15:11:07]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:
+
+* TX 2026-07-25 Sat 15:11:19 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2798
+:TIME:         [2026-07-25 Sat 15:11:19]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:
+
+* TX 2026-07-25 Sat 15:13:41 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2799
+:TIME:         [2026-07-25 Sat 15:13:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       implemented manager-direct; 206 CLI assertions green, verified against the real signed runtime
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+
+* TX 2026-07-25 Sat 15:38:52 task.created TASK-7QM8M
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2800
+:TIME:         [2026-07-25 Sat 15:38:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-7QM8M
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       surfaced while fixing TASK-KKGKM: reattach is off the critical path now, but still reads whole transcripts
+:END:
+
+* TX 2026-07-25 Sat 15:42:51 task.edited TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2801
+:TIME:         [2026-07-25 Sat 15:42:51]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-KKGKM
+:NODE_ID:      TASK-KKGKM
+:END:
+
+* TX 2026-07-25 Sat 15:43:02 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2802
+:TIME:         [2026-07-25 Sat 15:43:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       item 4 confirmed by reproduction and stack sample; bind-first fix implemented
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-25 Sat 15:54:29 task.created TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2803
+:TIME:         [2026-07-25 Sat 15:54:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       a permanently red suite cannot answer whether a change broke something; cost two 13-minute runs to rule out during TASK-KKGKM
+:END:
+
+* TX 2026-07-25 Sat 15:55:16 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2804
+:TIME:         [2026-07-25 Sat 15:55:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       bind-first fix landed with a regression verified against the reverted code; items 2/3/5 deferred with dependencies named
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:

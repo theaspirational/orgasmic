@@ -32,10 +32,10 @@ use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
     lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
-    task_file_path, task_file_rel, DriverEvent, Heading, Home, Lifecycle, LifecycleStage, OrgFile,
-    OrgRewriter, ProjectFile, ReleaseOutcome, RuntimeIdentity, SandboxAllowlist, SessionEnvelope,
-    SessionEventKind, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
-    REFERENCE_PROPERTY_KEYS,
+    scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, Home, Lifecycle,
+    LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome, RuntimeIdentity,
+    SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget, SlotValues, WorkerKind,
+    DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -127,6 +127,10 @@ pub struct ApiState {
         Arc<std::sync::Mutex<std::collections::HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>>,
     /// Per-origin locks serializing Failed recovery claims and POST /recover.
     pub recovery_claim_locks: RecoveryClaimLocks,
+    /// Serializes recovery inventory claim resolution with POST /recover's
+    /// claim/index decisions. Inventory resolution may quarantine or rebuild a
+    /// claim, so concurrent GETs cannot safely use a shared/read-side guard.
+    pub recovery_status_lock: Arc<tokio::sync::Mutex<()>>,
     /// Daemon-pinned trusted Claude executable identity, resolved at boot.
     pub trusted_claude_binary: Option<PinnedClaudeExecutable>,
     /// Optional trusted host override for the retained-inode exec boundary.
@@ -5731,7 +5735,46 @@ pub struct RecoveryResponse {
     pub failed_recoverable_runs: Vec<RecoveredRun>,
     pub terminal_noop_runs: Vec<RecoveredRun>,
     pub ambiguous_runs: Vec<RecoveredRun>,
+    /// Bounded-inventory stage metrics for this response. Present so an
+    /// operator (and the wire regression) can prove enumeration cost is a
+    /// function of record count, not transcript bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<InventoryStageMetrics>,
     pub note: &'static str,
+}
+
+/// What one `GET /api/runs` inventory pass actually touched.
+///
+/// Deliberately carries counts and byte totals only: never a session path's
+/// contents, transcript text, prompts, or any harness credential material.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct InventoryStageMetrics {
+    /// Session JSONL files considered across every registered project.
+    pub session_files: u64,
+    /// Total on-disk size of those files.
+    pub session_file_bytes: u64,
+    /// Bytes actually read to classify them. The whole point of the bounded
+    /// scan is that this stays flat as `session_file_bytes` grows.
+    pub bytes_inspected: u64,
+    /// Files whose middle region was skipped because they exceeded the budget.
+    pub truncated_scans: u64,
+    /// Files that could not be scanned or parsed, classified `ambiguous`.
+    pub unreadable_sessions: u64,
+    /// Driver attach proofs started for non-terminal records.
+    pub attach_probes_started: u64,
+    /// Attach proofs abandoned at the shared inventory deadline.
+    pub attach_probes_timed_out: u64,
+    /// Session files read by the recovery-origin index, when it ran at all.
+    pub origin_index_files: u64,
+    /// Bytes read by the recovery-origin index.
+    pub origin_index_bytes_inspected: u64,
+    pub interrupted: u64,
+    pub reattached: u64,
+    pub failed_recoverable: u64,
+    pub terminal_noop: u64,
+    pub ambiguous: u64,
+    /// Wall-clock cost of the whole inventory pass.
+    pub duration_ms: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -5802,6 +5845,9 @@ async fn get_runs(State(state): State<ApiState>) -> Json<Value> {
         "failed_recoverable": recovery.failed_recoverable_runs,
         "terminal_noop": recovery.terminal_noop_runs,
         "ambiguous": recovery.ambiguous_runs,
+        // Bounded-inventory stage metrics for this exact response, so an
+        // operator can see what enumeration cost without reading daemon logs.
+        "inventory": recovery.inventory,
     }))
 }
 
@@ -5809,11 +5855,16 @@ async fn get_run(
     State(state): State<ApiState>,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let recovery = recovery_status(&state).await;
-    if let Some(run) = recovery.live_runs.iter().find(|run| run.run_id == id) {
+    // Exact active-run lookups are supervisor-local. Worker finalize and
+    // manager close must not scan unrelated durable recovery history before
+    // they can act on a live run whose id they already know.
+    let live = state.supervisor.snapshot().await;
+    if let Some(run) = live.runs.iter().find(|run| run.run_id == id) {
         let source = read_artifact(&run.session_path, "run session")?;
         return Ok(Json(json!({"source": source, "run": run})));
     }
+
+    let recovery = recovery_status(&state).await;
     for (classification, runs) in [
         ("interrupted", &recovery.interrupted_runs),
         ("reattached", &recovery.reattached_runs),
@@ -5910,10 +5961,12 @@ async fn resolve_run_session_path(state: &ApiState, run_id: &str) -> Option<Path
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
                 continue;
             }
-            let Ok(envelopes) = read_session_file(&path) else {
+            // Identity lookup only: read the bounded lifecycle window rather
+            // than the whole transcript of every recorded run.
+            let Ok(scan) = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT) else {
                 continue;
             };
-            if envelopes.iter().any(|e| e.run_id == run_id) {
+            if scan.envelopes.iter().any(|e| e.run_id == run_id) {
                 return Some(path);
             }
         }
@@ -6572,10 +6625,14 @@ async fn post_run_recover(
         .clone()
         .ok_or_else(|| ApiError::bad_request("project is required for recovery"))?;
 
+    // Inventory never takes a per-origin lock. Recovery holds the global
+    // status mutex only for the initial claim/index decision and, after
+    // external work, the final RecoveryOrigin + claim commit.
     let claim_lock = state.recovery_claim_lock(&project_id, &id);
     let _claim_guard = claim_lock.lock().await;
+    let status_guard = state.recovery_status_lock.lock().await;
 
-    let recovery = recovery_status_with_locked_origin(&state, Some((&project_id, &id))).await;
+    let recovery = recovery_status_inner(&state).await;
     let prior = recovery
         .interrupted_runs
         .iter()
@@ -6595,7 +6652,8 @@ async fn post_run_recover(
         hook();
     }
     let board = state.index.snapshot().await.board;
-    let indexed_origins = collect_recovery_origin_index(&state.home, &board);
+    let indexed_origins =
+        collect_recovery_origin_index(&state.home, &board, &mut InventoryStageMetrics::default());
 
     let failed_origin = prior.classification == "failed_recoverable";
     let request_id = req
@@ -6867,6 +6925,10 @@ async fn post_run_recover(
         }
     }
 
+    // Driver recovery can wait on an external runtime. Pending claims are safe
+    // for inventory to observe, so do not let that work hold the global status
+    // lock and stall every GET /runs request.
+    drop(status_guard);
     let execute = execute_run_recover_action(
         &state,
         &id,
@@ -6881,6 +6943,10 @@ async fn post_run_recover(
     match execute {
         Ok(response) => {
             if failed_origin {
+                // Publish the durable RecoveryOrigin link and committed claim
+                // as one inventory-visible transition. GET /runs cannot build
+                // an origin index between these two writes.
+                let _status_guard = state.recovery_status_lock.lock().await;
                 let mut claim_snapshot = pending_plan
                     .as_ref()
                     .map(|plan| plan.claim.clone())
@@ -7442,18 +7508,17 @@ async fn execute_run_recover_action(
 }
 
 async fn recovery_status(state: &ApiState) -> RecoveryResponse {
-    recovery_status_with_locked_origin(state, None).await
+    let _status_guard = state.recovery_status_lock.lock().await;
+    recovery_status_inner(state).await
 }
 
-async fn recovery_status_with_locked_origin(
-    state: &ApiState,
-    locked_origin: Option<(&str, &str)>,
-) -> RecoveryResponse {
+async fn recovery_status_inner(state: &ApiState) -> RecoveryResponse {
+    let started = std::time::Instant::now();
     let live = state.supervisor.snapshot().await;
     let live_ids: BTreeSet<_> = live.runs.iter().map(|run| run.run_id.as_str()).collect();
     let board = state.index.snapshot().await.board;
     let project_roots: Vec<PathBuf> = board.iter().map(|entry| entry.path.clone()).collect();
-    let recovered = classify_session_files(
+    let (recovered, mut metrics) = classify_session_files(
         &state.home,
         state.trusted_claude_binary.as_ref(),
         &state.boot.boot_id,
@@ -7466,25 +7531,23 @@ async fn recovery_status_with_locked_origin(
     let mut failed_recoverable_runs = Vec::new();
     let mut terminal_noop_runs = Vec::new();
     let mut ambiguous_runs = Vec::new();
+    // Recovery-origin indexing is a whole-board session scan. Rebuilding it
+    // once per failed tombstone made GET /runs O(failed_runs * session_bytes)
+    // and effectively unbounded on projects with large transcripts.
+    let indexed_origins = recovered
+        .iter()
+        .any(|run| run.classification == "failed_recoverable")
+        .then(|| collect_recovery_origin_index(&state.home, &board, &mut metrics));
     for mut run in recovered {
         if live_ids.contains(run.run_id.as_str()) {
             continue;
         }
-        if run.classification == "failed_recoverable" {
-            if let Some(project_id) = run.project_id.as_deref() {
-                let skip_lock = locked_origin.is_some_and(|(locked_project, locked_run)| {
-                    locked_project == project_id && locked_run == run.run_id
-                });
-                if !skip_lock {
-                    let lock = state.recovery_claim_lock(project_id, &run.run_id);
-                    let _guard = lock.lock().await;
-                    let indexed_origins = collect_recovery_origin_index(&state.home, &board);
-                    apply_recovery_claim_to_run(&state.home, &indexed_origins, &mut run);
-                } else {
-                    let indexed_origins = collect_recovery_origin_index(&state.home, &board);
-                    apply_recovery_claim_to_run(&state.home, &indexed_origins, &mut run);
-                }
-            }
+        if run.classification == "failed_recoverable" && run.project_id.is_some() {
+            apply_recovery_claim_to_run(
+                &state.home,
+                indexed_origins.as_deref().unwrap_or_default(),
+                &mut run,
+            );
         }
         match run.classification.as_str() {
             "interrupted" => interrupted_runs.push(run),
@@ -7494,6 +7557,32 @@ async fn recovery_status_with_locked_origin(
             _ => ambiguous_runs.push(run),
         }
     }
+    metrics.interrupted = interrupted_runs.len() as u64;
+    metrics.reattached = reattached_runs.len() as u64;
+    metrics.failed_recoverable = failed_recoverable_runs.len() as u64;
+    metrics.terminal_noop = terminal_noop_runs.len() as u64;
+    metrics.ambiguous = ambiguous_runs.len() as u64;
+    metrics.duration_ms = started.elapsed().as_millis() as u64;
+    // Counts and byte totals only: no session paths, transcript text, prompts,
+    // or harness credential material may reach the log.
+    tracing::debug!(
+        session_files = metrics.session_files,
+        session_file_bytes = metrics.session_file_bytes,
+        bytes_inspected = metrics.bytes_inspected,
+        truncated_scans = metrics.truncated_scans,
+        unreadable_sessions = metrics.unreadable_sessions,
+        attach_probes_started = metrics.attach_probes_started,
+        attach_probes_timed_out = metrics.attach_probes_timed_out,
+        origin_index_files = metrics.origin_index_files,
+        origin_index_bytes_inspected = metrics.origin_index_bytes_inspected,
+        interrupted = metrics.interrupted,
+        reattached = metrics.reattached,
+        failed_recoverable = metrics.failed_recoverable,
+        terminal_noop = metrics.terminal_noop,
+        ambiguous = metrics.ambiguous,
+        duration_ms = metrics.duration_ms,
+        "run inventory pass complete"
+    );
     RecoveryResponse {
         boot_id: state.boot.boot_id.clone(),
         acquisition_paused: live.acquisition_paused,
@@ -7503,6 +7592,7 @@ async fn recovery_status_with_locked_origin(
         failed_recoverable_runs,
         terminal_noop_runs,
         ambiguous_runs,
+        inventory: Some(metrics),
         note: "boot reconciliation classifies durable session JSONL without restoring snapshots or mutating graph state",
     }
 }
@@ -7706,22 +7796,31 @@ fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Res
 /// written on release. Runs missing either path (manager, recovery, stage
 /// launch, or pre-upgrade session JSONL) are reattached with no watcher, same
 /// as before this fix.
-pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
-    let home = &state.home;
-    let supervisor = &state.supervisor;
-    let mut candidates: Vec<BootReattachCandidate> = Vec::new();
-    let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-    for root in project_roots {
-        let dir = project_sessions_dir(root);
-        if !seen_dirs.insert(dir.clone()) {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+/// Read every session file under `dirs` and keep the runs worth reattaching.
+/// Blocking by nature; callers must keep it off the async runtime's threads.
+fn collect_boot_reattach_candidates(dirs: &[PathBuf]) -> Vec<BootReattachCandidate> {
+    let mut candidates = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            // A session file is always a regular file. Anything else — a fifo,
+            // a socket, a device — would block `open()` forever, so refuse it
+            // by shape rather than discovering that by hanging.
+            if !entry
+                .file_type()
+                .map(|file_type| file_type.is_file())
+                .unwrap_or(false)
+            {
+                tracing::warn!(
+                    path = %path.display(),
+                    "skipping session path that is not a regular file"
+                );
                 continue;
             }
             let Ok(envelopes) = read_session_file(&path) else {
@@ -7732,6 +7831,31 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             }
         }
     }
+    candidates
+}
+
+pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
+    let home = &state.home;
+    let supervisor = &state.supervisor;
+    let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let dirs: Vec<PathBuf> = project_roots
+        .iter()
+        .map(|root| project_sessions_dir(root))
+        .filter(|dir| seen_dirs.insert(dir.clone()))
+        .collect();
+    // Every read here can block indefinitely rather than fail: a path the
+    // process lacks permission for, or any non-regular file, stalls inside
+    // `open()` before a descriptor exists. Keep all of it on a blocking thread
+    // so one such file costs this scan and nothing else — running it inline
+    // wedged the whole runtime (TASK-KKGKM).
+    let mut candidates: Vec<BootReattachCandidate> =
+        match tokio::task::spawn_blocking(move || collect_boot_reattach_candidates(&dirs)).await {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                tracing::warn!(error = %error, "boot reattach scan failed; skipping reattach");
+                return;
+            }
+        };
     // Managers first (false sorts before true).
     candidates.sort_by_key(|c| !c.task_id.starts_with("manager.launch:"));
 
@@ -7898,10 +8022,13 @@ async fn classify_session_files(
     _current_boot_id: &str,
     live_runs: &[crate::supervisor::RunSummary],
     project_roots: &[PathBuf],
-) -> Vec<RecoveredRun> {
+) -> (Vec<RecoveredRun>, InventoryStageMetrics) {
     let live_ids: std::collections::BTreeSet<_> =
         live_runs.iter().map(|run| run.run_id.as_str()).collect();
+    let mut metrics = InventoryStageMetrics::default();
     let mut runs = Vec::new();
+    let mut attach_probes = Vec::new();
+    let attach_limit = Arc::new(tokio::sync::Semaphore::new(RECOVERY_ATTACH_MAX_CONCURRENCY));
     // Per-run transcripts live per project under `.orgasmic/tmp/sessions/`
     // (dec: per-project tmp). Enumerate each registered project's sessions dir;
     // de-dup roots so a project listed twice on the board isn't scanned twice.
@@ -7925,17 +8052,57 @@ async fn classify_session_files(
             project_id,
             canonical_root,
             &live_ids,
+            &attach_limit,
+            &mut attach_probes,
             &mut runs,
+            &mut metrics,
         )
         .await;
     }
+    // Every external probe starts while its session is classified. Resolve all
+    // of them against one deadline only after the durable scan is complete:
+    // one hanging handle cannot starve a later healthy tmux/rmux proof, and N
+    // hanging handles still add at most one bounded wait to the endpoint.
+    metrics.attach_probes_started = attach_probes.len() as u64;
+    let attach_deadline = tokio::time::Instant::now() + RECOVERY_ATTACH_PROBE_BUDGET;
+    for pending in attach_probes {
+        let (attach, timed_out) =
+            finish_driver_attach(pending.task, pending.driver_id, attach_deadline).await;
+        if timed_out {
+            metrics.attach_probes_timed_out += 1;
+        }
+        let Some(run) = runs.get_mut(pending.run_index) else {
+            continue;
+        };
+        if run.classification != "attach_pending" {
+            continue;
+        }
+        run.classification = attach.classification.to_string();
+        run.reason = attach.reason;
+        if attach.classification == "reattached" {
+            let target = run
+                .recovery_actions
+                .first()
+                .map(|action| action.target.clone())
+                .unwrap_or_else(|| "worker".to_string());
+            run.recovery_actions.insert(
+                0,
+                RecoveryAction {
+                    kind: "reattach_tmux".to_string(),
+                    label: "Reattach".to_string(),
+                    target,
+                },
+            );
+        }
+    }
     runs.sort_by(|a, b| a.run_id.cmp(&b.run_id));
-    runs
+    (runs, metrics)
 }
 
 /// Classify every session JSONL in a single directory, appending to `runs`.
 /// Shared by the per-project boot scan; keys everything off the file path and
 /// parsed envelopes, so it is location-agnostic.
+#[allow(clippy::too_many_arguments)]
 async fn classify_session_dir(
     home: &Home,
     trusted_claude_binary: Option<&PinnedClaudeExecutable>,
@@ -7943,7 +8110,10 @@ async fn classify_session_dir(
     project_id: Option<String>,
     project_root: PathBuf,
     live_ids: &std::collections::BTreeSet<&str>,
+    attach_limit: &Arc<tokio::sync::Semaphore>,
+    attach_probes: &mut Vec<PendingAttachProbe>,
     runs: &mut Vec<RecoveredRun>,
+    metrics: &mut InventoryStageMetrics,
 ) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -7959,33 +8129,53 @@ async fn classify_session_dir(
         if !path_meta.is_file() || path_meta.file_type().is_symlink() {
             continue;
         }
-        let Ok(envelopes) = read_session_file(&path) else {
-            runs.push(RecoveredRun {
-                run_id: path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string(),
-                runtime_id: String::new(),
-                boot_id: String::new(),
-                session_path: path,
-                project_id: project_id.clone(),
-                project_root: Some(project_root.clone()),
-                worktree: None,
-                classification: "ambiguous".to_string(),
-                reason: "session JSONL could not be parsed".to_string(),
-                recovery_actions: Vec::new(),
-                recovery_replacement_run_id: None,
-                recovery_replacement_session_path: None,
-            });
-            continue;
+        // Lifecycle questions are answered from a bounded prefix/tail window.
+        // A single TUI run can persist hundreds of megabytes of `text_chunk`
+        // events, and enumeration must cost record count, not transcript size.
+        metrics.session_files += 1;
+        let scan = match scan_session_lifecycle(&path, SessionScanBudget::DEFAULT) {
+            Ok(scan) => scan,
+            Err(_) => {
+                metrics.unreadable_sessions += 1;
+                runs.push(RecoveredRun {
+                    run_id: path
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    runtime_id: String::new(),
+                    boot_id: String::new(),
+                    session_path: path,
+                    project_id: project_id.clone(),
+                    project_root: Some(project_root.clone()),
+                    worktree: None,
+                    classification: "ambiguous".to_string(),
+                    reason: "session JSONL could not be parsed".to_string(),
+                    recovery_actions: Vec::new(),
+                    recovery_replacement_run_id: None,
+                    recovery_replacement_session_path: None,
+                });
+                continue;
+            }
         };
-        let envelopes = latest_run_segment(&envelopes);
+        metrics.session_file_bytes += scan.file_bytes;
+        metrics.bytes_inspected += scan.bytes_inspected;
+        if scan.truncated {
+            metrics.truncated_scans += 1;
+        }
+        let envelopes = latest_run_segment(&scan.envelopes);
         let Some(first) = envelopes.first() else {
             continue;
         };
         let last = envelopes.last().unwrap_or(first);
-        let terminal_outcome = release_outcome(last);
+        // Only the file's genuine final envelope can prove a terminal
+        // release. When the scan dropped it as transcript, the newest
+        // retained lifecycle line is not the end of the run, so treating it
+        // as terminal would tombstone a run that is still writing.
+        let terminal_outcome = scan
+            .final_envelope_retained
+            .then(|| release_outcome(last))
+            .flatten();
         let terminal = if let Some(outcome) = terminal_outcome {
             match outcome {
                 ReleaseOutcome::Completed | ReleaseOutcome::Failed | ReleaseOutcome::Cancelled => {
@@ -8007,14 +8197,15 @@ async fn classify_session_dir(
             terminal
         {
             if terminal_outcome == Some(ReleaseOutcome::Failed) {
-                // Failed tombstones stay terminal/immutable; recovery is a
-                // distinct manager-authorized run (TASK-R28CP / TASK-QPKCD).
-                let attach = classify_current_boot_session(home, envelopes, first, live_ids).await;
+                // A Failed tombstone is immutable and can never be reattached
+                // under its old run id. Its recovery actions do not depend on
+                // liveness classification, so probing the dead driver here is
+                // both meaningless and a source of endpoint stalls.
                 let actions = resolve_recovery_actions(
                     home,
                     trusted_claude_binary,
                     envelopes,
-                    attach.classification,
+                    "interrupted",
                     true,
                 )
                 .await;
@@ -8023,19 +8214,39 @@ async fn classify_session_dir(
                 ("terminal_noop".to_string(), terminal_reason, Vec::new())
             }
         } else {
-            // Non-terminal: prove liveness (live tmux from any boot reattaches
-            // before being marked interrupted, dec_052) and compute the
-            // ordered, harness-aware recovery action list.
-            let attach = classify_current_boot_session(home, envelopes, first, live_ids).await;
-            let actions = resolve_recovery_actions(
-                home,
-                trusted_claude_binary,
-                envelopes,
-                attach.classification,
-                false,
-            )
-            .await;
-            (attach.classification.to_string(), attach.reason, actions)
+            match start_current_boot_attach_probe(home, envelopes, first, live_ids, attach_limit) {
+                AttachProbeStart::Ready(attach) => {
+                    let actions = resolve_recovery_actions(
+                        home,
+                        trusted_claude_binary,
+                        envelopes,
+                        attach.classification,
+                        false,
+                    )
+                    .await;
+                    (attach.classification.to_string(), attach.reason, actions)
+                }
+                AttachProbeStart::Pending { driver_id, task } => {
+                    let actions = resolve_recovery_actions(
+                        home,
+                        trusted_claude_binary,
+                        envelopes,
+                        "interrupted",
+                        false,
+                    )
+                    .await;
+                    attach_probes.push(PendingAttachProbe {
+                        run_index: runs.len(),
+                        driver_id,
+                        task,
+                    });
+                    (
+                        "attach_pending".to_string(),
+                        "driver attach proof pending".to_string(),
+                        actions,
+                    )
+                }
+            }
         };
         let run_meta = session_run_meta_project_worktree(envelopes);
         let verified_worktree = run_meta.as_ref().and_then(|(embedded_project, worktree)| {
@@ -8163,6 +8374,41 @@ struct AttachClassification {
     reason: String,
 }
 
+const RECOVERY_ATTACH_PROBE_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
+const RECOVERY_ATTACH_MAX_CONCURRENCY: usize = 16;
+
+struct PendingAttachProbe {
+    run_index: usize,
+    driver_id: String,
+    task: AbortOnDropAttachProbe,
+}
+
+struct AbortOnDropAttachProbe {
+    handle: tokio::task::JoinHandle<Result<AttachOutcome, orgasmic_drivers::DriverError>>,
+}
+
+impl AbortOnDropAttachProbe {
+    fn new(
+        handle: tokio::task::JoinHandle<Result<AttachOutcome, orgasmic_drivers::DriverError>>,
+    ) -> Self {
+        Self { handle }
+    }
+}
+
+impl Drop for AbortOnDropAttachProbe {
+    fn drop(&mut self) {
+        self.handle.abort();
+    }
+}
+
+enum AttachProbeStart {
+    Ready(AttachClassification),
+    Pending {
+        driver_id: String,
+        task: AbortOnDropAttachProbe,
+    },
+}
+
 #[derive(Debug, Clone)]
 struct SessionAcquireMeta {
     task_id: String,
@@ -8170,37 +8416,43 @@ struct SessionAcquireMeta {
     worker_id: String,
 }
 
-async fn classify_current_boot_session(
+fn start_current_boot_attach_probe(
     home: &Home,
     envelopes: &[SessionEnvelope],
     first: &SessionEnvelope,
     live_ids: &std::collections::BTreeSet<&str>,
-) -> AttachClassification {
+    attach_limit: &Arc<tokio::sync::Semaphore>,
+) -> AttachProbeStart {
     if live_ids.contains(first.run_id.as_str()) {
-        return AttachClassification {
+        return AttachProbeStart::Ready(AttachClassification {
             classification: "reattached",
             reason: "supervisor-live run; attach proof skipped for active lease".to_string(),
-        };
+        });
     }
     let Some(meta) = session_acquire_meta(envelopes) else {
-        return AttachClassification {
+        return AttachProbeStart::Ready(AttachClassification {
             classification: "ambiguous",
             reason: "current-boot session has no acquire lifecycle metadata".to_string(),
-        };
+        });
     };
     let Some((driver, driver_id)) = session_driver(home, envelopes, &meta) else {
-        return AttachClassification {
+        return AttachProbeStart::Ready(AttachClassification {
             classification: "ambiguous",
             reason: "current-boot session has no recoverable driver identity".to_string(),
-        };
+        });
     };
-    let identity = RuntimeIdentity {
-        run_id: first.run_id.clone(),
-        runtime_id: first.runtime_id.clone(),
-        boot_id: first.boot_id.clone(),
-    };
+    if !driver_supports_recovery_attach(&driver_id) {
+        return AttachProbeStart::Ready(AttachClassification {
+            classification: "interrupted",
+            reason: format!("driver {driver_id} does not support runtime reattach"),
+        });
+    }
     let ctx = DriverContext {
-        identity,
+        identity: RuntimeIdentity {
+            run_id: first.run_id.clone(),
+            runtime_id: first.runtime_id.clone(),
+            boot_id: first.boot_id.clone(),
+        },
         run_kind: meta.kind,
         task_id: meta.task_id,
         worker_id: meta.worker_id,
@@ -8208,23 +8460,76 @@ async fn classify_current_boot_session(
         worktree: None,
         babysitter_target: None,
     };
-    match driver.attach(ctx, DriverConfig::empty()).await {
-        Ok(AttachOutcome::Attached(_attached)) => AttachClassification {
-            classification: "reattached",
-            reason: if live_ids.contains(first.run_id.as_str()) {
-                format!("driver {driver_id} proved live runtime handle for supervisor-live run")
-            } else {
-                format!("driver {driver_id} proved live runtime handle")
+    let task = spawn_driver_attach_probe(driver, ctx, attach_limit.clone());
+    AttachProbeStart::Pending { driver_id, task }
+}
+
+fn driver_supports_recovery_attach(driver_id: &str) -> bool {
+    driver_id == "tmux-tui" || driver_id.starts_with("tmux/") || driver_id.starts_with("rmux/")
+}
+
+fn spawn_driver_attach_probe(
+    driver: Box<dyn WorkerDriver>,
+    ctx: DriverContext,
+    attach_limit: Arc<tokio::sync::Semaphore>,
+) -> AbortOnDropAttachProbe {
+    AbortOnDropAttachProbe::new(tokio::spawn(async move {
+        let _permit = attach_limit
+            .acquire_owned()
+            .await
+            .expect("recovery attach semaphore remains open");
+        driver.attach(ctx, DriverConfig::empty()).await
+    }))
+}
+
+/// Resolve one pending attach proof against the shared inventory deadline.
+/// The second element is true when the probe was abandoned at that deadline,
+/// which the caller records as an inventory stage metric.
+async fn finish_driver_attach(
+    mut probe: AbortOnDropAttachProbe,
+    driver_id: String,
+    attach_deadline: tokio::time::Instant,
+) -> (AttachClassification, bool) {
+    match tokio::time::timeout_at(attach_deadline, &mut probe.handle).await {
+        Ok(Ok(Ok(AttachOutcome::Attached(_attached)))) => (
+            AttachClassification {
+                classification: "reattached",
+                reason: format!("driver {driver_id} proved live runtime handle"),
             },
-        },
-        Ok(AttachOutcome::NotReattachable) => AttachClassification {
-            classification: "interrupted",
-            reason: format!("driver {driver_id} could not prove a live runtime handle"),
-        },
-        Err(e) => AttachClassification {
-            classification: "interrupted",
-            reason: format!("driver {driver_id} attach proof failed: {e}"),
-        },
+            false,
+        ),
+        Ok(Ok(Ok(AttachOutcome::NotReattachable))) => (
+            AttachClassification {
+                classification: "interrupted",
+                reason: format!("driver {driver_id} could not prove a live runtime handle"),
+            },
+            false,
+        ),
+        Ok(Ok(Err(error))) => (
+            AttachClassification {
+                classification: "interrupted",
+                reason: format!("driver {driver_id} attach proof failed: {error}"),
+            },
+            false,
+        ),
+        Ok(Err(error)) => (
+            AttachClassification {
+                classification: "interrupted",
+                reason: format!("driver {driver_id} attach proof task failed: {error}"),
+            },
+            false,
+        ),
+        Err(_) => {
+            probe.handle.abort();
+            let _ = (&mut probe.handle).await;
+            (
+                AttachClassification {
+                    classification: "interrupted",
+                    reason: format!("driver {driver_id} attach proof exceeded inventory deadline"),
+                },
+                true,
+            )
+        }
     }
 }
 
@@ -8586,7 +8891,11 @@ fn apply_recovery_claim_to_run(
     );
 }
 
-fn collect_recovery_origin_index(home: &Home, board: &[BoardEntry]) -> Vec<IndexedRecoveryOrigin> {
+fn collect_recovery_origin_index(
+    home: &Home,
+    board: &[BoardEntry],
+    metrics: &mut InventoryStageMetrics,
+) -> Vec<IndexedRecoveryOrigin> {
     let mut links = Vec::new();
     let mut seen_dirs = std::collections::BTreeSet::new();
     for entry in board {
@@ -8617,12 +8926,10 @@ fn collect_recovery_origin_index(home: &Home, board: &[BoardEntry]) -> Vec<Index
             if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
                 continue;
             }
-            links.extend(index_recovery_origins_in_session(
-                home,
-                &project_root,
-                &path,
-                project_id,
-            ));
+            let indexed = index_recovery_origins_in_session(home, &project_root, &path, project_id);
+            metrics.origin_index_files += 1;
+            metrics.origin_index_bytes_inspected += indexed.bytes_inspected;
+            links.extend(indexed.links);
         }
     }
     links
@@ -15133,6 +15440,7 @@ mod tests {
             dispatch_response_delay: None,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
             trusted_claude_binary: pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: None,
         }
@@ -17258,7 +17566,7 @@ mod tests {
             boot_reattach_candidate(&external_envelopes, &session_path).is_none(),
             "external residue must not enter the no-driver reattach/log path"
         );
-        let recovered = classify_session_files(
+        let (recovered, _inventory) = classify_session_files(
             &post_restart_state.home,
             post_restart_state.trusted_claude_binary.as_ref(),
             &post_restart_state.boot.boot_id,
@@ -17425,7 +17733,7 @@ mod tests {
             )
             .unwrap();
 
-        let recovered = classify_session_files(
+        let (recovered, _inventory) = classify_session_files(
             &home,
             None,
             "boot-after-restart",
@@ -17438,8 +17746,10 @@ mod tests {
             .find(|run| run.run_id == "run-manager-recovery")
             .expect("manager run should remain visible after restart");
         assert_eq!(run.classification, "interrupted");
+        // acp-stdio has no reattachable runtime handle, so inventory records
+        // that fact instead of paying for a driver probe that can only fail.
         assert!(
-            run.reason.contains("could not prove a live runtime handle"),
+            run.reason.contains("does not support runtime reattach"),
             "{}",
             run.reason
         );
@@ -20849,7 +21159,7 @@ mod tests {
         let project_root = tmp.path().join("proj");
         write_nonterminal_session(&project_root, identity, "acp/1", "implementer-claude-acp");
 
-        let recovered = classify_session_files(
+        let (recovered, _inventory) = classify_session_files(
             &home,
             None,
             "boot-test",
@@ -20863,7 +21173,247 @@ mod tests {
             .find(|run| run.run_id == "run-acp-recovery")
             .unwrap();
         assert_eq!(run.classification, "interrupted");
-        assert!(run.reason.contains("could not prove"));
+        assert!(run.reason.contains("does not support runtime reattach"));
+    }
+
+    struct HangingAttachDriver(Arc<std::sync::atomic::AtomicBool>);
+
+    impl Drop for HangingAttachDriver {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for HangingAttachDriver {
+        fn transport(&self) -> &'static str {
+            "test-hanging-attach"
+        }
+
+        async fn acquire(
+            &self,
+            _ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            Err(orgasmic_drivers::DriverError::Unsupported(
+                "test driver does not acquire",
+            ))
+        }
+
+        async fn attach(
+            &self,
+            _ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<AttachOutcome, orgasmic_drivers::DriverError> {
+            std::future::pending().await
+        }
+    }
+
+    struct ImmediateNonReattachableDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for ImmediateNonReattachableDriver {
+        fn transport(&self) -> &'static str {
+            "test-immediate-attach"
+        }
+
+        async fn acquire(
+            &self,
+            _ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            Err(orgasmic_drivers::DriverError::Unsupported(
+                "test driver does not acquire",
+            ))
+        }
+    }
+
+    struct CountingHangingAttachDriver {
+        current: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for CountingHangingAttachDriver {
+        fn transport(&self) -> &'static str {
+            "test-counting-hanging-attach"
+        }
+
+        async fn acquire(
+            &self,
+            _ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<orgasmic_drivers::DriverSession, orgasmic_drivers::DriverError> {
+            Err(orgasmic_drivers::DriverError::Unsupported(
+                "test driver does not acquire",
+            ))
+        }
+
+        async fn attach(
+            &self,
+            _ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<AttachOutcome, orgasmic_drivers::DriverError> {
+            struct InFlightGuard(Arc<std::sync::atomic::AtomicUsize>);
+            impl Drop for InFlightGuard {
+                fn drop(&mut self) {
+                    self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+
+            let now = self
+                .current
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            self.peak
+                .fetch_max(now, std::sync::atomic::Ordering::SeqCst);
+            let _guard = InFlightGuard(self.current.clone());
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_attach_probe_deadline_aborts_hang_without_starving_ready_probe() {
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let started = std::time::Instant::now();
+        let hanging_driver = Box::new(HangingAttachDriver(dropped.clone()));
+        let hanging_ctx = DriverContext {
+            identity: RuntimeIdentity {
+                run_id: "run-hanging-attach".into(),
+                runtime_id: "runtime-hanging-attach".into(),
+                boot_id: "boot-hanging-attach".into(),
+            },
+            run_kind: RunKind::Worker,
+            task_id: "TASK-HANG".into(),
+            worker_id: "test-hanging-attach".into(),
+            project_id: None,
+            worktree: None,
+            babysitter_target: None,
+        };
+        let ready_driver = Box::new(ImmediateNonReattachableDriver);
+        let ready_ctx = DriverContext {
+            identity: RuntimeIdentity {
+                run_id: "run-ready-attach".into(),
+                runtime_id: "runtime-ready-attach".into(),
+                boot_id: "boot-ready-attach".into(),
+            },
+            run_kind: RunKind::Worker,
+            task_id: "TASK-READY".into(),
+            worker_id: "test-ready-attach".into(),
+            project_id: None,
+            worktree: None,
+            babysitter_target: None,
+        };
+        let attach_limit = Arc::new(tokio::sync::Semaphore::new(2));
+        let hanging_task =
+            spawn_driver_attach_probe(hanging_driver, hanging_ctx, attach_limit.clone());
+        let ready_task = spawn_driver_attach_probe(ready_driver, ready_ctx, attach_limit);
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(25);
+        let (hanging, hanging_timed_out) =
+            finish_driver_attach(hanging_task, "test-hanging-attach".to_string(), deadline).await;
+        let (ready, ready_timed_out) =
+            finish_driver_attach(ready_task, "test-immediate-attach".to_string(), deadline).await;
+
+        assert_eq!(hanging.classification, "interrupted");
+        assert!(hanging.reason.contains("inventory deadline"));
+        assert!(hanging_timed_out, "a hung probe reports a deadline metric");
+        assert_eq!(ready.classification, "interrupted");
+        assert!(
+            !ready_timed_out,
+            "a probe that answered must not be counted as timed out"
+        );
+        assert!(
+            ready.reason.contains("could not prove"),
+            "a ready probe must retain its result after another probe consumes the deadline: {}",
+            ready.reason
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(500),
+            "unresponsive attach exceeded its shared deadline"
+        );
+        assert!(
+            dropped.load(std::sync::atomic::Ordering::SeqCst),
+            "timed-out attach task must be aborted, joined, and dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn recovery_attach_probe_concurrency_is_globally_capped() {
+        let current = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let peak = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let limit = Arc::new(tokio::sync::Semaphore::new(2));
+        let mut probes = Vec::new();
+        for index in 0..8 {
+            let driver = Box::new(CountingHangingAttachDriver {
+                current: current.clone(),
+                peak: peak.clone(),
+            });
+            let ctx = DriverContext {
+                identity: RuntimeIdentity {
+                    run_id: format!("run-capped-{index}"),
+                    runtime_id: format!("runtime-capped-{index}"),
+                    boot_id: "boot-capped".into(),
+                },
+                run_kind: RunKind::Worker,
+                task_id: format!("TASK-CAP-{index}"),
+                worker_id: "test-capped-attach".into(),
+                project_id: None,
+                worktree: None,
+                babysitter_target: None,
+            };
+            probes.push(spawn_driver_attach_probe(driver, ctx, limit.clone()));
+        }
+
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while peak.load(std::sync::atomic::Ordering::SeqCst) < 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("two attach probes should fill the configured concurrency limit");
+        assert_eq!(
+            peak.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "attach probes must never exceed the global concurrency limit"
+        );
+        drop(probes);
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while current.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping the inventory must abort every in-flight capped probe");
+    }
+
+    #[tokio::test]
+    async fn dropping_attach_probe_owner_aborts_unresponsive_driver() {
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let driver = Box::new(HangingAttachDriver(dropped.clone()));
+        let ctx = DriverContext {
+            identity: RuntimeIdentity {
+                run_id: "run-cancelled-attach".into(),
+                runtime_id: "runtime-cancelled-attach".into(),
+                boot_id: "boot-cancelled-attach".into(),
+            },
+            run_kind: RunKind::Worker,
+            task_id: "TASK-CANCEL".into(),
+            worker_id: "test-cancelled-attach".into(),
+            project_id: None,
+            worktree: None,
+            babysitter_target: None,
+        };
+        let task = spawn_driver_attach_probe(driver, ctx, Arc::new(tokio::sync::Semaphore::new(1)));
+        tokio::task::yield_now().await;
+        drop(task);
+
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while !dropped.load(std::sync::atomic::Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("dropping an inventory must abort and drop every pending attach probe");
     }
 
     #[tokio::test]
@@ -20899,7 +21449,7 @@ mod tests {
             "manager-tmux-tui",
         );
 
-        let recovered = classify_session_files(
+        let (recovered, _inventory) = classify_session_files(
             &home,
             None,
             "boot-test",
@@ -21300,7 +21850,7 @@ mod tests {
         let failed_path = session_path;
         let original_bytes = std::fs::read(&failed_path).unwrap();
 
-        let recovered = classify_session_files(
+        let (recovered, _inventory) = classify_session_files(
             &home,
             None,
             "boot-test",
@@ -21790,6 +22340,134 @@ mod tests {
         }
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn recovery_inventory_waits_for_atomic_claim_commit() {
+        let _live_guard = live_session_guard();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let run_id = "run-claim-inventory-race";
+        write_failed_recoverable_session(
+            &project_root,
+            run_id,
+            "protocol_end_without_finalize",
+            false,
+        );
+
+        let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        *RECOVERY_POST_ORIGIN_AUTHORITY_HOOK.lock().unwrap() = Some(Box::new(move || {
+            entered_tx.send(()).unwrap();
+            release_rx
+                .recv_timeout(Duration::from_secs(5))
+                .expect("test releases recovery after concurrent inventory starts");
+        }));
+
+        let running = crate::Daemon::run(home.clone(), test_options())
+            .await
+            .expect("boot daemon");
+        let token = read_token(&home);
+        let client = reqwest::Client::new();
+        let recover_url = format!("http://{}/api/runs/{run_id}/recover", running.addr);
+        let post_client = client.clone();
+        let post_token = token.clone();
+        let post = tokio::spawn(async move {
+            post_client
+                .post(recover_url)
+                .bearer_auth(post_token)
+                .json(&json!({
+                    "action": "start_recovery_run",
+                    "project": "orgasmic",
+                    "force_inert": true,
+                    "request_id": "claim-inventory-race",
+                }))
+                .send()
+                .await
+                .unwrap()
+        });
+        entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("recovery reaches origin-authority hook");
+
+        let get_client = client.clone();
+        let get_token = token.clone();
+        let runs_url = format!("http://{}/api/runs", running.addr);
+        let inventory = tokio::spawn(async move {
+            get_client
+                .get(runs_url)
+                .bearer_auth(get_token)
+                .send()
+                .await
+                .unwrap()
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(
+            !inventory.is_finished(),
+            "inventory must not apply a stale origin index during claim creation"
+        );
+
+        release_tx.send(()).unwrap();
+        let post_response = tokio::time::timeout(Duration::from_secs(5), post)
+            .await
+            .expect("recover POST completes")
+            .unwrap();
+        assert!(post_response.status().is_success());
+        let replacement: Value = post_response.json().await.unwrap();
+
+        let inventory_response = tokio::time::timeout(Duration::from_secs(5), inventory)
+            .await
+            .expect("inventory completes after atomic claim commit")
+            .unwrap();
+        assert!(inventory_response.status().is_success());
+        let concurrent_inventory: Value = inventory_response.json().await.unwrap();
+        let concurrent_origin = concurrent_inventory["failed_recoverable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["run_id"] == run_id)
+            .expect("origin remains listed after recovery");
+        assert!(
+            !concurrent_origin["reason"]
+                .as_str()
+                .unwrap()
+                .contains("invalid/quarantined"),
+            "inventory running between the pending plan and commit must not quarantine the claim"
+        );
+
+        let committed_inventory: Value = client
+            .get(format!("http://{}/api/runs", running.addr))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let committed_origin = committed_inventory["failed_recoverable"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|run| run["run_id"] == run_id)
+            .expect("origin remains listed after committed recovery");
+        assert_eq!(
+            committed_origin["recovery_replacement_run_id"], replacement["run_id"],
+            "the next inventory must observe the committed RecoveryOrigin and claim together"
+        );
+        assert!(committed_origin["recovery_actions"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let claim = load_recovery_claim(&home, "orgasmic", run_id)
+            .unwrap()
+            .expect("committed claim remains present");
+        assert_eq!(claim.status, RecoveryClaimStatus::Committed);
+
+        let _ = running.shutdown.send(());
+        let _ = running.join.await;
+    }
+
     #[tokio::test]
     async fn parallel_failed_recovery_same_request_id_creates_one_replacement() {
         let tmp = tempfile::tempdir().unwrap();
@@ -22205,7 +22883,7 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
-        let recovered = rt.block_on(classify_session_files(
+        let (recovered, _inventory) = rt.block_on(classify_session_files(
             &home,
             None,
             "boot-test",

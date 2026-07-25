@@ -21,6 +21,7 @@ mod doctor;
 mod goal;
 mod home;
 mod install_state;
+mod managed_binary;
 mod manager;
 mod member;
 mod node;
@@ -1588,12 +1589,14 @@ fn cmd_doctor_fix(home: &Home, no_modify_path: bool) -> Result<()> {
     if let Some(source) = source_checkout_for_repair(home) {
         match path_env::relink_source_binary(home, &source) {
             Ok(bin) => println!(
-                "→ relinked {} -> {}",
+                "→ installed {} from {}",
                 home.bin_orgasmic().display(),
                 bin.display()
             ),
-            Err(e) => eprintln!("warning: could not relink source binary: {e}"),
+            Err(e) => eprintln!("warning: could not install source binary: {e}"),
         }
+    } else if let Err(e) = migrate_managed_binary_off_symlink(home) {
+        eprintln!("warning: could not install the managed binary as a real file: {e}");
     }
     let report = path_env::ensure(home, no_modify_path)?;
     print_path_report(home, &report);
@@ -1605,6 +1608,32 @@ fn cmd_doctor_fix(home: &Home, no_modify_path: bool) -> Result<()> {
             }
             daemon_lifecycle::AuthRepairOutcome::NotNeeded => {}
         }
+    }
+    Ok(())
+}
+
+/// Convert a bundle install's legacy `bin/orgasmic -> ../current/bin/orgasmic`
+/// link into a real file, so the executed path stops changing with every runtime
+/// version. This is the remedy `doctor` names for that warning, so `--fix`
+/// should perform it rather than only describe it. No-op once migrated.
+/// TASK-9P810.
+fn migrate_managed_binary_off_symlink(home: &Home) -> Result<()> {
+    let bin = home.bin_orgasmic();
+    let Ok(meta) = std::fs::symlink_metadata(&bin) else {
+        return Ok(());
+    };
+    if !meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    // Publishing the link resolves it first, so this installs whatever runtime
+    // the operator is currently running — the same bytes, at a stable path.
+    let installed = managed_binary::install(home, &bin, managed_binary::IdentityGuard::Enforce)?;
+    println!(
+        "→ installed {} as a real binary; macOS permission grants now survive updates",
+        installed.path.display()
+    );
+    if installed.migrated_from_symlink {
+        println!("  expect one final permission prompt: the executed path just changed");
     }
     Ok(())
 }

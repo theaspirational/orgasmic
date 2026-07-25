@@ -143,7 +143,7 @@ Resolves ORGASMIC_HOME paths and content roots, placing user overrides before sh
 ** arch_WZFAX.2 install/update entrypoint
 :PROPERTIES:
 :ID:                 arch_WZFAX.2
-:SOURCE_PATHS:       crates/orgasmic-cli/src/update.rs crates/orgasmic-cli/src/content_lifecycle.rs
+:SOURCE_PATHS:       crates/orgasmic-cli/src/update.rs crates/orgasmic-cli/src/content_lifecycle.rs crates/orgasmic-cli/src/managed_binary.rs
 :TESTS:              cargo test -p orgasmic-cli
 :READS:
 :WRITES:             file:board
@@ -2102,3 +2102,39 @@ another role.
 
 - Revised this stable design report only; no source, durable `.orgasmic` state, daemon, commit, merge, or push action was performed.
 - Read anchors include `supervisor.rs` timeout/reattach/clock paths, `session.rs`, driver modes, `api.rs`, and `manager.rs` reason consumers. This is a design-only revision; no build or test was run.
+
+* arch_RN73Z On-demand native evidence materialization and multi-run retrospectives
+:PROPERTIES:
+:CONSTRAINTS: explicit-only bounded derived-no-authority provider-neutral
+:DECIDED_AT: 2026-07-25
+:DEPENDS_ON: arch_EAVPP
+:ID: arch_RN73Z
+:INTERFACE: run evidence materialize; manager retro
+:KIND: pipeline
+:MOTIVATED_BY: dec_PC6T2 dec_WDR5K
+:END:
+
+Manual retrospective evidence pipeline shared by direct manager requests and future opt-in routines.
+
+** Purpose
+Let a retrospective agent diagnose recurring tool-call churn, context flaws, loop causes, execution bottlenecks, wall-time loss, and token inefficiency across one run or a logically ordered group without making native transcript ingestion part of normal run operation.
+
+** Interfaces
+- `run evidence materialize --run <id>` and an equivalent agent-callable function resolve verified native metadata, fingerprint the source, and return a compact evidence reference plus summary.
+- `manager retro` accepts repeated run ids, task ids, or an ordered task sequence; it freezes resolved runs, ordering, source digests, missing-evidence gaps, and selection rationale into a scope manifest before dispatch.
+- A future routine invokes `manager retro` with a saved selector and trigger. It does not bypass scope resolution or permissions.
+
+** Components
+1. Native source resolver reuses the existing per-run native-transcript lookup and fails closed on ambiguous provider/session/worktree correlation.
+2. A provider adapter parses the vendor JSONL and emits the existing provider-neutral DriverEvent and activity vocabulary. Claude is the first adapter; other harnesses implement the same boundary locally.
+3. Materialization writes a bounded, versioned, idempotent cache under `.orgasmic/tmp/retro/evidence/<run-id>/<source-digest>/`. Large tool output, files, and thinking are represented by capped excerpts, counts, hashes, and source references rather than copied wholesale.
+4. A provider-neutral reducer computes timelines and signals: repeated equivalent calls, failed/retried calls, tool-result latency, idle gaps, context resets, redundant reads, permission/auth waits, output volume, token use, and progress per unit time/token.
+5. The retrospector receives the scope manifest and compact summaries first, materializes only missing evidence it needs, and writes a report with evidence references and cross-run findings.
+
+** Constraints
+- Source vendor JSONL and authoritative orgasmic session JSONL are immutable.
+- Derived evidence is tagged `derived_native` and cannot affect run lifecycle, task state, recovery, cleanup, lease, or dispatch authority.
+- Conversion and retro dispatch are never automatic by default.
+- Central reducers contain no Claude, Codex, Cursor, ACP, tmux, or rmux branches.
+- Materializers enforce per-event, per-run, and total-scope byte limits and return references instead of injecting full transcripts into agent context.
+- Retrospective workers are read-only except for their derived cache and report.

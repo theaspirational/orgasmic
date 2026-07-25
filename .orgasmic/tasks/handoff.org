@@ -8,9 +8,41 @@
 :LIVENESS:         40f70591a323ebb8fbbeb2a4caa31d81138e106c
 :LIVENESS_AT:      [2026-07-24 Fri]
 :UPDATED_AT:       [2026-07-24 Fri]
+:GOAL_ID:          goal-20260725-land-the-committed
 :END:
 
-Stable runtime 0.0.14 and apps 0.0.8 are published from source commit 40f70591a323ebb8fbbeb2a4caa31d81138e106c. The hardening backlog remains drained and no worker dispatch is active.
+Three fixes are committed on `task-kwstj-bounded-run-inventory` (fb7590b, 61b9b7f, 28247fd) and none of them are running. The operator's daemon is the installed 0.0.14 build, where `GET /api/runs` still takes 35 s to first byte. Closing that gap is what the top of this agenda is for.
+
+TASK-KWSTJ is verified against production shape and needs no further proof: measured on an APFS clone of the real 200-file / 2.404 GB corpus, 24.7 s to 0.10 s time-to-first-byte, 28 MB inspected of 2.404 GB, and — the assertion that matters — 200 runs classified with zero differences from the pre-fix build across every bucket, including the 135 files whose middle was skipped.
+
+Priority is severity; the order below is sequence. They differ in two places, both deliberate.
+
+1. TASK-9P810 (P0, raised from P1) — stable, identity-checked install path. Not the most severe item, but it sequences first because every other runtime fix has to reach the operator's machine through it, and the attempt to do that by hand on 2026-07-25 cost a 30-minute outage and two System Settings approvals. Until this lands, shipping any runtime change repeats that incident.
+2. TASK-KKGKM (P0) — a project the daemon cannot read must not stop it binding. The worst failure observed: a permission fault on part of the board took down the entire runtime — no bind, no CLI, no UI, `status` hanging, launchd churning against its own instance lock. Note its item 4 is explicitly unconfirmed: something blocks after the index scan completes, boot reattach is the suspect, and no fd was open when the process was sampled. Confirm before fixing.
+3. TASK-KWSTJ (P0) — land it. Committed, gated, production-verified.
+4. TASK-TJKFC (P0) — bounded preflight and atomic rollback. Two dispatches on 2026-07-25 died at startup; one left a live process for 70 minutes that the manager read as work in progress, and an open dispatch record that the documented close verb could not clear. Its evidence carries the sharp design constraint: `claude auth status` reported `loggedIn: true` while the actual argv failed in 39 ms, so the preflight must exercise the real spawned argv, not ambient credentials.
+5. TASK-Z8WEJ (P0) and TASK-VB9DQ (P1) — both committed and unit-tested, neither proven through a real dispatch. Verify end to end once 9P810 makes installing safe. Open items remain: the resolved credential mode is not yet in RunMeta, and codex, cursor-agent and hermes have not been checked for the same questions.
+
+Then the process arc, which changes how every remaining task is executed and is mostly shipped-text and CLI work:
+
+6. TASK-YGB1R — derivable tier floor; defines vocabulary for 3CM0Q and 4YX1K.
+7. TASK-TW3N3 — commit-before-dispatch precondition and the `.orgasmic/` worktree blindspot.
+8. TASK-JQARS — implement the documented `orgasmic manager drivers`; gates 0JY7M.
+9. TASK-8ED6V — retired-content residue visible to agents, naming the deciding node.
+10. TASK-3CM0Q — recorded tier declaration; no tier stated means no manager-direct source edits.
+11. TASK-4YX1K — proceed by default; confirm only for irreversible or outward-facing actions.
+12. TASK-0JY7M — ask once per session for agent selection; reviewers default off the author's harness family.
+
+Then the run-storage chain and naming:
+
+13. TASK-FZB6T — compact run catalog; its bounded legacy fallback already exists as `scan_session_lifecycle`.
+14. TASK-5P60H — slow-start and launchd backoff; carries the boot-reattach handoff from TASK-KWSTJ and overlaps TASK-KKGKM item 5.
+15. TASK-VBSG2 (P1) and TASK-3R3EZ (P2) — both gated on the catalog; VBSG2 additionally blocked by VB9DQ for the acp-stdio transport.
+16. TASK-XCJYC — rename the non-ACP transports to `stdio`/`ws`, reserving `acp-*`; then TASK-CM5KV (P2) evaluates real ACP.
+
+Standing contracts, unchanged: dec_WDR5K (no worker templates, zero model knowledge in orgasmic), dec_Y5MPK (orgasmic records operations, the harness owns the conversation, the operator owns retention), and the retro contract — no automatic conversion, no automatic retro runs, vendor JSONL vendor-owned and immutable, conversion produces bounded versioned derived-only evidence.
+
+Session caution recorded in gotchas: never test a source build by swapping the installed runtime. Use a throwaway `ORGASMIC_HOME` on a non-default port with an APFS `cp -c` clone of a real sessions directory — that is how the production measurement above was taken safely, and it was available before the outage.
 
 ** Done so far
 - Published runtime 0.0.14 to https://github.com/theaspirational/orgasmic/releases/tag/stable with four refreshed macOS/Linux targets and the existing Windows 0.0.7 target preserved.

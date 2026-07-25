@@ -27,8 +27,8 @@ use crate::modes::subprocess_stream_json::{
 use crate::r#trait::{
     AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl,
     DriverError, DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest,
-    RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck, UserInputRequest,
-    WorkerDriver,
+    NativeRuntimeMeta, RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck,
+    UserInputRequest, WorkerDriver,
 };
 use crate::runtime_options::{
     RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc, RuntimeOptionsRequest,
@@ -106,6 +106,10 @@ impl HarnessEventAdapter for AcpStdioComposeAdapter {
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
         self.inner.stdio_spawn()
+    }
+
+    fn native_runtime(&self) -> Option<NativeRuntimeMeta> {
+        self.inner.native_runtime()
     }
 
     fn upgrades_simulated_to_subprocess(&self) -> bool {
@@ -394,6 +398,9 @@ impl WorkerDriver for AcpStdioDriver {
         };
         compose.validate_config(&config)?;
         let request = compose.compose_request(&ctx, &config)?;
+        // Read straight after composing: the adapter pins the native session id
+        // while it builds the argv, and `compose.inner` is moved below.
+        let native_runtime = compose.native_runtime();
 
         let (tx, rx) = mpsc::channel(64);
         let jsonrpc_init = compose.jsonrpc_session_init;
@@ -500,7 +507,10 @@ impl WorkerDriver for AcpStdioDriver {
                 released: false,
             }),
             producer,
-            native_runtime: None,
+            // The adapter pins the harness-native session id while composing
+            // the request; surface it so the supervisor records a NativeRuntime
+            // lifecycle event for recovery and retro (dec_Y5MPK).
+            native_runtime,
         })
     }
 

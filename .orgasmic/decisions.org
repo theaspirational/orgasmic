@@ -2077,3 +2077,54 @@ rmux 0.9 changes the RPC protocol, so its CLI, hidden daemon, and Rust SDK canno
 Require the exact rmux 0.9.0 release across the external CLI and rmux-sdk. On macOS, launch the hidden rmux daemon as the direct process of its own user LaunchAgent with exit-empty disabled, before starting the orgasmic daemon. Before Cursor starts, run a bounded disposable Keychain probe through that rmux daemon and fail with an actionable kill-server and daemon-restart diagnostic when the launch context is stale. Spawn worker processes with retained exit state and convert stream end into one terminal event: code 0 completes, while signals, non-zero codes including 139, or missing retained state fail the run immediately.
 ** Consequences
 An upgrade may intentionally retire older rmux sessions because cross-version clients are unsupported. Normal orgasmic daemon restarts no longer orphan rmux in a terminated launch coalition, Cursor fails before doing work when Keychain access is unusable, and supervisors never continue polling after terminal pane loss.
+
+* dec_PC6T2 Native run evidence and retrospective execution are explicit opt-in operations
+:PROPERTIES:
+:DECIDED_AT: 2026-07-25
+:ID: dec_PC6T2
+:SOURCE: operator direction after 2026-07-23 run inventory incident
+:END:
+
+** Context
+Legacy rmux/tmux screen-redraw capture grew the orgasmic project session history to 2.239 GiB. Harnesses such as Claude already keep richer native JSONL in vendor-owned paths. Retrospectives need selected tool calls, tool results, timing, context churn, and token signals across logically related runs, but automatic copying, conversion, or retrospective dispatch would recreate the storage problem and spend agent capacity without an operator decision.
+
+** Decision
+1. Orgasmic session JSONL stores only lifecycle authority and bounded normalized semantic events required for live operation, recovery, and compact history. Rendered TUI scrollback or redraw streams are never persisted. Harness-native transcripts remain immutable in the vendor save path.
+2. Native transcript conversion is explicit and scoped. A user, manager, or already-running retrospective agent may materialize evidence for named runs only. The converter produces a bounded, versioned derived cache keyed by source digest and converter version. Derived-native events are diagnostics only: they never establish liveness, recovery, completion, dispatch closure, or task state.
+3. Retrospective runs are explicit. A manager resolves selected run ids, task ids, or an ordered task sequence into an immutable scope manifest, then dispatches a read-only retrospector. It may write only derived evidence and its report. No retrospective runs or conversions occur on startup, run completion, task completion, release, or enumeration.
+4. Future routines are user-configured invocations of the same manual retrospective path. A routine may choose a selector and schedule or trigger, but there is no shipped default routine and no second automatic execution path.
+
+** Consequences
+Operational run listing remains independent of large transcripts and derived evidence. Claude support can start as one small adapter over the existing native-transcript resolver and HarnessEventAdapter concepts; other harnesses add their own adapters without provider branches in central retrospective logic. Reports can audit several runs from backlog to done while evidence materialization stays lazy, idempotent, bounded, and attributable.
+
+* dec_Y5MPK Transcript ownership: orgasmic records operations, the harness owns the conversation, the operator owns retention
+:PROPERTIES:
+:ID: dec_Y5MPK
+:RELATES_TO: dec_WDR5K
+:SOURCE: operator direction 2026-07-25
+:END:
+
+** Context
+dec_WDR5K item 7 settled where transcripts come from: harness-native JSONL, located by per-harness transcript finder adapters, with TUI screen capture removed. It did not settle who owns those files over time, and the gap became load-bearing once retro (TASK-VBSG2) was designed on top of them.
+
+Measured on one real board, 2026-07-25: orgasmic's own session JSONL held 2.239 GiB across 198 runs, of which rendered TUI capture was 59% (rmux 1.275 GB over 60 runs, ~21 MB per run) while the structured protocol transports cost ~1.5 MB per run across more runs. Independently, the vendor stores already held the same conversations: 1267 files under `~/.codex/sessions`, 908 under `~/.cursor`, 447 under `~/.claude/projects`.
+
+The decisive property is not size, it is resumption. Orgasmic can replay its own record but cannot hand it back to a harness to continue. `claude --resume <id> --fork-session` works only because the vendor file exists. A transcript orgasmic saved itself can never be resumed, so native capture cannot substitute for the vendor file even in principle.
+
+** Decision
+Two records with two owners, and orgasmic owns only one of them.
+
+1. Orgasmic's session JSONL is operational truth: lifecycle, tool calls, terminal state — what the daemon observed and what recovery and classification consume. It is orgasmic-owned and must stay bounded.
+2. Harness-native JSONL is semantic truth: the conversation as the harness recorded it, including reasoning the protocol stream never exposes. It is vendor-owned, immutable to orgasmic, and is the sole source for retro and for resumption.
+3. Correlation is minted, never discovered. Orgasmic pins the native session id before launch and records it in a `NativeRuntime` lifecycle event, so locating the vendor file is deterministic rather than a timestamp or uniqueness heuristic. `modes/tmux.rs` already does this; every transport must.
+4. Orgasmic never suppresses vendor persistence. A transport that disables the harness's own session recording is a defect, not a configuration choice.
+5. Retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites, or expires a vendor file — not on upgrade, not by policy, not by age. Its obligation is visibility: report per-harness counts, total size, and age distribution through `doctor` so the operator can act with full information.
+
+** Consequences
+Vendor stores grow without bound and orgasmic will not manage that growth; the operator does, with orgasmic supplying the numbers. This is the honest reading of "vendor-owned and immutable" from the retro contract — a runtime that may delete the source a later retro run needs does not own it in any meaningful sense, and a runtime that silently prunes vendor state is indistinguishable from data loss.
+
+The rule makes existing defects legible rather than debatable. The acp-stdio claude adapter passes `--no-session-persistence` and emits no `NativeRuntime`, so its runs have no semantic record at all and cannot be resumed or retro-ed (TASK-VB9DQ). Rendered TUI capture is now clearly the worst option available — lossy, largest, and a strictly inferior duplicate of a vendor file that already exists — which sharpens rather than changes dec_WDR5K item 7's removal (TASK-AFE5Q).
+
+Externally this matches how comparable tools divide the responsibility: t3code requires the operator to authenticate each vendor CLI (`claude auth login`, `codex login`, `cursor-agent login`) and orchestrates the authenticated tool rather than owning its identity or state.
+
+Bounded derived evidence is unaffected: TASK-VBSG2 may convert vendor JSONL into a versioned, size-capped, derived-only cache under `.orgasmic/tmp/retro/evidence`, because that cache is orgasmic-owned and regenerable. Deriving from the vendor file is always permitted; mutating or deleting it never is.

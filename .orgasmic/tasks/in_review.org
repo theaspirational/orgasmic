@@ -1,3 +1,380 @@
 #+title: In Review
 #+orgasmic_version: 1
 
+* IN_REVIEW TASK-KWSTJ P0 prove and finish bounded GET /api/runs plus exact-run terminal paths :daemon:recovery:bug:
+:PROPERTIES:
+:DEPENDS_ON: TASK-JN5Q1
+:ID: TASK-KWSTJ
+:PRIORITY: P0
+:END:
+
+Build on, do not discard, the existing uncommitted TASK-JN5Q1 patch. First preserve its diff and rerun its focused gates. Reproduce against a fresh curl output path and record time-to-headers, time-to-body-complete, HTTP framing headers, response counts, and inventory stage timings. Treat the report claim that a complete stale file proves response serialization as disproven unless a packet/wire probe reproduces it.
+
+Implementation boundary:
+1. `GET /api/runs` must never await unbounded driver work. Terminal tombstones do no attach probe; genuine attach probes share one absolute deadline, have capped concurrency, and are aborted/joined on timeout.
+2. Inventory construction must not parse multi-megabyte transcript bodies to answer lifecycle questions. Read a bounded lifecycle summary/catalog representation; legacy fallback may inspect a capped prefix/tail and must classify uncertainty conservatively. No per-failed-run whole-board rescan.
+3. Exact recorded run ids use `/runs/:id` and `/runs/:id/release`; `dispatch-close` and explicit-id finalize never enumerate `/runs`. Legacy records without a run id retain a safe reachability fence.
+4. Add stage metrics/logs for file count, bytes inspected, attach count/timeouts, classification counts, and total inventory latency without logging transcript content or local secrets.
+
+Required regression is wire-level: seed production-shaped terminal, failed, interrupted, missing-worktree, and one permanently hanging attach record, including at least one very large transcript fixture or sparse file. Perform an authenticated HTTP request with a hard deadline; assert headers arrive, the body reaches EOF, JSON parses, classification counts are correct, and a second request does not rescan transcript bytes. Also run direct-close and explicit-finalize tests through a proxy that rejects `/api/runs`.
+
+Acceptance target: p95 warm inventory below 250 ms on 200 records; cold legacy reconciliation is bounded and cannot exceed the CLI request budget. Verify with the real 197-file/2.239-GiB shape using a non-mutating fixture or snapshot. Run daemon, CLI dispatch, fmt, clippy, and diff-check gates. Do not delete or rewrite operator session history in this task.
+** Evidence
+Wire reproduction against the live pre-fix daemon (0.0.14, pid 11674, 5 projects, 198 session files totalling 2.239 GiB), fresh curl output path:
+- `GET /api/runs` -> HTTP/1.1 200, `content-type: application/json`, `content-length: 120579`, `size_download: 120579`.
+- `time_connect` 0.000286 s, `time_starttransfer` (headers/first byte) *35.205 s*, `time_total` (body complete) 35.207 s.
+- Framing is therefore correct and the body does reach EOF; the body transfers in 1.4 ms once it starts. The "complete stale JSON file proves serialization" claim is disproven as an explanation, and the earlier "no headers, zero bytes" observation is a client deadline expiring inside the 35 s time-to-first-byte, not a serialization defect.
+
+Source-backed cause, measured on the same real corpus (release build, read-only, non-mutating):
+- Whole-transcript enumeration read 2.239 GiB / 428,992 envelopes in 3.08 s per pass, and the recovery-origin index re-read the whole board again whenever a failed tombstone existed, on top of serial driver attach probes.
+- Bounded lifecycle scan reads 26.67 MiB in 95.3 ms over the same 198 files (135 truncated, 0 parse errors): 86x fewer bytes, 32x faster, and inside the 250 ms warm target.
+
+Fix, on top of the preserved TASK-JN5Q1 patch (its focused gates rerun green before any new edit):
+- `orgasmic_core::scan_session_lifecycle` reads a prefix/tail byte window (128 KiB + 64 KiB by default) and retains only lifecycle-relevant envelopes, rejecting transcript lines from their raw bytes without parsing. Budget sized from the real corpus: the furthest a lifecycle-deciding line ever sat was 56 KiB from the start and 13 KiB from the end.
+- Truncation is conservative: `final_envelope_retained` gates the terminal-release decision, so a still-writing run is never tombstoned from a stale retained lifecycle line, and a missing acquire still classifies `ambiguous`.
+- Inventory (`classify_session_dir`), the recovery-origin index (through the same pinned-directory, device/inode-validated fd), and `resolve_run_session_path` all use the bounded scan. Boot auto-reattach deliberately still reads whole files; that is TASK-5P60H's slow-start scope.
+- `InventoryStageMetrics` (file count, on-disk bytes, bytes inspected, truncated/unreadable counts, attach probes started/timed out, origin-index files and bytes, per-classification counts, duration) is emitted as a `tracing::debug!` and returned on `GET /api/runs` as `inventory`. Counts and byte totals only: no session paths, transcript text, prompts, or credentials.
+
+Regression added, `crates/orgasmic-daemon/tests/run_inventory_wire.rs` (raw HTTP/1.1 over TCP, `Connection: close` so EOF is observable, 5 s hard deadline):
+- `runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_transcripts` seeds terminal (32 MiB transcript), failed, interrupted, missing-worktree, and one record whose driver attach never answers (stub `tmux` that sleeps 600 s). Asserts the status line and JSON content-type arrive, the body reaches EOF non-empty and parses, per-bucket classification is exact, the hung probe is recorded as `exceeded inventory deadline` with `attach_probes_timed_out == 1`, and inspected bytes stay at the fixed per-record ceiling. A second request inspects exactly the same byte window, proving transcript bytes are never rescanned.
+- `runs_endpoint_stays_bounded_across_two_hundred_records` seeds 200 terminal records (every 40th carrying a 4 MiB transcript) and asserts 200 classified, bounded bytes, and a warm response well inside the request budget.
+- Direct-close and explicit-id finalize keep passing through the `/api/runs`-rejecting proxy (`dispatch_close_with_recorded_run_id_does_not_enumerate_runs`, `stage_grill_finalize_from_orgasmic_run_id_on_main`).
+
+Gates: `cargo fmt` clean, `cargo clippy --workspace --all-targets` clean, `git diff --check` clean, `npm run typecheck` clean. orgasmic-core 132 lib + 26 fixture tests pass (plus one opt-in ignored real-corpus measurement). orgasmic-daemon lib 500 tests and every integration binary pass. orgasmic-cli dispatch 39 tests pass. Pre-existing failures unrelated to this change, verified identical on clean `main` by stashing: `orgasmic-drivers` `simulated_acquire_emits_deterministic_flow`, and the three `dispatch_endpoint` tests that need a stub `codex` on PATH. Under full-parallel load the daemon and CLI suites also show load flakes (tmux/git/daemon-connect timing) that all pass when rerun serially; the same class of flake was present before this change. One stale assertion from the TASK-JN5Q1 patch was corrected: `manager_session_after_restart_is_recovered_not_lost` now expects the `does not support runtime reattach` reason that acp-stdio records instead of a driver probe.
+
+No operator session history was deleted or rewritten.
+** Reviewer pass
+Production-shape verification, 2026-07-25, against an APFS copy-on-write clone of the real 200-file / 2.404 GB session corpus in an isolated scratch `ORGASMIC_HOME` on port 4899. The clone makes the measurement non-mutating by construction: writes cannot reach the originals, and the installed runtime was never involved.
+
+Same corpus, same endpoint, three requests each:
+
+| build | ttfb req1 | req2 | req3 |
+| installed 0.0.14 (pre-fix) | 24.695 s | 24.809 s | 24.840 s |
+| source build (fix)         | 0.105 s  | 0.096 s | 0.097 s |
+
+Roughly 255x faster, and inside the 250 ms warm p95 acceptance target with margin. The endpoint's own reported metrics for the fixed build: 200 session files, 2,404,437,937 bytes on disk, 28,016,305 bytes inspected (86x reduction), 135 truncated scans, 1 attach probe started and 0 timed out, duration_ms 95.
+
+Correctness, which matters more than the latency: the two builds were compared run-by-run across every classification bucket.
+
+- runs classified: old 200, new 200
+- present only in old: 0
+- present only in new: 0
+- classification differences: 0
+
+So the bounded prefix/tail scan produces an identical classification of the entire production corpus while reading 86x fewer bytes, including across the 135 files where the middle region was skipped. This is the evidence the reviewer brief asked for under "attack the bounded-window premise" — the premise holds on real data, not just on fixtures.
+
+Earlier live-daemon numbers for context: the same endpoint on the running 0.0.14 daemon with all five projects registered took 35.205 s to first byte. The scratch measurement is lower (24.7 s) because it carries one project rather than five; the order of magnitude and the conclusion are unchanged.
+
+Not established by this measurement: behaviour under concurrent load, and the boot path, which still reads whole session files and is TASK-5P60H's scope.
+
+* IN_REVIEW TASK-Z8WEJ Select the claude credential mode instead of hardcoding --bare :drivers:dispatch:bug:
+:PROPERTIES:
+:ID: TASK-Z8WEJ
+:PRIORITY: P0
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:136` hardcodes `--bare` in the claude stdio argv. Per the CLI's own help, `--bare` means "Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read)". An operator authenticated through a claude.ai subscription therefore cannot dispatch a claude worker at all: the credential exists, `claude auth status` reports `loggedIn: true, authMethod: claude.ai, subscriptionType: max`, and the dispatch still dies 1.2 s after acquire with "Not logged in - Please run /login" (observed TASK-KWSTJ reviewer dispatch, run-20260725T073841).
+
+`--bare` is wanted and should stay available: it skips hooks, LSP, plugin sync, auto-memory, background prefetches and CLAUDE.md auto-discovery, which is the right shape for a worker. The defect is that it is unconditional, and it silently carries a credential policy that a subscription operator cannot satisfy.
+
+Measured channel matrix, same binary and prompt, obviously-fake credential values (2026-07-25, claude 2.1.220):
+
+Under `--bare`:
+- no credential -> "Not logged in - Please run /login"
+- `ANTHROPIC_API_KEY=<fake>` -> "Invalid API key - Fix external API key" (channel LIVE)
+- `CLAUDE_CODE_OAUTH_TOKEN=<fake>` -> "Not logged in" (channel DEAD; the token is ignored)
+- `apiKeyHelper` via `--settings` -> "Invalid API key" (channel LIVE)
+
+Without `--bare`:
+- keychain OAuth -> authenticates and completes
+- `--strict-mcp-config` + empty `--mcp-config` + minimal `--settings` -> authenticates, `mcp_servers: []`, 30 tools, 2.0 s round trip
+
+Critical negative result: `CLAUDE_CODE_SIMPLE=1` on its own, with no `--bare` flag, also fails with "Not logged in". The lightweight behaviour and the credential policy are the same switch, so there is no way to keep bare-mode lightness while reading the keychain. Any design that assumes they can be separated is wrong.
+
+Both live `--bare` channels want an API key, not an OAuth credential, and a subscription's keychain credential is not an API key. So "`--bare` plus the user's keychain auth" is not achievable, by the flag's contract rather than by oversight.
+
+Work:
+1. Make the claude adapter select a credential mode instead of hardcoding one. At minimum: bare+API key (preferred, lightest) when an API key or apiKeyHelper is configured; non-bare with narrow isolation when auth is OAuth/subscription.
+2. Build the fallback tier explicitly rather than by dropping flags: `--strict-mcp-config` with an empty `--mcp-config`, a minimal `--settings`, and the existing `--no-session-persistence`. Verify it suppresses MCP, hooks, and CLAUDE.md discovery — do not assume the narrow flags cover everything `--bare` did, and record what is not covered.
+3. Detect, do not guess. `claude auth status` is non-interactive and returns structured JSON with `authMethod`; use it to choose the tier. Note it is necessary but not sufficient — see 5.
+4. Let the manager override the tier per dispatch, and record which tier was used in the run's RunMeta so a failure is diagnosable from the session JSONL alone.
+5. Feeds TASK-TJKFC: a generic auth probe is not enough. `claude auth status` reports `loggedIn: true` while the `--bare` invocation fails. The preflight must exercise the argv the worker will actually run.
+6. Consider whether the same credential-mode question exists for codex, cursor-agent, and hermes, or whether this is claude-specific. Do not generalise without checking.
+
+Acceptance:
+- a subscription-authenticated operator can dispatch a claude worker with no API key
+- an API-key operator still gets the light `--bare` path
+- the selected credential mode is visible in RunMeta
+- a mode that cannot authenticate is rejected before a worktree, lease, or dispatch record is created
+** Evidence
+Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+
+`adapters/claude.rs` now resolves a `ClaudeCredentialMode` in `compose_request` rather than hardcoding flags in `stdio_spawn`:
+- `BareApiKey` when `api_key_env` resolves or `ANTHROPIC_API_KEY` is present — keeps the light `--bare` path, which is the one credential channel `--bare` accepts.
+- `NativeLogin` otherwise — drops `--bare` so the harness reads its own keychain/OAuth login, and rebuilds isolation from `--strict-mcp-config` plus a minimal `--settings`.
+
+`stdio_spawn` now returns the credential-agnostic wire flags only; mode flags and the pinned session id are added where the run context is available.
+
+Item 2's instruction to verify rather than assume the narrow flags cover everything `--bare` did produced one negative result worth recording. Measured against claude 2.1.220:
+- MCP is fully suppressed: `--strict-mcp-config` alone yields `mcp_servers: []`, against nine servers loaded without it on the measurement machine.
+- Hooks are NOT suppressible. `--settings '{}'` and `--settings '{"hooks":{}}'` both still executed SessionStart hooks; `--include-hook-events` governs reporting, not execution; `--bare` is the only flag that skips them.
+
+So native-login workers execute whatever hooks the operator has configured. This is accepted deliberately — the alternative is that subscription-authenticated operators cannot dispatch claude at all — and is documented on the `NativeLogin` variant rather than left for a later reader to rediscover. It surfaced through a real test failure (`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events` began comparing nondeterministic hook uuids), not through inspection.
+
+Item 4 remains open: the resolved mode is logged at debug but is not yet recorded in RunMeta, so a failure is not yet diagnosable from the session JSONL alone. Item 6 also remains open — codex, cursor-agent and hermes have not been checked for the same credential-mode question.
+
+Gates: `cargo fmt`, `cargo clippy --workspace --all-targets`, `git diff --check` clean. orgasmic-drivers 213 lib tests pass; `driver_modes` returns to its pre-change baseline of 20 passed / 4 failed, those four being pre-existing codex failures verified identical on the clean branch by stashing. orgasmic-core 132 pass.
+
+Not verified end to end: the running daemon is the installed 0.0.14 build, so a live dispatch still uses the old adapter. Proving this against a real dispatch needs a daemon rebuild and restart, which is an operator decision.
+
+* IN_REVIEW TASK-VB9DQ Persist native session evidence for acp-stdio claude runs :drivers:recovery:evidence:
+:PROPERTIES:
+:ID: TASK-VB9DQ
+:PRIORITY: P1
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:144` passes `--no-session-persistence` on every acp-stdio claude run, and the adapter never passes `--session-id` or emits a `NativeRuntime` lifecycle event. The consequence is that acp-stdio claude runs leave no harness-native evidence of any kind.
+
+Measured 2026-07-25 (claude 2.1.220, counting files under `~/.claude/projects`):
+- run with `--no-session-persistence`: 0 new native transcripts
+- identical run without it: 1 new native transcript
+
+Confirmed by inspection:
+- `NativeRuntimeMeta` appears only in `modes/rmux.rs` and `modes/tmux.rs`; `adapters/claude.rs` never emits it
+- the acp-stdio reviewer run `run-20260725T073841` recorded lifecycle phases `acquire, run_meta, release` only — no `native_runtime`
+
+Contrast the TUI path, which already does this correctly. A real rmux run recorded:
+- `launch_argv: [claude, --dangerously-skip-permissions, --model, claude-sonnet-5, --session-id, a9fe25ff-...]`
+- `resume_argv: [claude, --resume, a9fe25ff-..., --fork-session, --dangerously-skip-permissions]`
+- `session_id: a9fe25ff-...`
+
+It passes an orgasmic-minted session id up front, so correlation is deterministic rather than discovered. acp-stdio should follow that pattern.
+
+Three consequences, all currently live:
+
+1. TASK-VBSG2 is impossible for this transport. Its slice A resolves "verified NativeRuntime provider/session/path metadata" and parses "Claude native JSONL". Neither exists for acp-stdio runs, so retro over an arbitrary past claude run cannot work no matter how good the materializer is.
+
+2. dec_WDR5K item 7 is violated in effect. TUI screen capture was removed on the premise that "session transcripts come from harness-native JSONL located by per-harness transcript finder adapters". For acp-stdio claude the finder adapter has nothing to find, so those runs have no transcript at all — not a lossy one, none. The decision's own sequencing constraint (finders must land before capture removal, or runs lose their session inputs) is satisfied in letter and broken in substance here.
+
+3. Recovery is degraded. `resolve_recovery_actions` offers `resume_native_fork` only when `session_native_runtime` yields a validated claude session id. acp-stdio records none, so that action can never be offered for this transport; recovery falls through to a fresh run even when resuming was possible.
+
+Work:
+1. Drop `--no-session-persistence` from the acp-stdio claude argv, or make it a deliberate per-dispatch option rather than a hardcoded default.
+2. Mint and pass an explicit `--session-id`, matching the TUI path, so correlation never depends on discovery heuristics.
+3. Emit a `NativeRuntime` lifecycle event from the acp-stdio path with provider, session id, launch argv, and resume argv, so recovery and retro read one shape regardless of transport.
+4. Weigh and record the retention tradeoff rather than assuming it away. Persisting worker sessions grows `~/.claude/projects` without bound (446 transcripts already present on this machine), and the retro contract holds vendor JSONL to be vendor-owned and immutable — so orgasmic may not prune it. Decide explicitly whether that is acceptable, whether worker sessions should be distinguishable from operator sessions, and record the answer.
+5. Check the same three properties for codex, cursor-agent, and hermes under acp-stdio. Do not assume this is claude-specific.
+
+Coordinates with TASK-Z8WEJ: both change `stdio_spawn` in the same adapter and should land together.
+
+Acceptance:
+- an acp-stdio claude run leaves a native transcript that the existing transcript finder resolves
+- its session id is recorded in a NativeRuntime lifecycle event, not discovered after the fact
+- `resume_native_fork` is offered for a recoverable acp-stdio claude run
+- the retention tradeoff is a recorded decision, not an implicit one
+** Notes
+Item 4's retention tradeoff is now settled by dec_Y5MPK: retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites or expires a vendor file; its obligation is visibility (per-harness counts, total size, age distribution through `doctor`). So this task does not need to solve growth — it needs to stop suppressing persistence, mint the session id, and emit NativeRuntime. The doctor reporting is separate work.
+** Evidence
+Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+
+- `--no-session-persistence` removed from the claude stdio argv. Verified beforehand that it was the sole cause: an otherwise identical run wrote one new file under `~/.claude/projects` without it and zero with it. Also verified that `--bare` does not suppress persistence, so both credential modes keep evidence.
+- `--session-id` is now pinned to the run's `runtime_id`, matching `modes/tmux.rs`. Verified that `-p` mode honours it and that the vendor transcript lands at exactly `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, the path `claude_session_path` computes. Correlation is minted, not discovered (dec_Y5MPK item 3).
+- `HarnessEventAdapter::native_runtime` added, defaulting to `None`. The claude adapter populates it while composing the request; `AcpStdioComposeAdapter` delegates it; `modes/acp_stdio.rs` reads it immediately after composing and carries it onto the `DriverSession` in place of the previous hardcoded `native_runtime: None`.
+- `claude_session_path` promoted to `pub(crate)` in `modes/tmux.rs` rather than duplicating the cwd-encoding rule in a second place.
+
+`resume_argv` is recorded as `[claude, --resume, <session-id>, --fork-session]`. Note it deliberately omits `--dangerously-skip-permissions`, which the TUI path includes: the stdio path never passed that flag at launch, and a resume argv should reproduce the original run's permission posture rather than widen it.
+
+Regression `every_mode_persists_a_locatable_native_session` asserts no `--no-session-persistence`, a pinned session id, and NativeRuntime whose `session_id` and `resume_argv` both target it.
+
+Still open from this task's work list: item 5, whether codex, cursor-agent and hermes need the same treatment. Codex is known to persist natively without orgasmic asking — a run that died on a provider 503 still wrote `~/.codex/sessions/2026/07/25/rollout-...jsonl` — so the question there is session-id correlation, not persistence.
+
+Gates as recorded on TASK-Z8WEJ. Not verified end to end: the running daemon is the installed 0.0.14 build, so proving this against a live dispatch needs a daemon rebuild and restart.
+
+* IN_REVIEW TASK-9P810 Install the runtime to a stable, identity-checked path so TCC grants survive upgrades :install:runtime:macos:
+:PROPERTIES:
+:ID: TASK-9P810
+:PRIORITY: P0
+:END:
+
+Problem: every runtime version costs the operator a macOS permission approval. Measured 2026-07-25 on one machine: 16 distinct runtime paths have been granted, 37 TCC rows in total, since 2026-06-18 — 0.0.1, 0.99.601, 0.0.3, 0.0.6, 0.0.7, three separate 0.0.8 nightlies, and so on through 0.0.13 and 0.0.14. Each one is a System Settings dialog the operator had to find and click, and a daemon that does not work until they do.
+
+Cause: TCC keys a grant to the resolved executable path. The install layout is `~/.orgasmic/runtimes/<version>/bin/orgasmic`, reached through `~/.orgasmic/bin/orgasmic -> ../current/bin/orgasmic -> runtimes/<version>/...`. TCC resolves the symlinks, so it records the versioned path and every release is a new client with no permissions.
+
+The signature is not the problem, and that is the useful part. The designated requirement is identity-based, not byte-based:
+
+  identifier "com.theaspirational.orgasmic" and certificate root = H"a70531007cd128ff081597cb27bee0816613d86d"
+
+A rebuilt binary re-signed with the same `orgasmic dev codesign` certificate satisfies that requirement, so content changes at a fixed path should inherit the grant. The two halves together are the fix: hold the path still and hold the identity still, and one approval covers every future version.
+
+Work:
+1. Make the executed binary a real file at a stable path (`~/.orgasmic/bin/orgasmic`) that install/update replaces in place. Keep versioned directories as rollback artifacts, but stop routing execution through a per-version path.
+2. Replace with a fresh inode, never overwrite in place — an in-use codesigned binary overwritten in place is silently SIGKILLed on every later exec (existing gotchas entry).
+3. Re-sign each installed binary with the pinned identity, so the designated requirement continues to match.
+4. Refuse the install when the incoming binary's designated requirement differs from the incumbent's, naming both. This is the guard for item 3: a mis-signed binary should be a rejected install, not a daemon that boots without permissions. Observed 2026-07-25 — an ad-hoc `codesign --force --sign -` replaced the certificate root and cost the operator two separate GUI grants to recover.
+5. Decide what `update` does about the LaunchAgent's `ProgramArguments`, which currently names `~/.orgasmic/bin/orgasmic`. If that becomes the real binary the plist may not need rewriting at all, which is its own win.
+6. Migration: existing installs already have grants against versioned paths. Decide whether the first stable-path install needs one final approval and say so in the update output, rather than letting the operator discover a dead daemon.
+
+Not in scope: Developer ID signing and notarization. That would anchor the requirement to Apple and a Team ID and is the right answer for distributing to other people, but the operator has deliberately deferred it; this task must work with the existing self-signed identity.
+
+Acceptance:
+- upgrading between two runtime versions requires no new permission approval
+- a binary signed by a different identity is refused at install time with both requirements named
+- the executed binary is replaced by fresh inode, never overwritten in place
+- rollback to a prior version still works
+
+IMPLEMENTATION EVIDENCE (2026-07-25, manager-implementer)
+Implemented manager-direct. New =crates/orgasmic-cli/src/managed_binary.rs= owns
+the single publish path; =update.rs=, =path_env.rs=, =doctor=, =daemon_service=
+and =scripts/install.sh= all route through it.
+
+Root cause confirmed, and it differs from the one assumed when this was filed.
+The LaunchAgent already named =~/.orgasmic/bin/orgasmic=, so the plist was never
+the problem: =env::current_exe()= on macOS returns the *invocation* path (probed
+directly), and the kernel resolves the symlink at =exec=. =codesign -d= on the
+link confirms it, printing =Executable=.../runtimes/0.0.14-darwin-aarch64/...=.
+So item 5 resolves to "no plist rewrite needed" — but =service_spec= now names
+the managed binary explicitly, because starting the daemon from a versioned path
+would have pinned the service to a directory that retention later prunes.
+
+Item 3 also resolves differently. A release bundle is already signed with the
+pinned identity by =package-runtime.sh=, and the signature is embedded in the
+Mach-O, so copying preserves it — verified: installing the real 0.0.14 binary
+into a scratch home reproduces
+=identifier "com.theaspirational.orgasmic" and certificate root = H"a705...d86d"=
+byte for byte, and a second install of the same identity reports grants as
+preserved. Re-signing at install time is therefore opt-in
+(=$ORGASMIC_CODESIGN_IDENTITY=) and exists for contributor source builds, which
+carry a linker signature that would otherwise be refused. Operators do not need
+the signing key.
+
+A real bug was caught before shipping. The first requirement parser missed
+ad-hoc signatures, which =codesign= prints *commented out* (=# designated =>=),
+reading them as "identity unknown" and waving them through — i.e. it would have
+permitted the exact 2026-07-25 accident this guard exists to stop. Covered now
+by a hermetic test that ad-hoc-signs a Mach-O and asserts the refusal end to
+end, including that a refused install leaves the incumbent byte-identical.
+
+=codesign= is invoked as =/usr/bin/codesign=, not through PATH: it decides
+whether a binary keeps the operator's grants, so a shadowing binary must not be
+able to answer for it.
+
+Acceptance:
+- no approval between versions — proven at the identity level: same requirement
+  in and out, =preserves_grants()= true on re-install
+- different identity refused with both requirements named — hermetic test
+- fresh inode never in-place — inode compared across an upgrade
+- rollback still works — restores from the previous runtime dir and bypasses the
+  guard by design, since it restores what the operator already approved
+
+Migration (item 6) is explicit rather than discovered: the first stable-path
+install prints that the executed path changed and one final prompt is expected.
+=orgasmic doctor= now reports a surviving symlink as a warning naming the cost,
+and =doctor --fix= performs the migration instead of only describing it.
+
+Not done here: nothing. Developer ID signing stays out of scope as filed.
+
+Incidental fix, unrelated to the task but blocking confidence in it:
+=path_env='s tests set process-global PATH to a bare tempdir, so any concurrent
+test spawning a PATH-resolved tool died with a bare =NotFound=.
+=manager::tests::local_dispatch_rollback_keeps_branch_when_worktree_validation_fails=
+failed ~3 runs in 4 and passed alone every time. Pre-existing (the PATH-setting
+tests date to 94e98f2). Fixed by keeping system dirs on the test PATH; 5/5 green
+after, 206 CLI assertions passing.
+
+* IN_REVIEW TASK-KKGKM A project the daemon cannot read must not prevent it from binding :daemon:boot:resilience:
+:PROPERTIES:
+:ID: TASK-KKGKM
+:PRIORITY: P0
+:RELATES_TO: TASK-3R3EZ TASK-5P60H
+:END:
+
+Problem: when the daemon lacks filesystem permission for a registered project's path, it does not degrade — it dies. Reproduced 2026-07-25 after a runtime binary swap invalidated the macOS TCC grant for `~/Documents`:
+
+- boot logged `starting pre-bind boot work`, then only `project scan timed out` warnings, then nothing
+- the process sat at 0% CPU for minutes, never reaching `listening`
+- `lsof` showed no project files open at all, only its own log, lock and binary — consistent with a permission-gated `open()` blocking in the kernel before a descriptor exists
+- launchd `KeepAlive` kept spawning replacements, each refusing with `daemon instance lock is held, but the incumbent is not healthy`, so the machine churned without recovering
+- the only operator-visible signal was a WARN line in a log file nobody was watching; `orgasmic status` simply hung
+
+The daemon never bound, so every CLI verb, the UI, and the app were dead. A permission problem affecting a subset of projects took down the whole runtime.
+
+The scan timeout works as designed — it logs "omitting project so daemon boot can continue" — but something after it blocks anyway. Find that, and make the whole class non-fatal.
+
+Work:
+1. Bind first, or at minimum guarantee that no per-project filesystem work can prevent binding. An operator must always be able to reach `status` and the UI to learn why the runtime is unhealthy.
+2. Give a project whose files cannot be read a durable `unavailable` state with the reason, rather than retrying it into a hang. This is the same state TASK-3R3EZ introduces for missing project roots; reuse it rather than inventing a parallel one.
+3. Report the condition where an operator will actually see it: `orgasmic status` and `orgasmic doctor` should name the affected projects and the exact remedy, not just emit a WARN into `daemon.out.log`.
+4. Identify what blocks after the index scan completes. Boot reattach reads every session JSONL and is the leading suspect, but it was not confirmed — no fd was open at the time of sampling. Confirm before fixing.
+5. Bound the launchd churn: repeated replacements refusing on the instance lock is noise that hides the real fault. Relates to TASK-5P60H's backoff work.
+6. Regression: a registered project whose path is unreadable must still leave the daemon bound, reporting that project as unavailable.
+
+Acceptance:
+- an unreadable project cannot prevent the daemon from binding
+- `status` and `doctor` name the affected project and the remedy
+- the daemon stays useful for every other project
+- a regression covers the unreadable-project case
+
+ITEM 4 CONFIRMED (2026-07-25) — the task said confirm before fixing, so it was
+reproduced rather than assumed.
+
+Built an isolated throwaway ORGASMIC_HOME with two registered projects and
+planted a FIFO where a session JSONL belongs. A FIFO with no writer blocks
+inside open() before a descriptor exists, which is the same shape as the
+permission-gated open in the original incident, and it is deterministic without
+touching TCC.
+
+Baseline with both projects healthy: bound in 44 ms.
+With the blocking session file present:
+- never reached listening; curl exit 7 (connection refused) indefinitely
+- daemon.boot froze at {"phase": "reattaching runs", "seq": 7}, refreshed_at
+  stuck at the boot instant while wall clock advanced 33 s
+- 0% CPU, and lsof showed zero descriptors on the blocking file — exactly the
+  "no fd was open when the process was sampled" observation from the incident,
+  now explained: the process is blocked *inside* open(), before an fd exists
+- stack sample:
+    tokio::runtime::park::CachedParkThread::block_on
+      orgasmic_daemon::api::reattach_live_runs_on_boot
+        orgasmic_core::session::read_session_file
+          std::fs::read_to_string
+
+So the leading suspect was right, and there is a second finding the task did not
+anticipate: the scan runs synchronously on the main thread inside block_on, so
+it also starves the boot-progress refresh task. That is why the operator's only
+liveness signal froze and `orgasmic status` simply hung — the heartbeat could
+not advance even to report the phase it was stuck in.
+
+FIX
+1. Boot auto-reattach now runs after the listener is bound, in a spawned task.
+   It is best-effort recovery; answering status is what an operator needs in
+   order to diagnose anything at all.
+2. Its file reads moved to spawn_blocking, so a wedged read costs one blocking
+   thread instead of a runtime worker.
+3. Session paths that are not regular files are refused by shape with a named
+   warning, rather than discovered by hanging.
+
+Verified end to end on the same isolated home: binds in ~50 ms with the
+blocking file still present, /api/daemon/status answers in 1.6 ms, and the
+warning names the offending path.
+
+REGRESSION
+crates/orgasmic-daemon/tests/boot_resilience.rs covers both the blocking-open
+case and an unreadable project directory. Both were verified to fail against the
+reverted fix, not merely to pass against the current one.
+
+The first version of that test used tokio::time::timeout and hung forever
+instead of failing: a synchronous block inside a future stalls the task
+mid-poll, so the timer fires but the task can never be woken to observe it. It
+now boots on an owned thread and waits on a channel deadline, and a reverted fix
+reports itself cleanly at 20.02 s with a message stating the invariant.
+
+NOT DONE HERE, and why:
+- Item 2 (durable `unavailable` project state) is the state model TASK-3R3EZ
+  introduces. The task says to reuse it rather than invent a parallel one, and
+  3R3EZ has not landed, so inventing it here would be something 3R3EZ has to
+  unpick.
+- Item 3 (status/doctor naming the affected project) depends on that state
+  existing to report.
+- Item 5 (bounding launchd churn) belongs with TASK-5P60H's backoff work.
+- Boot reattach still reads whole session files. That is cost, not a hang, now
+  that it is off the critical path; filed as TASK-7QM8M with the correctness
+  subtlety that blocks a naive swap to the bounded scanner.

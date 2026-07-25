@@ -8,8 +8,9 @@ use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
 use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
     CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter, RunKind, StdioSpawn,
-    SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, HARNESSES, MODES, SUPPORTED,
+    DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter,
+    RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, HARNESSES, MODES,
+    SUPPORTED,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -60,6 +61,29 @@ impl HarnessEventAdapter for MockAdapter {
             cwd: None,
             env: Vec::new(),
         })
+    }
+}
+
+/// Read events until the run's terminal event, tolerating the turn boundary
+/// that precedes it.
+///
+/// `AgentTurnComplete` marks the end of one agent turn; `RunComplete` marks the
+/// end of the run. A driver that supports multi-turn sessions emits the former
+/// before the latter, so a test asserting "the next event is RunComplete"
+/// encodes a single-turn assumption rather than the contract. These four
+/// assertions were left behind when the turn boundary was introduced
+/// (TASK-K05MX) and had been failing on main ever since.
+async fn expect_run_complete(session: &mut DriverSession) -> DriverEvent {
+    loop {
+        let event = timeout(Duration::from_secs(2), session.events.recv())
+            .await
+            .expect("driver went quiet before completing the run")
+            .expect("driver channel closed before completing the run");
+        match event {
+            DriverEvent::AgentTurnComplete { .. } => continue,
+            DriverEvent::RunComplete { .. } => return event,
+            other => panic!("expected the run to complete, got {other:?}"),
+        }
     }
 }
 
@@ -157,14 +181,16 @@ fn acp_stdio_codex_adapter_provides_stdio_spawn_config() {
 }
 
 #[test]
-fn claude_adapter_stdio_spawn_preserves_current_behavior() {
+fn claude_adapter_stdio_spawn_is_credential_agnostic() {
     let adapter = ClaudeAdapter::new();
     let spawn = adapter.stdio_spawn().expect("claude stdio_spawn");
     assert_eq!(spawn.command, "claude");
+    // The base argv carries the wire only. Credential-mode flags (`--bare` or
+    // the narrow isolation fallback) and the pinned `--session-id` are added by
+    // `compose_request`, which knows the run and its config.
     assert_eq!(
         spawn.args,
         vec![
-            "--bare".to_string(),
             "-p".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
@@ -172,11 +198,15 @@ fn claude_adapter_stdio_spawn_preserves_current_behavior() {
             "stream-json".to_string(),
             "--include-partial-messages".to_string(),
             "--verbose".to_string(),
-            "--no-session-persistence".to_string(),
         ]
     );
-    assert!(spawn.cwd.is_none());
-    assert!(spawn.env.is_empty());
+    // Regression (TASK-VB9DQ): suppressing the harness's own session recording
+    // left these runs with no resumable transcript, so no retro source and no
+    // `resume_native_fork` recovery action.
+    assert!(
+        !spawn.args.iter().any(|a| a == "--no-session-persistence"),
+        "vendor session persistence must never be suppressed"
+    );
 }
 
 #[tokio::test]
@@ -532,10 +562,7 @@ done
     .await
     .expect("turn/interrupt not observed on mock peer stdin");
 
-    let complete = timeout(Duration::from_secs(2), session.events.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let complete = expect_run_complete(&mut session).await;
     assert!(matches!(complete, DriverEvent::RunComplete { .. }));
 
     if let Ok(Some(event)) = timeout(Duration::from_millis(300), session.events.recv()).await {
@@ -1113,10 +1140,7 @@ async fn run_codex_stdio_approval_handshake(
         .unwrap();
     assert!(matches!(tool, DriverEvent::ToolCall { .. }));
 
-    let complete = timeout(Duration::from_secs(2), session.events.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let complete = expect_run_complete(&mut session).await;
     assert!(matches!(complete, DriverEvent::RunComplete { .. }));
 
     (stdin_log, approval_log)
@@ -1300,10 +1324,7 @@ async fn codex_turn_start_terminal_notification_does_not_emit_followup_error() {
         .unwrap();
     assert!(matches!(ready, DriverEvent::Ready { .. }));
 
-    let complete = timeout(Duration::from_secs(2), session.events.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let complete = expect_run_complete(&mut session).await;
     assert!(matches!(complete, DriverEvent::RunComplete { .. }));
 
     if let Ok(Some(event)) = timeout(Duration::from_millis(300), session.events.recv()).await {
@@ -1664,13 +1685,29 @@ async fn legacy_drivers_and_explicit_pairs_emit_equivalent_start_events() {
     }
 }
 
+/// First *start* event, skipping harness chatter that precedes the handshake.
+///
+/// Claude's native-login credential mode cannot suppress the operator's hooks
+/// (only `--bare` can, and its credential policy excludes subscription logins —
+/// see `ClaudeCredentialMode`). Hook lifecycle chunks therefore arrive before
+/// `Ready` and carry per-run uuids, so comparing raw first events would assert
+/// on machine-local hook configuration rather than on driver equivalence.
 async fn first_event(
     driver: Box<dyn WorkerDriver>,
     ctx: DriverContext,
     config: DriverConfig,
 ) -> DriverEvent {
     let mut session = driver.acquire(ctx, config).await.unwrap();
-    let event = session.events.recv().await.unwrap();
+    let event = loop {
+        let event = session.events.recv().await.unwrap();
+        let is_hook_chunk = matches!(
+            &event,
+            DriverEvent::TextChunk { chunk, .. } if chunk.contains("hook_")
+        );
+        if !is_hook_chunk {
+            break event;
+        }
+    };
     session.control.release("test cleanup").await.unwrap();
     event
 }

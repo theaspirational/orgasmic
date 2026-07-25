@@ -619,20 +619,27 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
 
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
-    // A failed liveness probe must fail the close: treating the error as
-    // "no live runs" would skip the release and prune worktree artifacts
-    // under a possibly still-live worker.
-    let live_runs = runtime
-        .block_on(fetch_live_runs(&client))
-        .context("liveness check before dispatch-close cleanup")?;
     if let Some(run_id) = open.run_id.as_deref() {
-        if live_runs.iter().any(|run| run.run_id == run_id) {
-            runtime.block_on(release_dispatch_run(
-                &client,
-                run_id,
-                &task_list_property(&tasks),
-            ))?;
+        // Modern dispatch records carry the exact run id. Release it directly
+        // so unrelated stale recovery records cannot block close. A 404 is
+        // authoritative "already absent"; transport and other failures still
+        // fail before cleanup, preserving the live-worker fencing invariant.
+        if let Err(error) = runtime.block_on(release_dispatch_run(
+            &client,
+            run_id,
+            &task_list_property(&tasks),
+        )) {
+            if !is_release_run_not_found_error(&error) {
+                return Err(error).context("release recorded run before dispatch-close cleanup");
+            }
         }
+    } else {
+        // Legacy records have no exact run identity. Retain the reachability
+        // fence before destructive cleanup even though they cannot directly
+        // release a supervisor run.
+        runtime
+            .block_on(fetch_live_runs(&client))
+            .context("liveness check before dispatch-close cleanup")?;
     }
 
     let missing_close_tasks = tasks
@@ -1014,6 +1021,11 @@ struct LiveRunInfo {
 struct LiveRunsResponse {
     #[serde(default)]
     live: Vec<LiveRunInfo>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LiveRunResponse {
+    run: LiveRunInfo,
 }
 
 /// The worker-driven counterpart to `dispatch-close` (dec_3M7M0 / TASK-AFE5Q):
@@ -1417,11 +1429,14 @@ async fn resolve_finalize_run_by_id(
     project_id: Option<&str>,
     run_id: &str,
 ) -> Result<LiveRunInfo> {
-    let live = client.get::<LiveRunsResponse>("/runs").await?.live;
-    let run = live
-        .into_iter()
-        .find(|run| run.run_id == run_id)
-        .ok_or_else(|| anyhow::anyhow!("no live run {run_id}; already released?"))?;
+    // An exact run id is sufficient supervisor authority. Do not enumerate
+    // every durable recovery record just to resolve the worker that is
+    // finalizing; unrelated stale sessions must not block its terminal action.
+    let run = client
+        .get::<LiveRunResponse>(&format!("/runs/{}", path_segment(run_id)))
+        .await
+        .map_err(|error| anyhow::anyhow!("no live run {run_id}; already released? ({error})"))?
+        .run;
     if let (Some(run_project), Some(project_id)) = (run.project_id.as_deref(), project_id) {
         if run_project != project_id {
             bail!(
@@ -1434,9 +1449,9 @@ async fn resolve_finalize_run_by_id(
 }
 
 /// Resolve the live run to finalize: an explicit `--run-id` is used as-is
-/// (still fetched from `/runs` to recover its kind/last_path); otherwise the
-/// single live run matching `task` (and `project_id`, when the daemon reports
-/// one) is used. Deliberately does NOT fall back to scanning
+/// (fetched from `/runs/:id` to recover its kind/last_path); otherwise the
+/// single live run from `/runs` matching `task` (and `project_id`, when the
+/// daemon reports one) is used. Deliberately does NOT fall back to scanning
 /// `.orgasmic/tx`: a worker's own worktree checkout cannot see the live
 /// (uncommitted) daemon writes to the manager's `.orgasmic/tx`, so the only
 /// reliable source is the daemon's in-memory live run list.

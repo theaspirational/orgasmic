@@ -69,9 +69,10 @@ pub use schema::{
     SkillMetadata, TaskHeading, TxHeadingView, WorkerKind,
 };
 pub use session::{
-    read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,
-    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEnvelope, SessionError, SessionEventKind,
-    SessionWriter, TextStream, WorkerTool,
+    read_session_file, scan_session_lifecycle, scan_session_lifecycle_reader,
+    BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle, ReleaseOutcome, RunSubState,
+    RuntimeIdentity, SessionEnvelope, SessionError, SessionEventKind, SessionLifecycleScan,
+    SessionScanBudget, SessionWriter, TextStream, WorkerTool,
 };
 pub use slots::{
     compile as compile_slots, default_registry as default_slot_registry, dry_run as slot_dry_run,
