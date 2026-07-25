@@ -173,6 +173,21 @@ resolve_asset_url() {
     fi
 }
 
+# `mv src dst` follows dst when it is a symlink to a directory, and moves src
+# *inside* that directory instead of replacing the link. Replacing an existing
+# `current -> runtimes/<version>` therefore dropped the new link into the OLD
+# runtime dir and left `current` untouched — an upgrade that printed "install
+# complete" while still pointing at the previous runtime. Observed 2026-07-25
+# re-installing over 0.0.14.
+#
+# BSD spells the fix `-h`, GNU spells it `-T`. Detect once, the same way the tar
+# flags below are detected: only GNU mv answers `--version`.
+if mv --version >/dev/null 2>&1; then
+    MV_REPLACE_LINK="-T"
+else
+    MV_REPLACE_LINK="-h"
+fi
+
 replace_symlink() {
     local target="$1" link="$2"
     mkdir -p "$(dirname "$link")"
@@ -183,7 +198,13 @@ replace_symlink() {
     local tmp="${link}.tmp.$$"
     rm -f "$tmp"
     ln -s "$target" "$tmp"
-    mv -f "$tmp" "$link"
+    mv -f "$MV_REPLACE_LINK" "$tmp" "$link"
+    # A silent no-op here is what made the original bug survive: the install
+    # continued and reported success against a stale runtime.
+    if [[ "$(readlink "$link")" != "$target" ]]; then
+        echo "error: failed to repoint $link at $target (now: $(readlink "$link" || echo missing))" >&2
+        exit 1
+    fi
 }
 
 # Publish the executed binary as a real file at a stable path. macOS keys
