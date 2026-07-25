@@ -477,6 +477,22 @@ mod tests {
         );
     }
 
+    /// A preflight rejection is the whole point of TASK-TJKFC: the daemon
+    /// refused before creating a lease, session, or dispatch record, so nothing
+    /// on its side can own the worktree and the CLI must reclaim it locally.
+    /// Routing this as *ambiguous* would leave the worktree and branch behind —
+    /// exactly the litter the 2026-07-25 dispatch left.
+    #[test]
+    fn preflight_rejection_is_an_unambiguous_local_rollback() {
+        let err = anyhow::Error::msg(
+            r#"daemon returned 400 Bad Request: {"error":"acp-stdio/claude cannot start a worker: Not logged in - Please run /login"}"#,
+        );
+        assert!(
+            !DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
+            "a preflight rejection commits no daemon-side resources, so the CLI owns the cleanup"
+        );
+    }
+
     #[test]
     fn dispatch_failure_needs_daemon_cleanup_decode_error_is_ambiguous() {
         let err =

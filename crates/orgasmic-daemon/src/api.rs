@@ -3949,6 +3949,40 @@ async fn spawn_worker_run(
         });
     }
 
+    // Last point at which rejecting is free. Everything below commits state the
+    // caller then has to unwind: the session file, the lease, the dispatch
+    // record. Observed 2026-07-25 — a run was fatally unusable 1.2 s after
+    // acquire for a reason knowable beforehand, and left an open dispatch, a
+    // 15 MB worktree, a branch, and a harness process still alive 70 minutes
+    // later that `dispatch-status` reported as `[pid-alive]`, i.e. as work in
+    // progress. A fatal startup that leaves a live process is worse than a
+    // crash. TASK-TJKFC.
+    // The run identity does not exist yet — that is the point of probing here —
+    // so the probe gets the placement it needs (worktree, task, run kind) and
+    // an empty identity. A probe must not depend on a run id it is trying to
+    // avoid creating.
+    let preflight_ctx = DriverContext {
+        identity: RuntimeIdentity::default(),
+        run_kind: req.run_kind,
+        task_id: req.task_id.to_string(),
+        worker_id: worker.id.clone(),
+        project_id: Some(req.project_id.to_string()),
+        worktree: Some(req.worktree_path.to_path_buf()),
+        babysitter_target: None,
+    };
+    if let Some(reason) = driver
+        .preflight(&preflight_ctx, &driver_config)
+        .await
+        .rejects_dispatch()
+    {
+        return Err(SpawnWorkerFailure {
+            error: ApiError::bad_request(format!(
+                "{}/{} cannot start a worker: {reason}",
+                worker.driver, worker.harness
+            )),
+        });
+    }
+
     let now = Utc::now();
     let fragment = safe_session_fragment(req.task_id);
     let timestamp = now.format("%Y%m%dT%H%M%S");

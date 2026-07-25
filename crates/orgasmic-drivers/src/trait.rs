@@ -461,6 +461,32 @@ pub trait WorkerDriver: Send + Sync + 'static {
         Ok(())
     }
 
+    /// Ask the harness, non-interactively and within a bounded time, whether a
+    /// worker launched with this exact configuration could actually start.
+    ///
+    /// Called after configuration is resolved and before any lease, session, or
+    /// dispatch record exists, so a definitive failure costs nothing to undo.
+    ///
+    /// Two rules make this worth doing at all:
+    ///
+    /// - The default is [`Preflight::Unsupported`], never a cheerful `Ok`. A
+    ///   driver that has not implemented a probe must not be able to claim
+    ///   readiness it never checked.
+    /// - An implementation must exercise the same execution context the worker
+    ///   will use — the same binary, the same argv, the same environment — not
+    ///   the harness's ambient opinion of itself. Measured 2026-07-25:
+    ///   `claude auth status` reported `loggedIn: true` while the very same
+    ///   binary invoked with the dispatch's own flags answered "Not logged in"
+    ///   in 39 ms. A preflight that asked the harness whether it was logged in
+    ///   would have passed and still produced the failure it exists to prevent.
+    ///
+    /// It must never prompt. A harness answering "run /login" is a definitive
+    /// failure to report, not an interactive flow to enter: nobody is attached
+    /// to a dispatched worker to answer it.
+    async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
+        Preflight::Unsupported
+    }
+
     /// Acquire the runtime and start the event stream. The supervisor
     /// has already created the session JSONL; the driver only emits events.
     async fn acquire(
@@ -608,6 +634,45 @@ pub struct UserInputRequest {
 pub struct UserInputAck {
     pub accepted: bool,
     pub message: Option<String>,
+}
+
+/// Whether a worker launched with a given configuration could start.
+///
+/// Deliberately three-valued. Collapsing `Unsupported` into `Ready` would let
+/// every driver that never implemented a probe report readiness it did not
+/// check; collapsing it into `Fatal` would refuse every dispatch on drivers that
+/// work fine. Callers must treat "we did not look" as its own answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Preflight {
+    /// The harness answered, using the worker's own execution context, that a
+    /// worker could start.
+    Ready,
+    /// The harness cannot start a worker with this configuration, and trying
+    /// would waste the resources the dispatch is about to create. `reason` is
+    /// operator-facing and must name the remedy where one exists.
+    Fatal { reason: String },
+    /// This driver has no probe, or the probe could not reach a verdict (a
+    /// timeout, a harness that does not answer). Dispatch proceeds as it did
+    /// before preflight existed — the pre-existing failure modes still apply.
+    Unsupported,
+}
+
+impl Preflight {
+    /// Build a definitive rejection.
+    pub fn fatal(reason: impl Into<String>) -> Self {
+        Self::Fatal {
+            reason: reason.into(),
+        }
+    }
+
+    /// Only a definitive `Fatal` may reject a dispatch. An inconclusive probe
+    /// must not.
+    pub fn rejects_dispatch(&self) -> Option<&str> {
+        match self {
+            Self::Fatal { reason } => Some(reason.as_str()),
+            Self::Ready | Self::Unsupported => None,
+        }
+    }
 }
 
 #[derive(Debug, Error)]

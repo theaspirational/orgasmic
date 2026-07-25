@@ -59,7 +59,7 @@ pub enum SessionEventKind {
 
 /// Identity tuple used to disambiguate cleanup from a replacement runtime
 /// after restart (`arch_010`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeIdentity {
     pub run_id: String,
     pub runtime_id: String,

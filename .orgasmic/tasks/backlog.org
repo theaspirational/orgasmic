@@ -139,6 +139,58 @@ Regression: poll `/api/runs` repeatedly with several records pointing at one pru
 :END:
 
 Problem: dispatch can create a worktree and enter the daemon before provider or harness authentication is known to be usable. A fatal startup DriverError can then leave an open dispatch record and resources that block later work. Add a bounded non-interactive preflight at the provider-local driver boundary after configuration is resolved but before lease, session, or manager.dispatch_started ownership is committed. The default capability must be explicit unsupported, not false success; supported adapters return ready or a typed fatal reason. Claude and ACP implementations must test the same execution context used by the worker and must never prompt. A definitive preflight failure returns a normal rejected dispatch so the existing CLI rollback restores lifecycle state and removes the newly created worktree and branch. Also make dispatch attempt creation atomic with the earliest driver events: a fatal event during the startup gate must record an aborted attempt, close any open dispatch, release the lease, and safely clean only attempt-owned resources. Once startup has been accepted and meaningful work has occurred, later failures retain normal failed-run history and inspection artifacts. Acceptance: fake-provider tests prove auth failure creates no lease, session, or open dispatch and CLI rollback removes attempt resources; a race test emits fatal before dispatch bookkeeping and proves no orphan; supported-preflight success reaches running; unsupported preflight preserves current drivers; a post-start fatal remains a failed historical run and does not erase work. Provider-specific parsing stays inside the driver adapter; manager and supervisor consume only typed readiness/startup outcomes.
+
+PARTIAL IMPLEMENTATION (2026-07-25, manager-implementer). The startup gate
+exists and is wired; the concrete probes and the atomic-abort half do not.
+
+LANDED
+- =Preflight= on =WorkerDriver=: three-valued Ready / Fatal{reason} /
+  Unsupported, defaulting to Unsupported. The default is the point: a driver
+  that never implemented a probe must not be able to report readiness it never
+  checked. Only Fatal rejects a dispatch, so an inconclusive probe leaves the
+  pre-existing behaviour intact.
+- Called in =spawn_worker_run= immediately after =driver.validate=, which is the
+  last point at which rejecting is free. Verified by reading the ordering rather
+  than assuming it: the session path, babysitter, lease and acquire all come
+  after, and =record_dispatch_started= runs after =spawn_worker_run= returns.
+- A Fatal returns =400 Bad Request=. Verified this routes correctly:
+  =dispatch_failure_needs_daemon_cleanup= treats any "daemon returned ..."
+  message as an unambiguous rejection, so the CLI runs
+  =cleanup_created_resources= (worktree + branch + artifact paths) and
+  =restore_task_lifecycle_stages=. Pinned by a test using the actual
+  preflight message shape, because routing it as ambiguous would leave behind
+  exactly the litter the 2026-07-25 dispatch left.
+- The probe receives placement (worktree, task, run kind, project) and an empty
+  =RuntimeIdentity=. A probe must not depend on a run id it exists to avoid
+  creating.
+- Driver-level tests: the default is Unsupported and does not reject; only Fatal
+  rejects; a harness answering "Please run /login" is classified Fatal rather
+  than surfaced into a worker that would wait on a prompt nobody will answer.
+
+NOT LANDED, and this matters for reading the task's status honestly
+1. No adapter implements =preflight= yet, so nothing changes behaviourally
+   today. The gate is structural.
+2. The claude probe has an unresolved design question worth deciding before
+   writing it. Auth failure is observable in ~39 ms because it happens before
+   any model call, but a probe that exercises "the same execution context the
+   worker will use" and succeeds will have made a real (small) model call on
+   every dispatch. Cheaper probes exist and are all weaker: =claude auth status=
+   is exactly the check measured to give a false pass (loggedIn: true while the
+   dispatch argv answered "Not logged in"). Pick deliberately.
+3. The atomic-abort half is untouched: a fatal driver event *after* startup has
+   been accepted still leaves an open dispatch record, and the race test the
+   task asks for (fatal emitted before dispatch bookkeeping completes) does not
+   exist.
+4. Consequently the acceptance clause "fake-provider tests prove auth failure
+   creates no lease, session, or open dispatch and CLI rollback removes attempt
+   resources" is only half covered: the reject-before-commit ordering is proven
+   by construction and by the routing test, but there is no end-to-end test
+   driving a fake provider through the daemon and asserting the absence of a
+   lease and session.
+
+Note on the original incident: its specific cause was fixed separately in
+61b9b7f — orgasmic's own =--bare= argv, not an operator credential problem.
+This task remains worth finishing for the class, not that instance.
 ** Evidence
 Live reproduction 2026-07-25, dispatching a reviewer for TASK-KWSTJ. This is the abstract problem statement happening end to end, with timings.
 

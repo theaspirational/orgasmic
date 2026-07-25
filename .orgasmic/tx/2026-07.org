@@ -27221,3 +27221,33 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+
+* TX 2026-07-25 Sat 16:00:40 task.state_transitioned TASK-KWSTJ
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2805
+:TIME:         [2026-07-25 Sat 16:00:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KWSTJ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       landed on main; production-verified 24.7s->0.10s TTFB with zero classification differences across 200 runs
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-25 Sat 16:11:08 task.edited TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2806
+:TIME:         [2026-07-25 Sat 16:11:08]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-TJKFC
+:NODE_ID:      TASK-TJKFC
+:END:

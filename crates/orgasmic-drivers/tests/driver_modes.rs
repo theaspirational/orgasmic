@@ -9,8 +9,8 @@ use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
     CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
     DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter,
-    RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver, HARNESSES, MODES,
-    SUPPORTED,
+    Preflight, RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver,
+    HARNESSES, MODES, SUPPORTED,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -1761,4 +1761,99 @@ where
     ))
     .await
     .unwrap();
+}
+
+// ---- preflight (TASK-TJKFC) --------------------------------------------------
+
+/// A driver whose only behaviour is the preflight verdict it was built with.
+struct PreflightDriver(Preflight);
+
+#[async_trait]
+impl WorkerDriver for PreflightDriver {
+    fn transport(&self) -> &'static str {
+        "preflight-fake"
+    }
+
+    async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
+        self.0.clone()
+    }
+
+    async fn acquire(
+        &self,
+        _ctx: DriverContext,
+        _config: DriverConfig,
+    ) -> Result<DriverSession, DriverError> {
+        panic!("acquire must not be reached when preflight rejects the dispatch")
+    }
+}
+
+/// A driver that implements nothing beyond the trait's required methods, i.e.
+/// every driver that predates preflight.
+struct SilentDriver;
+
+#[async_trait]
+impl WorkerDriver for SilentDriver {
+    fn transport(&self) -> &'static str {
+        "preflight-silent"
+    }
+
+    async fn acquire(
+        &self,
+        _ctx: DriverContext,
+        _config: DriverConfig,
+    ) -> Result<DriverSession, DriverError> {
+        unreachable!("not acquired in this test")
+    }
+}
+
+#[tokio::test]
+async fn a_driver_without_a_probe_reports_unsupported_not_ready() {
+    let verdict = SilentDriver.preflight(&ctx(), &DriverConfig::empty()).await;
+    assert_eq!(
+        verdict,
+        Preflight::Unsupported,
+        "the default must not claim a readiness the driver never checked"
+    );
+    assert!(
+        verdict.rejects_dispatch().is_none(),
+        "an unchecked driver must keep dispatching exactly as it did before"
+    );
+}
+
+#[tokio::test]
+async fn only_a_definitive_failure_rejects_a_dispatch() {
+    let fatal = PreflightDriver(Preflight::fatal("Not logged in - Please run /login"));
+    let verdict = fatal.preflight(&ctx(), &DriverConfig::empty()).await;
+    let reason = verdict
+        .rejects_dispatch()
+        .expect("a definitive failure must reject the dispatch");
+    assert!(
+        reason.contains("/login"),
+        "the remedy must survive: {reason}"
+    );
+
+    for tolerated in [Preflight::Ready, Preflight::Unsupported] {
+        assert!(
+            PreflightDriver(tolerated.clone())
+                .preflight(&ctx(), &DriverConfig::empty())
+                .await
+                .rejects_dispatch()
+                .is_none(),
+            "{tolerated:?} must not reject a dispatch"
+        );
+    }
+}
+
+/// The harness answering "run /login" is an instruction to start an interactive
+/// flow. Nobody is attached to a dispatched worker to answer it, so it has to be
+/// classified as a definitive failure and reported — never surfaced into a
+/// worker that then waits on a prompt forever.
+#[tokio::test]
+async fn an_instruction_to_log_in_is_fatal_rather_than_something_to_wait_on() {
+    let verdict = PreflightDriver(Preflight::fatal(
+        "claude authentication_failed: Not logged in - Please run /login",
+    ))
+    .preflight(&ctx(), &DriverConfig::empty())
+    .await;
+    assert!(matches!(verdict, Preflight::Fatal { .. }));
 }

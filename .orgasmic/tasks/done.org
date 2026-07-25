@@ -12698,3 +12698,70 @@ Acceptance:
 - focused regressions plus daemon/CLI gates pass
 
 Out of scope: boot transaction replay duration and concurrent daemon restart bind races.
+
+* DONE TASK-KWSTJ P0 prove and finish bounded GET /api/runs plus exact-run terminal paths :daemon:recovery:bug:
+:PROPERTIES:
+:DEPENDS_ON: TASK-JN5Q1
+:ID: TASK-KWSTJ
+:PRIORITY: P0
+:END:
+
+Build on, do not discard, the existing uncommitted TASK-JN5Q1 patch. First preserve its diff and rerun its focused gates. Reproduce against a fresh curl output path and record time-to-headers, time-to-body-complete, HTTP framing headers, response counts, and inventory stage timings. Treat the report claim that a complete stale file proves response serialization as disproven unless a packet/wire probe reproduces it.
+
+Implementation boundary:
+1. `GET /api/runs` must never await unbounded driver work. Terminal tombstones do no attach probe; genuine attach probes share one absolute deadline, have capped concurrency, and are aborted/joined on timeout.
+2. Inventory construction must not parse multi-megabyte transcript bodies to answer lifecycle questions. Read a bounded lifecycle summary/catalog representation; legacy fallback may inspect a capped prefix/tail and must classify uncertainty conservatively. No per-failed-run whole-board rescan.
+3. Exact recorded run ids use `/runs/:id` and `/runs/:id/release`; `dispatch-close` and explicit-id finalize never enumerate `/runs`. Legacy records without a run id retain a safe reachability fence.
+4. Add stage metrics/logs for file count, bytes inspected, attach count/timeouts, classification counts, and total inventory latency without logging transcript content or local secrets.
+
+Required regression is wire-level: seed production-shaped terminal, failed, interrupted, missing-worktree, and one permanently hanging attach record, including at least one very large transcript fixture or sparse file. Perform an authenticated HTTP request with a hard deadline; assert headers arrive, the body reaches EOF, JSON parses, classification counts are correct, and a second request does not rescan transcript bytes. Also run direct-close and explicit-finalize tests through a proxy that rejects `/api/runs`.
+
+Acceptance target: p95 warm inventory below 250 ms on 200 records; cold legacy reconciliation is bounded and cannot exceed the CLI request budget. Verify with the real 197-file/2.239-GiB shape using a non-mutating fixture or snapshot. Run daemon, CLI dispatch, fmt, clippy, and diff-check gates. Do not delete or rewrite operator session history in this task.
+** Evidence
+Wire reproduction against the live pre-fix daemon (0.0.14, pid 11674, 5 projects, 198 session files totalling 2.239 GiB), fresh curl output path:
+- `GET /api/runs` -> HTTP/1.1 200, `content-type: application/json`, `content-length: 120579`, `size_download: 120579`.
+- `time_connect` 0.000286 s, `time_starttransfer` (headers/first byte) *35.205 s*, `time_total` (body complete) 35.207 s.
+- Framing is therefore correct and the body does reach EOF; the body transfers in 1.4 ms once it starts. The "complete stale JSON file proves serialization" claim is disproven as an explanation, and the earlier "no headers, zero bytes" observation is a client deadline expiring inside the 35 s time-to-first-byte, not a serialization defect.
+
+Source-backed cause, measured on the same real corpus (release build, read-only, non-mutating):
+- Whole-transcript enumeration read 2.239 GiB / 428,992 envelopes in 3.08 s per pass, and the recovery-origin index re-read the whole board again whenever a failed tombstone existed, on top of serial driver attach probes.
+- Bounded lifecycle scan reads 26.67 MiB in 95.3 ms over the same 198 files (135 truncated, 0 parse errors): 86x fewer bytes, 32x faster, and inside the 250 ms warm target.
+
+Fix, on top of the preserved TASK-JN5Q1 patch (its focused gates rerun green before any new edit):
+- `orgasmic_core::scan_session_lifecycle` reads a prefix/tail byte window (128 KiB + 64 KiB by default) and retains only lifecycle-relevant envelopes, rejecting transcript lines from their raw bytes without parsing. Budget sized from the real corpus: the furthest a lifecycle-deciding line ever sat was 56 KiB from the start and 13 KiB from the end.
+- Truncation is conservative: `final_envelope_retained` gates the terminal-release decision, so a still-writing run is never tombstoned from a stale retained lifecycle line, and a missing acquire still classifies `ambiguous`.
+- Inventory (`classify_session_dir`), the recovery-origin index (through the same pinned-directory, device/inode-validated fd), and `resolve_run_session_path` all use the bounded scan. Boot auto-reattach deliberately still reads whole files; that is TASK-5P60H's slow-start scope.
+- `InventoryStageMetrics` (file count, on-disk bytes, bytes inspected, truncated/unreadable counts, attach probes started/timed out, origin-index files and bytes, per-classification counts, duration) is emitted as a `tracing::debug!` and returned on `GET /api/runs` as `inventory`. Counts and byte totals only: no session paths, transcript text, prompts, or credentials.
+
+Regression added, `crates/orgasmic-daemon/tests/run_inventory_wire.rs` (raw HTTP/1.1 over TCP, `Connection: close` so EOF is observable, 5 s hard deadline):
+- `runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_transcripts` seeds terminal (32 MiB transcript), failed, interrupted, missing-worktree, and one record whose driver attach never answers (stub `tmux` that sleeps 600 s). Asserts the status line and JSON content-type arrive, the body reaches EOF non-empty and parses, per-bucket classification is exact, the hung probe is recorded as `exceeded inventory deadline` with `attach_probes_timed_out == 1`, and inspected bytes stay at the fixed per-record ceiling. A second request inspects exactly the same byte window, proving transcript bytes are never rescanned.
+- `runs_endpoint_stays_bounded_across_two_hundred_records` seeds 200 terminal records (every 40th carrying a 4 MiB transcript) and asserts 200 classified, bounded bytes, and a warm response well inside the request budget.
+- Direct-close and explicit-id finalize keep passing through the `/api/runs`-rejecting proxy (`dispatch_close_with_recorded_run_id_does_not_enumerate_runs`, `stage_grill_finalize_from_orgasmic_run_id_on_main`).
+
+Gates: `cargo fmt` clean, `cargo clippy --workspace --all-targets` clean, `git diff --check` clean, `npm run typecheck` clean. orgasmic-core 132 lib + 26 fixture tests pass (plus one opt-in ignored real-corpus measurement). orgasmic-daemon lib 500 tests and every integration binary pass. orgasmic-cli dispatch 39 tests pass. Pre-existing failures unrelated to this change, verified identical on clean `main` by stashing: `orgasmic-drivers` `simulated_acquire_emits_deterministic_flow`, and the three `dispatch_endpoint` tests that need a stub `codex` on PATH. Under full-parallel load the daemon and CLI suites also show load flakes (tmux/git/daemon-connect timing) that all pass when rerun serially; the same class of flake was present before this change. One stale assertion from the TASK-JN5Q1 patch was corrected: `manager_session_after_restart_is_recovered_not_lost` now expects the `does not support runtime reattach` reason that acp-stdio records instead of a driver probe.
+
+No operator session history was deleted or rewritten.
+** Reviewer pass
+Production-shape verification, 2026-07-25, against an APFS copy-on-write clone of the real 200-file / 2.404 GB session corpus in an isolated scratch `ORGASMIC_HOME` on port 4899. The clone makes the measurement non-mutating by construction: writes cannot reach the originals, and the installed runtime was never involved.
+
+Same corpus, same endpoint, three requests each:
+
+| build | ttfb req1 | req2 | req3 |
+| installed 0.0.14 (pre-fix) | 24.695 s | 24.809 s | 24.840 s |
+| source build (fix)         | 0.105 s  | 0.096 s | 0.097 s |
+
+Roughly 255x faster, and inside the 250 ms warm p95 acceptance target with margin. The endpoint's own reported metrics for the fixed build: 200 session files, 2,404,437,937 bytes on disk, 28,016,305 bytes inspected (86x reduction), 135 truncated scans, 1 attach probe started and 0 timed out, duration_ms 95.
+
+Correctness, which matters more than the latency: the two builds were compared run-by-run across every classification bucket.
+
+- runs classified: old 200, new 200
+- present only in old: 0
+- present only in new: 0
+- classification differences: 0
+
+So the bounded prefix/tail scan produces an identical classification of the entire production corpus while reading 86x fewer bytes, including across the 135 files where the middle region was skipped. This is the evidence the reviewer brief asked for under "attack the bounded-window premise" — the premise holds on real data, not just on fixtures.
+
+Earlier live-daemon numbers for context: the same endpoint on the running 0.0.14 daemon with all five projects registered took 35.205 s to first byte. The scratch measurement is lower (24.7 s) because it carries one project rather than five; the order of magnitude and the conclusion are unchanged.
+
+Not established by this measurement: behaviour under concurrent load, and the boot path, which still reads whole session files and is TASK-5P60H's scope.
+
