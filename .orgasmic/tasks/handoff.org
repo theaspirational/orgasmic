@@ -11,50 +11,50 @@
 :GOAL_ID:          goal-20260725-land-the-committed
 :END:
 
-Session 2026-07-25 (manager-implementer, no workers dispatched — the operator
-gated agent dispatch on runtime and dispatch issues being fixed first).
+Session 2026-07-25 (manager-implementer). Four P0s landed on main and the fixed
+runtime is INSTALLED AND VERIFIED on the operator's machine as 0.0.15-dev.1.
 
-LANDED ON MAIN (merge 5863214)
-1. TASK-KWSTJ (done) — bounded GET /api/runs. Was already verified last session;
-   this session merged it. 24.7s -> 0.10s TTFB, 28.0 MB inspected of 2.404 GB,
-   200 runs classified with zero differences from the pre-fix build.
-2. TASK-9P810 (in_review) — the runtime binary is a real file at a stable path,
-   replaced by fresh inode, and an install whose code identity differs from the
-   incumbent's is refused with both requirements named. Root cause differed from
-   the filing: the plist already named bin/orgasmic, but the kernel resolves
-   symlinks at exec, so TCC recorded the versioned path.
-3. TASK-KKGKM (in_review) — the daemon binds before per-project filesystem work.
-   Item 4 was confirmed by reproduction, not assumed: a FIFO planted where a
-   session JSONL belongs wedges boot at phase "reattaching runs", 0% CPU, zero
-   fds on the file, with a stack sample in read_session_file -> read_to_string
-   on the main thread inside block_on. That last detail also explains why the
-   heartbeat froze and `status` hung.
-4. TASK-TJKFC (in_progress) — the dispatch startup gate exists and rejects
-   before any resource is committed. Structural only; see the task for the two
-   remaining halves and the open design question about probe cost.
+VERIFIED LIVE, not just in tests
+- TASK-KWSTJ (done): GET /api/runs on the operator's real board went from
+  41.9 s to 0.24 s to first byte. 224 session files, 2.42 GB on disk, 31.4 MB
+  inspected (77x reduction), 152 truncated scans, 0 unreadable.
+- TASK-9P810 (done): the executed path is now version-free — codesign resolves
+  Executable=~/.orgasmic/bin/orgasmic where it previously resolved
+  runtimes/0.0.14-darwin-aarch64/bin/orgasmic. Identity preserved exactly.
+  Cost the one grant the installer predicted and printed.
+- TASK-KKGKM (done): proved itself during 9P810's own installation. While the
+  grant was missing, the daemon stayed bound and answerable — status, API and
+  CLI all worked and named the reason — where the same condition caused a
+  30-minute outage on 2026-07-25.
+- TASK-TJKFC (in_progress): startup gate only; adapter probes and atomic abort
+  remain, with an open design question about probe cost recorded on the task.
 
-STATE OF THE TREE
-main is green: cli 206, drivers+core 403, daemon integration suites pass. Five
-driver tests that had been failing on main since TASK-K05MX are fixed. The
-daemon lib suite still fails four tests on every full run, pre-existing and now
-filed as TASK-STWVB with evidence that they fail identically with unrelated
-changes stashed out.
+THE ONE THING TO KNOW ABOUT THIS INSTALL
+It is a local bundle at version 0.0.15-dev.1, built and signed here, not a
+published release. install.json still names the stable channel, and the
+installer is equality-based, so the next `orgasmic update` will see stable
+advertising 0.0.14, treat it as a change, and REVERT the machine to 0.0.14 —
+losing all four fixes. Publishing 0.0.15 to stable is what makes this permanent.
+Until then, do not run `orgasmic update`.
 
-THE ONE THING NOT DONE, DELIBERATELY
-None of this is installed. The operator's daemon is still the pre-fix 0.0.14
-build, so `GET /api/runs` still takes 35 s on their machine and the boot fix is
-not protecting them yet. Installing is outward-facing and previously caused a
-30-minute outage plus two System Settings approvals, so it needs the operator's
-say-so. TASK-9P810 is precisely what makes that install safe, and its own
-migration prints that the first stable-path install still costs one final
-permission prompt because the executed path changes.
+ALSO FIXED WHILE INSTALLING
+scripts/install.sh's replace_symlink let mv follow the `current` symlink and
+drop the new link inside the OLD runtime dir, so an upgrade printed "install
+complete" while still pointing at the previous runtime. Only reproduces on
+re-install, never on a first install, which is why it survived. Commit d455051.
+
+CORRECTED MID-SESSION
+A reindex that succeeds does NOT prove the daemon has permission. One succeeded
+in 1.3 s while the grant was missing and loaded all five projects, which led to
+a wrong "no grant needed" call. Only comparing a boot with and without the grant
+settles it. Recorded in gotchas.
 
 NEXT
-- Install the built runtime (operator decision) and then TASK-Z8WEJ / TASK-VB9DQ
-  verify end-to-end, which is also what unblocks dispatching agents again.
-- Finish TASK-TJKFC: adapter probes, then the atomic-abort half.
-- TASK-7QM8M (bound boot reattach reads) and TASK-STWVB (flaky daemon suite)
-  were both filed from evidence found this session.
+- Publish 0.0.15 to stable (needs operator approval; it is a public release).
+- Finish TASK-TJKFC, then TASK-Z8WEJ / TASK-VB9DQ verify dispatch end to end,
+  which is what unblocks dispatching agents again.
+- TASK-7QM8M (bound boot reattach reads) and TASK-STWVB (four daemon tests fail
+  on every full run) were filed from evidence found this session.
 - The process arc (YGB1R, TW3N3, JQARS, 8ED6V, 3CM0Q, 4YX1K, 0JY7M) is untouched.
 
 ** Done so far
