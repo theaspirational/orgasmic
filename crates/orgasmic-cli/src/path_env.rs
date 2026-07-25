@@ -392,7 +392,13 @@ pub fn resolve_source_binary(source: &Path) -> Option<PathBuf> {
         .max_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
 }
 
-/// Repoint `bin/orgasmic` at the resolved source binary. Returns the target.
+/// Publish the resolved source binary as `bin/orgasmic`. Returns the build
+/// artifact it was taken from.
+///
+/// This copies rather than links. A link would put the executed path back inside
+/// `target/release`, which is a different macOS TCC client from the managed path
+/// and is rewritten by every `cargo build` — so the operator would re-approve
+/// filesystem access after each rebuild. TASK-9P810.
 #[cfg(unix)]
 pub fn relink_source_binary(home: &Home, source: &Path) -> Result<PathBuf> {
     let bin = resolve_source_binary(source).ok_or_else(|| {
@@ -401,9 +407,7 @@ pub fn relink_source_binary(home: &Home, source: &Path) -> Result<PathBuf> {
             source.join("target").display()
         )
     })?;
-    std::fs::create_dir_all(home.bin())
-        .with_context(|| format!("create {}", home.bin().display()))?;
-    crate::update::replace_symlink(&home.bin_orgasmic(), &bin)?;
+    crate::managed_binary::install(home, &bin, crate::managed_binary::IdentityGuard::Enforce)?;
     Ok(bin)
 }
 
@@ -421,6 +425,19 @@ mod tests {
     fn env_guard() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    /// A PATH containing `local_bin` **and** the system tool dirs.
+    ///
+    /// `ScopedEnv` mutates the process environment, which every thread in the
+    /// test binary shares. Setting PATH to a bare tempdir therefore made any
+    /// concurrently running test that spawns a PATH-resolved tool fail with a
+    /// bare `NotFound` — `manager::tests::local_dispatch_rollback_*` (git) failed
+    /// this way roughly three runs in four. Keeping the system dirs preserves
+    /// what these tests actually assert (is `local_bin` on PATH?) while leaving
+    /// the rest of the suite able to find its tools.
+    fn test_path(local_bin: &Path) -> String {
+        format!("{}:/usr/bin:/bin", local_bin.display())
     }
 
     struct ScopedEnv {
@@ -569,7 +586,7 @@ mod tests {
         let _env = ScopedEnv::set(&[
             ("HOME", tmp.path().to_str().unwrap()),
             ("SHELL", "/bin/zsh"),
-            ("PATH", local_bin.to_str().unwrap()),
+            ("PATH", &test_path(&local_bin)),
             (NO_MODIFY_ENV, "0"),
         ]);
         let home = home_with_binary(tmp.path());
@@ -600,7 +617,7 @@ mod tests {
         let _env = ScopedEnv::set(&[
             ("HOME", tmp.path().to_str().unwrap()),
             ("SHELL", "/bin/zsh"),
-            ("PATH", local_bin.to_str().unwrap()),
+            ("PATH", &test_path(&local_bin)),
             (NO_MODIFY_ENV, "0"),
         ]);
         // bin/orgasmic -> a real binary living outside bin/, like the runtime chain.
@@ -637,7 +654,7 @@ mod tests {
         let _env = ScopedEnv::set(&[
             ("HOME", tmp.path().to_str().unwrap()),
             ("SHELL", "/bin/zsh"),
-            ("PATH", local_bin.to_str().unwrap()),
+            ("PATH", &test_path(&local_bin)),
             (NO_MODIFY_ENV, "0"),
         ]);
         let home = home_with_binary(tmp.path());
@@ -685,7 +702,7 @@ mod tests {
         let _env = ScopedEnv::set(&[
             ("HOME", tmp.path().to_str().unwrap()),
             ("SHELL", "/bin/zsh"),
-            ("PATH", local_bin.to_str().unwrap()),
+            ("PATH", &test_path(&local_bin)),
         ]);
         let home = home_with_binary(tmp.path());
 

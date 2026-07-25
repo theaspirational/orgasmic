@@ -26913,3 +26913,225 @@
 :REASON:       edited task node TASK-KWSTJ
 :NODE_ID:      TASK-KWSTJ
 :END:
+
+* TX 2026-07-25 Sat 14:36:47 task.created TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2783
+:TIME:         [2026-07-25 Sat 14:36:47]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       16 runtime paths and 37 TCC grants since June; every version bump costs a GUI approval
+:END:
+
+* TX 2026-07-25 Sat 14:37:14 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2784
+:TIME:         [2026-07-25 Sat 14:37:14]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       recurring operator toil
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 14:37:14 task.property_updated TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2785
+:TIME:         [2026-07-25 Sat 14:37:14]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       every release costs a manual grant
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-25 Sat 14:37:14 task.created TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2786
+:TIME:         [2026-07-25 Sat 14:37:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       a TCC denial on one path hung the whole runtime pre-bind with no actionable signal
+:END:
+
+* TX 2026-07-25 Sat 14:37:31 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2787
+:TIME:         [2026-07-25 Sat 14:37:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       single-project permission fault takes down the runtime
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-25 Sat 14:37:31 task.property_updated TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2788
+:TIME:         [2026-07-25 Sat 14:37:31]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       total outage from a recoverable per-project condition
+:PRIORITY:     P0
+:END:
+
+* TX 2026-07-25 Sat 14:37:32 task.property_updated TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2789
+:TIME:         [2026-07-25 Sat 14:37:32]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       shares unavailable-project state and launchd backoff
+:RELATES_TO:   TASK-3R3EZ TASK-5P60H
+:END:
+
+* TX 2026-07-25 Sat 14:40:54 task.property_updated TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2790
+:TIME:         [2026-07-25 Sat 14:40:54]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       gates safe delivery of the committed runtime fixes; today's install attempt caused an outage
+:PRIORITY:     P0
+:END:
+
+* TX 2026-07-25 Sat 14:40:54 manager.set_goal orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2791
+:TIME:         [2026-07-25 Sat 14:40:54]
+:TYPE:         manager.set_goal
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       .orgasmic/tasks/goal.org
+:REASON:       reprioritised after a session that produced three outages and eight new tasks
+:GOAL_ID:      goal-20260725-land-the-committed
+:REPLACES:     goal-20260725-harden-the-manager
+:END:
+
+* TX 2026-07-25 Sat 14:40:54 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2792
+:TIME:         [2026-07-25 Sat 14:40:54]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 14:41:26 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2793
+:TIME:         [2026-07-25 Sat 14:41:26]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-25 Sat 14:49:54 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2794
+:TIME:         [2026-07-25 Sat 14:49:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager-implementer: stable identity-checked install path
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-25 Sat 15:08:50 graph.architecture.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2795
+:TIME:         [2026-07-25 Sat 15:08:50]
+:TYPE:         graph.architecture.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/architecture.org
+:REASON:       edited architecture node arch_WZFAX.2
+:NODE_ID:      arch_WZFAX.2
+:END:
+
+* TX 2026-07-25 Sat 15:10:55 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2796
+:TIME:         [2026-07-25 Sat 15:10:55]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:
+
+* TX 2026-07-25 Sat 15:11:07 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2797
+:TIME:         [2026-07-25 Sat 15:11:07]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:
+
+* TX 2026-07-25 Sat 15:11:19 task.edited TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2798
+:TIME:         [2026-07-25 Sat 15:11:19]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-9P810
+:NODE_ID:      TASK-9P810
+:END:

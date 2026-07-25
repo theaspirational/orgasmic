@@ -2,12 +2,28 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Harden the manager tier gate before draining the recovery chain :goal:
+* GOAL Land the committed runtime fixes safely, then repair what took the runtime down :goal:
+:PROPERTIES:
+:ID:               goal-20260725-land-the-committed
+:SET_AT:           [2026-07-25 Sat]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         goal-20260725-harden-the-manager
+:END:
+
+** Statement
+Three fixes are committed and unshipped while the operator's daemon still runs the 35-second pre-fix build. Make installing them safe (TASK-9P810), stop a single unreadable project from killing the whole runtime (TASK-KKGKM), and stop fatal startups from leaving orphans and uncloseable dispatch records (TASK-TJKFC). Then land the process guardrails that change how every remaining task is executed, and only then resume the run-storage chain.
+
+** Reached When
+TASK-KWSTJ, TASK-Z8WEJ and TASK-VB9DQ are landed on a runtime the operator is actually running. An unreadable project leaves the daemon bound. A fatal harness startup leaves no orphan process and no open dispatch record. Upgrading the runtime costs no macOS permission approval. A manager cannot begin source edits without a declared tier.
+
+* SUPERSEDED Harden the manager tier gate before draining the recovery chain :goal:
 :PROPERTIES:
 :ID:               goal-20260725-harden-the-manager
 :SET_AT:           [2026-07-25 Sat]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         —
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-07-25 Sat]
 :END:
 
 ** Statement

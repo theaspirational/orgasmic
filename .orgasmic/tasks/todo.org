@@ -219,3 +219,36 @@ Acceptance:
 - no identifier, mode value, doc comment or protocol_version calls a non-ACP transport "acp"
 - pre-rename session records still classify and still resolve to their native transcripts
 - `acp-stdio` and `acp-ws` are unused and documented as reserved
+
+* TODO TASK-KKGKM A project the daemon cannot read must not prevent it from binding :daemon:boot:resilience:
+:PROPERTIES:
+:ID: TASK-KKGKM
+:PRIORITY: P0
+:RELATES_TO: TASK-3R3EZ TASK-5P60H
+:END:
+
+Problem: when the daemon lacks filesystem permission for a registered project's path, it does not degrade — it dies. Reproduced 2026-07-25 after a runtime binary swap invalidated the macOS TCC grant for `~/Documents`:
+
+- boot logged `starting pre-bind boot work`, then only `project scan timed out` warnings, then nothing
+- the process sat at 0% CPU for minutes, never reaching `listening`
+- `lsof` showed no project files open at all, only its own log, lock and binary — consistent with a permission-gated `open()` blocking in the kernel before a descriptor exists
+- launchd `KeepAlive` kept spawning replacements, each refusing with `daemon instance lock is held, but the incumbent is not healthy`, so the machine churned without recovering
+- the only operator-visible signal was a WARN line in a log file nobody was watching; `orgasmic status` simply hung
+
+The daemon never bound, so every CLI verb, the UI, and the app were dead. A permission problem affecting a subset of projects took down the whole runtime.
+
+The scan timeout works as designed — it logs "omitting project so daemon boot can continue" — but something after it blocks anyway. Find that, and make the whole class non-fatal.
+
+Work:
+1. Bind first, or at minimum guarantee that no per-project filesystem work can prevent binding. An operator must always be able to reach `status` and the UI to learn why the runtime is unhealthy.
+2. Give a project whose files cannot be read a durable `unavailable` state with the reason, rather than retrying it into a hang. This is the same state TASK-3R3EZ introduces for missing project roots; reuse it rather than inventing a parallel one.
+3. Report the condition where an operator will actually see it: `orgasmic status` and `orgasmic doctor` should name the affected projects and the exact remedy, not just emit a WARN into `daemon.out.log`.
+4. Identify what blocks after the index scan completes. Boot reattach reads every session JSONL and is the leading suspect, but it was not confirmed — no fd was open at the time of sampling. Confirm before fixing.
+5. Bound the launchd churn: repeated replacements refusing on the instance lock is noise that hides the real fault. Relates to TASK-5P60H's backoff work.
+6. Regression: a registered project whose path is unreadable must still leave the daemon bound, reporting that project as unavailable.
+
+Acceptance:
+- an unreadable project cannot prevent the daemon from binding
+- `status` and `doctor` name the affected project and the remedy
+- the daemon stays useful for every other project
+- a regression covers the unreadable-project case

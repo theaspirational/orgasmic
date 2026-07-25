@@ -188,3 +188,4 @@ Open questions to answer before committing to it:
 This is deliberately a research-and-decide task, not an implementation commitment. If the answer is that ACP does not carry orgasmic's lifecycle needs, recording that is a complete and useful result.
 
 Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
+

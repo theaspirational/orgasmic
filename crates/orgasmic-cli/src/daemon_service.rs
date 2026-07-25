@@ -303,14 +303,35 @@ fn systemd_user_available() -> bool {
     }
 }
 
+/// The managed binary, when the install actually owns one as a real file.
+/// A surviving legacy symlink is skipped: resolving it is what put a versioned
+/// path into the service definition in the first place, and an install that has
+/// not been through TASK-9P810 yet has no stable file to name.
+fn managed_binary_exe(home: &Home) -> Option<PathBuf> {
+    let bin = home.bin_orgasmic();
+    std::fs::symlink_metadata(&bin)
+        .ok()
+        .filter(|meta| meta.is_file() && !meta.file_type().is_symlink())
+        .map(|_| bin)
+}
+
 fn service_spec(home: &Home) -> Result<ServiceSpec> {
     home.ensure()?;
     std::fs::create_dir_all(home.logs())
         .with_context(|| format!("create {}", home.logs().display()))?;
     let runtime_override = daemon_runtime::active(home)?;
     let exe = match &runtime_override {
+        // A deliberate `--from-source` override still wins: it exists to run a
+        // specific binary.
         Some(runtime) => runtime.binary.clone(),
-        None => std::env::current_exe().context("resolve current executable")?,
+        // Otherwise name the managed binary rather than whatever path invoked
+        // us. `current_exe` returns the *invocation* path on macOS, so running
+        // `~/.orgasmic/runtimes/<version>/bin/orgasmic daemon start` would pin
+        // the service to a per-version path — a fresh TCC client that is also
+        // pruned by retention two updates later. TASK-9P810.
+        None => managed_binary_exe(home)
+            .map(Ok)
+            .unwrap_or_else(|| std::env::current_exe().context("resolve current executable"))?,
     };
     Ok(ServiceSpec {
         exe,

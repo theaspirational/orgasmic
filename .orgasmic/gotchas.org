@@ -152,3 +152,69 @@ questions from a bounded prefix/tail window — and why any *new* mid-file
 lifecycle event would be invisible to run enumeration unless
 =SessionScanBudget= or the retention rule in =line_is_lifecycle_relevant=
 changes with it. Durable invariant as of TASK-KWSTJ.
+
+** Re-signing the installed runtime destroys its macOS permissions
+The installed binary carries an identity-based designated requirement:
+=identifier "com.theaspirational.orgasmic" and certificate root = H"a705..."=.
+A rebuilt binary re-signed with the *same* =orgasmic dev codesign= identity
+satisfies it, so replacing the file at a fixed path is safe. Signing ad-hoc
+(=codesign --force --sign -=) replaces the certificate root, the requirement
+stops matching, and every TCC grant for that binary dies.
+
+Restoring the original bytes does NOT bring the permission back — verified
+2026-07-25 with a byte-identical restore (same SHA-256) that still could not
+read =~/Documents=. Recovery took two separate System Settings approvals, and
+in the end only Full Disk Access worked where the Files and Folders grant did
+not; that asymmetry is unexplained and worth confirming before relying on it.
+
+The daemon does not fail loudly when this happens. It hangs pre-bind at 0% CPU
+with no project files open, launchd respawns replacements that refuse on the
+instance lock, and =orgasmic status= just hangs. Symptom looks like a daemon
+bug, not a permissions one.
+
+Never test a source build by swapping the installed runtime. Run it against a
+throwaway =ORGASMIC_HOME= on a non-default port instead; an APFS =cp -c= clone
+of a real project's =.orgasmic/tmp/sessions= gives production-shaped data with
+copy-on-write isolation, so writes cannot reach the originals. Durable
+invariant as of TASK-9P810.
+
+** The executed path is what macOS grants permission to, not the path you typed
+=env::current_exe()= on macOS returns the *invocation* path, so a LaunchAgent
+written by =daemon start= names whatever the operator ran. That is not what TCC
+records. The kernel resolves symlinks at =exec=, so a plist naming
+=~/.orgasmic/bin/orgasmic= while that entry was a link produced grants against
+=~/.orgasmic/runtimes/<version>/bin/orgasmic=. =codesign -d= shows the same
+resolution: pass it the link and its =Executable== header prints the versioned
+path. Every release was therefore a new TCC client — 16 granted paths and 37
+rows on one machine between 2026-06-18 and 2026-07-25 — and retention then
+pruned the very directories those grants pointed at.
+
+Path and identity are two independent halves. Holding the path still is useless
+if the signature changes, and holding the identity still is useless if the path
+moves. TASK-9P810 pins both: =bin/orgasmic= is a real file replaced by fresh
+inode, and an install whose designated requirement differs from the incumbent's
+is refused rather than published.
+
+=codesign -d -r-= prints the requirement to *stdout* and the =Executable==
+header to stderr — reading the merged stream misleads. Worse, an ad-hoc
+signature has no explicit requirement, so the implied one is printed *commented
+out*:
+
+: designated => identifier "com.theaspirational.orgasmic" and certificate root = H"a705..."
+: # designated => cdhash H"b35e..." or cdhash H"45d6..."
+
+A parser that misses the =#= form reads an ad-hoc binary as "identity unknown"
+and waves it through — precisely the case the guard exists to catch. Resolve
+=codesign= as =/usr/bin/codesign=, never through PATH: this decides whether a
+binary keeps the operator's grants, and anything earlier on PATH could answer
+for it. Durable invariant as of TASK-9P810.
+
+** Tests that set PATH break every other test in the binary
+=ScopedEnv= in =path_env= mutates the *process* environment, which all test
+threads share. Setting PATH to a bare tempdir made any concurrently running test
+that spawns a PATH-resolved tool fail with a bare =NotFound= and no hint of the
+cause: =manager::tests::local_dispatch_rollback_keeps_branch_when_worktree_validation_fails=
+(spawns =git=) failed roughly three runs in four, and passed alone every time.
+Keep the system dirs on any test PATH — =format!("{local_bin}:/usr/bin:/bin")= —
+and prefer absolute paths for system tools in production code. Fixed 2026-07-25
+under TASK-9P810.

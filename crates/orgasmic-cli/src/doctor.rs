@@ -66,13 +66,20 @@ pub fn diagnose(home: &Home) -> Vec<Finding> {
         )));
     }
 
+    // A real file here is the healthy shape, not a degraded one: macOS keys
+    // permission grants to the executed path, so a link would resolve to a
+    // per-version path and cost the operator an approval per release
+    // (TASK-9P810). A surviving link still works, so it is a warning with the
+    // remedy, not a failure.
     let bin = home.bin_orgasmic();
     match std::fs::symlink_metadata(&bin) {
         Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(&bin) {
             Ok(target) => {
                 if target.exists() || home.bin().join(&target).exists() {
-                    out.push(Finding::Ok(format!(
-                        "binary symlink ok: {} -> {}",
+                    out.push(Finding::Warn(format!(
+                        "{} is a symlink to {}; the executed path changes with every runtime \
+                         version, so macOS re-prompts for file access on each update. \
+                         Run `orgasmic update` to install it as a real binary.",
                         bin.display(),
                         target.display()
                     )));
@@ -90,12 +97,15 @@ pub fn diagnose(home: &Home) -> Vec<Finding> {
                 e
             ))),
         },
-        Ok(_) => out.push(Finding::Warn(format!(
-            "{} exists but is not a symlink (run scripts/install.sh)",
+        Ok(meta) if meta.is_file() => {
+            out.push(Finding::Ok(format!("binary ok: {}", bin.display())));
+        }
+        Ok(_) => out.push(Finding::Fail(format!(
+            "{} exists but is not a regular file (run scripts/install.sh)",
             bin.display()
         ))),
         Err(_) => out.push(Finding::Warn(format!(
-            "binary symlink missing: {} (run scripts/install.sh)",
+            "binary missing: {} (run scripts/install.sh)",
             bin.display()
         ))),
     }

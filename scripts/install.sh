@@ -9,7 +9,7 @@
 #     runtimes/<version>-<target>/
 #     current -> runtimes/<version>-<target>
 #     orgasmic -> current                 # compatibility content root
-#     bin/orgasmic -> ../current/bin/orgasmic
+#     bin/orgasmic                        # real file, copied from the runtime
 #     user/ state/ sessions/ secrets/ logs/ config.yaml
 #     install.json
 #
@@ -184,6 +184,27 @@ replace_symlink() {
     rm -f "$tmp"
     ln -s "$target" "$tmp"
     mv -f "$tmp" "$link"
+}
+
+# Publish the executed binary as a real file at a stable path. macOS keys
+# filesystem permission grants (TCC) to the path the kernel resolves at exec
+# time, so a symlink here would resolve to a per-version runtime path and cost
+# the operator an approval on every release. Always a fresh inode staged beside
+# the destination and renamed into place: overwriting a codesigned Mach-O in
+# place invalidates the running image's signature and macOS SIGKILLs it.
+# orgasmic:TASK-9P810
+install_managed_binary() {
+    local source="$1" dest="$2"
+    mkdir -p "$(dirname "$dest")"
+    if [[ -e "$dest" && ! -L "$dest" && ! -f "$dest" ]]; then
+        echo "error: $dest exists and is not a regular file; refusing to replace it" >&2
+        exit 1
+    fi
+    local tmp="${dest}.incoming.$$"
+    rm -f "$tmp"
+    cp "$source" "$tmp"
+    chmod 755 "$tmp"
+    mv -f "$tmp" "$dest"
 }
 
 # Locate the freshly built binary, accounting for `--target`-qualified builds
@@ -411,7 +432,7 @@ install_bundle_mode() {
     validate_runtime_payload "$runtime_dir"
     replace_symlink "runtimes/${runtime_version}-${runtime_target}" "$ORGASMIC_HOME/current"
     replace_symlink "current" "$ORGASMIC_HOME/orgasmic"
-    replace_symlink "../current/bin/orgasmic" "$ORGASMIC_HOME/bin/orgasmic"
+    install_managed_binary "$runtime_dir/bin/orgasmic" "$ORGASMIC_HOME/bin/orgasmic"
     link_agent_skill "$ORGASMIC_HOME/current/shipped/skills/orgasmic"
     write_install_json_bundle "$runtime_version" "$runtime_target" "$manifest_url" "$runtime_dir"
 
@@ -505,7 +526,7 @@ install_source_mode() {
             echo "error: built orgasmic binary not found under $INSTALL_DIR/target (release or <triple>/release)" >&2
             exit 1
         fi
-        replace_symlink "$source_bin" "$ORGASMIC_HOME/bin/orgasmic"
+        install_managed_binary "$source_bin" "$ORGASMIC_HOME/bin/orgasmic"
         "$ORGASMIC_HOME/bin/orgasmic" init
         ensure_path_on_shell
     else

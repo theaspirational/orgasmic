@@ -143,7 +143,7 @@ Resolves ORGASMIC_HOME paths and content roots, placing user overrides before sh
 ** arch_WZFAX.2 install/update entrypoint
 :PROPERTIES:
 :ID:                 arch_WZFAX.2
-:SOURCE_PATHS:       crates/orgasmic-cli/src/update.rs crates/orgasmic-cli/src/content_lifecycle.rs
+:SOURCE_PATHS:       crates/orgasmic-cli/src/update.rs crates/orgasmic-cli/src/content_lifecycle.rs crates/orgasmic-cli/src/managed_binary.rs
 :TESTS:              cargo test -p orgasmic-cli
 :READS:
 :WRITES:             file:board
