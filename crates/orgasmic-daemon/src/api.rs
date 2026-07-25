@@ -7796,22 +7796,31 @@ fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Res
 /// written on release. Runs missing either path (manager, recovery, stage
 /// launch, or pre-upgrade session JSONL) are reattached with no watcher, same
 /// as before this fix.
-pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
-    let home = &state.home;
-    let supervisor = &state.supervisor;
-    let mut candidates: Vec<BootReattachCandidate> = Vec::new();
-    let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-    for root in project_roots {
-        let dir = project_sessions_dir(root);
-        if !seen_dirs.insert(dir.clone()) {
-            continue;
-        }
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+/// Read every session file under `dirs` and keep the runs worth reattaching.
+/// Blocking by nature; callers must keep it off the async runtime's threads.
+fn collect_boot_reattach_candidates(dirs: &[PathBuf]) -> Vec<BootReattachCandidate> {
+    let mut candidates = Vec::new();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                continue;
+            }
+            // A session file is always a regular file. Anything else — a fifo,
+            // a socket, a device — would block `open()` forever, so refuse it
+            // by shape rather than discovering that by hanging.
+            if !entry
+                .file_type()
+                .map(|file_type| file_type.is_file())
+                .unwrap_or(false)
+            {
+                tracing::warn!(
+                    path = %path.display(),
+                    "skipping session path that is not a regular file"
+                );
                 continue;
             }
             let Ok(envelopes) = read_session_file(&path) else {
@@ -7822,6 +7831,31 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
             }
         }
     }
+    candidates
+}
+
+pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
+    let home = &state.home;
+    let supervisor = &state.supervisor;
+    let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let dirs: Vec<PathBuf> = project_roots
+        .iter()
+        .map(|root| project_sessions_dir(root))
+        .filter(|dir| seen_dirs.insert(dir.clone()))
+        .collect();
+    // Every read here can block indefinitely rather than fail: a path the
+    // process lacks permission for, or any non-regular file, stalls inside
+    // `open()` before a descriptor exists. Keep all of it on a blocking thread
+    // so one such file costs this scan and nothing else — running it inline
+    // wedged the whole runtime (TASK-KKGKM).
+    let mut candidates: Vec<BootReattachCandidate> =
+        match tokio::task::spawn_blocking(move || collect_boot_reattach_candidates(&dirs)).await {
+            Ok(candidates) => candidates,
+            Err(error) => {
+                tracing::warn!(error = %error, "boot reattach scan failed; skipping reattach");
+                return;
+            }
+        };
     // Managers first (false sorts before true).
     candidates.sort_by_key(|c| !c.task_id.starts_with("manager.launch:"));
 

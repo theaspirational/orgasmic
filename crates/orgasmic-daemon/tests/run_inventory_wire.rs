@@ -294,9 +294,9 @@ async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_tr
     let project_root = tmp.path().join("project");
     seed_board(&home, &project_root, "orgasmic");
 
-    // Boot first, then seed. Boot auto-reattach is a separate (still
-    // unbounded) path owned by the slow-start task; this regression is about
-    // what a *request* costs.
+    // Boot first, then seed. Boot auto-reattach is a separate path — since
+    // TASK-KKGKM it runs after bind, on a blocking thread, and it is still
+    // unbounded (TASK-7QM8M). This regression is about what a *request* costs.
     let running = Daemon::run(home.clone(), test_options())
         .await
         .expect("boot daemon");

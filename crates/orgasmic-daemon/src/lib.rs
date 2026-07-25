@@ -568,13 +568,16 @@ impl Daemon {
             trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
         };
 
-        // Boot auto-reattach: rehydrate still-live runs (notably the operator's
-        // manager terminal) against their surviving mux sessions so a daemon
-        // restart/rebuild is transparent. Runs whose mux session is gone are
-        // skipped, not interrupted. Reattached dispatch runs get their
-        // completion watcher respawned (TASK-567JG).
-        boot_progress.set_phase("reattaching runs")?;
-        api::reattach_live_runs_on_boot(&api_state, &reattach_roots).await;
+        // Boot auto-reattach runs *after* the listener is bound (see below). It
+        // reads every session file in every project, so a single unreadable one
+        // used to hold the whole runtime pre-bind: no `status`, no UI, no CLI —
+        // launchd respawning replacements that refuse on the instance lock, and
+        // a WARN in a log nobody was watching as the only signal. Reproduced
+        // 2026-07-25 and confirmed by stack sample: blocked in
+        // `read_session_file` -> `read_to_string` on the main thread inside
+        // `block_on`, which also starved the boot-progress heartbeat, so even
+        // the phase readout froze. TASK-KKGKM.
+        let reattach_state = api_state.clone();
 
         let app: Router = router(api_state);
         let addr = SocketAddr::new(cfg.bind, cfg.port);
@@ -605,6 +608,20 @@ impl Daemon {
         );
         // Ready: retire boot heartbeat so readers do not keep reporting phases.
         boot_progress.retire();
+
+        // Rehydrate still-live runs (notably the operator's manager terminal)
+        // against their surviving mux sessions so a daemon restart is
+        // transparent. Runs whose mux session is gone are skipped, not
+        // interrupted; reattached dispatch runs get their completion watcher
+        // respawned (TASK-567JG).
+        //
+        // Deliberately after bind and off the runtime threads: this is
+        // best-effort recovery, while answering `status` is what an operator
+        // needs in order to diagnose anything at all. A project that cannot be
+        // read now costs its own runs' reattachment and nothing else.
+        tokio::spawn(async move {
+            api::reattach_live_runs_on_boot(&reattach_state, &reattach_roots).await;
+        });
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let writer_for_shutdown = writer.clone();
         let join = tokio::spawn(async move {

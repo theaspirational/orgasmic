@@ -189,3 +189,86 @@ This is deliberately a research-and-decide task, not an implementation commitmen
 
 Depends on TASK-XCJYC only for the name; the evaluation can start earlier.
 
+* BACKLOG TASK-7QM8M Bound the bytes boot auto-reattach reads per session file    :daemon:boot:performance:
+:PROPERTIES:
+:ID: TASK-7QM8M
+:PRIORITY: P1
+:END:
+
+Boot auto-reattach reads every session file whole. It calls
+=read_session_file= -> =std::fs::read_to_string=, so a project with large TUI
+transcripts pays their full size at every daemon start. This is the same
+unbounded read TASK-KWSTJ removed from =GET /api/runs=, still present on the
+boot path; measured there, a 2.4 GB board cost 24.7 s and the bounded scanner
+reduced it to 28 MB inspected.
+
+TASK-KKGKM moved this scan after bind and onto a blocking thread, so it can no
+longer stop the daemon serving, and it is no longer on the critical path. What
+remains is cost and latency: reattachment of the operator's live manager
+terminal is delayed by however long the read takes.
+
+=boot_reattach_candidate= consumes only lifecycle-class events — acquire,
+run_meta, release, the terminal driver event, and the external-registration
+marker — which is exactly what =scan_session_lifecycle= retains, so the
+substitution should be direct.
+
+One correctness subtlety must be handled explicitly rather than assumed. The
+function calls =latest_run_segment=, which picks the newest contiguous run
+segment by run_id. On a truncated scan the prefix may hold one segment's
+acquire while the tail holds a later segment's end, so the two windows can
+describe different runs. =classify_session_files= already guards this with
+=scan.final_envelope_retained= before trusting =release_outcome=; reattach needs
+an equivalent rule. Getting it wrong means a live run is silently not
+reattached, which looks like the run vanished.
+
+Acceptance:
+- boot reattach inspects bounded bytes per session file, not file size
+- a truncated scan cannot combine two run segments into one candidate
+- a still-live run in a multi-segment session file is still reattached
+- measured against a production-shaped board, as TASK-KWSTJ was
+
+* BACKLOG TASK-STWVB Four daemon tests fail on every full-suite run and pass alone    :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB
+:PRIORITY: P1
+:END:
+
+Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
+and each passes alone:
+
+- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
+- api::tests::recovery_inventory_waits_for_atomic_claim_commit
+- api::tests::recovery_reattaches_tmux_session_when_handle_exists
+- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
+
+Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
+unrelated change stashed out. They only fail under full-suite parallelism, not
+in a filtered subset, so the trigger is cross-test interference rather than any
+one test's logic.
+
+Why this is worth fixing rather than tolerating: a suite that always fails four
+tests cannot answer "did my change break something?". Establishing that these
+four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
+stash-and-compare that every future change to this crate has to repeat. A red
+suite is also indistinguishable from a red suite with one new real failure in
+it.
+
+Leads, not conclusions:
+- These tests share process-global state: `live_session_guard()` and static
+  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
+  tests against each other but not against everything that observes the same
+  state.
+- The same class of bug was found and fixed in the CLI crate on the same day:
+  `path_env`'s tests set process-global PATH to a bare tempdir, so any
+  concurrently running test spawning a PATH-resolved tool failed with a bare
+  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
+  shared-environment dependency before assuming a timing race.
+- Two of the four are tmux/mux-dependent, so a real external session leaking
+  between tests is also plausible.
+
+Acceptance:
+- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
+  parallelism
+- the cause is named per test, not worked around by serializing the whole suite
+- if any test genuinely requires exclusive global state, it says so and enforces
+  it, rather than depending on scheduling luck

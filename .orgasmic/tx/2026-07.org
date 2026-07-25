@@ -27135,3 +27135,74 @@
 :REASON:       edited task node TASK-9P810
 :NODE_ID:      TASK-9P810
 :END:
+
+* TX 2026-07-25 Sat 15:13:41 task.state_transitioned TASK-9P810
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2799
+:TIME:         [2026-07-25 Sat 15:13:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-9P810
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       implemented manager-direct; 206 CLI assertions green, verified against the real signed runtime
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+
+* TX 2026-07-25 Sat 15:38:52 task.created TASK-7QM8M
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2800
+:TIME:         [2026-07-25 Sat 15:38:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-7QM8M
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       surfaced while fixing TASK-KKGKM: reattach is off the critical path now, but still reads whole transcripts
+:END:
+
+* TX 2026-07-25 Sat 15:42:51 task.edited TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2801
+:TIME:         [2026-07-25 Sat 15:42:51]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/todo.org
+:REASON:       edited task node TASK-KKGKM
+:NODE_ID:      TASK-KKGKM
+:END:
+
+* TX 2026-07-25 Sat 15:43:02 task.state_transitioned TASK-KKGKM
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2802
+:TIME:         [2026-07-25 Sat 15:43:02]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKGKM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       item 4 confirmed by reproduction and stack sample; bind-first fix implemented
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-25 Sat 15:54:29 task.created TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2803
+:TIME:         [2026-07-25 Sat 15:54:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       a permanently red suite cannot answer whether a change broke something; cost two 13-minute runs to rule out during TASK-KKGKM
+:END:
