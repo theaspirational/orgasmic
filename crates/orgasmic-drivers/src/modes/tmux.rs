@@ -1294,7 +1294,7 @@ fn claude_native_runtime_pending_fork(
 /// Claude stores conversation JSONL under
 /// `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, where the encoding
 /// replaces path separators and dots with `-`.
-fn claude_session_path(session_id: &str, cwd: &std::path::Path) -> Option<PathBuf> {
+pub(crate) fn claude_session_path(session_id: &str, cwd: &std::path::Path) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let encoded: String = cwd
         .to_string_lossy()

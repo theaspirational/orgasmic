@@ -11,19 +11,27 @@
 :GOAL_ID:          goal-20260725-harden-the-manager
 :END:
 
-TASK-KWSTJ is implemented and in review, uncommitted, with no independent reviewer pass. The agenda is reprioritised: the process defect that produced it outranks the remaining run-storage work, because every task still queued has the same P0/P1 multi-crate shape that slipped through.
+TASK-KWSTJ is committed as fb7590b on branch `task-kwstj-bounded-run-inventory` and under independent review (run-20260725T073841, reviewer-claude-acp-stdio). The agenda is reprioritised: the process defects surfaced while running it outrank the remaining run-storage work, because every queued task has the same shape that slipped through.
 
-What went wrong, recorded so it is not relitigated: the manager read the resolved `default` workflow, registered that manager-implementer is sanctioned, and never classified the work as trivial / ordinary / risky at all. ~900 lines of daemon-recovery code across four crates landed with no tier decision and no reviewer. The workflow states the rule but imposes only a reading obligation; nothing forces an output before the first source edit, so skipping it is silent and leaves no audit trace.
+Two failures produced this agenda, and they are opposites. The manager read the resolved `default` workflow, registered that manager-implementer is sanctioned, and never classified the work as trivial / ordinary / risky at all — ~900 lines of P0 daemon-recovery code across four crates landed with no tier decision and no reviewer. Corrected, it over-corrected: it then asked permission to commit to a local branch, a reversible machine-local step already implied by an approved plan. An agent without an explicit line between "decision that is the operator's" and "mechanical step that is not" oscillates between both.
+
+A third, separate failure is recorded because it nearly landed a wrong architectural recommendation. Choosing a reviewer transport, the manager ran the documented `orgasmic manager drivers`, found it does not exist, grepped `SUPPORTED` out of the drivers crate and took the first entry — then found the retired `~/.orgasmic/user/workers/*.org` templates, mistook them for live configuration, told the operator it had "bypassed your configured reviewer", and proposed restoring template resolution. dec_WDR5K retired that concept on 2026-07-17, and the `gpt-5.6-sol` override in those files is the exact incident its consequences call structurally impossible. The daemon had logged the correct warning at every boot; nothing put it where an agent would look. The stale files are now deleted (backup in this session's scratchpad).
 
 Reprioritised order:
-1. TASK-KWSTJ — commit to a branch, then dispatch an independent reviewer against that ref. A reviewer cannot see uncommitted source, so committing first is the precondition, not a formality.
-2. TASK-YGB1R (P1) — make the tier floor derivable from the task heading. Pure text in `shipped/workflows/default.org` and `shipped/entry/router.org`. Cheapest, and it defines the vocabulary the other two need.
-3. TASK-TW3N3 (P1) — document and optionally guard the commit-before-dispatch precondition, folding in the known `.orgasmic/` worktree blindspot as one constraint.
-4. TASK-3CM0Q (P1, depends on TASK-YGB1R) — the recorded `manager tier` declaration and the inverted default (no tier stated means no manager-direct source edits).
-5. TASK-FZB6T (P1) — compact run catalog; the bounded legacy fallback it needs already exists as `scan_session_lifecycle`.
-6. TASK-TJKFC (P1) — harness/auth preflight and atomic rollback.
-7. TASK-5P60H (P1) — slow-start/single-owner tests and launchd backoff; carries the boot-reattach handoff from TASK-KWSTJ.
-8. TASK-3R3EZ (P2) and TASK-VBSG2 (P1) — both gated on the catalog.
+1. TASK-KWSTJ — awaiting the reviewer's findings, then land or fix.
+2. TASK-YGB1R (P1) — derivable tier floor. Pure text in `shipped/workflows/default.org` and `shipped/entry/router.org`; defines vocabulary for TASK-3CM0Q and TASK-4YX1K.
+3. TASK-TW3N3 (P1) — commit-before-dispatch precondition, folding in the `.orgasmic/` worktree blindspot.
+4. TASK-JQARS (P1) — implement the documented `orgasmic manager drivers`; gates TASK-0JY7M.
+5. TASK-8ED6V (P1) — retired-content residue visible to agents, naming the deciding node.
+6. TASK-3CM0Q (P1, dep TASK-YGB1R) — recorded tier declaration; no tier stated means no manager-direct source edits.
+7. TASK-4YX1K (P1, dep TASK-YGB1R) — proceed by default; confirm only for irreversible or outward-facing actions.
+8. TASK-0JY7M (P1, dep TASK-JQARS) — ask once per session for agent selection; reviewers default off the author's harness family.
+9. TASK-FZB6T (P1) — compact run catalog; its bounded legacy fallback already exists as `scan_session_lifecycle`.
+10. TASK-TJKFC (P1) — harness/auth preflight and atomic rollback.
+11. TASK-5P60H (P1) — slow-start/single-owner tests and launchd backoff; carries the boot-reattach handoff from TASK-KWSTJ.
+12. TASK-3R3EZ (P2) and TASK-VBSG2 (P1) — both gated on the catalog.
+
+Items 2-8 are the process arc; 9-12 resume the run-storage chain under it. dec_WDR5K stands: no task here reintroduces worker templates or stored model knowledge.
 
 The retro contract is unchanged: no automatic native transcript conversion, no automatic retro runs, vendor JSONL stays vendor-owned and immutable, conversion produces bounded versioned derived-only evidence, and retro accepts selected runs, tasks, or an ordered task sequence.
 

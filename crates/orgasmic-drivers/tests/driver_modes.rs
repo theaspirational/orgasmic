@@ -157,14 +157,16 @@ fn acp_stdio_codex_adapter_provides_stdio_spawn_config() {
 }
 
 #[test]
-fn claude_adapter_stdio_spawn_preserves_current_behavior() {
+fn claude_adapter_stdio_spawn_is_credential_agnostic() {
     let adapter = ClaudeAdapter::new();
     let spawn = adapter.stdio_spawn().expect("claude stdio_spawn");
     assert_eq!(spawn.command, "claude");
+    // The base argv carries the wire only. Credential-mode flags (`--bare` or
+    // the narrow isolation fallback) and the pinned `--session-id` are added by
+    // `compose_request`, which knows the run and its config.
     assert_eq!(
         spawn.args,
         vec![
-            "--bare".to_string(),
             "-p".to_string(),
             "--input-format".to_string(),
             "stream-json".to_string(),
@@ -172,11 +174,15 @@ fn claude_adapter_stdio_spawn_preserves_current_behavior() {
             "stream-json".to_string(),
             "--include-partial-messages".to_string(),
             "--verbose".to_string(),
-            "--no-session-persistence".to_string(),
         ]
     );
-    assert!(spawn.cwd.is_none());
-    assert!(spawn.env.is_empty());
+    // Regression (TASK-VB9DQ): suppressing the harness's own session recording
+    // left these runs with no resumable transcript, so no retro source and no
+    // `resume_native_fork` recovery action.
+    assert!(
+        !spawn.args.iter().any(|a| a == "--no-session-persistence"),
+        "vendor session persistence must never be suppressed"
+    );
 }
 
 #[tokio::test]
@@ -1664,13 +1670,29 @@ async fn legacy_drivers_and_explicit_pairs_emit_equivalent_start_events() {
     }
 }
 
+/// First *start* event, skipping harness chatter that precedes the handshake.
+///
+/// Claude's native-login credential mode cannot suppress the operator's hooks
+/// (only `--bare` can, and its credential policy excludes subscription logins —
+/// see `ClaudeCredentialMode`). Hook lifecycle chunks therefore arrive before
+/// `Ready` and carry per-run uuids, so comparing raw first events would assert
+/// on machine-local hook configuration rather than on driver equivalence.
 async fn first_event(
     driver: Box<dyn WorkerDriver>,
     ctx: DriverContext,
     config: DriverConfig,
 ) -> DriverEvent {
     let mut session = driver.acquire(ctx, config).await.unwrap();
-    let event = session.events.recv().await.unwrap();
+    let event = loop {
+        let event = session.events.recv().await.unwrap();
+        let is_hook_chunk = matches!(
+            &event,
+            DriverEvent::TextChunk { chunk, .. } if chunk.contains("hook_")
+        );
+        if !is_hook_chunk {
+            break event;
+        }
+    };
     session.control.release("test cleanup").await.unwrap();
     event
 }

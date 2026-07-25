@@ -226,6 +226,18 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
         None
     }
 
+    /// Native session identity for the run this adapter last composed, read by
+    /// the mode when it builds the [`DriverSession`].
+    ///
+    /// Adapters that pin a harness-native session id at launch report it here
+    /// so recovery can resume/fork the run and retro can locate its vendor
+    /// transcript deterministically (dec_Y5MPK). `None` means this adapter
+    /// establishes no native identity, and such runs have no resumable
+    /// transcript — an accepted gap only where the harness offers none.
+    fn native_runtime(&self) -> Option<NativeRuntimeMeta> {
+        None
+    }
+
     /// Returns true when this adapter wants the acp-stdio mode to upgrade a
     /// [`HarnessRequest::Simulated`] to a real detached subprocess via
     /// [`Self::stdio_spawn`]. Default false preserves the Simulated

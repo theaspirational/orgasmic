@@ -24,20 +24,70 @@ use tokio::sync::mpsc;
 
 use orgasmic_core::{DriverEvent, TextStream};
 
+use crate::modes::tmux::claude_session_path;
 use crate::r#trait::{
     BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, RunKind, StdioSpawn, TransitionRequest,
+    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, RunKind, StdioSpawn, TransitionRequest,
 };
 
 const TRANSPORT: &str = "claude-acp";
 
+/// How this run authenticates the `claude` subprocess.
+///
+/// `--bare` is the light path — it skips hooks, LSP, plugin sync, attribution,
+/// auto-memory, background prefetches and CLAUDE.md auto-discovery — but its
+/// contract is that OAuth and keychain are *never* read: credentials must come
+/// from `ANTHROPIC_API_KEY` or an `apiKeyHelper`. An operator authenticated
+/// through a claude.ai subscription cannot satisfy either, so hardcoding
+/// `--bare` made the harness unusable for them (TASK-Z8WEJ).
+///
+/// Measured 2026-07-25 against claude 2.1.220: setting `CLAUDE_CODE_SIMPLE=1`
+/// alone, with no `--bare` flag, fails identically. The lightweight behaviour
+/// and the credential policy are one switch and cannot be separated, so the
+/// fallback rebuilds isolation from narrower flags instead of trying to keep
+/// bare mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClaudeCredentialMode {
+    /// `--bare` plus an API key in the child's environment.
+    BareApiKey,
+    /// No `--bare`; the harness reads its own login (keychain/OAuth) exactly as
+    /// it does for an interactive operator. Isolation comes from
+    /// `--strict-mcp-config` and a minimal `--settings` instead.
+    ///
+    /// Known gap, measured rather than assumed: this mode CANNOT suppress the
+    /// operator's hooks. `--settings '{}'` and `--settings '{"hooks":{}}'` both
+    /// still ran SessionStart hooks; `--bare` is the only flag that skips them,
+    /// and `--include-hook-events` governs reporting, not execution. So a
+    /// native-login worker executes whatever hooks the operator has configured.
+    /// MCP is fully suppressed (`mcp_servers: []`, versus nine servers without
+    /// the flag on the machine this was measured on), which is the larger half
+    /// of "light". Accepted deliberately: the alternative is that
+    /// subscription-authenticated operators cannot dispatch claude at all.
+    NativeLogin,
+}
+
+impl ClaudeCredentialMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::BareApiKey => "bare_api_key",
+            Self::NativeLogin => "native_login",
+        }
+    }
+}
+
 pub struct ClaudeAdapter {
     translator: Option<AcpTranslator>,
+    /// Native session identity for the run this adapter last composed, handed
+    /// to the mode so the supervisor can record it (see `native_runtime`).
+    native_runtime: Option<NativeRuntimeMeta>,
 }
 
 impl ClaudeAdapter {
     pub fn new() -> Self {
-        Self { translator: None }
+        Self {
+            translator: None,
+            native_runtime: None,
+        }
     }
 
     async fn collect<F>(&mut self, f: F) -> Vec<DriverEvent>
@@ -90,6 +140,10 @@ impl HarnessEventAdapter for ClaudeAdapter {
         Box::new(ClaudeAdapter::new())
     }
 
+    fn native_runtime(&self) -> Option<NativeRuntimeMeta> {
+        self.native_runtime.clone()
+    }
+
     async fn parse_event(&mut self, raw: Value) -> Vec<DriverEvent> {
         self.collect(|translator, tx| {
             Box::pin(async move {
@@ -129,11 +183,19 @@ impl HarnessEventAdapter for ClaudeAdapter {
         Ok(())
     }
 
+    /// The wire flags every claude run needs, independent of how it
+    /// authenticates. Credential-mode flags, isolation flags and the native
+    /// session id are added by `compose_request`, which has the context this
+    /// method does not.
+    ///
+    /// Deliberately no `--no-session-persistence`: suppressing the harness's
+    /// own session recording left these runs with no resumable native
+    /// transcript, and therefore no retro source and no `resume_native_fork`
+    /// recovery action (dec_Y5MPK, TASK-VB9DQ).
     fn stdio_spawn(&self) -> Option<StdioSpawn> {
         Some(StdioSpawn {
             command: "claude".into(),
             args: vec![
-                "--bare".to_string(),
                 "-p".to_string(),
                 "--input-format".to_string(),
                 "stream-json".to_string(),
@@ -141,7 +203,6 @@ impl HarnessEventAdapter for ClaudeAdapter {
                 "stream-json".to_string(),
                 "--include-partial-messages".to_string(),
                 "--verbose".to_string(),
-                "--no-session-persistence".to_string(),
             ],
             cwd: None,
             env: Vec::new(),
@@ -210,27 +271,84 @@ impl HarnessEventAdapter for ClaudeAdapter {
         let spawn = self
             .stdio_spawn()
             .expect("claude adapter always exposes stdio_spawn");
-        let mut args = spawn.args.clone();
+
+        // Resolve credentials first: the mode decides which isolation flags are
+        // even available (see `ClaudeCredentialMode`).
+        let mut env = BTreeMap::new();
+        let mode = match cfg.api_key_env.as_deref() {
+            Some(env_name) => {
+                let api_key = std::env::var(env_name).map_err(|_| {
+                    DriverError::InvalidConfig(format!(
+                        "api_key_env '{env_name}' not set but endpoint is configured"
+                    ))
+                })?;
+                env.insert("ANTHROPIC_API_KEY".into(), api_key);
+                ClaudeCredentialMode::BareApiKey
+            }
+            None if std::env::var_os("ANTHROPIC_API_KEY").is_some() => {
+                ClaudeCredentialMode::BareApiKey
+            }
+            None => ClaudeCredentialMode::NativeLogin,
+        };
+
+        let mut args = Vec::with_capacity(spawn.args.len() + 8);
+        match mode {
+            ClaudeCredentialMode::BareApiKey => args.push("--bare".to_string()),
+            ClaudeCredentialMode::NativeLogin => {
+                // Rebuild what `--bare` would have given us, minus its
+                // credential policy. `--strict-mcp-config` alone yields
+                // `mcp_servers: []` (measured); without it this machine loaded
+                // nine MCP servers into a worker that wants none.
+                args.push("--strict-mcp-config".to_string());
+                args.push("--settings".to_string());
+                args.push("{}".to_string());
+            }
+        }
+        args.extend(spawn.args.iter().cloned());
+
+        // Pin the native session id to the run's runtime_id, exactly as the TUI
+        // path does, so the vendor transcript lands at a path orgasmic can
+        // compute rather than discover (dec_Y5MPK item 3). Verified: `-p` mode
+        // honours `--session-id` and writes
+        // `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`.
+        let session_id = ctx.identity.runtime_id.clone();
+        args.push("--session-id".to_string());
+        args.push(session_id.clone());
+
         if let Some(model) = cfg.model.as_deref() {
             if !model.is_empty() {
                 args.push("--model".into());
                 args.push(model.to_string());
             }
         }
-        let mut env = BTreeMap::new();
-        if let Some(env_name) = cfg.api_key_env.as_deref() {
-            let api_key = std::env::var(env_name).map_err(|_| {
-                DriverError::InvalidConfig(format!(
-                    "api_key_env '{env_name}' not set but endpoint is configured"
-                ))
-            })?;
-            env.insert("ANTHROPIC_API_KEY".into(), api_key);
-        }
+
+        let cwd = spawn.cwd.clone().or_else(|| ctx.worktree.clone());
+        let mut launch_argv = vec![spawn.command.clone()];
+        launch_argv.extend(args.iter().cloned());
+        self.native_runtime = Some(NativeRuntimeMeta {
+            provider: "claude".to_string(),
+            session_id: Some(session_id.clone()),
+            session_path: cwd
+                .as_deref()
+                .and_then(|cwd| claude_session_path(&session_id, cwd)),
+            launch_argv,
+            resume_argv: vec![
+                spawn.command.clone(),
+                "--resume".to_string(),
+                session_id,
+                "--fork-session".to_string(),
+            ],
+        });
+        tracing::debug!(
+            credential_mode = mode.as_str(),
+            "claude stdio: resolved credential mode"
+        );
+
         Ok(HarnessRequest::Subprocess {
             binary: spawn.command,
             args,
             env,
-            cwd: spawn.cwd.clone().or_else(|| ctx.worktree.clone()),
+            cwd,
             stdin_payload: Some(json_line_bytes(&claude_user_message(build_spawn_prompt(
                 ctx, &cfg,
             )))?),
@@ -758,6 +876,116 @@ mod tests {
             worktree: None,
             babysitter_target: None,
         }
+    }
+
+    /// Compose a real subprocess request and return its argv, bypassing the
+    /// simulate short-circuit so the actual launch flags are asserted.
+    fn composed_args(cfg: Value) -> (Vec<String>, Option<NativeRuntimeMeta>) {
+        let mut adapter = ClaudeAdapter::new();
+        let ctx = ctx("run-args", RunKind::Worker);
+        let request = adapter
+            .compose_request(&ctx, &DriverConfig(cfg))
+            .expect("compose");
+        let args = match request {
+            HarnessRequest::Subprocess { args, .. } => args,
+            other => panic!(
+                "expected a subprocess request, got {other:?}; is `claude` missing from PATH?"
+            ),
+        };
+        (args, adapter.native_runtime())
+    }
+
+    /// A config that forces the real (non-simulated) path: a non-empty
+    /// endpoint, with no api_key_env so credential resolution picks the
+    /// operator's own login.
+    fn subprocess_config() -> Value {
+        json!({"endpoint": "stdio://claude"})
+    }
+
+    #[tokio::test]
+    async fn native_login_mode_drops_bare_and_isolates_without_it() {
+        let _guard = env_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+        let (args, _) = composed_args(subprocess_config());
+
+        // `--bare` never reads OAuth or the keychain, so a subscription
+        // operator could not authenticate at all while it was hardcoded.
+        assert!(
+            !args.iter().any(|a| a == "--bare"),
+            "native-login mode must not pass --bare: {args:?}"
+        );
+        // Isolation is rebuilt from narrower flags: measured, --strict-mcp-config
+        // alone yields `mcp_servers: []`.
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w == ["--settings", "{}"]),
+            "{args:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn api_key_mode_keeps_the_light_bare_path() {
+        let _guard = env_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test-not-real");
+        let (args, _) = composed_args(subprocess_config());
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert!(
+            args.iter().any(|a| a == "--bare"),
+            "an API key is the one credential --bare accepts, so keep the light path: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--strict-mcp-config"),
+            "--bare already suppresses MCP; do not double up: {args:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn every_mode_persists_a_locatable_native_session() {
+        let _guard = env_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+        let (args, native) = composed_args(subprocess_config());
+
+        // Suppressing persistence left these runs with no resumable transcript,
+        // so no retro source and no resume_native_fork recovery action.
+        assert!(
+            !args.iter().any(|a| a == "--no-session-persistence"),
+            "vendor persistence must never be suppressed: {args:?}"
+        );
+        // Correlation is minted, not discovered (dec_Y5MPK item 3).
+        let session_id = args
+            .windows(2)
+            .find(|w| w[0] == "--session-id")
+            .map(|w| w[1].clone())
+            .expect("a native session id must be pinned before launch");
+
+        let native = native.expect("the adapter must report NativeRuntime metadata");
+        assert_eq!(native.provider, "claude");
+        assert_eq!(native.session_id.as_deref(), Some(session_id.as_str()));
+        assert!(
+            native
+                .resume_argv
+                .windows(2)
+                .any(|w| w == ["--resume", session_id.as_str()]),
+            "resume argv must target the pinned session: {:?}",
+            native.resume_argv
+        );
+        assert!(native.launch_argv.iter().any(|a| a == "--session-id"));
     }
 
     #[tokio::test]

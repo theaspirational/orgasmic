@@ -73,3 +73,237 @@ Acceptance:
 - an agent following the router can dispatch a reviewer that actually reads the intended diff, without discovering the constraint by being surprised
 - a dispatch that would silently review the wrong tree is either blocked or loudly flagged
 - the `.orgasmic/` blindspot and the uncommitted-source blindspot are documented as one coherent constraint, not two folk facts
+
+* TODO TASK-4YX1K Default to proceeding; confirm only for irreversible or outward-facing actions :workflow:runtime:process:
+:PROPERTIES:
+:ID: TASK-4YX1K
+:DEPENDS_ON: TASK-YGB1R
+:PRIORITY:   P1
+:END:
+
+Problem: the runtime tells a manager what work to do and how much process to apply, but says nothing about when to stop and ask a human. Agents fill that vacuum with timidity. Observed 2026-07-25: a manager finished TASK-KWSTJ, correctly identified that a reviewer cannot see uncommitted source, and then asked the user for permission to commit to a local branch — a reversible, machine-local step that was already the precondition for a review the user had asked for. The question contained no decision. It cost a round-trip and stalled the work.
+
+This is the mirror image of TASK-3CM0Q. That task stops an agent from silently proceeding through a decision that is genuinely the user's. This one stops an agent from interrupting on something that is not a decision at all. An agent without an explicit line between them oscillates: the same session skipped a real tier decision, was corrected, then over-corrected into asking about a mechanical step. Both failures are the human checkpoint landing in the wrong place, and neither is fixed by telling the agent to "use judgement".
+
+Work:
+1. State the default in `shipped/entry/router.org` and `shipped/workflows/default.org`: proceed. Asking is the exception and needs a reason that names which property of the action triggers it.
+2. Define confirmation triggers by property, not by feeling. Confirm when an action is hard to reverse, leaves the machine, or spends someone else's resources — pushing to a remote, publishing a release or artifact, force-pushing or rewriting history, deleting or rewriting operator session/run history, touching the LaunchAgent or a live production daemon, or anything that mutates a shared or external service.
+3. Name the proceed class just as explicitly, because a bare "proceed by default" will not survive contact with a cautious agent: committing to a local branch, creating and removing worktrees, running gates and test suites, reading anything, and `.orgasmic/` state writes through the CLI.
+4. Cover the standing-authorization case: once a user has approved a plan, the mechanical steps that plan obviously entails do not each need their own approval. Re-asking inside an approved plan is itself the defect.
+5. Say what to do instead of asking when an agent is unsure but the action is in the proceed class: act, then report what was done plainly enough to be reversed.
+
+Non-goal: expanding autonomy on the confirm class. This narrows *where* the human is asked, it does not reduce *whether* they are asked about the things that matter.
+
+Acceptance:
+- committing to a branch, creating a worktree, or running gates never produces a permission question
+- pushing, publishing, force-pushing, or touching the live daemon still does
+- the router text distinguishes the two classes by a stated property, so an agent reaching an unlisted action can classify it rather than guess
+- reads coherently against TASK-3CM0Q: one task puts a checkpoint where a decision exists, this one removes checkpoints where none does
+
+* TODO TASK-JQARS Implement the documented orgasmic manager drivers command :cli:runtime:docs:
+:PROPERTIES:
+:ID: TASK-JQARS
+:PRIORITY: P1
+:END:
+
+Problem: `shipped/entry/router.org` tells every manager "Use `orgasmic --help` and `orgasmic manager drivers` to discover installed transport pairs (`mode` + `harness`)". That subcommand does not exist; it exits with `unrecognized subcommand 'drivers'`.
+
+This is not cosmetic. dec_WDR5K item 1 makes the `SUPPORTED` (mode, harness) matrix in `orgasmic-drivers` "the sole authority" for transport selection, and item 9 assigns per-dispatch model and effort choice to manager judgment rather than configuration. The runtime therefore depends on a manager reading that matrix — and gives it no way to.
+
+Observed consequence 2026-07-25: a manager needing a reviewer transport ran the documented command, got the error, fell back to grepping `pub const SUPPORTED` out of `crates/orgasmic-drivers/src/lib.rs`, and picked the first entry of the array. The dispatch was decided by source-order, not judgement. A missing discovery surface does not produce a careful manager; it produces an arbitrary one.
+
+Work:
+1. Implement `orgasmic manager drivers`: list the `SUPPORTED` (mode, harness) pairs from the drivers crate, so the documented command matches reality.
+2. Include what a manager actually needs to choose between them, not just the pair list — at minimum which pairs are non-interactive versus which spawn an interactive TUI pane, since that distinction decides whether a dispatch can run unattended.
+3. Surface per-harness runtime options where a protocol catalog exists (dec_WDR5K item 9 permits structured protocol adapters only; never CLI text parsing). Where no catalog exists, say so explicitly rather than omitting the harness.
+4. Add a router/CLI consistency check so a command named in shipped entry text cannot silently not exist. The general defect is that shipped prose and the CLI surface drifted with nothing to catch it.
+
+Acceptance:
+- every command named in `shipped/entry/router.org` resolves
+- a manager can choose a transport without reading Rust source
+- the output distinguishes unattended-capable transports from interactive ones
+
+* TODO TASK-8ED6V Make retired-content residue visible to agents, not just to the daemon log :runtime:docs:process:
+:PROPERTIES:
+:ID: TASK-8ED6V
+:PRIORITY: P1
+:END:
+
+Problem: dec_WDR5K item 10 retired worker templates with a hard cutover, and the daemon "warns-and-ignores a leftover `user/workers/` directory" (`crates/orgasmic-daemon/src/lib.rs`). The warning goes to the daemon log. No agent reads the daemon log.
+
+Observed 2026-07-25: `~/.orgasmic/user/workers/` still held `implementer-codex-acp.org` and `reviewer-codex-acp.org`, both written 2026-07-16, one day before dec_WDR5K. A manager choosing a reviewer transport found them, read `:DEFAULT_MODEL: gpt-5.6-sol` and `:DEFAULT_EFFORT: xhigh`, and reported to the operator that it had "bypassed your configured reviewer" and should re-dispatch to honour it. Every part of that was wrong: the files are inert, and the `gpt-5.6-sol` override in them is precisely the incident dec_WDR5K's consequences say becomes "structurally impossible". The manager then proposed restoring template resolution as a fix — advocating for the concept the decision removed. Meanwhile the daemon had logged the correct warning at every boot since 2026-07-24 and earlier.
+
+The general defect: retired content stays on disk looking exactly like live configuration, and the only signal that it is dead is written where the reader never looks. A stale file with plausible content is worse than a missing one, because it produces confident wrong reasoning rather than a lookup failure.
+
+Work:
+1. `orgasmic doctor` reports retired-content residue by name — leftover `user/workers/`, and any other path a hard cutover left behind — with the deciding node id (here dec_WDR5K) so the reader can check the rationale rather than guess.
+2. Offer removal through the CLI. It is the operator's data, so removal is opt-in, not automatic on upgrade, and never silent.
+3. Maintain the residue list as part of doing a hard cutover: a decision that retires a content family should land its path in the doctor check in the same release, not leave it to a later incident. Consider whether the existing update path can carry this.
+4. Consider whether an agent-facing surface beyond `doctor` is warranted — the manager in this incident never ran `doctor` either. A cheap option is for `orgasmic entry` to name known-retired paths so the router output itself inoculates against them.
+
+Acceptance:
+- an agent that finds retired content on disk has a first-class way to learn it is retired, without reading daemon logs or source
+- the check names the deciding node, not just the path
+- removal is offered, never performed silently
+
+* TODO TASK-0JY7M Ask once per session for agent selection, and default reviewers off the author's harness family :workflow:dispatch:process:
+:PROPERTIES:
+:ID: TASK-0JY7M
+:DEPENDS_ON: TASK-JQARS
+:PRIORITY:   P1
+:END:
+
+Problem: dec_WDR5K item 9 states that "per-kind model preference is manager judgment per dispatch, not configuration", and removes every model and effort identifier from orgasmic code and config. That is a deliberate and correct constraint — it is what makes vendor model bumps require no orgasmic change. But it leaves the manager with no way to learn what the operator actually wants, and nothing in the runtime prompts it to find out.
+
+Observed 2026-07-25 on TASK-KWSTJ: a manager dispatching a reviewer for its own P0 daemon-recovery change chose `acp-stdio` + `claude` by taking the first entry of the `SUPPORTED` array, passed no model and no effort, and never asked the operator anything. Three separate defects in one dispatch:
+- the transport pair was decided by source ordering, not judgment
+- effort was left at harness default for a review the workflow itself says warrants a premium tier
+- the reviewer ran on the same model family as the author of the code under review
+
+The third is the structural one. A reviewer sharing the implementer's model family shares its priors and its blind spots, which is most of what an independent pass is for. That is a runtime policy question, not manager taste, and it should not be re-derived per dispatch by whoever happens to be holding the session.
+
+Because configuration was removed by design, a session-level ask is the only durable channel left. This is an elicitation that *removes* downstream friction, so it does not conflict with TASK-4YX1K's default-to-proceeding rule: ask once, cheaply, then stop asking.
+
+Work:
+1. The manager asks the operator once per session for agent-selection preference — harness family, and effort posture for review and risky stages — at the first dispatch, not at session start, so a session that never dispatches never asks.
+2. Carry the answer for the session so subsequent dispatches do not re-ask. Decide whether it persists beyond the session, respecting item 9: an operator's *harness family* preference is not model knowledge, but a pinned model identifier would be, and must stay per-dispatch.
+3. Encode reviewer independence as runtime policy: a reviewer dispatch defaults to a different harness family than the run under review, and the manager states its reason when it does not. Where the implementer harness is unknown, ask rather than defaulting to the manager's own family.
+4. Fold in the premium-tier rule already in `shipped/workflows/default.org` — review and risky stages should carry an explicit effort, so leaving it unset is a visible choice rather than an oversight.
+5. Reconcile with TASK-4YX1K so the two read as one policy: this is the sanctioned once-per-session elicitation; everything downstream of it proceeds without asking.
+
+Non-goal: reintroducing worker templates or any stored model catalog. dec_WDR5K stands. This is about the manager acquiring a preference at runtime, not about orgasmic storing model knowledge.
+
+Acceptance:
+- a manager cannot complete its first dispatch of a session without either an operator preference or an explicit recorded reason for the default it chose
+- a reviewer defaults to a different harness family than the code's author
+- review and risky-stage dispatches carry an explicit effort
+- no model identifier enters orgasmic config or code
+
+* TODO TASK-Z8WEJ Select the claude credential mode instead of hardcoding --bare :drivers:dispatch:bug:
+:PROPERTIES:
+:ID: TASK-Z8WEJ
+:PRIORITY: P0
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:136` hardcodes `--bare` in the claude stdio argv. Per the CLI's own help, `--bare` means "Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read)". An operator authenticated through a claude.ai subscription therefore cannot dispatch a claude worker at all: the credential exists, `claude auth status` reports `loggedIn: true, authMethod: claude.ai, subscriptionType: max`, and the dispatch still dies 1.2 s after acquire with "Not logged in - Please run /login" (observed TASK-KWSTJ reviewer dispatch, run-20260725T073841).
+
+`--bare` is wanted and should stay available: it skips hooks, LSP, plugin sync, auto-memory, background prefetches and CLAUDE.md auto-discovery, which is the right shape for a worker. The defect is that it is unconditional, and it silently carries a credential policy that a subscription operator cannot satisfy.
+
+Measured channel matrix, same binary and prompt, obviously-fake credential values (2026-07-25, claude 2.1.220):
+
+Under `--bare`:
+- no credential -> "Not logged in - Please run /login"
+- `ANTHROPIC_API_KEY=<fake>` -> "Invalid API key - Fix external API key" (channel LIVE)
+- `CLAUDE_CODE_OAUTH_TOKEN=<fake>` -> "Not logged in" (channel DEAD; the token is ignored)
+- `apiKeyHelper` via `--settings` -> "Invalid API key" (channel LIVE)
+
+Without `--bare`:
+- keychain OAuth -> authenticates and completes
+- `--strict-mcp-config` + empty `--mcp-config` + minimal `--settings` -> authenticates, `mcp_servers: []`, 30 tools, 2.0 s round trip
+
+Critical negative result: `CLAUDE_CODE_SIMPLE=1` on its own, with no `--bare` flag, also fails with "Not logged in". The lightweight behaviour and the credential policy are the same switch, so there is no way to keep bare-mode lightness while reading the keychain. Any design that assumes they can be separated is wrong.
+
+Both live `--bare` channels want an API key, not an OAuth credential, and a subscription's keychain credential is not an API key. So "`--bare` plus the user's keychain auth" is not achievable, by the flag's contract rather than by oversight.
+
+Work:
+1. Make the claude adapter select a credential mode instead of hardcoding one. At minimum: bare+API key (preferred, lightest) when an API key or apiKeyHelper is configured; non-bare with narrow isolation when auth is OAuth/subscription.
+2. Build the fallback tier explicitly rather than by dropping flags: `--strict-mcp-config` with an empty `--mcp-config`, a minimal `--settings`, and the existing `--no-session-persistence`. Verify it suppresses MCP, hooks, and CLAUDE.md discovery — do not assume the narrow flags cover everything `--bare` did, and record what is not covered.
+3. Detect, do not guess. `claude auth status` is non-interactive and returns structured JSON with `authMethod`; use it to choose the tier. Note it is necessary but not sufficient — see 5.
+4. Let the manager override the tier per dispatch, and record which tier was used in the run's RunMeta so a failure is diagnosable from the session JSONL alone.
+5. Feeds TASK-TJKFC: a generic auth probe is not enough. `claude auth status` reports `loggedIn: true` while the `--bare` invocation fails. The preflight must exercise the argv the worker will actually run.
+6. Consider whether the same credential-mode question exists for codex, cursor-agent, and hermes, or whether this is claude-specific. Do not generalise without checking.
+
+Acceptance:
+- a subscription-authenticated operator can dispatch a claude worker with no API key
+- an API-key operator still gets the light `--bare` path
+- the selected credential mode is visible in RunMeta
+- a mode that cannot authenticate is rejected before a worktree, lease, or dispatch record is created
+
+* TODO TASK-VB9DQ Persist native session evidence for acp-stdio claude runs :drivers:recovery:evidence:
+:PROPERTIES:
+:ID: TASK-VB9DQ
+:PRIORITY: P1
+:END:
+
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:144` passes `--no-session-persistence` on every acp-stdio claude run, and the adapter never passes `--session-id` or emits a `NativeRuntime` lifecycle event. The consequence is that acp-stdio claude runs leave no harness-native evidence of any kind.
+
+Measured 2026-07-25 (claude 2.1.220, counting files under `~/.claude/projects`):
+- run with `--no-session-persistence`: 0 new native transcripts
+- identical run without it: 1 new native transcript
+
+Confirmed by inspection:
+- `NativeRuntimeMeta` appears only in `modes/rmux.rs` and `modes/tmux.rs`; `adapters/claude.rs` never emits it
+- the acp-stdio reviewer run `run-20260725T073841` recorded lifecycle phases `acquire, run_meta, release` only — no `native_runtime`
+
+Contrast the TUI path, which already does this correctly. A real rmux run recorded:
+- `launch_argv: [claude, --dangerously-skip-permissions, --model, claude-sonnet-5, --session-id, a9fe25ff-...]`
+- `resume_argv: [claude, --resume, a9fe25ff-..., --fork-session, --dangerously-skip-permissions]`
+- `session_id: a9fe25ff-...`
+
+It passes an orgasmic-minted session id up front, so correlation is deterministic rather than discovered. acp-stdio should follow that pattern.
+
+Three consequences, all currently live:
+
+1. TASK-VBSG2 is impossible for this transport. Its slice A resolves "verified NativeRuntime provider/session/path metadata" and parses "Claude native JSONL". Neither exists for acp-stdio runs, so retro over an arbitrary past claude run cannot work no matter how good the materializer is.
+
+2. dec_WDR5K item 7 is violated in effect. TUI screen capture was removed on the premise that "session transcripts come from harness-native JSONL located by per-harness transcript finder adapters". For acp-stdio claude the finder adapter has nothing to find, so those runs have no transcript at all — not a lossy one, none. The decision's own sequencing constraint (finders must land before capture removal, or runs lose their session inputs) is satisfied in letter and broken in substance here.
+
+3. Recovery is degraded. `resolve_recovery_actions` offers `resume_native_fork` only when `session_native_runtime` yields a validated claude session id. acp-stdio records none, so that action can never be offered for this transport; recovery falls through to a fresh run even when resuming was possible.
+
+Work:
+1. Drop `--no-session-persistence` from the acp-stdio claude argv, or make it a deliberate per-dispatch option rather than a hardcoded default.
+2. Mint and pass an explicit `--session-id`, matching the TUI path, so correlation never depends on discovery heuristics.
+3. Emit a `NativeRuntime` lifecycle event from the acp-stdio path with provider, session id, launch argv, and resume argv, so recovery and retro read one shape regardless of transport.
+4. Weigh and record the retention tradeoff rather than assuming it away. Persisting worker sessions grows `~/.claude/projects` without bound (446 transcripts already present on this machine), and the retro contract holds vendor JSONL to be vendor-owned and immutable — so orgasmic may not prune it. Decide explicitly whether that is acceptable, whether worker sessions should be distinguishable from operator sessions, and record the answer.
+5. Check the same three properties for codex, cursor-agent, and hermes under acp-stdio. Do not assume this is claude-specific.
+
+Coordinates with TASK-Z8WEJ: both change `stdio_spawn` in the same adapter and should land together.
+
+Acceptance:
+- an acp-stdio claude run leaves a native transcript that the existing transcript finder resolves
+- its session id is recorded in a NativeRuntime lifecycle event, not discovered after the fact
+- `resume_native_fork` is offered for a recoverable acp-stdio claude run
+- the retention tradeoff is a recorded decision, not an implicit one
+** Notes
+Item 4's retention tradeoff is now settled by dec_Y5MPK: retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites or expires a vendor file; its obligation is visibility (per-harness counts, total size, age distribution through `doctor`). So this task does not need to solve growth — it needs to stop suppressing persistence, mint the session id, and emit NativeRuntime. The doctor reporting is separate work.
+
+* TODO TASK-XCJYC Rename non-ACP transports and reserve acp-* for the real protocol :drivers:cli:naming:
+:PROPERTIES:
+:ID: TASK-XCJYC
+:PRIORITY: P1
+:END:
+
+Problem: orgasmic uses "acp" for transports that are not the Agent Client Protocol. ACP is a specific open standard from Zed Industries (released August 2025, JSON-RPC 2.0 over stdio for local agents, HTTP/WebSocket for remote): it standardises the editor-to-agent boundary while MCP standardises tool access. It is adopted by JetBrains, Google, GitHub and 25+ agents, and Zed ships an ACP Registry containing Claude Agent, Codex, Gemini CLI, OpenCode and others.
+
+What orgasmic labels `acp` is not that:
+- `acp-stdio` + claude runs `claude -p --input-format stream-json --output-format stream-json` — Claude Code's own stream-json wire
+- `acp-stdio` / `acp-ws` + codex runs `codex app-server` — Codex's own JSON-RPC app-server
+- `cursor-acp` is a cursor-agent adapter
+
+The source half-knows: `adapters/claude.rs` documents itself as "ACP-like stdio stream-json", and the `protocol_version` values are already honest (`claude-code-stream-json/1`, `codex-appserver/1`). Only the wrapper names lie. One genuine error remains at `adapters/claude.rs:364`, which reports `protocol_version: "acp/1"`.
+
+Cost, in increasing order of severity:
+1. It misleads readers into treating two unrelated native protocols as one protocol's two implementations. This happened twice in one manager session on 2026-07-25.
+2. It hides that ACP-vs-MCP is a live architectural distinction, precisely the layering an operator asking for a worker "without MCP" is reasoning about.
+3. It squats on the name. If orgasmic adds real ACP, the correct name is taken by something that is not it.
+
+Decision (operator, 2026-07-25): modes name the wire only, since the harness field already determines the protocol.
+- `("acp-stdio", H)` becomes `("stdio", H)`
+- `("acp-ws", H)` becomes `("ws", H)`
+- driver id `claude-acp` becomes `claude-stream-json`; `cursor-acp` becomes `cursor-agent`
+- `acp-stdio` and `acp-ws` are reserved for real ACP and must not be reused for anything else
+
+Scope: roughly 371 occurrences of `acp` across 12+ files, concentrated in `orgasmic-daemon/src/api.rs`, the CLI and daemon dispatch tests, `orgasmic-daemon/src/supervisor.rs`, `orgasmic-daemon/src/config.rs`, and the drivers crate.
+
+This is a cutover, not a find-and-replace. `--mode acp-stdio` is user-facing, the pair list is the `SUPPORTED` matrix authority per dec_WDR5K item 1, and the old names are persisted: 70 historical runs carry `transport: "acp-stdio"` and 1 carries `acp-ws`, plus worker ids such as `reviewer-codex-acp-stdio` throughout tx history.
+
+Work:
+1. Rename the mode pairs, driver ids, transport constants, and the `acp/1` protocol_version error.
+2. Follow dec_WDR5K item 10's precedent for historical data: no alias table, old records render their historical strings as plain text. Confirm the recovery classifier and transcript finder still resolve pre-rename records, since `persisted_run_address_from_session` reads `transport` from old RunMeta.
+3. Record the reservation so a future contributor cannot re-take `acp-*` for a non-ACP transport.
+4. Add a glossary term distinguishing ACP, MCP, and orgasmic's transport modes.
+
+Acceptance:
+- no identifier, mode value, doc comment or protocol_version calls a non-ACP transport "acp"
+- pre-rename session records still classify and still resolve to their native transcripts
+- `acp-stdio` and `acp-ws` are unused and documented as reserved
