@@ -96,6 +96,42 @@ fn default_auto_start_turn() -> bool {
     true
 }
 
+/// Hermes deliberately has **no `preflight`**, unlike claude, codex and
+/// cursor-agent. It inherits the default `Unsupported`, and this is the reason —
+/// recorded here because "no probe" otherwise reads as an oversight. TASK-TJKFC.
+///
+/// Not for want of a status command. Measured 2026-07-25 on hermes 0.16.0,
+/// `hermes auth status <provider>` answers in 0.25 s, exit 0, in both
+/// directions: `anthropic: logged in`, and `anthropic: logged out` with `HOME`
+/// pointed at an empty directory. As a *command* it is the cleanest of the four.
+///
+/// What is missing is a question orgasmic can ask it. The preflight rule is to
+/// check the credential the launch will actually consume, and on every hermes
+/// mode that credential is not one orgasmic selects:
+///
+/// - acp-stdio, tmux, rmux: the spawn is a bare `hermes acp` / `hermes` with no
+///   provider on the argv. The configured provider travels only inside
+///   `thread_start._meta.orgasmic`, and hermes ignores it. Measured: a
+///   `session/new` carrying `provider: "nonexistent-provider"` succeeded and
+///   came up on `ollama-cloud:glm-5.2` — hermes's own default — and so did the
+///   same call carrying `provider: "anthropic"`. Identical result either way.
+/// - acp-ws: the provider *is* sent, but the run authenticates to a remote
+///   gateway with a `session_token`. A local pooled-credential store says
+///   nothing about a credential held on another machine.
+///
+/// So a probe built on `hermes auth status <cfg.provider>` would interrogate a
+/// credential the worker was never going to present — which is precisely the
+/// mistake `claude auth status` made in the incident this task exists for, and
+/// here it would run in the dangerous direction: the bogus provider above would
+/// have been reported logged out and the dispatch refused, while the run it
+/// refused demonstrably starts.
+///
+/// Two things would make a probe possible, and both are real work rather than a
+/// missing call: hermes honouring the provider orgasmic asks for (TASK-5M45A —
+/// until then a dispatch's provider and model are decorative on this harness,
+/// and the session JSONL reports them anyway), or a non-interactive way to read
+/// hermes's own default. Until
+/// one exists, no probe is the correct answer, not a deferred one.
 #[async_trait]
 impl HarnessEventAdapter for HermesAdapter {
     fn harness(&self) -> &'static str {

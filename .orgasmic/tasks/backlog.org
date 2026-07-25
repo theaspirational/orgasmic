@@ -383,3 +383,48 @@ ACCEPTANCE
   error text distinguishes the two cases. The test must construct the state
   directly rather than wait for whatever produced it here, since the cause is
   not yet known - fixing the diagnosis must not be blocked on finding it.
+
+* BACKLOG TASK-5M45A Hermes ignores the provider and model a dispatch asks for    :P1:
+:PROPERTIES:
+:ID: TASK-5M45A
+:END:
+
+Measured 2026-07-25 on hermes 0.16.0, driving `hermes acp` directly with the
+same JSON-RPC handshake `acp_stdio` performs.
+
+On the hermes stdio path orgasmic transmits the dispatch's provider and model
+only inside `thread_start._meta.orgasmic` (`spawn_payload`, hermes.rs), and the
+argv is a bare `hermes acp`. Hermes does not read them. Two `session/new`
+calls, identical but for the provider:
+
+  provider = "anthropic"             -> currentModelId ollama-cloud:glm-5.2
+  provider = "nonexistent-provider"  -> currentModelId ollama-cloud:glm-5.2
+
+Neither errored. Both landed on hermes's own configured default. An unknown
+provider id is not even rejected, so there is no signal that the request was
+dropped.
+
+Consequences, in order of how much they cost:
+1. A dispatch that specifies a provider silently runs on a different one. The
+   operator is billed to the wrong account and gets a different model's output,
+   with nothing in the session to say so.
+2. It is worse than invisible, it is actively misreported: the `Ready` event's
+   capabilities echo `cfg.provider` and `cfg.model` back
+   (`on_ws_thread_started`), so the session JSONL records the provider that was
+   ASKED FOR as though it were the one in use. Reading the session is the normal
+   way to find out what a run did, and here it lies.
+3. It blocks a hermes readiness probe. Checking a credential requires knowing
+   which credential the launch consumes; while the provider is ignored, orgasmic
+   cannot know. See the comment on `HermesAdapter` (TASK-TJKFC decided against a
+   probe on exactly this ground).
+
+Not yet established: whether hermes exposes any supported way to select a
+provider per ACP session (a `session/set_config_option` equivalent, an argv
+flag, or an env var). The adapter already builds a `/model ... --provider ...`
+slash command in `transition_state`, so mid-run switching works; whether that
+same path can be driven at startup was not tested. The fix might be as small as
+issuing that command once after `session/new`.
+
+Minimum acceptable outcome if selection turns out to be impossible: stop echoing
+a provider and model the run is not using, so the session records what actually
+happened rather than what was requested.

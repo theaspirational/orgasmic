@@ -242,6 +242,44 @@ STILL NOT LANDED
 - No end-to-end test drives a fake provider through the daemon and asserts the
   absence of a lease and session.
 - hermes still has no readiness probe.
+COMPLETE (2026-07-25). The three items left open above are done.
+
+RACE TEST. `a_failure_declared_before_the_run_is_recorded_still_ends_the_run`
+(supervisor.rs). A driver that declares its fatal synchronously inside
+`acquire`, before returning the session, so the queue is guaranteed non-empty
+when the supervisor inserts the run record. What protects this is an ordering,
+not a lock: the record goes in before the drain task spawns, so no event can be
+applied through `runs.get_mut` while the record is missing. Verified by mutation
+- deferring the insert past the drain's first events produces no release at all.
+Worth noting how it fails: not by timing out, but instantly, because a run
+absent from the map reads as already released. That is the bug's own shape, an
+orphan indistinguishable from a finished run.
+
+END-TO-END ABSENCE. `an_unusable_credential_leaves_no_lease_no_session_and_no_run`
+(tests/dispatch_preflight.rs), a real dispatch through the daemon with an empty
+`ANTHROPIC_API_KEY`: 400, no session file, no lease, no run.created, and a
+second dispatch still refused with 400 rather than 409. Its own test binary
+because it mutates process-global env. Non-vacuity checked by running it with a
+non-empty key - the dispatch then succeeds and acquires, so the absence really
+is the preflight's doing.
+
+HERMES: NO PROBE, and now for a measured reason rather than an unmeasured one.
+`hermes auth status <provider>` is the cleanest status command of the four
+(0.25 s, exit 0, both directions). The problem is that orgasmic has no provider
+to ask about. Measured on hermes 0.16.0 by driving `hermes acp` directly: a
+`session/new` carrying provider "nonexistent-provider" succeeded on
+`ollama-cloud:glm-5.2`, and so did the same call carrying "anthropic". Hermes
+ignores the provider orgasmic sends. So a probe on `cfg.provider` would
+interrogate a credential the worker never presents - the `claude auth status`
+mistake again, and here in the direction that blocks working dispatches. The
+reasoning is recorded on `HermesAdapter` itself. The underlying defect is
+TASK-5M45A.
+
+Tests: drivers 261/0. supervisor module 97 passed, with
+`stall_detector_revalidates_after_driver_event_race` failing intermittently -
+2 of 3 runs on HEAD without these changes and 2 of 3 with them, so pre-existing
+(TASK-STWVB). dispatch_endpoint has 3 failures, identical on HEAD, from stale
+worker fixtures ("legacy user/workers directory ignored").
 ** Evidence
 Live reproduction 2026-07-25, dispatching a reviewer for TASK-KWSTJ. This is the abstract problem statement happening end to end, with timings.
 

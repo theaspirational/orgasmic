@@ -4982,6 +4982,72 @@ mod tests {
         }
     }
 
+    /// The same failure as [`FatalThenSilentDriver`], but declared *before*
+    /// `acquire` returns — so it is already queued when the supervisor does its
+    /// bookkeeping. TASK-TJKFC's race case.
+    ///
+    /// A harness can fail this early for real: authentication is settled before
+    /// any model call, and the incident's own JSONL puts the fatal 0.4 s after
+    /// the spawn. There is no rule that a driver must finish handing back a
+    /// session before its transport has anything to say.
+    ///
+    /// The events go into the channel synchronously here rather than from a
+    /// spawned task, which is what makes the ordering deterministic instead of
+    /// merely likely: the queue is guaranteed non-empty at the instant the
+    /// supervisor inserts the run record. Capacity 8 holds all four without
+    /// blocking.
+    struct FatalBeforeBookkeepingDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for FatalBeforeBookkeepingDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(DriverEvent::Ready {
+                protocol_version: "claude-code-stream-json/1".into(),
+                capabilities: json!({"simulated": false}),
+            })
+            .await
+            .unwrap();
+            tx.send(DriverEvent::TextChunk {
+                stream: orgasmic_core::TextStream::Assistant,
+                chunk: "Not logged in \u{b7} Please run /login".into(),
+                seq: 1,
+            })
+            .await
+            .unwrap();
+            tx.send(DriverEvent::DriverError {
+                message: "claude authentication_failed".into(),
+                fatal: true,
+            })
+            .await
+            .unwrap();
+            tx.send(DriverEvent::RunFail {
+                error_code: "claude_result_error".into(),
+                error_markdown: "Not logged in \u{b7} Please run /login".into(),
+            })
+            .await
+            .unwrap();
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                // Same as the sibling stub: only a release can end this stream,
+                // so nothing but the terminal-event path can free the lease.
+                control: Box::new(FatalThenSilentControl { held: Some(tx) }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+    }
+
     struct FatalDriverErrorDriver;
 
     #[async_trait::async_trait]
@@ -8901,6 +8967,63 @@ mod tests {
                 .iter()
                 .any(|run| run.run_id == resp.run_id),
             "the failed run must not still hold its lease"
+        );
+    }
+
+    /// A failure declared before the supervisor finished its bookkeeping must
+    /// still end the run. TASK-TJKFC's race case.
+    ///
+    /// The window is narrow and the consequence is not: driver events are
+    /// applied through `runs.get_mut(run_id)`, which is a no-op when the record
+    /// does not exist yet. A fatal that lands in that gap sets no
+    /// `terminal_outcome`, so the terminal-event release never fires — and this
+    /// driver's stream never ends either, so nothing else would rescue it. The
+    /// run would sit holding its lease until the stall timeout, which is the
+    /// seventy-minute orphan again by a different route.
+    ///
+    /// What keeps that from happening is an ordering, not a lock:
+    /// `acquire_impl` inserts the run record *before* spawning the drain task,
+    /// so no event can be processed against a record that does not exist. This
+    /// test is what makes that ordering load-bearing rather than incidental —
+    /// verified by mutation: with the insert deferred past the drain's first
+    /// events, no release is ever written and `assert_release` fails. (It fails
+    /// fast rather than timing out, because a run absent from the map reads as
+    /// already released — which is itself the shape of the bug: an orphan is
+    /// indistinguishable from a finished run when nobody recorded it.)
+    #[tokio::test]
+    async fn a_failure_declared_before_the_run_is_recorded_still_ends_the_run() {
+        let (sup, dir, _w) = make_supervisor();
+        let resp = sup
+            .acquire(
+                &FatalBeforeBookkeepingDriver,
+                dispatch_impl_req("TASK-STARTUP-RACE", dir.path()),
+            )
+            .await
+            .unwrap();
+        let path = dir.path().join("TASK-STARTUP-RACE.jsonl");
+
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+
+        assert_release(&path, "protocol_end_without_finalize", "failed");
+        assert_eq!(release_count(&path), 1, "exactly one release");
+        assert!(
+            !sup.snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == resp.run_id),
+            "the failed run must not still hold its lease"
+        );
+        // The events queued before the record existed must still be on record.
+        // Releasing the lease while losing the reason why is a quieter version
+        // of the same defect: the operator gets a failed run with no evidence.
+        let events = session_events(&path);
+        assert!(
+            events.iter().any(|evt| evt
+                .event
+                .to_string()
+                .contains("claude authentication_failed")),
+            "the fatal that arrived before bookkeeping must reach the session"
         );
     }
 
