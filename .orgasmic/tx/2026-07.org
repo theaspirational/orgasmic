@@ -27251,3 +27251,31 @@
 :REASON:       edited task node TASK-TJKFC
 :NODE_ID:      TASK-TJKFC
 :END:
+
+* TX 2026-07-25 Sat 16:11:31 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2807
+:TIME:         [2026-07-25 Sat 16:11:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       startup gate landed; adapter probes and atomic abort remain
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-25 Sat 16:11:56 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260725-orgasmic-2808
+:TIME:         [2026-07-25 Sat 16:11:56]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
