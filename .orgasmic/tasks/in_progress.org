@@ -658,3 +658,70 @@ CI while failing on every developer Mac. That is an argument for fixing the
 fixture rather than tolerating the failure locally, and for not concluding "green
 in CI" means "green".
 
+ROUND 2 MERGED, GATE NOT MET [2026-07-26]. The fix is real and kept; the green
+claim is not reproducible.
+
+Merged 67e427c (shared warm fixture in crates/orgasmic-daemon/src/test_fixtures.rs,
+converted spawn fixtures, gotchas entry). Worker: implementer-codex-acp-stdio
+(acp-stdio / codex / gpt-5.6-sol / xhigh), run
+run-20260726T125001-9e991bce9f75485a84e2f4be1d127800. It reported 504 passed /
+0 failed on three consecutive runs at 24.9 / 27.5 / 26.1 s.
+
+Manager measurement on the merged tree, four runs:
+
+    502 passed / 2 failed   106.5 s
+    501 passed / 3 failed   112.1 s   (+ recovery_inventory, known flake)
+    502 passed / 2 failed   108.2 s
+    502 passed / 2 failed   106.5 s
+
+Both target tests still fail:
+- post_artifact_regenerate_hot_path_reuses_live_run_id — now 409 "harness busy"
+  rather than the earlier run_id mismatch
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — still
+  "fake cursor-agent did not start children" at its 30 s deadline
+
+WHY THE WORKER SAW GREEN — see TASK-RRT4T. Removing rmux from PATH, changing
+nothing else, turns the manager's own run into 504 passed / 0 failed in 22.3 s,
+reproducing the worker's numbers exactly. Eight rmux-dependent tests silently
+return when the rmux binary is not found. The worker's own 7-before / 7-after
+session count was the tell: the test never ran.
+
+WHAT THE ROUND-2 WORK DID ESTABLISH, verified independently:
+- Hard-linking a warmed executable does dodge first-exec evaluation. Measured:
+  fresh direct exec 196 ms, second exec 4 ms, hard link to a new path 4 ms, a
+  byte-identical COPY 162 ms. So link_shared_test_executable is sound and the
+  inode, not the path, is the cache key.
+- The pressure is inside the rmux test path, not in the converted fixtures.
+  syspolicyd CPU during one suite run: +281 s with rmux present, +32 s with
+  rmux absent, against ~106 s and ~22 s of wall time. The rmux binary itself is
+  cheap (9.2 ms/exec, 0.0 ms of syspolicyd), so the cost is something the rmux
+  session path execs, and it has not been identified.
+- A strictly simpler primitive exists and was not used: invoking a fresh script
+  through a signed interpreter skips evaluation entirely. Measured on the same
+  fresh file — `./script` 270 ms, `/bin/sh script` 5 ms, `/bin/bash script`
+  3 ms. Round 3 should prefer this over warm-and-hard-link wherever the callee
+  is a script, because it needs no shared state, no OnceLock, and no argv
+  multiplexing.
+
+REMAINING SCOPE
+1. Land TASK-RRT4T first. Until a skipped test is visible in the default
+   summary, no gate on this crate can be trusted, including this task's.
+2. Identify what the rmux test path execs that costs syspolicyd ~250 s per
+   suite run. That is the actual remaining cause for poll_direct_child_pid,
+   which passes when that pressure is absent.
+3. post_artifact_regenerate_hot_path now fails as 409 "harness busy", a
+   different symptom than before; treat its cause as unestablished.
+
+A note on the fixture module for round 3: shared_test_executable() asserts the
+on-disk fixture equals FIXTURE_SCRIPT and panics otherwise, while its doc
+comment claims a changed script gets a new path because the path is derived from
+the hashed test binary name. That reasoning does not hold — cargo's test-binary
+hash is not content-derived — so editing FIXTURE_SCRIPT can leave a stale file
+at the same path and fail every spawn test until it is deleted by hand. Make it
+overwrite, or key the filename on a content hash.
+
+Also weakened, worth restoring: the old pinned-exec wrapper asserted
+[ "$1" = __exec-pinned ] || exit 97, so a production regression that stopped
+passing that argv failed loudly. The shared fixture falls through to exit 0
+instead.
+

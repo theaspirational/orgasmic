@@ -1012,10 +1012,13 @@ Acceptance:
 * BACKLOG TASK-2BPWM dispatch-close destroys uncommitted worker output by default (git worktree remove --force, no dirty check)    :dispatch:recovery:data-loss:bug:
 :PROPERTIES:
 :ID: TASK-2BPWM
-:priority: P1
+:priority: 
 :PRIORITY: P1
-:test_cmd: cargo test -p orgasmic-cli
-:write_scope: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:test_cmd: 
+:write_scope: 
+:WRITE_SCOPE: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:READ_SCOPE:  crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:TEST_CMD:    cargo test -p orgasmic-cli
 :END:
 
 Verified 2026-07-26 by reading the cleanup paths after the operator asked
@@ -1213,3 +1216,77 @@ Note the failure is silent in BOTH directions worth testing: an unknown key
 (`WRITE_SCOPE` uppercase, dropped) and a known-but-unsupported-on-this-verb key
 (`priority` on create, dropped). Fixing only the first would leave this case
 intact.
+
+* BACKLOG TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing    :testing:daemon:dispatch:trust:
+:PROPERTIES:
+:ID: TASK-RRT4T
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs
+:END:
+
+Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
+return (and therefore PASS) when `rmux` is not on PATH:
+
+    if !rmux_available_for_test() {
+        eprintln!("skipping <name>: rmux binary not found");
+        return;
+    }
+
+`rmux_available_for_test()` is `probe_rmux_binary().found`, which resolves
+`rmux` from PATH only (crates/orgasmic-drivers/src/modes/rmux.rs:197-210). The
+skip prints to stderr, which `cargo test` swallows without `--nocapture`. The
+run then reports `504 passed; 0 failed` — literally true, and completely
+misleading.
+
+MEASURED 2026-07-26, manager-direct, on main at the TASK-STWVB merge, same
+machine, same commit, one variable changed:
+
+| PATH                             | result          | wall   | syspolicyd CPU |
+|----------------------------------|-----------------|--------|----------------|
+| normal (rmux on ~/.local/bin)    | 502 passed, 2 failed | 106.5 s | +281 s |
+| /usr/bin:/bin:/usr/sbin:/sbin... | 504 passed, 0 failed |  22.3 s | + 32 s |
+
+The second row reproduces, to the second, what the TASK-STWVB round-2
+implementer reported as proof its fix worked: 504/0 at 24.9 / 27.5 / 26.1 s.
+Its fix did not green those tests; its environment skipped them.
+
+WHY THIS IS P0
+
+This is the mechanism behind three consecutive over-reports today:
+- TASK-8W30B: worker measured +5 leaked sessions/run, manager measured +1
+- TASK-6FNAY: worker reported 504/0, manager measured 502/2 three times
+- TASK-STWVB r2: worker reported 504/0 x3, manager measured 502/2 four times
+
+Every one is the same shape, and the shape is not worker dishonesty — each
+phrased its claim carefully. A dispatched worker inherits the daemon's PATH.
+The daemon runs under launchd, which does not carry `~/.local/bin`, so `rmux`
+is absent for workers and present for the operator. Worker green on this crate
+therefore does not mean what it says, and no amount of brief discipline fixes
+it.
+
+Corroborating evidence in the round-2 report itself: it recorded
+`orgasmic-rmux-run-*` sessions as 7 before / 7 after three runs. A real run of
+`post_artifact_regenerate_hot_path_reuses_live_run_id` creates rmux sessions,
+and the manager's runs grew 7 -> 10 (+1 per run, the known panic-abandon).
+Zero growth was the tell that the test never ran.
+
+FIX
+
+1. A skipped test must be visible in the default `cargo test` summary. Options,
+   in preference order: (a) make the guard `panic!` unless an explicit
+   `ORGASMIC_ALLOW_SKIP_RMUX_TESTS=1` opt-out is set, so the default is loud;
+   (b) mark them `#[ignore]` and run them via an explicit filtered gate, so the
+   summary counts them as ignored rather than passed.
+2. Whatever the mechanism, `cargo test -p orgasmic-daemon --lib` must not be
+   able to print `504 passed; 0 failed` while eight tests did nothing.
+3. Give dispatched workers a PATH that finds the tools their gates need, OR
+   make the worker persona report the skip count with every test claim. Prefer
+   the first; the second is a documentation fix for an environment defect.
+4. Audit for the same pattern elsewhere: any `if !X_available() { return }` in
+   a test is the same trap. tmux and cursor-agent guards are the likely
+   siblings.
+
+Acceptance:
+- with rmux absent, the daemon suite cannot report a clean all-passed summary
+- the count of skipped-for-missing-tooling tests is visible without --nocapture
+- a manager reading a worker's test claim can tell whether the scoped test ran

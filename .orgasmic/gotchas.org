@@ -100,6 +100,31 @@ Linux CI has no Gatekeeper and will likely stay green even when a fresh-script
 regression makes the macOS suite fail in parallel. Durable invariant as of
 TASK-STWVB.
 
+Two corrections measured 2026-07-26 after that entry was written. First, the
+cheapest sidestep is not warming at all: run the script through a signed
+interpreter. On one fresh file, =./script= took 270 ms, =/bin/sh script= 5 ms,
+and =/bin/bash script= 3 ms. Prefer that for new fixtures — it needs no shared
+state, no OnceLock, and no argv multiplexing. Second, the cache key is the
+inode, not the path: a hard link to a warmed file execs in 4 ms while a
+byte-identical copy pays the full 162 ms.
+
+** A worker's green test count means nothing until you know which tests ran
+Eight rmux-dependent tests in =crates/orgasmic-daemon/src/api.rs= call
+=return= — and therefore PASS — when =probe_rmux_binary().found= is false. The
+skip only prints to stderr, which =cargo test= swallows without =--nocapture=.
+
+Measured 2026-07-26 on one commit, one machine, one variable: with =rmux= on
+PATH the daemon suite is =502 passed / 2 failed= in 106 s; with =rmux= hidden
+it is =504 passed / 0 failed= in 22 s. A dispatched worker inherits the daemon's
+launchd PATH, which does not carry =~/.local/bin=, so workers get the second row
+and the operator gets the first. Three worker over-reports in one day trace to
+this and nothing else.
+
+Manager rule: before accepting any test claim on the daemon crate, re-run the
+scoped test yourself, and check a side effect that proves execution — for the
+artifact/regenerate tests, =orgasmic-rmux-run-*= session growth. Zero growth
+across three runs means the rmux path never executed. Tracked as TASK-RRT4T.
+
 ** Test daemon port isolation from checkout-resident production daemon
 Tests that spawn isolated test daemons must ensure the daemons don't default to
 port 4848 when running in parallel from a checkout where a production daemon is

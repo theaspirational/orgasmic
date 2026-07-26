@@ -28827,3 +28827,77 @@
 :test_cmd:     cargo test -p orgasmic-cli
 :write_scope:  crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
 :END:
+
+* TX 2026-07-26 Sun 13:19:35 implementer.done TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2911
+:TIME:         [2026-07-26 Sun 13:19:35]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:RUN_ID:       run-20260726T125001-9e991bce9f75485a84e2f4be1d127800
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:SHA:          67e427cb5ea62e76c2933e314ea6a4cef53799d0
+:MERGE_SHA:    67e427cb5ea62e76c2933e314ea6a4cef53799d0
+:END:
+
+* TX 2026-07-26 Sun 13:24:47 task.property_updated TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2912
+:TIME:         [2026-07-26 Sun 13:24:47]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       set the readable WRITE_SCOPE key before dispatch
+:WRITE_SCOPE:  crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:END:
+
+* TX 2026-07-26 Sun 13:26:05 task.property_updated TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2913
+:TIME:         [2026-07-26 Sun 13:26:05]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       use the UPPERCASE keys the schema actually reads; clear the inert lowercase duplicates
+:READ_SCOPE:   crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:TEST_CMD:     cargo test -p orgasmic-cli
+:priority:
+:test_cmd:
+:write_scope:
+:END:
+
+* TX 2026-07-26 Sun 13:35:08 task.created TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2914
+:TIME:         [2026-07-26 Sun 13:35:08]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       measured: hiding rmux from PATH turns 502/2 into 504/0 and reproduces the worker's exact numbers
+:END:
+
+* TX 2026-07-26 Sun 13:36:09 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2915
+:TIME:         [2026-07-26 Sun 13:36:09]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
