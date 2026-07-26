@@ -30082,3 +30082,58 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-26 Sun 20:15:58 implementer.done TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2987
+:TIME:         [2026-07-26 Sun 20:15:58]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:RUN_ID:       run-20260726T195450-ca46c33862b7462fb515be5eef7c4da9
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6AYEJ/worktree
+:END:
+
+* TX 2026-07-26 Sun 20:22:33 task.edited TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2988
+:TIME:         [2026-07-26 Sun 20:22:33]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-6AYEJ
+:NODE_ID:      TASK-6AYEJ
+:END:
+
+* TX 2026-07-26 Sun 20:23:08 task.state_transitioned TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2989
+:TIME:         [2026-07-26 Sun 20:23:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       merged; reviewer pass owed. Fix is dormant until the runtime is rebuilt — workers still resolve the installed 0.0.15-dev.1 binary
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-26 Sun 20:23:26 task.created TASK-K5NDR
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2990
+:TIME:         [2026-07-26 Sun 20:23:26]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-K5NDR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-K5NDR
+:END:
