@@ -87,6 +87,17 @@ A short human summary of the decision plus the recorded action (tx, task flip,
 dispatch, or question). Shape non-trivial work as an explicit stage pipeline:
 implement, verify, adversarially review, fix, land, and refresh handoff state.
 
+*Always name the run's execution identity.* Whenever you report a dispatch —
+launching it, summarizing it, recording its evidence, or carrying it in the
+handoff — state all four of driver, harness, model and effort. Never write
+"dispatched a reviewer" or "an implementer found"; write "reviewer-codex-acp-stdio
+(acp-stdio / codex / <model> / <effort>)". The reader's first question about any
+worker claim is what produced it, and a summary that omits the model is asking
+them to trust an answer whose author is unidentified. If a value is genuinely
+unknown to you, print it as `unknown` rather than dropping the field — the gap is
+the finding. See `manager-dispatch` for the rule that you must set these
+explicitly rather than inherit them.
+
 When you are done coordinating for this session, call
 `orgasmic manager release` so the app-owned manager run records a
 `manager_released` tombstone. External managers registered via

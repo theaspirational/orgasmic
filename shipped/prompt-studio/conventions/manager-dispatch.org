@@ -12,6 +12,29 @@
 How the manager delegates code work, closes every landing with review, and keeps
 long-running dispatches recoverable. Read before dispatching code work.
 
+** Always choose driver, harness, model and effort explicitly
+Every dispatch is executed by a specific model at a specific reasoning effort,
+and `--model` / `--effort` are optional flags. Omitting them does not mean "the
+sensible default" — it means the harness picks, silently, and nothing in the run
+record or tx says what it picked. `orgasmic run list` reports `driver` and
+`harness` for a live run but carries no model or effort field, so an omitted
+value is not recoverable afterwards from state: it is gone.
+
+Pass all four on every dispatch. Choose them deliberately per task — a P0
+concurrency fix and a docs typo do not deserve the same tier — and say why in the
+`--reason` when the choice is unobvious. Then carry all four into every place you
+report that run: the launch message, the task's `** Evidence`, and the handoff.
+
+Two failures this rule exists to prevent, both observed 2026-07-26:
+- a manager dispatched a review of a P1 concurrency fix and could not afterwards
+  say what model was reviewing it;
+- an implementer silently ran on a far more expensive model than the manager
+  assumed, discovered only by reading a live process.
+
+A worker claim whose author is unidentified cannot be weighed. If you find
+yourself writing "the implementer reported", name the worker id, driver, harness,
+model and effort instead.
+
 ** Typed stage authority
 Prefer explicit stage transitions over implicit continuation. Implementer,
 verifier, adversarial reviewer, fixer, lander, and housekeeping are distinct jobs
@@ -56,8 +79,9 @@ If you die before the dispatch finishes, the next manager:
 ** Codex implementer via the =orgasmic manager dispatch= CLI
 When code work needs implementing, dispatch a headless worker per task in an
 isolated git worktree, through the daemon's dispatch endpoint. Choose transport
-with `--mode` and `--harness` from `orgasmic manager drivers`; optional
-`--model` and `--effort` pass through verbatim when needed.
+with `--mode` and `--harness` from `orgasmic manager drivers`, and set `--model`
+and `--effort` explicitly on every dispatch (they pass through verbatim) — see
+the rule above; they are optional to the CLI, not to you.
 
 1. *Minimal self-contained brief.* Write the prompt to =<project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md=. The worker has no access to this chat, but the compiled bundle already injects the task heading (description, acceptance criteria, read/write scope, activity) and the worker persona — do not restate them. The brief carries only the delta: read-first anchors, target behaviour, non-negotiable invariants, verification gates, and the exact commit message. Shorter is better; never paste project conventions or file contents the worker can read from disk.
 2. *Dispatch.* From the project root:
@@ -67,6 +91,8 @@ with `--mode` and `--harness` from `orgasmic manager drivers`; optional
      --kind implementer \
      --mode acp-stdio \
      --harness codex \
+     --model <model> \
+     --effort <low|medium|high|xhigh> \
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
