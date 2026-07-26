@@ -10,7 +10,16 @@ use orgasmic_core::{
     read_session_file, Home, Lifecycle, SandboxAllowlist, SessionEventKind, WorkerKind,
 };
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+};
 use orgasmic_drivers::{allowlist_from_driver_config, DriverConfig};
+
+#[cfg(unix)]
+#[test]
+fn required_test_tooling_is_present() {
+    assert_required_test_tooling(&[ToolRequirement::new("cc", 2, cc_available_for_test())]);
+}
 
 fn test_options() -> DaemonOptions {
     DaemonOptions {
@@ -984,8 +993,12 @@ async fn dispatch_endpoint_lease_held_returns_409() {
 #[tokio::test]
 #[ignore = "requires cursor-agent installed"]
 async fn dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_created() {
-    if !cursor_agent_available() {
-        eprintln!("skipping cursor-agent dispatch endpoint test: cursor-agent not on PATH");
+    let available = cursor_agent_available();
+    if skip_test_if_missing(
+        "dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_created",
+        &[("cursor-agent", available)],
+    ) {
+        assert_required_test_tooling(&[ToolRequirement::new("cursor-agent", 1, available)]);
         return;
     }
 
@@ -1046,8 +1059,12 @@ async fn dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_
 #[tokio::test]
 #[ignore = "requires codex installed"]
 async fn dispatch_endpoint_routes_acp_stdio_codex_through_supervisor() {
-    if !codex_available() {
-        eprintln!("skipping acp-stdio codex dispatch endpoint test: codex not on PATH");
+    let available = codex_available();
+    if skip_test_if_missing(
+        "dispatch_endpoint_routes_acp_stdio_codex_through_supervisor",
+        &[("codex", available)],
+    ) {
+        assert_required_test_tooling(&[ToolRequirement::new("codex", 1, available)]);
         return;
     }
 
@@ -2116,8 +2133,12 @@ async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
 #[tokio::test]
 #[ignore = "spawns a real codex run (≤60s + API spend); run with --ignored"]
 async fn dispatch_grace_path_writes_artifacts_without_terminal_session_marker() {
-    if !codex_available() {
-        eprintln!("skipping grace-path dispatch test: codex not on PATH");
+    let available = codex_available();
+    if skip_test_if_missing(
+        "dispatch_grace_path_writes_artifacts_without_terminal_session_marker",
+        &[("codex", available)],
+    ) {
+        assert_required_test_tooling(&[ToolRequirement::new("codex", 1, available)]);
         return;
     }
 
@@ -2498,8 +2519,10 @@ async fn get_project_invalid_task_returns_404_quickly_without_paths() {
 #[tokio::test]
 async fn dispatch_response_pid_is_inner_subprocess_child() {
     let _lock = fake_cursor_agent_test_lock();
-    if !cc_available_for_test() {
-        eprintln!("skipping dispatch_response_pid_is_inner_subprocess_child: no C compiler for the hermetic fake harness");
+    if skip_test_if_missing(
+        "dispatch_response_pid_is_inner_subprocess_child",
+        &[("cc", cc_available_for_test())],
+    ) {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();
@@ -2574,8 +2597,10 @@ async fn dispatch_response_pid_is_inner_subprocess_child() {
 #[tokio::test]
 async fn dispatch_response_pid_prefers_worker_server_child() {
     let _lock = fake_cursor_agent_test_lock();
-    if !cc_available_for_test() {
-        eprintln!("skipping dispatch_response_pid_prefers_worker_server_child: no C compiler for the hermetic fake harness");
+    if skip_test_if_missing(
+        "dispatch_response_pid_prefers_worker_server_child",
+        &[("cc", cc_available_for_test())],
+    ) {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();

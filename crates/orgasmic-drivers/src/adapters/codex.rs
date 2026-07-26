@@ -1158,6 +1158,7 @@ fn simulated_start_events(ctx: &DriverContext, cfg: &CodexAppserverConfig) -> Ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
     use crate::{CodexAppserverDriver, RunKind, WorkerDriver};
     use futures::{SinkExt, StreamExt};
     use tokio::io::{AsyncRead, AsyncWrite};
@@ -1310,8 +1311,14 @@ mod tests {
 
     #[tokio::test]
     async fn real_appserver_fixture_bridge_streams_events() {
-        if !codex_available() {
-            eprintln!("skipping real_appserver_fixture_bridge_streams_events: codex not on PATH");
+        let available = {
+            let _environment = test_environment_lock().lock().await;
+            codex_available()
+        };
+        if skip_test_if_missing(
+            "real_appserver_fixture_bridge_streams_events",
+            &[("codex", available)],
+        ) {
             return;
         }
 

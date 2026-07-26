@@ -11,6 +11,9 @@ use orgasmic_core::{
 };
 use orgasmic_daemon::recovery_claim::{load_recovery_claim, RecoveryClaim, RecoveryClaimStatus};
 use orgasmic_daemon::{Daemon, DaemonOptions};
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+};
 use serde_json::{json, Value};
 
 const PROJECT_ID: &str = "orgasmic";
@@ -147,6 +150,11 @@ fn tmux_available() -> bool {
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+#[test]
+fn required_test_tooling_is_present() {
+    assert_required_test_tooling(&[ToolRequirement::new("tmux", 1, tmux_available())]);
 }
 
 fn tmux_has_session(name: &str) -> bool {
@@ -566,8 +574,10 @@ async fn recovery_fault_child_daemon() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn recovery_faults_kill_real_daemon_and_preserve_original_pane() {
-    if !tmux_available() {
-        eprintln!("skipping recovery fault/restart matrix: tmux unavailable");
+    if skip_test_if_missing(
+        "recovery_faults_kill_real_daemon_and_preserve_original_pane",
+        &[("tmux", tmux_available())],
+    ) {
         return;
     }
     let points = [

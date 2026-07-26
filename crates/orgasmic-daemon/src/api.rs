@@ -14635,7 +14635,7 @@ mod tests {
     use std::time::Duration;
 
     use futures::{SinkExt as _, StreamExt as _};
-    use orgasmic_drivers::HarnessEventAdapter;
+    use orgasmic_drivers::{modes::rmux::test_tooling::skip_test_if_missing, HarnessEventAdapter};
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::Message;
 
@@ -17623,10 +17623,10 @@ mod tests {
     #[tokio::test]
     async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
         let _live_guard = live_session_guard();
-        if !tmux_on_path() {
-            eprintln!(
-                "skipping boot_reattach_respawns_dispatch_completion_watcher_without_artifacts: tmux not on PATH"
-            );
+        if skip_test_if_missing(
+            "boot_reattach_respawns_dispatch_completion_watcher_without_artifacts",
+            &[("tmux", tmux_on_path())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -21636,10 +21636,10 @@ mod tests {
     #[tokio::test]
     async fn recovery_reattaches_tmux_session_when_handle_exists() {
         let _live_guard = live_session_guard();
-        if !tmux_on_path() {
-            eprintln!(
-                "skipping recovery_reattaches_tmux_session_when_handle_exists: tmux not on PATH"
-            );
+        if skip_test_if_missing(
+            "recovery_reattaches_tmux_session_when_handle_exists",
+            &[("tmux", tmux_on_path())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -22018,10 +22018,10 @@ mod tests {
     #[tokio::test]
     async fn failed_terminal_with_live_tmux_never_offers_reattach() {
         let _live_guard = live_session_guard();
-        if !tmux_on_path() {
-            eprintln!(
-                "skipping failed_terminal_with_live_tmux_never_offers_reattach: tmux not on PATH"
-            );
+        if skip_test_if_missing(
+            "failed_terminal_with_live_tmux_never_offers_reattach",
+            &[("tmux", tmux_on_path())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -23265,10 +23265,10 @@ mod tests {
     #[tokio::test]
     async fn production_resume_native_fork_uses_pinned_claude_not_path_shim() {
         let _live_guard = live_session_guard();
-        if !tmux_on_path() {
-            eprintln!(
-                "skipping production_resume_native_fork_uses_pinned_claude_not_path_shim: tmux not on PATH"
-            );
+        if skip_test_if_missing(
+            "production_resume_native_fork_uses_pinned_claude_not_path_shim",
+            &[("tmux", tmux_on_path())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -23367,10 +23367,10 @@ mod tests {
     #[tokio::test]
     async fn two_recovery_chain_second_resume_uses_first_fork_session_id() {
         let _live_guard = live_session_guard();
-        if !tmux_on_path() {
-            eprintln!(
-                "skipping two_recovery_chain_second_resume_uses_first_fork_session_id: tmux not on PATH"
-            );
+        if skip_test_if_missing(
+            "two_recovery_chain_second_resume_uses_first_fork_session_id",
+            &[("tmux", tmux_on_path())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -25447,8 +25447,10 @@ mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!("skipping post_artifact_regenerate_hot_path_reuses_live_run_id: rmux binary not found");
+        if skip_test_if_missing(
+            "post_artifact_regenerate_hot_path_reuses_live_run_id",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -25653,10 +25655,10 @@ mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!(
-                "skipping post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation: rmux binary not found"
-            );
+        if skip_test_if_missing(
+            "post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -25812,10 +25814,10 @@ mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!(
-                "skipping post_artifact_regenerate_cold_spawns_after_forgotten_run: rmux binary not found"
-            );
+        if skip_test_if_missing(
+            "post_artifact_regenerate_cold_spawns_after_forgotten_run",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -25948,10 +25950,10 @@ mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!(
-                "skipping post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address: rmux binary not found"
-            );
+        if skip_test_if_missing(
+            "post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -26055,10 +26057,10 @@ mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!(
-                "skipping post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record: rmux binary not found"
-            );
+        if skip_test_if_missing(
+            "post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -26205,10 +26207,10 @@ mod tests {
     #[tokio::test]
     async fn launch_artifact_generation_persistence_failure_releases_run() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!(
-                "skipping launch_artifact_generation_persistence_failure_releases_run: rmux binary not found"
-            );
+        if skip_test_if_missing(
+            "launch_artifact_generation_persistence_failure_releases_run",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -26286,10 +26288,10 @@ mod tests {
     #[tokio::test]
     async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
         let _live_guard = live_session_guard();
-        if !rmux_available_for_test() {
-            eprintln!(
-                "skipping artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round: rmux binary not found"
-            );
+        if skip_test_if_missing(
+            "artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round",
+            &[("rmux", rmux_available_for_test())],
+        ) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();

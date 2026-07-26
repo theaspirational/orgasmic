@@ -280,6 +280,180 @@ fn binary_on_path(binary: &str) -> bool {
     which_on_path(binary).is_some()
 }
 
+// orgasmic:task_RRT4T
+/// Shared support for tests whose assertions require host tooling.
+///
+/// Integration-test crates cannot import `#[cfg(test)]` library modules, so
+/// this deliberately lives in the normal library behind a doc-hidden module.
+/// Every tooling guard routes through this module, and every affected test
+/// binary has one `required_test_tooling_is_present` sentinel that reports the
+/// number of tests gated by each tool.
+#[doc(hidden)]
+pub mod test_tooling {
+    use std::collections::BTreeSet;
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    pub const ALLOW_MISSING_TOOLS_ENV: &str = "ORGASMIC_ALLOW_MISSING_TOOLS";
+
+    /// Tool probes and tests that temporarily mutate process environment share
+    /// this lock so a sentinel never observes another test's synthetic PATH.
+    #[must_use]
+    pub fn test_environment_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    pub struct ToolRequirement {
+        tool: &'static str,
+        gated_tests: usize,
+        available: bool,
+    }
+
+    impl ToolRequirement {
+        #[must_use]
+        pub const fn new(tool: &'static str, gated_tests: usize, available: bool) -> Self {
+            Self {
+                tool,
+                gated_tests,
+                available,
+            }
+        }
+    }
+
+    #[must_use]
+    pub fn command_available(tool: &str) -> bool {
+        super::which_on_path(tool).is_some()
+    }
+
+    #[must_use]
+    pub fn command_succeeds(tool: &str, args: &[&str]) -> bool {
+        Command::new(tool)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    /// Preserve the useful per-test diagnostic for `--nocapture` while the
+    /// binary-level sentinel supplies the default-output failure signal.
+    #[must_use]
+    pub fn skip_test_if_missing(test_name: &str, tooling: &[(&str, bool)]) -> bool {
+        let missing = tooling
+            .iter()
+            .filter_map(|(tool, available)| (!available).then_some(*tool))
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return false;
+        }
+        eprintln!(
+            "skipping {test_name}: missing test tooling: {}",
+            missing.join(", ")
+        );
+        true
+    }
+
+    /// A live-driver test that degrades to inert has found a defect, not a
+    /// reason to skip its assertions.
+    pub fn assert_not_degraded(test_name: &str, degraded: bool) {
+        assert!(
+            !degraded,
+            "{test_name}: live driver degraded to inert instead of exercising its assertions"
+        );
+    }
+
+    /// Fail one clearly named sentinel test per binary when any required tool
+    /// is absent. A comma-separated, per-tool environment opt-out keeps the
+    /// suite runnable on constrained hosts without allowing one missing tool
+    /// to hide another.
+    pub fn assert_required_test_tooling(requirements: &[ToolRequirement]) {
+        let missing = requirements
+            .iter()
+            .filter(|requirement| !requirement.available)
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            return;
+        }
+
+        let allowed = std::env::var(ALLOW_MISSING_TOOLS_ENV)
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|tool| !tool.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<BTreeSet<_>>();
+        let allowed_missing = missing
+            .iter()
+            .copied()
+            .filter(|requirement| allowed.contains(requirement.tool))
+            .collect::<Vec<_>>();
+        let required_missing = missing
+            .iter()
+            .copied()
+            .filter(|requirement| !allowed.contains(requirement.tool))
+            .collect::<Vec<_>>();
+
+        if !allowed_missing.is_empty() {
+            let details = format_requirements(&allowed_missing);
+            emit_visible_notice(&format!(
+                "warning: {ALLOW_MISSING_TOOLS_ENV} explicitly allows missing test tooling: \
+                 {details}; those gated tests did not run"
+            ));
+        }
+
+        if required_missing.is_empty() {
+            return;
+        }
+
+        let required_details = format_requirements(&required_missing);
+        let opt_out = required_missing
+            .iter()
+            .map(|requirement| requirement.tool)
+            .collect::<Vec<_>>()
+            .join(",");
+        panic!(
+            "required test tooling is missing: {required_details}; gated tests did not run. \
+             Install the tooling or explicitly acknowledge only these skips with \
+             {ALLOW_MISSING_TOOLS_ENV}={opt_out}"
+        );
+    }
+
+    fn format_requirements(requirements: &[&ToolRequirement]) -> String {
+        requirements
+            .iter()
+            .map(|requirement| {
+                let noun = if requirement.gated_tests == 1 {
+                    "test"
+                } else {
+                    "tests"
+                };
+                format!(
+                    "{} (gates {} {noun})",
+                    requirement.tool, requirement.gated_tests
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// libtest captures `eprintln!` from passing tests. Write to the process
+    /// stderr device so an explicitly opted-out green run remains visibly
+    /// different in default `cargo test` output.
+    fn emit_visible_notice(message: &str) {
+        #[cfg(unix)]
+        {
+            if let Ok(mut stderr) = std::fs::OpenOptions::new().write(true).open("/dev/stderr") {
+                let _ = writeln!(stderr, "{message}");
+                return;
+            }
+        }
+        eprintln!("{message}");
+    }
+}
+
 /// Whether the wrapped harness binary is available. Distinct from the rmux
 /// binary probe (acceptance criterion: catalog checks them separately).
 fn harness_binary_available(command: &str) -> bool {
@@ -2047,6 +2221,7 @@ where
 
 #[cfg(test)]
 mod tests {
+    use super::test_tooling::{assert_not_degraded, skip_test_if_missing, test_environment_lock};
     use super::*;
     use crate::modes::tmux::{
         classify_cursor_startup_frame, cursor_trust_dialog_frame, CursorStartupFrame,
@@ -2075,6 +2250,11 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs2::FileExt::unlock(&self.0);
         }
+    }
+
+    async fn live_rmux_probe() -> RmuxBinaryProbe {
+        let _environment = test_environment_lock().lock().await;
+        probe_rmux_binary()
     }
 
     fn ctx(run_id: &str, kind: RunKind) -> DriverContext {
@@ -2121,6 +2301,7 @@ mod tests {
 
     #[test]
     fn probe_honors_explicit_env_override() {
+        let _environment = test_environment_lock().blocking_lock();
         // SAFETY: single-threaded test; we restore the prior value.
         let prior = std::env::var_os(RMUX_SDK_DAEMON_BINARY_ENV);
         std::env::set_var(RMUX_SDK_DAEMON_BINARY_ENV, "/nonexistent/rmux-binary-xyz");
@@ -2850,9 +3031,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_attach_reattaches_when_available() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!("skipping live_rmux_attach_reattaches_when_available: rmux binary not found");
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_attach_reattaches_when_available",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         let d = driver();
@@ -2866,10 +3049,10 @@ mod tests {
         let DriverEvent::Ready { capabilities, .. } = ev else {
             panic!("expected Ready, got {ev:?}");
         };
-        if capabilities["inert"] == true {
-            eprintln!("skipping live_rmux_attach_reattaches_when_available: SDK degraded to inert");
-            return;
-        }
+        assert_not_degraded(
+            "live_rmux_attach_reattaches_when_available",
+            capabilities["inert"] == true,
+        );
 
         let out = d.attach(context.clone(), cfg).await.unwrap();
         let AttachOutcome::Attached(attached) = out else {
@@ -2962,9 +3145,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_session_lifecycle_when_available() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!("skipping live_rmux_session_lifecycle_when_available: rmux binary not found");
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_session_lifecycle_when_available",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         let d = driver();
@@ -3034,11 +3219,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_streams_output_and_completes_on_exit() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_streams_output_and_completes_on_exit: rmux binary not found"
-            );
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_streams_output_and_completes_on_exit",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         const SENTINEL: &str = "orgasmic-rmux-line-stream-sentinel";
@@ -3103,9 +3288,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_exit_139_emits_a_fatal_terminal_event() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.usable() {
-            eprintln!("skipping live_rmux_exit_139_emits_a_fatal_terminal_event: compatible rmux binary not found");
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_exit_139_emits_a_fatal_terminal_event",
+            &[("rmux", probe.usable())],
+        ) {
             return;
         }
         let d = driver();
@@ -3144,9 +3331,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_session_exports_orgasmic_run_id() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!("skipping live_rmux_session_exports_orgasmic_run_id: rmux binary not found");
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_session_exports_orgasmic_run_id",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         let out_dir = tempfile::tempdir().unwrap();
@@ -3190,11 +3379,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_process_exit_emits_run_complete_without_text_chunks() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_process_exit_emits_run_complete_without_text_chunks: rmux binary not found"
-            );
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_process_exit_emits_run_complete_without_text_chunks",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         let d = driver();
@@ -3244,11 +3433,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_persistent_run_completes_on_process_exit() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_persistent_run_completes_on_process_exit: rmux binary not found"
-            );
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_persistent_run_completes_on_process_exit",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         let run_id = "run-persistent-exit";
@@ -3265,11 +3454,8 @@ mod tests {
             panic!("expected Ready, got {ev:?}");
         };
         if capabilities["inert"] == true {
-            eprintln!(
-                "skipping live_rmux_persistent_run_completes_on_process_exit: SDK degraded to inert"
-            );
             s.control.release("cleanup").await.unwrap();
-            return;
+            assert_not_degraded("live_rmux_persistent_run_completes_on_process_exit", true);
         }
 
         let mut saw_complete = false;
@@ -3363,11 +3549,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_send_input_delivers_followup_turn() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_send_input_delivers_followup_turn: rmux binary not found"
-            );
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_send_input_delivers_followup_turn",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         const INITIAL: &str = "ORGASMIC_INITIAL_SENTINEL";
@@ -3388,11 +3574,8 @@ mod tests {
             panic!("expected Ready, got {ev:?}");
         };
         if capabilities["inert"] == true {
-            eprintln!(
-                "skipping live_rmux_send_input_delivers_followup_turn: SDK degraded to inert"
-            );
             s.control.release("cleanup").await.unwrap();
-            return;
+            assert_not_degraded("live_rmux_send_input_delivers_followup_turn", true);
         }
         let session_name = rmux_session_name(&s.identity);
         let bin = probe.path.as_deref().unwrap_or(RMUX_BINARY);
@@ -3449,11 +3632,11 @@ mod tests {
     #[tokio::test]
     async fn live_rmux_send_input_rejects_while_harness_busy() {
         let _live_guard = live_session_guard();
-        let probe = probe_rmux_binary();
-        if !probe.found {
-            eprintln!(
-                "skipping live_rmux_send_input_rejects_while_harness_busy: rmux binary not found"
-            );
+        let probe = live_rmux_probe().await;
+        if skip_test_if_missing(
+            "live_rmux_send_input_rejects_while_harness_busy",
+            &[("rmux", probe.found)],
+        ) {
             return;
         }
         let d = driver();
@@ -3471,11 +3654,8 @@ mod tests {
             panic!("expected Ready, got {ev:?}");
         };
         if capabilities["inert"] == true {
-            eprintln!(
-                "skipping live_rmux_send_input_rejects_while_harness_busy: SDK degraded to inert"
-            );
             s.control.release("cleanup").await.unwrap();
-            return;
+            assert_not_degraded("live_rmux_send_input_rejects_while_harness_busy", true);
         }
 
         let ack = tokio::time::timeout(

@@ -109,9 +109,9 @@ inode, not the path: a hard link to a warmed file execs in 4 ms while a
 byte-identical copy pays the full 162 ms.
 
 ** A worker's green test count means nothing until you know which tests ran
-Eight rmux-dependent tests in =crates/orgasmic-daemon/src/api.rs= call
-=return= — and therefore PASS — when =probe_rmux_binary().found= is false. The
-skip only prints to stderr, which =cargo test= swallows without =--nocapture=.
+Seven rmux-dependent tests in =crates/orgasmic-daemon/src/api.rs= used to call
+=return= — and therefore PASS — when =probe_rmux_binary().found= was false. The
+skip only printed to stderr, which =cargo test= swallowed without =--nocapture=.
 
 Measured 2026-07-26 on one commit, one machine, one variable: with =rmux= on
 PATH the daemon suite is =502 passed / 2 failed= in 106 s; with =rmux= hidden
@@ -120,10 +120,27 @@ launchd PATH, which does not carry =~/.local/bin=, so workers get the second row
 and the operator gets the first. Three worker over-reports in one day trace to
 this and nothing else.
 
-Manager rule: before accepting any test claim on the daemon crate, re-run the
-scoped test yourself, and check a side effect that proves execution — for the
-artifact/regenerate tests, =orgasmic-rmux-run-*= session growth. Zero growth
-across three runs means the rmux path never executed. Tracked as TASK-RRT4T.
+The audit footprint was fourteen files across =orgasmic-daemon=,
+=orgasmic-drivers=, and =orgasmic-cli=, not just =api.rs=. Twelve contained
+tooling- or capability-gated tests; the =watcher.rs= and =manager.rs= grep hits
+were production diagnostics rather than test skips. TASK-RRT4T routes the real
+guards through one helper and adds one sentinel named
+=required_test_tooling_is_present= per affected default-running test binary.
+The sentinel fails once, naming each missing tool and how many tests it gates.
+Explicit live smokes use =#[ignore]= so default output counts them instead of
+letting an opt-in guard pass silently.
+
+The environment-only escape hatch is comma-separated and per tool:
+=ORGASMIC_ALLOW_MISSING_TOOLS=claude,cursor-agent=. It is deliberately not a
+boolean and has no config/dotenv equivalent. A green run using the opt-out
+writes an uncaptured warning to default =cargo test= output naming the missing
+tool and gated-test count, so it cannot be mistaken for a fully exercised run.
+
+Manager rule: every test claim for these crates must include either the
+=required_test_tooling_is_present= result or the visible
+=ORGASMIC_ALLOW_MISSING_TOOLS= warning and counts. For the artifact/regenerate
+tests, =orgasmic-rmux-run-*= session growth remains useful corroboration: zero
+growth means the rmux path did not execute. Durable invariant as of TASK-RRT4T.
 
 ** Test daemon port isolation from checkout-resident production daemon
 Tests that spawn isolated test daemons must ensure the daemons don't default to
