@@ -60,7 +60,9 @@ At the start of each manager pickup, read:
 - `.orgasmic/tasks/handoff.org`
 - `orgasmic status` when the CLI/daemon is available
 - recent tx entries for `manager.action`, `manager.launch`,
-  `manager.dispatch_started`, `implementer.done`, and `reviewer.done`
+  `manager.dispatch_started`, `implementer.reported`, `reviewer.reported`,
+  `implementer.done`, and `reviewer.done` — `*.reported` is the worker saying
+  it finished, `*.done` is your close
 - `git status --short` and `git worktree list`
 
 If recall surfaces a handoff `:LIVENESS:` SHA that does not match HEAD on

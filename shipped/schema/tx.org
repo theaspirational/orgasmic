@@ -91,6 +91,9 @@ Emitted when the auto-spawn consumer cannot complete the worker → driver → s
 - manager.dispatch_started
 - manager.dispatch_aborted
 - implementer.commit_pending
+- implementer.reported
+- reviewer.reported
+- architector.reported
 - implementer.done
 - reviewer.done
 
@@ -127,7 +130,31 @@ Properties in addition to the required base properties:
 - :WORKTREE: absolute git worktree path
 - :HAS_UNCOMMITTED: =yes= | =no=
 
+**** implementer.reported / reviewer.reported / architector.reported
+The WORKER's own completion record, emitted by =orgasmic dispatch finalize=
+(dec_3M7M0). It says "this worker is finished, its report is written, its lease
+is released" — it does NOT close the dispatch, which stays open in
+=dispatch-status= (flagged =[reported]=) until the manager runs
+=dispatch-close=. Before TASK-6AYEJ finalize emitted the =*.done= types below
+instead, which closed the dispatch before the manager had read the report, so
+worktree/branch cleanup never ran and =:MERGE_SHA:= recorded the worker's own
+branch tip. Historical worker-authored =*.done= entries stay valid and stay
+closed; there is no migration.
+
+Required properties in addition to the base tx properties:
+- :PROJECT: project id
+- :TASK: task id
+- :RUN_ID: supervisor-assigned run id (how the scan pairs this with its =manager.dispatch_started=)
+- :WORKTREE: absolute git worktree path
+
+Optional properties:
+- :SHA: the worker's own commit on its branch, when =--commit= was passed. Never =:MERGE_SHA:= — nothing has merged at this point.
+- :REASON: optional free text
+
 **** implementer.done
+Emitted by the MANAGER via =dispatch-close= after reading the report, merging,
+and deciding. This is the record that closes the dispatch.
+
 Required properties in addition to the base tx properties:
 - :PROJECT: project id
 - :TASK: task id
