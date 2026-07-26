@@ -465,6 +465,43 @@ NOT YET LIVE. This is merged in source only. The installed runtime is
 protects nothing on this machine until 0.0.15 is published or the runtime is
 rebuilt from source.
 
+REVIEWER PASS: BLOCK SHIP [2026-07-26]. reviewer-codex-acp-stdio (acp-stdio /
+codex / gpt-5.6-sol / xhigh), run
+run-20260726T145141-a55bd48661ac43208123f295cb5a4632, 12 minutes. Five findings
+filed as reviewer.finding tx-20260726-orgasmic-2942 .. -2946, closed with
+reviewer.done at -2947. Fix subtask: TASK-D0GA3.
+
+Two HIGH data-loss windows remain, both missed by the manager and by the
+implementer:
+1. The salvage commit is not anchored to the recorded dispatch branch — on a
+   detached or switched HEAD it lands unreferenced and is prunable by git gc, so
+   the close tx advertises a sha git may delete. Manager-confirmed empirically in
+   a scratch repo, not accepted on the reviewer's word: the salvage is not an
+   ancestor of the recorded branch and no ref points at it.
+2. `--force` still runs after the last clean check, so a writer in that window
+   loses bytes exactly as before the fix.
+
+Plus MEDIUM: a concurrent CLI close can delete another close's salvage branch via
+unfenced `git branch -D`; the daemon path is fenced with an expected OID and the
+CLI is not.
+
+The review also refuted three of the four suspicions in the review brief, each
+with code rather than assertion — error propagation is not a regression,
+--no-worktree-remove does not commit a retained worktree, and the post-commit
+porcelain check has no false-failure case. It ranked the manager's own CLI test
+gap correctly BELOW the three real defects. That is the right shape for a review:
+it did not simply confirm what it was handed.
+
+Worth recording for the RRT4T argument: the reviewer stated that rmux resolved in
+its environment and explicitly declined to claim a full-suite count, running only
+targeted tests. That is the discipline the brief asked for, and it is what the
+three earlier over-reports lacked.
+
+So this task stays in_review pending TASK-D0GA3. The fix cannot be dispatched
+immediately: its write scope needs crates/orgasmic-daemon/src/api.rs, which the
+in-flight TASK-RRT4T worker holds, and both would add tests to the same api.rs
+test module.
+
 * IN_REVIEW TASK-870YX TASK-35TK4 fix: tolerate transient CLI daemon-lock probes :fix:daemon:
 :PROPERTIES:
 :FIXES: TASK-35TK4

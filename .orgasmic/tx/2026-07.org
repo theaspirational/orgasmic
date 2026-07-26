@@ -29290,3 +29290,170 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: xhigh
 :END:
+
+* TX 2026-07-26 Sun 14:51:41 manager.dispatch_started TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2940
+:TIME:         [2026-07-26 Sun 14:51:41]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:REASON:
+:KIND:         reviewer
+:MODE:         acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2bpwm-review/worktree
+:BRANCH:       task-2bpwm-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2BPWM-review/task-2BPWM-review-brief.md
+:STARTED_AT:   [2026-07-26 Sun 14:51:41]
+:LIVENESS:     e18ae0acd85ad5d81257361537e96e3cc614063b
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: adversarial review of the salvage-before-force-removal change; error-propagation shape and branch retention are the two suspicions
+:END:
+
+* TX 2026-07-26 Sun 14:51:41 run.created TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2941
+:TIME:         [2026-07-26 Sun 14:51:41]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-2BPWM-reviewer-20260726T145141.jsonl
+:REASON:       adversarial review of the salvage-before-force-removal change; error-propagation shape and branch retention are the two suspicions
+:RUN_ID:       run-20260726T145141-a55bd48661ac43208123f295cb5a4632
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-acp-stdio
+:KIND:         reviewer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2bpwm-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-2BPWM-review/task-2BPWM-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-2BPWM-review/task-2BPWM-review-1f79f845ad1c45598b65e8943160c823-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-2BPWM-review/task-2BPWM-review-1f79f845ad1c45598b65e8943160c823-stdout.log
+:DISPATCH_ATTEMPT: 1f79f845ad1c45598b65e8943160c823
+:PID:          37481
+:DISPATCH_TX:  tx-20260726-orgasmic-2940
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-07-26 Sun 15:01:46 reviewer.finding TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2942
+:TIME:         [2026-07-26 Sun 15:01:46]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       HIGH correctness — manager.rs:1432-1445 and api.rs:4496-4551 commit whichever HEAD is checked out, while manager.rs:2268 and api.rs:4659 retain the recorded dispatch branch merely because salvage is Some. If a worker detached HEAD or switched branches before dying, close force-removes the worktree but the recorded branch does not point to SALVAGE_SHA; a detached salvage is unreferenced and can be pruned by git gc, violating durable recovery. Pass the expected branch into salvage and either fail safe on a mismatch or atomically move that exact ref with an old-OID guard before removal; test detached and switched-branch worktrees in both paths.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:END:
+
+* TX 2026-07-26 Sun 15:01:46 reviewer.finding TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2943
+:TIME:         [2026-07-26 Sun 15:01:46]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       HIGH correctness — manager.rs:1414-1440 then 2080-2084, and api.rs:4534-4551 then 4569-4573, leave an unlocked gap between the final clean-status check and git worktree remove --force. A second writer can create or modify a file in that gap; --force then deletes the new uncommitted bytes, recreating the task data-loss bug despite a successful salvage. Make removal fail closed on newly dirty state (prefer non-force removal after salvage) and/or hold a cleanup lock spanning final validation through removal; add a deterministic late-writer regression test.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:END:
+
+* TX 2026-07-26 Sun 15:01:46 reviewer.finding TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2944
+:TIME:         [2026-07-26 Sun 15:01:46]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       MEDIUM correctness — manager.rs:2268-2273 bases branch deletion only on this invocation having salvage=None and uses unfenced git branch -D. Two concurrent dispatch-close --branch-delete calls can both load the open record; after one salvages and removes, the other can observe removal failure/path missing with no local salvage and delete the branch now pointing at the first salvage. SALVAGE_SHA then becomes dangling and eventually unrecoverable. Do not delete after any worktree failure/missing result, and delete the pre-cleanup OID with update-ref -d fencing as the daemon path does.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:END:
+
+* TX 2026-07-26 Sun 15:01:47 reviewer.finding TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2945
+:TIME:         [2026-07-26 Sun 15:01:47]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       LOW test — manager.rs:4008,4069,4101 exercises cleanup_dispatch only as (remove=true, branch_delete=false); there is no CLI regression test for the load-bearing manager.rs:2268 salvage branch-retention condition when --branch-delete is requested. The daemon helper test covers its separate condition only. Add a dirty CLI cleanup with branch_delete=true and assert the retained branch resolves SALVAGE_SHA; this gap is real but less important than detached-HEAD and concurrent-close coverage.
+:SEVERITY:     LOW
+:KIND:         test
+:END:
+
+* TX 2026-07-26 Sun 15:01:47 reviewer.finding TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2946
+:TIME:         [2026-07-26 Sun 15:01:47]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       crates/orgasmic-cli/src/manager.rs
+:REASON:       LOW correctness — manager.rs:1381-1385 and api.rs:4504-4507 count porcelain records, not committed files. Default git status --porcelain collapses an untracked directory containing many files to one ?? directory entry, so SALVAGE_FILE_COUNT can materially under-report what was saved. Use --untracked-files=all or derive the count from the salvage commit tree diff, and add a nested-untracked-directory fixture.
+:SEVERITY:     LOW
+:KIND:         correctness
+:END:
+
+* TX 2026-07-26 Sun 15:03:24 reviewer.done TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2947
+:TIME:         [2026-07-26 Sun 15:03:24]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:RUN_ID:       run-20260726T145141-a55bd48661ac43208123f295cb5a4632
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-2BPWM-review/worktree
+:END:
+
+* TX 2026-07-26 Sun 15:04:55 task.created TASK-D0GA3
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2948
+:TIME:         [2026-07-26 Sun 15:04:55]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D0GA3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reviewer BLOCK SHIP on 2BPWM: two HIGH data-loss windows remain
+:END:
+
+* TX 2026-07-26 Sun 15:05:15 task.edited TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2949
+:TIME:         [2026-07-26 Sun 15:05:15]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-2BPWM
+:NODE_ID:      TASK-2BPWM
+:END:
