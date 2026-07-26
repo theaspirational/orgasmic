@@ -4283,6 +4283,8 @@ pub struct DispatchCleanupResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub salvage_sha: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub salvage_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub salvage_file_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -4291,7 +4293,8 @@ pub struct DispatchCleanupResponse {
 /// Daemon-executed rollback for a failed or timed-out CLI dispatch. Per the
 /// fencing invariant: kill any live worker (driver release / PGID reap), wait
 /// for confirmed death, salvage dirty output, then remove the worktree. A
-/// clean rollback still deletes its branch; a salvaged branch is retained.
+/// clean rollback deletes its branch; salvaged output remains reachable from
+/// the named refs/orgasmic/salvage ref even when branch cleanup is requested.
 async fn post_task_dispatch_cleanup(
     State(state): State<ApiState>,
     Path((project_id, task_id)): Path<(String, String)>,
@@ -4337,6 +4340,7 @@ async fn post_task_dispatch_cleanup(
                 worktree_removed: false,
                 branch_deleted: false,
                 salvage_sha: None,
+                salvage_ref: None,
                 salvage_file_count: None,
                 error: Some(format!("validation: {err}")),
             }));
@@ -4351,6 +4355,7 @@ async fn post_task_dispatch_cleanup(
                 worktree_removed: false,
                 branch_deleted: false,
                 salvage_sha: None,
+                salvage_ref: None,
                 salvage_file_count: None,
                 error: Some(format!("validation: {err}")),
             }));
@@ -4372,6 +4377,7 @@ async fn post_task_dispatch_cleanup(
                 worktree_removed: false,
                 branch_deleted: false,
                 salvage_sha: None,
+                salvage_ref: None,
                 salvage_file_count: None,
                 error: Some("cleanup identity mismatch with live or newer tokened attempt".into()),
             }));
@@ -4388,6 +4394,8 @@ async fn post_task_dispatch_cleanup(
         &req.worktree_path,
         &validated_artifacts,
         &task_id,
+        &req.branch,
+        expected_branch_oid.as_deref(),
     ) {
         Ok(removal) => removal,
         Err(err) => {
@@ -4402,6 +4410,7 @@ async fn post_task_dispatch_cleanup(
                 worktree_removed: false,
                 branch_deleted: false,
                 salvage_sha: None,
+                salvage_ref: None,
                 salvage_file_count: None,
                 error: Some(errors.join("; ")),
             }));
@@ -4411,7 +4420,7 @@ async fn post_task_dispatch_cleanup(
     if let Some(err) = &worktree_removal.error {
         errors.push(format!("worktree: {err}"));
     }
-    let branch_deleted = if worktree_removal.error.is_some() {
+    let branch_deleted = if worktree_removal.error.is_some() || !worktree_removed {
         false
     } else {
         match delete_dispatch_branch_after_removal(
@@ -4439,23 +4448,30 @@ async fn post_task_dispatch_cleanup(
         worktree_removal.salvage.is_some(),
         errors.is_empty(),
     ) {
-        (true, false, true, true) => "ok",
+        (true, false, true, true) | (true, true, true, true) => "ok",
         (true, true, false, true) => "ok",
         (false, false, false, true) => "noop",
         (true, false, false, _) | (false, true, false, _) => "partial",
         _ => "failed",
     };
 
-    let (salvage_sha, salvage_file_count) = worktree_removal
+    let (salvage_sha, salvage_ref, salvage_file_count) = worktree_removal
         .salvage
-        .map(|salvage| (Some(salvage.sha), Some(salvage.file_count)))
-        .unwrap_or((None, None));
+        .map(|salvage| {
+            (
+                Some(salvage.sha),
+                Some(salvage.ref_name),
+                Some(salvage.file_count),
+            )
+        })
+        .unwrap_or((None, None, None));
     Ok(Json(DispatchCleanupResponse {
         status: status.into(),
         released_run_id,
         worktree_removed,
         branch_deleted,
         salvage_sha,
+        salvage_ref,
         salvage_file_count,
         error: if errors.is_empty() {
             None
@@ -4468,6 +4484,7 @@ async fn post_task_dispatch_cleanup(
 #[derive(Debug, Eq, PartialEq)]
 struct DispatchSalvageCommit {
     sha: String,
+    ref_name: String,
     file_count: usize,
 }
 
@@ -4480,31 +4497,103 @@ struct DispatchWorktreeRemoval {
 
 fn dispatch_worktree_status_porcelain(path: &FsPath) -> Result<Vec<u8>, String> {
     let output = Command::new("git")
-        .args(["status", "--porcelain"])
+        .args(["status", "--porcelain=v1", "-z", "--untracked-files=all"])
         .current_dir(path)
         .output()
         .map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(format!(
-            "git status --porcelain failed: {}",
+            "git status --porcelain=v1 -z --untracked-files=all failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
     Ok(output.stdout)
 }
 
+fn dispatch_changed_file_count_between(
+    path: &FsPath,
+    parent: &str,
+    commit: &str,
+) -> Result<usize, String> {
+    let output = Command::new("git")
+        .args([
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "-z",
+            parent,
+            commit,
+        ])
+        .current_dir(path)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff-tree for salvage file count failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == b'\0')
+        .filter(|path| !path.is_empty())
+        .count())
+}
+
+fn anchor_dispatch_salvage_ref(project_root: &FsPath, sha: &str) -> Result<String, String> {
+    let ref_name = format!("refs/orgasmic/salvage/{sha}");
+    let existing = Command::new("git")
+        .args(["rev-parse", "--verify", "--quiet", &ref_name])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if existing.status.success() {
+        let existing = String::from_utf8_lossy(&existing.stdout).trim().to_string();
+        if existing == sha {
+            return Ok(ref_name);
+        }
+        return Err(format!(
+            "salvage ref {ref_name} unexpectedly resolves to {existing}"
+        ));
+    }
+
+    let zero_oid = "0".repeat(sha.len());
+    let update = Command::new("git")
+        .args(["update-ref", &ref_name, sha, &zero_oid])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !update.status.success() {
+        return Err(format!(
+            "git update-ref failed for salvage ref {ref_name}: {}{}",
+            String::from_utf8_lossy(&update.stderr),
+            String::from_utf8_lossy(&update.stdout)
+        ));
+    }
+    Ok(ref_name)
+}
+
 fn salvage_dispatch_worktree_if_dirty(
+    project_root: &FsPath,
     path: &FsPath,
     task_id: &str,
+    expected_branch: &str,
+    expected_branch_oid: &str,
 ) -> Result<Option<DispatchSalvageCommit>, String> {
     let status = dispatch_worktree_status_porcelain(path)?;
     if status.is_empty() {
         return Ok(None);
     }
-    let file_count = status
-        .split(|byte| *byte == b'\n')
-        .filter(|line| !line.is_empty())
-        .count();
+
+    let current_branch_oid = resolve_dispatch_branch_oid(project_root, expected_branch)?;
+    if current_branch_oid.as_deref() != Some(expected_branch_oid) {
+        return Err(format!(
+            "recorded dispatch branch {expected_branch} moved before salvage (expected {expected_branch_oid}, found {})",
+            current_branch_oid.as_deref().unwrap_or("<missing>")
+        ));
+    }
+
     let add = Command::new("git")
         .args(["add", "-A"])
         .current_dir(path)
@@ -4516,9 +4605,24 @@ fn salvage_dispatch_worktree_if_dirty(
             String::from_utf8_lossy(&add.stderr)
         ));
     }
+    let tree = Command::new("git")
+        .args(["write-tree"])
+        .current_dir(path)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !tree.status.success() {
+        return Err(format!(
+            "git write-tree failed: {}",
+            String::from_utf8_lossy(&tree.stderr)
+        ));
+    }
+    let tree = String::from_utf8_lossy(&tree.stdout).trim().to_string();
     let commit = Command::new("git")
         .args([
-            "commit",
+            "commit-tree",
+            &tree,
+            "-p",
+            expected_branch_oid,
             "-m",
             &format!("{task_id}: manager-salvaged uncommitted worker output"),
         ])
@@ -4527,28 +4631,74 @@ fn salvage_dispatch_worktree_if_dirty(
         .map_err(|err| err.to_string())?;
     if !commit.status.success() {
         return Err(format!(
-            "git commit failed: {}",
+            "git commit-tree failed: {}",
             String::from_utf8_lossy(&commit.stderr)
         ));
     }
-    if !dispatch_worktree_status_porcelain(path)?.is_empty() {
-        return Err("git commit left uncommitted changes in the worktree".to_string());
-    }
-    let head = Command::new("git")
-        .args(["rev-parse", "HEAD"])
+    let sha = String::from_utf8_lossy(&commit.stdout).trim().to_string();
+    let file_count = dispatch_changed_file_count_between(path, expected_branch_oid, &sha)?;
+
+    let checkout = Command::new("git")
+        .args(["checkout", "--detach", &sha])
         .current_dir(path)
         .output()
         .map_err(|err| err.to_string())?;
-    if !head.status.success() {
+    if !checkout.status.success() {
         return Err(format!(
-            "git rev-parse HEAD failed: {}",
-            String::from_utf8_lossy(&head.stderr)
+            "git checkout --detach salvage commit failed: {}{}",
+            String::from_utf8_lossy(&checkout.stderr),
+            String::from_utf8_lossy(&checkout.stdout)
         ));
     }
+    if !dispatch_worktree_status_porcelain(path)?.is_empty() {
+        return Err("git checkout left uncommitted changes in the worktree".to_string());
+    }
+    let ref_name = anchor_dispatch_salvage_ref(project_root, &sha)?;
+
     Ok(Some(DispatchSalvageCommit {
-        sha: String::from_utf8_lossy(&head.stdout).trim().to_string(),
+        sha,
+        ref_name,
         file_count,
     }))
+}
+
+struct DispatchCleanupLock(std::fs::File);
+
+impl Drop for DispatchCleanupLock {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+
+fn acquire_dispatch_cleanup_lock(project_root: &FsPath) -> Result<DispatchCleanupLock, String> {
+    let output = Command::new("git")
+        .args(["rev-parse", "--git-common-dir"])
+        .current_dir(project_root)
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "git rev-parse --git-common-dir failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let common_dir = PathBuf::from(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    let common_dir = if common_dir.is_absolute() {
+        common_dir
+    } else {
+        project_root.join(common_dir)
+    };
+    let path = common_dir.join("orgasmic-dispatch-cleanup.lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|err| format!("open cleanup lock {}: {err}", path.display()))?;
+    fs2::FileExt::lock_exclusive(&file)
+        .map_err(|err| format!("lock dispatch cleanup {}: {err}", path.display()))?;
+    Ok(DispatchCleanupLock(file))
 }
 
 fn remove_dispatch_worktree(
@@ -4556,7 +4706,31 @@ fn remove_dispatch_worktree(
     path: &FsPath,
     artifacts: &orgasmic_core::DispatchAttemptArtifacts,
     task_id: &str,
+    expected_branch: &str,
+    expected_branch_oid: Option<&str>,
 ) -> Result<DispatchWorktreeRemoval, String> {
+    remove_dispatch_worktree_with_hook(
+        project_root,
+        path,
+        artifacts,
+        task_id,
+        expected_branch,
+        expected_branch_oid,
+        |_| {},
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn remove_dispatch_worktree_with_hook(
+    project_root: &FsPath,
+    path: &FsPath,
+    artifacts: &orgasmic_core::DispatchAttemptArtifacts,
+    task_id: &str,
+    expected_branch: &str,
+    expected_branch_oid: Option<&str>,
+    before_remove: impl FnOnce(&FsPath),
+) -> Result<DispatchWorktreeRemoval, String> {
+    let _cleanup_lock = acquire_dispatch_cleanup_lock(project_root)?;
     if !path.exists() {
         return Ok(DispatchWorktreeRemoval {
             removed: false,
@@ -4565,9 +4739,22 @@ fn remove_dispatch_worktree(
         });
     }
     orgasmic_core::verify_dispatch_worktree_identity(artifacts, path)?;
-    let salvage = salvage_dispatch_worktree_if_dirty(path, task_id)?;
+    let salvage = if dispatch_worktree_status_porcelain(path)?.is_empty() {
+        None
+    } else {
+        let expected_branch_oid = expected_branch_oid
+            .ok_or_else(|| format!("recorded dispatch branch {expected_branch} does not exist"))?;
+        salvage_dispatch_worktree_if_dirty(
+            project_root,
+            path,
+            task_id,
+            expected_branch,
+            expected_branch_oid,
+        )?
+    };
+    before_remove(path);
     let output = match Command::new("git")
-        .args(["worktree", "remove", "--force"])
+        .args(["worktree", "remove"])
         .arg(path)
         .current_dir(project_root)
         .output()
@@ -4660,11 +4847,8 @@ fn delete_dispatch_branch_after_removal(
     project_root: &FsPath,
     branch: &str,
     expected_oid: Option<&str>,
-    salvage: Option<&DispatchSalvageCommit>,
+    _salvage: Option<&DispatchSalvageCommit>,
 ) -> Result<bool, String> {
-    if salvage.is_some() {
-        return Ok(false);
-    }
     delete_dispatch_branch(project_root, branch, expected_oid)
 }
 
@@ -26894,8 +27078,73 @@ mod tests {
         let _ = running.join.await;
     }
 
+    struct DaemonDispatchCleanupFixture {
+        _tmp: tempfile::TempDir,
+        root: PathBuf,
+        worktree: PathBuf,
+        branch: String,
+        artifacts: orgasmic_core::DispatchAttemptArtifacts,
+    }
+
+    fn daemon_dispatch_cleanup_fixture(slug: &str) -> DaemonDispatchCleanupFixture {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.name", "Test"],
+            vec!["config", "user.email", "test@example.com"],
+        ] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        std::fs::write(root.join("base.txt"), "base\n").unwrap();
+        for args in [vec!["add", "base.txt"], vec!["commit", "-qm", "init"]] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success());
+        }
+
+        let branch = format!("{slug}-impl");
+        let dispatch_dir = root.join(".orgasmic/tmp/dispatch").join(slug);
+        let worktree = dispatch_dir.join("worktree");
+        std::fs::create_dir_all(&dispatch_dir).unwrap();
+        assert!(Command::new("git")
+            .args(["worktree", "add", "-q", "-b", &branch])
+            .arg(&worktree)
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        let attempt = "aaaaaaaa11111111bbbbbbbb22222222";
+        let last = dispatch_dir.join(format!("{slug}-{attempt}-last.txt"));
+        let stdout = dispatch_dir.join(format!("{slug}-{attempt}-stdout.log"));
+        std::fs::write(&last, "unfinished summary\n").unwrap();
+        std::fs::write(&stdout, "unfinished output\n").unwrap();
+        let artifacts = orgasmic_core::validate_dispatch_cleanup_targets(
+            &root,
+            &worktree,
+            Some(&last),
+            Some(&stdout),
+        )
+        .unwrap();
+        DaemonDispatchCleanupFixture {
+            _tmp: tmp,
+            root,
+            worktree,
+            branch,
+            artifacts,
+        }
+    }
+
     #[test]
-    fn dispatch_cleanup_salvages_dirty_worktree_and_retains_branch() {
+    fn dispatch_cleanup_salvages_dirty_worktree_on_named_ref() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         assert!(Command::new("git")
@@ -26962,9 +27211,16 @@ mod tests {
             .status()
             .unwrap()
             .success());
-        let failed = remove_dispatch_worktree(root, &worktree, &artifacts, "TASK-DAEMON-SALVAGE")
-            .unwrap_err();
-        assert!(failed.contains("git commit failed"), "{failed}");
+        let failed = remove_dispatch_worktree(
+            root,
+            &worktree,
+            &artifacts,
+            "TASK-DAEMON-SALVAGE",
+            branch,
+            expected_oid.as_deref(),
+        )
+        .unwrap_err();
+        assert!(failed.contains("git commit-tree failed"), "{failed}");
         assert!(worktree.exists(), "failed salvage must not remove worktree");
         assert!(Command::new("git")
             .args(["config", "user.name", "Test"])
@@ -26973,14 +27229,21 @@ mod tests {
             .unwrap()
             .success());
 
-        let removal =
-            remove_dispatch_worktree(root, &worktree, &artifacts, "TASK-DAEMON-SALVAGE").unwrap();
+        let removal = remove_dispatch_worktree(
+            root,
+            &worktree,
+            &artifacts,
+            "TASK-DAEMON-SALVAGE",
+            branch,
+            expected_oid.as_deref(),
+        )
+        .unwrap();
         assert!(removal.removed);
         assert_eq!(removal.error, None);
         let salvage = removal.salvage.as_ref().expect("dirty worktree salvaged");
         assert_eq!(salvage.file_count, 1);
         assert!(!worktree.exists());
-        assert!(!delete_dispatch_branch_after_removal(
+        assert!(delete_dispatch_branch_after_removal(
             root,
             branch,
             expected_oid.as_deref(),
@@ -26988,21 +27251,135 @@ mod tests {
         )
         .unwrap());
 
-        let branch_oid = resolve_dispatch_branch_oid(root, branch)
-            .unwrap()
-            .expect("salvage branch retained");
-        assert_eq!(branch_oid, salvage.sha);
+        assert_eq!(resolve_dispatch_branch_oid(root, branch).unwrap(), None);
+        let salvage_oid = Command::new("git")
+            .args(["rev-parse", "--verify", &salvage.ref_name])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(salvage_oid.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&salvage_oid.stdout).trim(),
+            salvage.sha
+        );
         let recovered = Command::new("git")
-            .args(["show", &format!("{branch}:worker-output.txt")])
+            .args(["show", &format!("{}:worker-output.txt", salvage.ref_name)])
             .current_dir(root)
             .output()
             .unwrap();
         assert!(
             recovered.status.success(),
-            "dirty output was not recoverable from {branch}: {}",
+            "dirty output was not recoverable from {}: {}",
+            salvage.ref_name,
             String::from_utf8_lossy(&recovered.stderr)
         );
         assert_eq!(recovered.stdout, b"unfinished work\n");
+    }
+
+    #[test]
+    fn dispatch_cleanup_salvage_uses_recorded_branch_from_detached_or_switched_head() {
+        for (slug, switch_to_branch) in [
+            ("task-daemon-detached", false),
+            ("task-daemon-switched", true),
+        ] {
+            let fixture = daemon_dispatch_cleanup_fixture(slug);
+            let recorded_oid = resolve_dispatch_branch_oid(&fixture.root, &fixture.branch)
+                .unwrap()
+                .unwrap();
+            let unrelated = format!("{slug}-unrelated");
+            let mut checkout = Command::new("git");
+            checkout.current_dir(&fixture.worktree);
+            if switch_to_branch {
+                checkout.args(["checkout", "-qb", &unrelated]);
+            } else {
+                checkout.args(["checkout", "--detach"]);
+            }
+            assert!(checkout.status().unwrap().success());
+            std::fs::write(
+                fixture.worktree.join("worker-output.txt"),
+                "unfinished work\n",
+            )
+            .unwrap();
+
+            let removal = remove_dispatch_worktree(
+                &fixture.root,
+                &fixture.worktree,
+                &fixture.artifacts,
+                "TASK-DAEMON-IDENTITY",
+                &fixture.branch,
+                Some(&recorded_oid),
+            )
+            .unwrap();
+            assert!(removal.removed, "{:?}", removal.error);
+            let salvage = removal.salvage.expect("dirty worktree salvaged");
+            let salvage_oid = Command::new("git")
+                .args(["rev-parse", "--verify", &salvage.ref_name])
+                .current_dir(&fixture.root)
+                .output()
+                .unwrap();
+            assert!(salvage_oid.status.success());
+            assert_eq!(
+                String::from_utf8_lossy(&salvage_oid.stdout).trim(),
+                salvage.sha
+            );
+            let parent = Command::new("git")
+                .args(["rev-parse", &format!("{}^", salvage.sha)])
+                .current_dir(&fixture.root)
+                .output()
+                .unwrap();
+            assert_eq!(String::from_utf8_lossy(&parent.stdout).trim(), recorded_oid);
+            assert_eq!(
+                resolve_dispatch_branch_oid(&fixture.root, &fixture.branch).unwrap(),
+                Some(recorded_oid.clone())
+            );
+            if switch_to_branch {
+                assert_eq!(
+                    resolve_dispatch_branch_oid(&fixture.root, &unrelated).unwrap(),
+                    Some(recorded_oid.clone())
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn dispatch_cleanup_late_writer_blocks_removal_after_nested_salvage() {
+        let fixture = daemon_dispatch_cleanup_fixture("task-daemon-late-writer");
+        std::fs::create_dir_all(fixture.worktree.join("nested/deeper")).unwrap();
+        std::fs::write(fixture.worktree.join("nested/one.txt"), "one\n").unwrap();
+        std::fs::write(fixture.worktree.join("nested/deeper/two.txt"), "two\n").unwrap();
+        let expected_oid = resolve_dispatch_branch_oid(&fixture.root, &fixture.branch)
+            .unwrap()
+            .unwrap();
+
+        let removal = remove_dispatch_worktree_with_hook(
+            &fixture.root,
+            &fixture.worktree,
+            &fixture.artifacts,
+            "TASK-DAEMON-LATE-WRITER",
+            &fixture.branch,
+            Some(&expected_oid),
+            |path| std::fs::write(path.join("late-writer.txt"), "late\n").unwrap(),
+        )
+        .unwrap();
+
+        assert!(!removal.removed);
+        assert!(removal.error.is_some());
+        let salvage = removal.salvage.expect("initial dirty output salvaged");
+        assert_eq!(salvage.file_count, 2);
+        let salvage_oid = Command::new("git")
+            .args(["rev-parse", "--verify", &salvage.ref_name])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(salvage_oid.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&salvage_oid.stdout).trim(),
+            salvage.sha
+        );
+        assert_eq!(
+            std::fs::read_to_string(fixture.worktree.join("late-writer.txt")).unwrap(),
+            "late\n"
+        );
     }
 
     #[test]
