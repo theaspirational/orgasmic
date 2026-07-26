@@ -8595,8 +8595,24 @@ mod tests {
             .spawn()
             .expect("spawn wrapper");
         let wrapper_pid = wrapper.id();
-        std::thread::sleep(Duration::from_millis(100));
-        let child_pid = live_direct_child_pid(wrapper_pid).expect("direct child pid");
+        // Wait for `sh` to actually fork `sleep 300` instead of assuming it has.
+        // The shared state here is host scheduling: a fixed sleep asserts that
+        // 500 concurrent tests plus whatever else the machine is running leave
+        // `sh` enough CPU to fork within one fixed window, and on a loaded host
+        // it does not (observed twice under a background `mediaanalysisd` spike).
+        // Poll to a deadline, the same shape the wrapper-child sibling test
+        // above already uses for its `ready` marker.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let child_pid = loop {
+            if let Some(pid) = live_direct_child_pid(wrapper_pid) {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "wrapper never forked a direct child"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        };
         let output = Command::new("ps")
             .args(["-p", child_pid.to_string().as_str(), "-o", "command="])
             .output()
