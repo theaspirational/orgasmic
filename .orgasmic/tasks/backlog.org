@@ -771,6 +771,7 @@ any manager action.
 :PROPERTIES:
 :ID: TASK-099T6
 :priority: P1
+:PRIORITY: P1
 :END:
 
 Found 2026-07-26 running the TASK-8W30B merge gates on main (433fef1 + merge).
@@ -827,6 +828,7 @@ Acceptance:
 :PROPERTIES:
 :ID: TASK-A55J7
 :priority: P1
+:PRIORITY: P2
 :END:
 
 Filed 2026-07-26 alongside a manager prompt change requiring every dispatch to
@@ -892,6 +894,7 @@ Acceptance:
 :PROPERTIES:
 :ID: TASK-VSWZT
 :priority: P1
+:PRIORITY: P1
 :END:
 
 Observed 2026-07-26 clearing run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2
@@ -962,6 +965,7 @@ Acceptance:
 :PROPERTIES:
 :ID: TASK-S2KM0
 :priority: P1
+:PRIORITY: P1
 :END:
 
 Verified 2026-07-26 while ruling on reviewer finding 5 on TASK-8W30B.
@@ -1004,3 +1008,208 @@ Acceptance:
 - the suite CI runs is honest about what it did not run, rather than skipping
   silently
 - no default CI lane bills the operator for a provider turn
+
+* BACKLOG TASK-2BPWM dispatch-close destroys uncommitted worker output by default (git worktree remove --force, no dirty check)    :dispatch:recovery:data-loss:bug:
+:PROPERTIES:
+:ID: TASK-2BPWM
+:priority: P1
+:PRIORITY: P1
+:test_cmd: cargo test -p orgasmic-cli
+:write_scope: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:END:
+
+Verified 2026-07-26 by reading the cleanup paths after the operator asked
+whether a stuck dispatch can end with its work unrecoverable. It can, and the
+destructive behaviour is the default.
+
+THE PATH
+
+`orgasmic manager dispatch-close` declares `--worktree-remove` with
+`default_value_t = true` (crates/orgasmic-cli/src/manager.rs:124) and
+`--branch-delete` with `default_value_t = false`. Removal is
+`git worktree remove --force` (manager.rs:2007; the daemon does the same at
+crates/orgasmic-daemon/src/api.rs:4438). `--force` is exactly the flag that makes
+git delete a DIRTY worktree instead of refusing.
+
+No dirty check guards it. `worktree_has_uncommitted_changes` exists at
+manager.rs:1331 but is only consumed by `commit_worktree` on the worker-driven
+`dispatch finalize --commit` path. Nothing consults it before removal.
+
+The two guards that do run before removal —
+`validate_dispatch_cleanup_targets` and `verify_dispatch_worktree_identity` —
+protect against deleting the WRONG worktree. Neither protects against deleting
+UNSAVED WORK.
+
+THE SCENARIO, WHICH IS NOT HYPOTHETICAL
+
+1. A worker does real work and never reaches `dispatch finalize --commit`,
+   because its harness dies. Observed today: the TASK-STWVB run emitted
+   `run_complete` at 09:54:47 and `claude exited with status exit status: 143`
+   at 09:54:48.
+2. The run can then sit live for a long time (80 minutes, observed).
+3. The manager reaches for the documented cleanup verb,
+   `dispatch-close --status aborted`.
+4. Default flags delete the worktree with `--force`. Uncommitted work is gone,
+   with no prompt, and no tx entry recording that anything was discarded.
+5. The branch survives, because branch-delete defaults false. If the worker never
+   committed, that branch sits at the base commit and holds nothing — so the
+   surviving branch creates a false impression of recoverability.
+
+WHAT IS NOT WRONG, so nobody widens this
+
+There is no automatic or background pruning of dispatch worktrees. No retention
+sweep touches them. The loss always requires an explicit manager action. The
+problem is not a daemon deleting things unasked; it is that the verb the manager
+is instructed to use is destructive by default, at exactly the moment a worker
+has failed and its output is most likely to be uncommitted.
+
+In practice the opposite failure dominates: 17 worktrees are on disk right now,
+including several from 2026-07-23. Cleanup usually is not run at all. That makes
+the risk distribution the worst possible shape — litter for the careless, silent
+data loss for the conscientious.
+
+FIX
+
+`commit_worktree` already exists, so the cheap fix loses nothing and needs no
+judgment call:
+1. Before removing a worktree, test it with `worktree_has_uncommitted_changes`.
+   If dirty, make a salvage commit on the dispatch branch (which already survives
+   by default) with a message naming the task and that it was manager-salvaged,
+   then remove.
+2. Record the salvage in the close tx — sha and file count — so the recovery
+   story is discoverable from state rather than from memory.
+3. Consider making `--worktree-remove` default false for `--status aborted`
+   specifically. A done close follows a worker that committed; an aborted close
+   is by definition the case where it did not.
+4. Say what happened in the CLI output. "worktree removed" should distinguish
+   clean removal from salvaged-then-removed.
+
+Related: TASK-TJKFC already states the right principle for the other half of this
+("once startup has been accepted and meaningful work has occurred, later failures
+retain normal failed-run history and inspection artifacts"), and that half is
+unimplemented.
+
+Acceptance:
+- closing a dispatch whose worktree is dirty never loses the diff
+- the salvage is recoverable from tx alone, without knowing the branch name
+- a clean close behaves exactly as it does today
+
+* BACKLOG TASK-HXSW0 Make the CLI self-documenting for agents: real help per verb and flag, no silent no-ops, a drivers listing verb    :cli:agent-ergonomics:docs:
+:PROPERTIES:
+:ID: TASK-HXSW0
+:priority: P1
+:write_scope: crates/orgasmic-cli/src/
+:PRIORITY:    P1
+:END:
+
+Filed 2026-07-26 after a session in which the manager guessed wrong CLI verbs
+four times, and one shipped convention was found instructing a hallucination.
+
+The operator framing, which sets the constraint: fix this with better CLI help
+that agents are told to consult, NOT by pasting a command cheat sheet into every
+prompt. Prompt space is scarce and a stale cheat sheet is worse than none.
+
+MEASURED FAILURES, all from one session
+
+1. `orgasmic manager drivers` does not exist in any command group — and
+   `shipped/prompt-studio/conventions/manager-dispatch.org` instructed the
+   manager to run it to choose `--mode`/`--harness`. The valid pairs live only in
+   `orgasmic_drivers::SUPPORTED` (crates/orgasmic-drivers/src/lib.rs:74) with no
+   CLI surface at all. The convention was corrected the same day, but the
+   underlying gap stands: the one fact needed on EVERY dispatch has no listing
+   verb. The only discovery path is to submit a bogus pair and read the
+   rejection, which does helpfully name all sixteen.
+2. `orgasmic task show` — guessed repeatedly. The real verb is `task get`, and
+   listing lives in a SEPARATE top-level group, `tasks list`. A singular/plural
+   split where both exist and neither mentions the other is a hallucination
+   generator.
+3. `orgasmic run release` — a prior manager asserted it existed, corrected
+   itself in the handoff, and the correction itself was then wrong. Two wrong
+   records about one nonexistent verb.
+4. `orgasmic worker list` — guessed, does not exist.
+
+5. WORST CLASS — a silent no-op on a write verb.
+   `orgasmic task update TASK-X --property "WRITE_SCOPE=..." --property
+   "TEST_CMD=..."` returned `{"changed":{"STATE":"in_progress"}}` and dropped
+   both properties without a word. The same call with lowercase `write_scope`
+   and `test_cmd` worked. An unrecognised property key must be an error: a write
+   verb that reports success while discarding two of three arguments is worse
+   than a missing feature, because the caller has no reason to re-check.
+
+6. Flags on the primary agent verb have NO help text. `orgasmic manager dispatch
+   --help` renders `--task <TASK>`, `--kind <KIND>`, `--brief <BRIEF>`,
+   `--from <FROM>`, `--model <MODEL>`, `--effort <EFFORT>`, `--worktree`,
+   `--branch`, `--reason` with blank descriptions. An agent cannot learn from
+   that whether `--from` is a git ref or a path, or that `--worktree-remove`
+   on `dispatch-close` defaults to TRUE and force-deletes uncommitted work
+   (TASK-2BPWM).
+
+WHAT ALREADY WORKS, and should be the template
+
+Two errors in the same session were excellent and cost zero follow-up:
+- `manager dispatch` from the wrong lifecycle: "task TASK-X is in lifecycle
+  stage in_progress; implementer dispatch is allowed only from BACKLOG or TODO"
+  — names the rule and the allowed set.
+- `node body append --section Evidence` on a node lacking it: "no section
+  \"Evidence\"; sections: [] (use `set --section` to create one via add)" —
+  names the fix verb.
+Contrast `node body append gotchas ...` → "glossary file not found", which names
+the wrong file entirely (already a recorded gotcha).
+
+WORK
+
+1. Give every command and every flag a one-line description that says what it
+   does and what it returns. Blank `#[arg]` descriptions on agent-facing verbs
+   should be treated as a bug, not a style nit.
+2. State destructive defaults in the help text where the operator reads them,
+   not only in the code.
+3. Make unrecognised `--property` keys a hard error listing accepted keys.
+   Audit for other silent-drop paths in the same shape.
+4. Add a real listing verb for mode/harness pairs, sourced from
+   `orgasmic_drivers::SUPPORTED` so it cannot drift.
+5. Make near-miss verbs self-correcting: an unknown subcommand should suggest
+   the real one (`task show` -> `task get`; `worker list` -> ?) and cross-
+   reference the singular/plural split between `task` and `tasks`.
+6. Audit shipped prompts and conventions for commands that do not exist. One was
+   found by accident; nobody has checked the rest. A test asserting that every
+   `orgasmic ...` invocation appearing in `shipped/**` parses against the real
+   clap surface would make this class permanently impossible.
+
+Item 6 is the highest-leverage item here — it converts "an agent hallucinated"
+into a build failure.
+
+Acceptance:
+- an agent can discover any verb and flag it needs from `--help` alone, in at
+  most three calls, without reading Rust source
+- no write verb silently ignores an argument
+- every command string in shipped prompts/conventions is checked against the
+  real CLI surface by a test
+- mode/harness pairs are listable
+CONFIRMED INSTANCE, found while filing these very tasks [2026-07-26].
+
+`orgasmic task create` has no `--priority` flag at all. Every task filed this
+session used `--property "priority=P1"` on create, which was accepted silently
+and discarded. ALL SEVEN tasks created today came out with priority None:
+TASK-099T6, TASK-A55J7, TASK-VSWZT, TASK-S2KM0, TASK-6FNAY, TASK-2BPWM,
+TASK-HXSW0. They were repaired afterwards with `task update --priority`, which
+does have a real flag and works.
+
+This sharpens item 3 beyond "unknown property keys should error". Two distinct
+defects compose here:
+
+1. The property allowlist differs between `create` and `update`. `update`
+   accepts `--priority` as a first-class flag; `create` accepts neither the flag
+   nor the property. The same field is settable, unsettable, or silently ignored
+   depending on which verb you reach for.
+2. The silent drop makes the divergence invisible. `create` returned a normal
+   success object with `id` and `tx_id` and no indication that an argument had
+   been thrown away.
+
+The result is a whole session of P1 work filed as unprioritised, which is exactly
+the kind of state error that later reads as "nobody triaged this" rather than
+"the CLI dropped it".
+
+Note the failure is silent in BOTH directions worth testing: an unknown key
+(`WRITE_SCOPE` uppercase, dropped) and a known-but-unsupported-on-this-verb key
+(`priority` on create, dropped). Fixing only the first would leave this case
+intact.

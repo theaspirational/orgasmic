@@ -7,6 +7,7 @@
 :priority: P1
 :test_cmd: cargo test -p orgasmic-drivers
 :write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/tests/ crates/orgasmic-daemon/src/supervisor.rs
+:PRIORITY:    P1
 :END:
 
 Fix round for the reviewer BLOCK on TASK-8W30B (merged d60c4ed / d3fae4d).
@@ -414,4 +415,246 @@ This task also still carries the sharpest constraint from its own Evidence: the
 probe must exercise the exact argv the worker will run. `claude auth status`
 returned loggedIn:true while the same binary with the dispatch argv returned
 "Not logged in" in 39 ms.
+
+* IN_PROGRESS TASK-STWVB Four daemon tests fail on every full-suite run and pass alone :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB
+:PRIORITY: P2
+:END:
+
+Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
+and each passes alone:
+
+- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
+- api::tests::recovery_inventory_waits_for_atomic_claim_commit
+- api::tests::recovery_reattaches_tmux_session_when_handle_exists
+- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
+
+Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
+unrelated change stashed out. They only fail under full-suite parallelism, not
+in a filtered subset, so the trigger is cross-test interference rather than any
+one test's logic.
+
+Why this is worth fixing rather than tolerating: a suite that always fails four
+tests cannot answer "did my change break something?". Establishing that these
+four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
+stash-and-compare that every future change to this crate has to repeat. A red
+suite is also indistinguishable from a red suite with one new real failure in
+it.
+
+Leads, not conclusions:
+- These tests share process-global state: `live_session_guard()` and static
+  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
+  tests against each other but not against everything that observes the same
+  state.
+- The same class of bug was found and fixed in the CLI crate on the same day:
+  `path_env`'s tests set process-global PATH to a bare tempdir, so any
+  concurrently running test spawning a PATH-resolved tool failed with a bare
+  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
+  shared-environment dependency before assuming a timing race.
+- Two of the four are tmux/mux-dependent, so a real external session leaking
+  between tests is also plausible.
+
+Acceptance:
+- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
+  parallelism
+- the cause is named per test, not worked around by serializing the whole suite
+- if any test genuinely requires exclusive global state, it says so and enforces
+  it, rather than depending on scheduling luck
+RE-MEASURED [2026-07-26], and the original inventory does not hold.
+
+The "four tests fail on every full run" claim was made while the build
+environment was badly degraded: the disk was 89% full, target/ was 57 GB with
+164,619 retained .o files, and a full `cargo test -p orgasmic-daemon --lib` run
+took 13 minutes. After clearing that (dead worktree targets, 31 GB of
+incremental, a stale Time Machine snapshot, and switching the dev profile to
+line-tables-only) the same suite runs in ~45 seconds and target/debug is 3.4 GB.
+
+Five consecutive full runs at default parallelism on the repaired environment:
+
+| test                                                          | failed |
+|---------------------------------------------------------------|--------|
+| api::post_artifact_regenerate_hot_path_reuses_live_run_id       | 3/5    |
+| recovery_claim::reconcile_pending_rejects_rename_swap_after_open| 2/5    |
+| api::post_artifact_regenerate_cold_changed_address_replaces_... | 1/5    |
+| api::recovery_inventory_waits_for_atomic_claim_commit           | 0/5    |
+| api::recovery_reattaches_tmux_session_when_handle_exists        | 0/5    |
+| supervisor::poll_direct_child_pid_prefers_worker_server_over_...| 0/5    |
+
+So three of the four originally named tests did not fail once, and two tests
+that were never on the list do fail. The suite is green outright in 1 run of 5.
+
+What this means: a 13-minute run on a thrashing disk stretches every await long
+enough to tip deadline-bounded waits, which is why the failure set looked stable
+and looked like those four. The environment was a confound. The remaining three
+are real flakes but a smaller and different problem than recorded.
+
+Also fixed and split out of this task:
+- stall_detector_revalidates_after_driver_event_race — root-caused to
+  Supervisor::new's own 50ms timeout monitor releasing the aged run out from
+  under the test, not to load. Fixed in a629a51 with Supervisor::unmonitored.
+  wait_for_event_count no longer reports a released run as "event_count 0".
+- The 3 dispatch_endpoint failures were a separate, deterministic defect
+  (TASK-5T575, fixed in 05d029b).
+
+Remaining scope for this task is the three flakes in the table, not the original
+four. The regenerate pair are the priority — both touch the same hot/cold
+artifact-regenerate launch-record path, so they are likely one cause.
+GATE IS BLOCKED BY TASK-8W30B [2026-07-26], and this is a measurement problem
+rather than a remaining-work problem.
+
+The rmux session leak adds 8 leaked sessions per full-suite run (manager-
+confirmed: 23 -> 31 across one run, from a known-empty daemon). Saturation
+degrades the rmux driver to inert, at which point
+`post_artifact_regenerate_hot_path_reuses_live_run_id` fails on all retries with
+`409 capability_unsupported: send_input`.
+
+So '5 consecutive green full-suite runs' cannot be satisfied on a machine where
+each run makes the next one worse. The gate should be re-run only after
+TASK-8W30B lands, and the two fixed tests should be judged on the controlled
+before/after they already have rather than on an absolute streak.
+
+Post-merge state, 3 runs on a quiet machine (499-500 passed):
+- reconcile_pending_rejects_rename_swap_after_open: 0/3 — FIXED, was 4/6
+- post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 — TASK-8W30B
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling: 3/3 in-suite
+  but PASSES ALONE on both the pre-merge and post-merge commits, so it is
+  in-suite interference and specifically NOT a regression from the merge
+  (checked deliberately, since the implementer touched its sibling)
+- recovery_inventory_waits_for_atomic_claim_commit: 1/3
+
+Remaining scope after the merge: the interference behind poll_direct_child_pid
+and recovery_inventory, both of which pass in isolation.
+STATE CORRECTED [2026-07-26]: in_review -> in_progress, and the root-cause
+attribution above is DISCONFIRMED.
+
+The block is lifted: TASK-8W30B merged (d60c4ed / d3fae4d) and release growth
+went from +8 per suite run to 0, manager-measured independently. So the
+"measurement problem" framing above no longer applies — the environment no
+longer degrades run over run.
+
+But the line "post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 —
+TASK-8W30B" attributed that failure to the leak, and that is now wrong. On the
+merged tree, with release growth at zero, the test still fails:
+
+    assertion `left == right` failed: two consecutive rounds must reuse one run_id
+      left:  run-20260726T105347-034ff6ca59844f43a18a9a0ae8a3ba2c
+      right: run-20260726T105337-c9b87801bc334547a747b5b8ebf2277a
+
+That is a run-id reuse failure, not a `409 capability_unsupported: send_input`
+saturation failure. The leak may have aggravated its environment; it was not the
+cause. The reviewer on TASK-8W30B reached the same conclusion independently.
+
+Remaining scope is therefore three tests, not two:
+- post_artifact_regenerate_hot_path_reuses_live_run_id — needs its own root
+  cause, in the hot/cold artifact-regenerate launch-record path
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling — in-suite
+  interference, passes alone
+- recovery_inventory_waits_for_atomic_claim_commit — same shape, passes alone
+
+Do not re-run a "5 consecutive green" gate as the closing condition until the
+first of those has a named cause. An absolute streak was the wrong instrument
+while the environment degraded, and it is still the wrong instrument for a
+deterministic assertion failure.
+ROOT CAUSE MEASURED [2026-07-26], manager-direct. The "cross-test shared global
+state" hypothesis at the top of this task is WRONG for poll_direct_child_pid.
+The cause is process-creation latency, and the test is simply asserting a
+deadline the machine cannot meet while the suite runs.
+
+WHAT WAS MEASURED
+
+Both remaining tests pass alone and fast: poll_direct_child_pid in 0.42 s,
+post_artifact_regenerate_hot_path in 0.80 s. In-suite they now fail 3/3, not
+intermittently — that is an improvement, because deterministic is debuggable.
+
+Running each module alone at full parallelism is green:
+- supervisor::tests  99 passed, 12.0 s
+- api::tests        199 passed, 37.5 s
+So the interference is cross-module, not within either.
+
+Live capture of the fake cursor-agent during a full run (three separate runs,
+same result). The test writes a bash script that backgrounds two sleeps, touches
+`children-ready`, then sleeps; it waits up to 30 s for that file:
+
+- the process IS alive the whole time — it is not killed, not starved of a slot
+- it has ZERO children, so it never reached even its first `&`
+- state is S (blocked), never R (runnable), so it is not losing a CPU race
+- CPU time stays at 0:00.00 across 28+ seconds of sampling — it never executed
+  a single instruction
+
+A process that is alive, blocked, and has consumed no CPU is wedged BEFORE
+execution, not running slowly.
+
+THE DISCRIMINATOR
+
+An unrelated trivial bash script (`#!/bin/bash` + one `touch`), spawned from
+outside the test binary while the suite ran, timed at:
+
+    6205 ms, 2993 ms, 63771 ms, 64 ms, 354 ms
+
+Sixty-three seconds to spawn a two-line shell script, then 64 ms a few seconds
+later. Process creation on this machine intermittently stalls for seconds to a
+minute while this suite runs. Nothing about the test is special; it is just the
+one test that asserts a 30 s deadline on a freshly spawned external process.
+
+Caveat on that measurement, stated so nobody over-reads it: the timestamps were
+taken by spawning python3, so each figure includes one additional process
+spawn. That does not change the conclusion — spawning anything is what is slow —
+but the per-call attribution is not exact.
+
+Peak process count during a run was only ~720 against a 5333 maxprocperuid, and
+fd limit is 1048576, so this is not simple resource exhaustion. The likely
+mechanism is serialization in macOS exec (code-signing / syspolicy validation)
+under many concurrent spawns, which is worth confirming before designing around
+it.
+
+CONSEQUENCE FOR THE FIX
+
+Do not fix this by raising the 30 s deadline. Sixty seconds was observed, so any
+constant is a guess. Either remove the dependence on a freshly spawned external
+process reaching a checkpoint, or serialize the process-spawning tests against
+each other so the suite stops competing with itself for exec.
+
+The same mechanism is a plausible cause for post_artifact_regenerate_hot_path:
+its two run_ids are 10 s apart, consistent with round one exceeding a deadline
+and its run being released before round two. Not yet confirmed — do not record
+it as established.
+MECHANISM CONFIRMED [2026-07-26]. It is macOS first-exec evaluation, and it is
+measurable in three lines on a completely idle machine:
+
+    fresh script #1 first exec: 0.18 s    second exec: 0.00 s
+    fresh script #2 first exec: 0.15 s    second exec: 0.00 s
+    fresh script #3 first exec: 0.16 s    second exec: 0.00 s
+
+macOS charges roughly 150-180 ms of syspolicy/Gatekeeper evaluation the first
+time a newly created executable is exec-ed, and nothing thereafter. Idle spawns
+of an already-evaluated script are 0.00 s, which is why every one of these tests
+passes alone.
+
+That per-file cost is paid through a single system daemon, so concurrent first
+execs queue. This suite writes many fresh executable fixtures into tempdirs and
+execs them in parallel, which is how a 150 ms cost becomes the 3 s / 6 s / 63 s
+spawns measured earlier. The failing test is not special; it is the one that
+asserts a 30 s deadline against that queue.
+
+So the chain is: fresh fixture -> per-file Gatekeeper evaluation -> serialized
+daemon -> queue under suite parallelism -> a spawned helper that never reaches
+its first instruction inside the deadline.
+
+FIX DIRECTION
+
+Stop paying the per-file cost per test. The fixture script should be created and
+exec-ed ONCE per test binary and then reused, with the per-test variation moved
+out of the file contents and into argv, so the second and subsequent uses hit
+the warm path. Pre-warming a shared fixture is preferable to serializing the
+tests, because it removes the cost rather than queueing it, and it also speeds up
+every other spawn-based test in the crate.
+
+Raising the deadline is not a fix. 63 s was observed; any constant is a guess.
+
+NOTE FOR CI (TASK-S2KM0): this mechanism is macOS-specific. A Linux runner has
+no Gatekeeper and will very likely not reproduce it, so this test could pass in
+CI while failing on every developer Mac. That is an argument for fixing the
+fixture rather than tolerating the failure locally, and for not concluding "green
+in CI" means "green".
 

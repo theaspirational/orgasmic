@@ -28593,3 +28593,237 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     todo
 :END:
+
+* TX 2026-07-26 Sun 12:50:00 task.state_transitioned TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2896
+:TIME:         [2026-07-26 Sun 12:50:00]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-STWVB to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 12:50:01 manager.dispatch_started TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2897
+:TIME:         [2026-07-26 Sun 12:50:01]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:REASON:
+:KIND:         implementer
+:MODE:         acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:BRANCH:       task-stwvb-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-STWVB-r2/task-STWVB-r2-brief.md
+:STARTED_AT:   [2026-07-26 Sun 12:50:01]
+:LIVENESS:     075e017c0985c2e5092408fdbd2d942a26112389
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: green the last two daemon tests: warm shared exec fixtures (cause measured) + diagnose the regenerate 10s deadline (gpt-5.6-sol/xhigh — part 2 is open diagnosis)
+:END:
+
+* TX 2026-07-26 Sun 12:50:01 run.created TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2898
+:TIME:         [2026-07-26 Sun 12:50:01]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-STWVB-implementer-20260726T125001.jsonl
+:REASON:       green the last two daemon tests: warm shared exec fixtures (cause measured) + diagnose the regenerate 10s deadline (gpt-5.6-sol/xhigh — part 2 is open diagnosis)
+:RUN_ID:       run-20260726T125001-9e991bce9f75485a84e2f4be1d127800
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp-stdio
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-STWVB-r2/task-STWVB-r2-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-STWVB-r2/task-STWVB-r2-e93c04fbe8534a66900a6abf6869ae47-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-STWVB-r2/task-STWVB-r2-e93c04fbe8534a66900a6abf6869ae47-stdout.log
+:DISPATCH_ATTEMPT: e93c04fbe8534a66900a6abf6869ae47
+:PID:          31887
+:DISPATCH_TX:  tx-20260726-orgasmic-2897
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-07-26 Sun 12:55:13 task.created TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2899
+:TIME:         [2026-07-26 Sun 12:55:13]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: operator asked whether a stuck run can lose its work; verified it can, by default
+:END:
+
+* TX 2026-07-26 Sun 13:04:04 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2900
+:TIME:         [2026-07-26 Sun 13:04:04]
+:TYPE:         manager.action
+:ACTOR:        manager
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       shipped/prompt-studio
+:REASON:       TIER DECLARATION (manager-direct, trivial): operator asked for a prompt rule that agents verify CLI verbs before guessing. Prompt/convention prose only, no source. Also corrects manager-dispatch.org, which instructs the manager to run 'orgasmic manager drivers' — a command that does not exist in any command group; the mode/harness pairs live only in orgasmic_drivers::SUPPORTED. The convention was actively teaching a hallucination.
+:tier:         trivial
+:scope:        shipped/prompt-studio/prompt-specs/manager.org shipped/prompt-studio/conventions/manager-dispatch.org
+:END:
+
+* TX 2026-07-26 Sun 13:05:11 task.created TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2901
+:TIME:         [2026-07-26 Sun 13:05:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: agents repeatedly guess verbs that do not exist; the fix is discoverable help, not bigger prompts
+:END:
+
+* TX 2026-07-26 Sun 13:14:07 task.property_updated TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2902
+:TIME:         [2026-07-26 Sun 13:14:07]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-26 Sun 13:14:07 task.property_updated TASK-S2KM0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2903
+:TIME:         [2026-07-26 Sun 13:14:07]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S2KM0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-26 Sun 13:14:07 task.property_updated TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2904
+:TIME:         [2026-07-26 Sun 13:14:07]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-26 Sun 13:14:08 task.property_updated TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2905
+:TIME:         [2026-07-26 Sun 13:14:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-26 Sun 13:14:08 task.property_updated TASK-VSWZT
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2906
+:TIME:         [2026-07-26 Sun 13:14:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VSWZT
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-26 Sun 13:14:09 task.property_updated TASK-099T6
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2907
+:TIME:         [2026-07-26 Sun 13:14:09]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-099T6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-26 Sun 13:14:09 task.property_updated TASK-A55J7
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2908
+:TIME:         [2026-07-26 Sun 13:14:09]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A55J7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: priority lost at create time (task create has no --priority; --property priority=... was silently dropped)
+:PRIORITY:     P2
+:END:
+
+* TX 2026-07-26 Sun 13:14:23 task.edited TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2909
+:TIME:         [2026-07-26 Sun 13:14:23]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-HXSW0
+:NODE_ID:      TASK-HXSW0
+:END:
+
+* TX 2026-07-26 Sun 13:14:31 task.property_updated TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2910
+:TIME:         [2026-07-26 Sun 13:14:31]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: scope for the queued dispatch
+:test_cmd:     cargo test -p orgasmic-cli
+:write_scope:  crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:END:
