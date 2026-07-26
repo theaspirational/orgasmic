@@ -5,154 +5,151 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         42cc2638c08e50639b7921eb46e72d43fb90a132
+:LIVENESS:         db071733bf3bf95e275d6d1314c31b277a5441dd
 :LIVENESS_AT:      [2026-07-26 Sun]
 :UPDATED_AT:       [2026-07-26 Sun]
 :GOAL_ID:          goal-20260725-land-the-committed
 :END:
 
-Session 2026-07-25 (manager-implementer). Four P0s landed on main and the fixed
-runtime is INSTALLED AND VERIFIED on the operator's machine as 0.0.15-dev.1.
+Session 2026-07-26 (manager-direct + four dispatches). The theme: the daemon test
+suite still cannot answer "did my change break something?", and today the reason
+turned out to be the measurement channel itself, not the tests.
 
-VERIFIED LIVE, not just in tests
-- TASK-KWSTJ (done): GET /api/runs on the operator's real board went from
-  41.9 s to 0.24 s to first byte. 224 session files, 2.42 GB on disk, 31.4 MB
-  inspected (77x reduction), 152 truncated scans, 0 unreadable.
-- TASK-9P810 (done): the executed path is now version-free — codesign resolves
-  Executable=~/.orgasmic/bin/orgasmic where it previously resolved
-  runtimes/0.0.14-darwin-aarch64/bin/orgasmic. Identity preserved exactly.
-  Cost the one grant the installer predicted and printed.
-- TASK-KKGKM (done): proved itself during 9P810's own installation. While the
-  grant was missing, the daemon stayed bound and answerable — status, API and
-  CLI all worked and named the reason — where the same condition caused a
-  30-minute outage on 2026-07-25.
-- TASK-TJKFC (in_progress): startup gate only; adapter probes and atomic abort
-  remain, with an open design question about probe cost recorded on the task.
+THE ONE THING TO KNOW
+A worker's "504 passed / 0 failed" on the daemon crate is not evidence. Eight
+rmux-dependent tests in api.rs `return` — and so PASS — when the rmux binary is
+not on PATH, printing only to stderr, which cargo test hides. A dispatched worker
+inherits the daemon's launchd PATH, which does not carry ~/.local/bin, so the
+worker gets 504/0 in 22 s where the operator gets 502/2 in 106 s. Same commit,
+same machine, one variable. That single mechanism accounts for all three worker
+over-reports today (8W30B, 6FNAY, STWVB r2). Filed P0 as TASK-RRT4T. Until it
+lands, re-run every scoped daemon test yourself and check a side effect that
+proves execution — for the artifact tests, `orgasmic-rmux-run-*` session growth;
+zero growth across three runs means the rmux path never ran.
 
-THE ONE THING TO KNOW ABOUT THIS INSTALL
-It is a local bundle at version 0.0.15-dev.1, built and signed here, not a
-published release. install.json still names the stable channel, and the
-installer is equality-based, so the next `orgasmic update` will see stable
-advertising 0.0.14, treat it as a change, and REVERT the machine to 0.0.14 —
-losing all four fixes. Publishing 0.0.15 to stable is what makes this permanent.
-Until then, do not run `orgasmic update`.
-
-ALSO FIXED WHILE INSTALLING
-scripts/install.sh's replace_symlink let mv follow the `current` symlink and
-drop the new link inside the OLD runtime dir, so an upgrade printed "install
-complete" while still pointing at the previous runtime. Only reproduces on
-re-install, never on a first install, which is why it survived. Commit d455051.
-
-CORRECTED MID-SESSION
-A reindex that succeeds does NOT prove the daemon has permission. One succeeded
-in 1.3 s while the grant was missing and loaded all five projects, which led to
-a wrong "no grant needed" call. Only comparing a boot with and without the grant
-settles it. Recorded in gotchas.
-
-NEXT
-- Publish 0.0.15 to stable (needs operator approval; it is a public release).
-- Finish TASK-TJKFC, then TASK-Z8WEJ / TASK-VB9DQ verify dispatch end to end,
-  which is what unblocks dispatching agents again.
-- TASK-7QM8M (bound boot reattach reads) and TASK-STWVB (four daemon tests fail
-  on every full run) were filed from evidence found this session.
-- The process arc (YGB1R, TW3N3, JQARS, 8ED6V, 3CM0Q, 4YX1K, 0JY7M) is untouched.
+THE INSTALL, unchanged and still true
+The operator's daemon is a locally built 0.0.15-dev.1. install.json names the
+stable channel and the installer is equality-based, so `orgasmic update` would
+see stable advertising 0.0.14, treat it as a change, and revert the machine,
+losing every fix from the last two days. Do not run it. Publishing 0.0.15 is what
+makes this permanent, and that needs operator approval.
 
 ** Done so far
-Session 2026-07-26 (manager-direct + one live dispatch). The theme was that the
-test suite could not answer "did my change break something?", and fixing that
-exposed two production defects whose tests had been passing all along.
+Session 2026-07-26, in order.
 
-TEST SIGNAL
-- TASK-5T575 (05d029b): three dispatch_endpoint tests failed every run. seed_worker
-  wrote to user/workers/, ignored since templates were retired, and the body sent
-  worker_id, which DispatchRequest does not declare and serde drops. They asked
-  for a worker by a name with no reader over a field with no receiver. 30/30.
-- TASK-STWVB partial (a629a51 + merge 42cc263): stall_detector was racing
-  Supervisor::new's own 50ms timeout monitor, not losing to load; unwrap_or(0)
-  reported the released run as "event_count 0". A dispatched implementer then
-  keyed two unkeyed test hooks that tests were stealing from each other
-  (4/6 -> 0/16 each, controlled before/after).
+LANDED
+- TASK-8W30B (d60c4ed, merge d3fae4d): RmuxControl::release aborted its lifecycle
+  task before Session::kill, poisoning the shared ordered SDK transport, so every
+  rmux run leaked a session, pty and harness process. Leak +8/run -> 0,
+  manager-measured. Reviewer then BLOCKed it: cancellation consumed the only
+  Session handle before a cancellable await, so Drop could not retry.
+- TASK-6FNAY (83ea420, merge 075e017): the round-2 fix. as_ref() instead of
+  take(), 2 s SDK + 2 s CLI reap budgets inside the caller's 5 s, an
+  endpoint-exact `-S <endpoint> kill-session -t <name>` fallback, and a detached
+  run_complete sender that survives cancellation.
+- TASK-STWVB round 2 (67e427c, merge c578fcc): one OnceLock-owned warm executable
+  per test binary, per-test variation moved into argv, hard links for
+  production-shaped paths. Kept, because the mechanism is sound — but the gate is
+  NOT met; see In flight.
+- Prompt rules (902b240, 3f7121c): every dispatch report must name driver,
+  harness, model and effort; and check `orgasmic <group> <verb> --help` before
+  inventing a verb. The second was written because a shipped convention taught
+  `orgasmic manager drivers`, which has never existed.
 
-PRODUCTION DEFECTS FOUND BY LOOKING AT LIVE PROCESSES
-- TASK-SGRTX (b43fc70, f5c6913): TASK-VB9DQ and TASK-Z8WEJ were INERT in
-  production. claude's simulation_reason treated an empty endpoint as a reason
-  to simulate, which is every dispatch, so compose_request returned Simulated
-  before building any argv; the mode then spawned the bare stdio_spawn base.
-  --session-id, the credential mode and --model were computed, recorded and
-  dropped. Verified by argv on a live process, not by test.
-- --effort (0f65de5): never wired for claude at all.
-- TASK-8W30B: RmuxControl::release aborts its tasks before Session::kill, so the
-  kill fails on a dead transport and every rmux run leaks a session, pty and
-  harness process. Confirmed +8 per suite run, twice, independently. At
-  saturation the driver degrades to inert silently.
+MEASURED, and worth not re-deriving
+- macOS charges 150-270 ms of Gatekeeper evaluation on the FIRST exec of each
+  newly created executable, through one serialized daemon. Warm exec 4 ms. A hard
+  link to a warmed file is also 4 ms (the cache key is the inode); a byte-
+  identical copy pays 162 ms. And `/bin/sh script` on a fresh file is 5 ms
+  against 270 ms for `./script` — the simplest sidestep, and the one to use next.
+- The remaining suite pressure is in the rmux test path, not in the converted
+  fixtures: syspolicyd burns +281 s of CPU during a 106 s run with rmux present
+  and +32 s with it absent. What it is exec-ing has NOT been identified. The rmux
+  binary itself is cheap (9.2 ms, 0 ms syspolicyd).
 
-BUILD ENVIRONMENT
-target/ was 57 GB with 164,619 retained .o files, disk 89% full, suite runs 13
-minutes. Now 8.6 GB, 273 GB free, runs ~45-90s. [profile.dev]
-debug = "line-tables-only" stops the .o churn (rlib 130 MB -> 69 MB).
+BOARD REPAIR
+In Review went 5 -> 3. TJKFC (P0, partial implementation) and STWVB moved back to
+in_progress; Z8WEJ and VB9DQ stay in review with their real blocker recorded —
+they need a live claude dispatch on a daemon carrying today's main.
+
+CLI DEFECTS FOUND WHILE WORKING, now understood correctly
+`--property KEY=VALUE` writes any key verbatim and the schema reads only a fixed
+UPPERCASE set (schema.rs:276-286), matched case-SENSITIVELY. So `write_scope`,
+`test_cmd` and `priority` in lowercase are stored where nothing reads them, and
+the response echoes them back as changed. The earlier note in this session that
+uppercase WRITE_SCOPE was "silently dropped" was wrong — uppercase is the form
+that works. `task create` has no --priority flag at all, which is how all seven
+tasks filed today came out priority None. Tracked on TASK-HXSW0.
 
 ** Next likely actions
-1. TASK-8W30B (rmux session leak). Highest value open item: it is user-facing,
-   it silently degrades every rmux dispatch once saturated, and it makes any
-   consecutive-green test gate unmeasurable because each run degrades the next.
-2. Re-run TASK-STWVB's 5-green gate once 8W30B lands, then close it. Its two
-   fixed tests already have controlled before/after; the residual failures
-   (poll_direct_child_pid, recovery_inventory) pass in isolation.
-3. Publish 0.0.15 — NOT before the above. It now carries the SGRTX fixes, so
-   VB9DQ/Z8WEJ finally work in production; shipping earlier would have shipped
-   them inert.
-4. TASK-4YC8E (hermes alias collision) — one line if confirmed, and unverified
-   for hermes itself.
-5. Set an explicit default model/effort now that both actually reach the process.
-   Nothing configures them today, so every dispatch takes the harness default —
-   the STWVB worker silently ran on claude-opus-5.
+1. TASK-RRT4T (P0). Make a skipped test visible in the default cargo test summary
+   — panic unless an explicit opt-out is set, or mark them #[ignore] and run them
+   through a filtered gate. Nothing else on this crate can be trusted first, and
+   it is the cheapest fix on the board. Audit tmux and cursor-agent guards for the
+   same `if !available() { return }` shape.
+2. Integrate TASK-2BPWM when its watcher reports (in flight).
+3. TASK-STWVB round 3. Two tests still red. Use `/bin/sh <script>` rather than
+   more warming, find what the rmux test path execs, and treat the regenerate
+   test's new 409 "harness busy" symptom as an unestablished cause.
+4. TASK-S2KM0 (CI runs the suite). Note the trap recorded on it: Linux has no
+   Gatekeeper, so the fixture class of failure would go green in CI while failing
+   on every developer Mac. CI is still the right answer to "every green claim is
+   one local run", but not a substitute for a local gate.
+5. TASK-HXSW0 (CLI self-documentation): reject unknown/miscased property keys
+   instead of storing them, give `task create` the flags `task update` has, and
+   make help agent-first per the operator's instruction — good errors that name
+   the fix, not command inventories pasted into prompts.
+6. Publish 0.0.15 to stable. Needs operator approval; it is a public release.
+7. Then TASK-Z8WEJ / TASK-VB9DQ end-to-end verification on the published runtime.
 
 ** In flight
-None. The TASK-STWVB dispatch is closed (manager-rescued: the worker reported
-fully but never called dispatch finalize) and its worktree and branch are gone.
+TASK-2BPWM implementer, LIVE. Worker implementer-codex-acp-stdio
+(acp-stdio / codex / gpt-5.6-sol / xhigh), pid 52455, run
+run-20260726T133651-60f38adc34c349cd9800c0aaed726807, dispatched from db07173.
+Brief at .orgasmic/tmp/dispatch/task-2BPWM/task-2BPWM-brief.md. One watcher
+installed with a 60-minute deadline. It fixes `dispatch-close` force-removing
+dirty worktrees by default (salvage-commit before removal, both the CLI path at
+manager.rs:2007 and the daemon's at api.rs:4438). One question was deliberately
+left to the worker to argue: whether --worktree-remove should default false for
+--status aborted.
+
+TASK-STWVB is in_progress, NOT closed. Round 2 is merged and kept, and its gate
+is not met: 502/2, 501/3, 502/2, 502/2 across four manager runs at ~106-112 s,
+against the worker's reported 504/0 at ~26 s. The difference is entirely
+TASK-RRT4T — hiding rmux from PATH reproduces the worker's numbers exactly. Its
+branch task-stwvb-impl and worktree at .orgasmic/tmp/dispatch/task-stwvb/worktree
+are still on disk; leave them until round 3 or clean them deliberately.
 
 Two orphan dispatch records remain from 2026-07-23, both [pid-gone] [run-gone]:
-TASK-870YX and TASK-RRVX0. They predate this session and were not touched.
+TASK-870YX and TASK-RRVX0. Untouched, and older than this session.
+
+17 dispatch worktrees are on disk, some from 2026-07-23. Do not mass-clean them
+until TASK-2BPWM lands: the current `dispatch-close` default is exactly the
+data-loss path being fixed.
 
 ** Divergence / Risks
-- 0.0.15 is still unpublished and the operator's daemon runs 0.0.15-dev.1, which
-  predates every fix from this session. install.json still names the stable
-  channel and the installer is equality-based, so → checking stable runtime manifest: https://github.com/theaspirational/orgasmic/releases/download/stable/runtime-latest.json
-→ downloading stable runtime 0.0.14 for darwin-aarch64 would revert
-  the machine to 0.0.14. Do not run it.
-- TASK-VB9DQ and TASK-Z8WEJ sit in in_review with Evidence written against the
-  pre-SGRTX behaviour. VB9DQ's line "Not verified end to end" is now stale in the
-  opposite direction: it IS verified, but only after SGRTX. Re-read both before
-  closing.
-- The daemon suite is not green: post_artifact_regenerate_hot_path (8W30B),
-  poll_direct_child_pid and recovery_inventory fail in-suite while passing alone.
-- Two 2026-07-23 orphan dispatch records remain open (TASK-870YX, TASK-RRVX0).
-- A live dispatch is now the only acceptable evidence for driver argv changes.
-  Every defect found today had a passing test standing over it.
-- STRANDED LIVE RUN: run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2 is
-  still `implementer.working` in the supervisor with its worker process gone and
-  its dispatch record closed. There is no `orgasmic run release` verb, and the
-  run blocks the runtime-update fence ("refusing runtime update while live
-  run(s) exist"), so publishing or updating needs it cleared first — a daemon
-  restart is the simplest route. The supervisor's stall monitor should have
-  released it after ~600s and did not, which is worth a look: the running daemon
-  is 0.0.15-dev.1 and predates f80b577 ("a declared failure ends the run instead
-  of waiting for the harness"), so this may already be fixed on main.
-- CORRECTION to the stranded-live-run note above, same session: it is wrong on
-  both counts and is retained only so the error is not repeated.
-
-  There is no `orgasmic run release` verb BY DESIGN, not by omission. Per the
-  rescue-policy convention, release is the daemon's job — it writes the
-  authoritative tombstone on protocol_end_without_finalize / stall /
-  max-duration and emits manager.dispatch_orphaned; the manager's surface is
-  `orgasmic run recover` (reattach / resume-fork / fresh / abandon), not
-  release. And `manager dispatch-close` DOES release the supervisor run when
-  the record carries a run_id — `release_dispatch_run`, manager.rs:627.
-
-  `orgasmic run list` now reports 0 total / 0 live, so the run was released by
-  the dispatch-close at tx-20260726-orgasmic-2844 and nothing is blocking the
-  update fence. Do not restart the daemon on account of that note.
-
-  What remains real and is filed separately: the run stayed live for roughly
-  forty minutes after its worker exited, which the daemon should have ended on
-  its own well before a manager closed the record.
+- WORKER TEST CLAIMS ON THE DAEMON CRATE ARE NOT EVIDENCE until TASK-RRT4T lands.
+  Three over-reports today, one mechanism. Re-run the scoped test yourself and
+  verify a side effect that proves it executed.
+- The daemon suite is not green: post_artifact_regenerate_hot_path (now 409
+  "harness busy") and poll_direct_child_pid (30 s deadline) fail in-suite and pass
+  alone; recovery_inventory fails about 1 run in 3.
+- 0.0.15 is unpublished and the running daemon predates every fix from today.
+  Do not run `orgasmic update` — it would revert the machine to 0.0.14.
+- There is still no CI, so every green claim is one local run on one machine.
+  This is the root of the "chasing issues while fixing issues" feeling the
+  operator named: without a shared gate, each fix is verified once, by whoever
+  happened to run it, in an environment nobody else can reproduce. TASK-S2KM0.
+- A live dispatch remains the only acceptable evidence for driver argv changes.
+  Every defect found in the last two days had a passing test standing over it.
+- TASK-VB9DQ and TASK-Z8WEJ sit in in_review with Evidence written against
+  pre-SGRTX behaviour. VB9DQ's "not verified end to end" is stale in the opposite
+  direction: it IS verified, but only after SGRTX. Re-read both before closing.
+- Superseded and retained so it is not repeated: an earlier note in this handoff
+  claimed `orgasmic run release` does not exist by omission and that `run list`
+  reported 0 live. The first is by design (release is the daemon's job; the
+  manager's surface is `orgasmic run recover`, and `manager dispatch-close`
+  releases the run when the record carries a run_id, manager.rs:627). The second
+  was simply false — the run was live for about 80 minutes and was cleared by a
+  daemon restart, which cost about a minute of downtime and required
+  `rmux kill-server` first because a stale rmux-daemon owned the socket.
