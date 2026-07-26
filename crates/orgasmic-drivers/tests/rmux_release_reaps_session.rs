@@ -60,8 +60,16 @@ async fn rmux_session_exists(rmux_bin: &str, session: &str) -> Result<bool, Stri
 #[tokio::test]
 async fn release_reaps_live_rmux_session() {
     let _live_guard = live_session_guard();
+    // Opt-in gate lane: unlike the ordinary developer smoke, this must fail
+    // closed when its declared rmux prerequisite is absent.
+    let rmux_required = std::env::var("ORGASMIC_REQUIRE_LIVE_RMUX").as_deref() == Ok("1");
     let probe = probe_rmux_binary();
     if !probe.found || !probe.compatible {
+        assert!(
+            !rmux_required,
+            "ORGASMIC_REQUIRE_LIVE_RMUX=1 but compatible rmux is unavailable ({:?})",
+            probe.version_error
+        );
         eprintln!(
             "SKIPPED release_reaps_live_rmux_session: compatible rmux unavailable ({:?})",
             probe.version_error
@@ -99,6 +107,11 @@ async fn release_reaps_live_rmux_session() {
         panic!("expected rmux Ready, got {ready:?}");
     };
     if capabilities["inert"] == true {
+        assert!(
+            !rmux_required,
+            "ORGASMIC_REQUIRE_LIVE_RMUX=1 but acquire was inert ({})",
+            capabilities["inert_reason"]
+        );
         eprintln!(
             "SKIPPED release_reaps_live_rmux_session: rmux daemon unavailable ({})",
             capabilities["inert_reason"]

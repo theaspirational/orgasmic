@@ -46,7 +46,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
-use tracing::warn;
+use tracing::{error, warn};
 use uuid::Uuid;
 
 use crate::runtime::BootIdentity;
@@ -64,6 +64,7 @@ const BABYSITTER_SUMMARY_EVENT_THRESHOLD: usize = 50;
 const BABYSITTER_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFAULT_MAX_RUN_DURATION: Duration = Duration::from_secs(14_400);
+const DRIVER_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default idle window for persistent (hot-session) artifactor runs: 15
 /// minutes of no accepted `send_input` before self-release. Long enough to
 /// survive an operator reading a diff or drafting review feedback between
@@ -595,6 +596,8 @@ enum TerminalReleaseSource {
 }
 
 struct TerminalRelease {
+    run_id: String,
+    transport: String,
     control: Box<dyn DriverControl>,
     producer: Option<tokio::task::JoinHandle<()>>,
 }
@@ -2118,6 +2121,7 @@ impl Supervisor {
             babysitter_run_id,
             session_path,
             identity,
+            transport,
             control,
             producer,
             mut drain,
@@ -2167,6 +2171,7 @@ impl Supervisor {
                 rec.babysitter_run_id.clone(),
                 rec.session_path.clone(),
                 rec.identity.clone(),
+                rec.transport.clone(),
                 control,
                 producer,
                 drain,
@@ -2179,7 +2184,7 @@ impl Supervisor {
         // we freeze one terminal outcome. A legitimate terminal event racing
         // timeout/cancel therefore wins; no pre-stop snapshot can overwrite
         // an event that was durably drained during shutdown.
-        stop_and_join_driver_producer(control, producer, reason).await;
+        stop_and_join_driver_producer(run_id, &transport, control, producer, reason).await;
         if let Some(watcher) = watcher {
             watcher.abort();
             let _ = watcher.await;
@@ -3163,14 +3168,21 @@ fn spawn_early_exit_watcher(
                         rec.explicit_release_in_progress = true;
                         rec.pid_exit_shutdown_in_progress = true;
                         Some((
+                            rec.transport.clone(),
                             std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl)),
                             rec.producer.take(),
                         ))
                     }
                 };
-                if let Some((control, producer)) = shutdown {
-                    stop_and_join_driver_producer(control, producer, "observed subprocess exit")
-                        .await;
+                if let Some((transport, control, producer)) = shutdown {
+                    stop_and_join_driver_producer(
+                        &run_id,
+                        &transport,
+                        control,
+                        producer,
+                        "observed subprocess exit",
+                    )
+                    .await;
                 }
                 return;
             }
@@ -3896,6 +3908,8 @@ fn take_driver_terminal_release(
     rec.explicit_release_in_progress = true;
     rec.terminal_event_shutdown_in_progress = true;
     Some(TerminalRelease {
+        run_id: rec.identity.run_id.clone(),
+        transport: rec.transport.clone(),
         control: std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl)),
         producer: rec.producer.take(),
     })
@@ -3974,22 +3988,51 @@ async fn write_terminal_release_from_record(
 }
 
 async fn finish_driver_terminal_release(_writer: &WriterHandle, release: TerminalRelease) {
-    stop_and_join_driver_producer(release.control, release.producer, "driver terminal event").await;
+    stop_and_join_driver_producer(
+        &release.run_id,
+        &release.transport,
+        release.control,
+        release.producer,
+        "driver terminal event",
+    )
+    .await;
     // The receiver owns the terminal boundary. Dropping the producer closes
     // the channel; the drain then persists every queued event before it
     // removes the record and writes Lifecycle::Release.
 }
 
 async fn stop_and_join_driver_producer(
+    run_id: &str,
+    transport: &str,
     mut control: Box<dyn DriverControl>,
     producer: Option<tokio::task::JoinHandle<()>>,
     reason: &str,
 ) {
-    let _ = tokio::time::timeout(Duration::from_secs(5), control.release(reason)).await;
+    match tokio::time::timeout(DRIVER_RELEASE_TIMEOUT, control.release(reason)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(release_error)) => {
+            error!(
+                run_id,
+                transport,
+                reason,
+                error = %release_error,
+                "driver release failed; continuing unconditional producer and lifecycle cleanup"
+            );
+        }
+        Err(_) => {
+            error!(
+                run_id,
+                transport,
+                reason,
+                timeout = ?DRIVER_RELEASE_TIMEOUT,
+                "driver release timed out; continuing unconditional producer and lifecycle cleanup"
+            );
+        }
+    }
     drop(control);
 
     if let Some(mut producer) = producer {
-        if tokio::time::timeout(Duration::from_secs(5), &mut producer)
+        if tokio::time::timeout(DRIVER_RELEASE_TIMEOUT, &mut producer)
             .await
             .is_err()
         {
@@ -4651,6 +4694,187 @@ mod tests {
     }
 
     struct HungReleaseControl;
+
+    struct StalledRmuxReapDriver {
+        session_live: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    struct StalledRmuxReapControl {
+        session_live: Arc<std::sync::atomic::AtomicBool>,
+        events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
+    }
+
+    struct FailingRmuxReapDriver {
+        producer_dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    struct FailingRmuxReapControl {
+        release_producer: Arc<tokio::sync::Notify>,
+        events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
+    }
+
+    #[derive(Clone)]
+    struct CapturedLog(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    struct CapturedLogWriter(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedLogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLog {
+        type Writer = CapturedLogWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedLogWriter(Arc::clone(&self.0))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for StalledRmuxReapDriver {
+        fn transport(&self) -> &'static str {
+            "rmux"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(DriverEvent::Ready {
+                protocol_version: "stalled-rmux-reap/1".into(),
+                capabilities: json!({"test": true}),
+            })
+            .await
+            .unwrap();
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(StalledRmuxReapControl {
+                    session_live: Arc::clone(&self.session_live),
+                    events: Some(tx),
+                }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for StalledRmuxReapControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Err(DriverError::Unsupported("transition_state"))
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, reason: &str) -> Result<(), DriverError> {
+            let _ = self
+                .events
+                .as_ref()
+                .unwrap()
+                .send(DriverEvent::RunComplete {
+                    summary: Some(reason.to_string()),
+                })
+                .await;
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::time::sleep(Duration::from_secs(6)),
+            )
+            .await;
+            self.session_live.store(false, Ordering::SeqCst);
+            self.events.take();
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for FailingRmuxReapDriver {
+        fn transport(&self) -> &'static str {
+            "rmux"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(DriverEvent::Ready {
+                protocol_version: "failing-rmux-reap/1".into(),
+                capabilities: json!({"test": true}),
+            })
+            .await
+            .unwrap();
+            let release_producer = Arc::new(tokio::sync::Notify::new());
+            let producer_release = Arc::clone(&release_producer);
+            let producer_dropped = Arc::clone(&self.producer_dropped);
+            let producer = tokio::spawn(async move {
+                let _drop_probe = ProducerDropProbe(producer_dropped);
+                producer_release.notified().await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(FailingRmuxReapControl {
+                    release_producer,
+                    events: Some(tx),
+                }),
+                producer: Some(producer),
+                native_runtime: None,
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for FailingRmuxReapControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Err(DriverError::Unsupported("transition_state"))
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, reason: &str) -> Result<(), DriverError> {
+            let _ = self
+                .events
+                .as_ref()
+                .unwrap()
+                .send(DriverEvent::RunComplete {
+                    summary: Some(reason.to_string()),
+                })
+                .await;
+            self.release_producer.notify_one();
+            Err(DriverError::Transport(
+                "SDK stalled and exact-endpoint CLI fallback refused".into(),
+            ))
+        }
+    }
 
     #[async_trait::async_trait]
     impl DriverControl for HungReleaseControl {
@@ -9078,6 +9302,85 @@ mod tests {
                 .to_string()
                 .contains("claude authentication_failed")),
             "the fatal that arrived before bookkeeping must reach the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill() {
+        let (sup, dir, _writer) = make_supervisor();
+        let session_path = dir.path().join("TASK-6FNAY-REAP.jsonl");
+        let session_live = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let driver = StalledRmuxReapDriver {
+            session_live: Arc::clone(&session_live),
+        };
+        let resp = sup
+            .acquire(&driver, impl_req("TASK-6FNAY-REAP", dir.path()))
+            .await
+            .unwrap();
+
+        sup.release(
+            &resp.run_id,
+            "rmux reap regression",
+            ReleaseOutcome::Completed,
+        )
+        .await
+        .unwrap();
+
+        assert!(
+            !session_live.load(Ordering::SeqCst),
+            "the real supervisor release timeout cancelled the stalled SDK kill before fallback"
+        );
+        assert!(
+            session_has_terminal_event(&session_events(&session_path)),
+            "release-owned RunComplete must be drained before lifecycle cleanup"
+        );
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_failure_is_logged_with_context_and_cleanup_remains_unconditional() {
+        let (sup, dir, _writer) = make_supervisor();
+        let producer_dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let driver = FailingRmuxReapDriver {
+            producer_dropped: Arc::clone(&producer_dropped),
+        };
+        let session_path = dir.path().join("TASK-6FNAY-REAP-FAIL.jsonl");
+        let resp = sup
+            .acquire(&driver, impl_req("TASK-6FNAY-REAP-FAIL", dir.path()))
+            .await
+            .unwrap();
+        let log_bytes = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(CapturedLog(Arc::clone(&log_bytes)))
+            .finish();
+        let dispatch = tracing::Dispatch::new(subscriber);
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+
+        sup.release(
+            &resp.run_id,
+            "rmux reap failure regression",
+            ReleaseOutcome::Completed,
+        )
+        .await
+        .unwrap();
+
+        assert!(producer_dropped.load(Ordering::SeqCst));
+        assert!(
+            !sup.snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == resp.run_id),
+            "reap failure must not strand the run record"
+        );
+        assert_eq!(release_count(&session_path), 1);
+        let log = String::from_utf8(log_bytes.lock().unwrap().clone()).unwrap();
+        assert!(log.contains(&resp.run_id), "{log}");
+        assert!(log.contains("transport=\"rmux\""), "{log}");
+        assert!(
+            log.contains("SDK stalled and exact-endpoint CLI fallback refused"),
+            "{log}"
         );
     }
 
