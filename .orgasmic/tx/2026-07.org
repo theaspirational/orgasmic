@@ -29846,35 +29846,7 @@
 :MACHINE:      Vasyls-MacBook-Pro.local
 :PROJECT:      orgasmic
 :TASK:         TASK-D0GA3
-:REASON:       TASK-D0GA3 merged and verified; TASK-2BPWM unblocked and closed.
-
-MERGED 0daa77c (worker e7837f1, implementer-codex-acp-stdio, acp-stdio / codex /
-gpt-5.6-sol / xhigh, 22 min). Salvage commits are now built with commit-tree
-parented on the recorded dispatch branch OID and anchored at
-refs/orgasmic/salvage/<sha>, named in the close tx as SALVAGE_REF. Worktree
-removal is no longer --force and a repo-scoped advisory lock spans validation
-through removal. CLI branch deletion is fenced with expected-OID update-ref.
-SALVAGE_FILE_COUNT comes from the tree diff.
-
-GATES, run by the manager: orgasmic-cli 140+ passed / 0 failed across 18
-binaries; orgasmic-daemon --lib 505 passed / 3 failed, all three pre-existing
-in-suite flakes that pass in isolation; clippy -D warnings clean; fmt clean.
-Independent gc probe: on a detached HEAD, after branch deletion, reflog expiry
-and `git gc --prune=now`, the salvage content is still recoverable from the
-named ref. That is the original TASK-2BPWM finding inverted.
-
-FILED TASK-6AYEJ (P1): the manager's dispatch-close is unreachable after a
-worker's `dispatch finalize`. scan_open_dispatches treats implementer.done as
-terminal (manager.rs:3338), and finalize emits implementer.done itself, so the
-dispatch is closed before the manager reads the report. Consequence: the
-success-path worktree/branch cleanup never runs (17 stale worktrees on disk),
-MERGE_SHA records the worker commit rather than the merge, and REVIEWED_DIFF is
-never recorded. Discovered by trying to close this very task. The D0GA3
-worktree and branch were removed by hand instead.
-
-Recorded a third member of the TASK-STWVB flake family:
-recovery_reattaches_tmux_session_when_handle_exists, which points at shared
-tmux-namespace contention rather than at the executable fixture.
+:REASON:       TASK-D0GA3 merged and verified at 0daa77c (worker e7837f1, implementer-codex-acp-stdio, acp-stdio / codex / gpt-5.6-sol / xhigh, 22 min); TASK-2BPWM closed with it. Salvage commits are now built with commit-tree parented on the recorded dispatch branch OID and anchored at refs/orgasmic/salvage/<sha>, named in the close tx as SALVAGE_REF; worktree removal is no longer --force and a repo-scoped advisory lock spans validation through removal; CLI branch deletion is fenced with expected-OID update-ref; SALVAGE_FILE_COUNT comes from the tree diff. GATES run by the manager: orgasmic-cli 140 passed / 0 failed across 18 binaries; orgasmic-daemon --lib 505 passed / 3 failed, all three pre-existing in-suite flakes that pass in isolation; clippy -D warnings clean; fmt clean. Independent gc probe: on a detached HEAD, after branch deletion, reflog expiry and git gc --prune=now, the salvage content is still recoverable from the named ref — the original TASK-2BPWM finding inverted. FILED TASK-6AYEJ (P1): the manager's dispatch-close is unreachable after a worker's dispatch finalize, because scan_open_dispatches treats implementer.done as terminal (manager.rs:3338) and finalize emits it, so success-path worktree/branch cleanup never runs (17 stale worktrees on disk), MERGE_SHA records the worker commit rather than the merge, and REVIEWED_DIFF is never recorded; discovered by trying to close this very task, and the D0GA3 worktree and branch were removed by hand. Also recorded a third member of the TASK-STWVB flake family, recovery_reattaches_tmux_session_when_handle_exists, which points at shared tmux-namespace contention rather than at the executable fixture.
 :MERGE_SHA:    0daa77c115a9f8e44313a25f24af855248870f30
 :WORKER_COMMIT: e7837f1eb8a95d830a6454f2b16f99416a6849b6
 :FILED:        TASK-6AYEJ
@@ -29892,4 +29864,18 @@ tmux-namespace contention rather than at the executable fixture.
 :TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
 :REASON:       edited task node TASK-HXSW0
 :NODE_ID:      TASK-HXSW0
+:END:
+
+
+* TX 2026-07-26 Sun 19:39:38 task.created TASK-HQ970
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2975
+:TIME:         [2026-07-26 Sun 19:39:38]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQ970
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-HQ970
 :END:

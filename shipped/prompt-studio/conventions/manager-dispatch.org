@@ -35,6 +35,40 @@ A worker claim whose author is unidentified cannot be weighed. If you find
 yourself writing "the implementer reported", name the worker id, driver, harness,
 model and effort instead.
 
+** The standing worker matrix
+Operator-set 2026-07-26. Use these unless the task gives you a reason to
+deviate, and state the reason in `--reason` when you do. "Choose explicitly"
+above still governs — this is the default you are choosing, not a licence to
+stop passing the flags.
+
+| stage       | --kind      | --mode | --harness | --model         | --effort |
+|-------------+-------------+--------+-----------+-----------------+----------|
+| implementer | implementer | rmux   | claude    | claude-opus-5   | high     |
+| reviewer    | reviewer    | rmux   | codex     | gpt-5.6-sol     | high     |
+| fixer       | implementer | rmux   | claude    | claude-opus-5   | medium   |
+
+Three things this encodes deliberately:
+
+*Every dispatch runs in an rmux TUI pane.* Not acp-stdio. A pane is attachable,
+so the operator can watch a live worker and intervene; an acp-stdio worker is a
+black box until it writes its report. `--mode rmux` with `--kind reviewer` still
+selects the reviewer persona; there is no `--worker` flag.
+
+*The reviewer is a different vendor from the implementer.* Adversarial review by
+the same model that wrote the code shares its blind spots. Keeping claude on the
+implement side and codex on the review side is the point of the split, so do not
+"simplify" it by matching them.
+
+*The fixer drops to medium.* A fix pass works from findings that already name the
+file, the line and the direction — the expensive reasoning was spent producing
+them. Reserve high effort for the passes that have to discover something.
+
+Before dispatching in rmux mode, confirm `rmux ls` responds and that the daemon's
+launchd PATH reaches the rmux binary; a dispatch that cannot find it fails at
+spawn rather than reporting a missing tool. Note also that rmux sessions are not
+currently reaped — check `rmux ls` for accumulation and kill stale
+`orgasmic-rmux-run-*` sessions during housekeeping.
+
 ** Typed stage authority
 Prefer explicit stage transitions over implicit continuation. Implementer,
 verifier, adversarial reviewer, fixer, lander, and housekeeping are distinct jobs
@@ -80,11 +114,12 @@ If you die before the dispatch finishes, the next manager:
    `manager.dispatch_aborted`) if the brief is stale or the worktree
    diverged.
 
-** Codex implementer via the =orgasmic manager dispatch= CLI
-When code work needs implementing, dispatch a headless worker per task in an
-isolated git worktree, through the daemon's dispatch endpoint. Set `--model` and `--effort`
+** Dispatching a worker via the =orgasmic manager dispatch= CLI
+When code work needs implementing, dispatch a worker per task in an isolated git
+worktree, through the daemon's dispatch endpoint. Set `--model` and `--effort`
 explicitly on every dispatch (they pass through verbatim) — see the rule above;
-they are optional to the CLI, not to you.
+they are optional to the CLI, not to you. The stage defaults are in the standing
+worker matrix; the example below shows the shape, not the choice.
 
 For `--mode` and `--harness`, there is no listing command. Earlier revisions of
 this convention told you to run `orgasmic manager drivers`; that verb has never
@@ -106,10 +141,10 @@ Pair that with `--dry-run` and the check costs nothing.
    orgasmic manager dispatch \
      --task TASK-NNN \
      --kind implementer \
-     --mode acp-stdio \
-     --harness codex \
-     --model <model> \
-     --effort <low|medium|high|xhigh> \
+     --mode rmux \
+     --harness claude \
+     --model claude-opus-5 \
+     --effort high \
      --brief <project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md \
      --reason "<one-line reason — surfaces in tx + run.created>"
    #+end_src
@@ -134,6 +169,14 @@ Pair that with `--dry-run` and the check costs nothing.
    manager decision; it does not redefine supervisor heartbeat or stall-timeout
    semantics.
 4. *Integrate.* Read =<project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt= for the worker summary, then from your base branch — the branch HEAD was on at dispatch (=git branch --show-current=): =main= in the default upstream flow, or your feature branch when developing a feature via parallel worktrees for a PR — run =git merge --no-ff task-NNN-impl=, resolve any same-file conflicts (usually only =use= statements when two tasks added imports to the same crate), run =cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings=, record evidence in the sprint task's =** Evidence= section, then =git worktree remove <path> --force && git branch -D task-NNN-impl=. The =implementer.done= close tx is normally emitted by the worker itself, as its terminal action, via =orgasmic dispatch finalize --summary-file <path> [--commit]= (dec_3M7M0) — the SOLE success signal: it writes the report verbatim, optionally commits the worktree, emits the terminal tx, and releases the lease in one call over the same worker→daemon channel used for every other write. Every worker persona's contract ends with this call. Pane/process exit or stall/max-duration timeout without finalize is a failed/orphaned run (=manager.dispatch_orphaned=) — there is no scrollback-scrape or end-of-turn-marker fallback. If the worker never finalized (manager-rescued merge, aborted dispatch), record the close yourself via =orgasmic tx record= or =orgasmic manager dispatch-close=. Never leave orphan pre-flight tx — see the exit checklist.
+
+   *Do not plan on running =dispatch-close= after a successful finalize.* It will
+   refuse with "no open manager.dispatch_started tx": =scan_open_dispatches=
+   treats =implementer.done= as terminal, and finalize emits it, so the worker
+   closes its own dispatch before you have read the report. Until TASK-6AYEJ
+   lands you must remove the worktree and branch by hand after merging, and the
+   close tx will carry the worker's commit as =MERGE_SHA= rather than yours —
+   record the real merge sha in a =manager.action= tx instead.
 5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer=. (There is no =--worker= flag; earlier revisions said =--worker reviewer-codex-acp= and that flag has never existed. =--kind= selects the persona.) Reviewer findings → fix subtasks minted as =TASK-<parent>.N= per the ID rule above, with =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
 6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").
 7. *Lockfile pitfall.* Pre-stage workspace deps before parallel rounds. If multiple codex runs need new =Cargo.toml= deps they will revert =Cargo.lock= to honour their stated write scope, leaving a stale lockfile on main. Add likely deps to the workspace =Cargo.toml= and commit =Cargo.lock= before the dispatch.
