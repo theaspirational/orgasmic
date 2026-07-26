@@ -29194,3 +29194,32 @@
 :FROM_STATE:   cancelled
 :TO_STATE:     todo
 :END:
+
+* TX 2026-07-26 Sun 14:44:16 task.edited TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2935
+:TIME:         [2026-07-26 Sun 14:44:16]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-RRT4T
+:NODE_ID:      TASK-RRT4T
+:END:
+
+* TX 2026-07-26 Sun 14:44:17 task.property_updated TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2936
+:TIME:         [2026-07-26 Sun 14:44:17]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       widen scope to the real 14-file footprint before dispatch
+:TEST_CMD:     cargo test -p orgasmic-daemon --lib
+:WRITE_SCOPE:  crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
+:END:

@@ -1133,7 +1133,8 @@ intact.
 :PROPERTIES:
 :ID: TASK-RRT4T
 :PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
+:TEST_CMD:    cargo test -p orgasmic-daemon --lib
 :END:
 
 Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
@@ -1202,6 +1203,41 @@ Acceptance:
 - with rmux absent, the daemon suite cannot report a clean all-passed summary
 - the count of skipped-for-missing-tooling tests is visible without --nocapture
 - a manager reading a worker's test claim can tell whether the scoped test ran
+
+FOOTPRINT CORRECTED [2026-07-26], before dispatch. Two changes to the numbers
+above; neither weakens the finding and one widens it considerably.
+
+1. The count is SEVEN `if !rmux_available_for_test()` call sites in api.rs, not
+   eight. The eighth match in the original grep was the helper's own definition.
+   Every measurement in this task stands; only the count was wrong, and it was
+   repeated into gotchas.org and three commit messages.
+
+2. The pattern is not confined to api.rs. Fourteen files across three crates
+   carry a tooling skip:
+   - crates/orgasmic-daemon/src/api.rs (7 rmux guards), supervisor.rs
+     (command_available_for_test("tmux")), watcher.rs
+   - crates/orgasmic-drivers/src/modes/rmux.rs, modes/tmux.rs,
+     adapters/claude.rs, adapters/codex.rs
+   - crates/orgasmic-daemon/tests/{dispatch_endpoint,boot_resilience,
+     recovery_fault_restart}.rs
+   - crates/orgasmic-drivers/tests/{driver_modes,cursor_agent}.rs
+   - crates/orgasmic-cli/tests/dispatch.rs, crates/orgasmic-cli/src/manager.rs
+
+   So `cargo test -p orgasmic-drivers` reporting "236 passed / 0 failed" has the
+   same hole, and that figure was already quoted as evidence in a worker report
+   today.
+
+3. Four of the skips are worse than tool-absent — they read
+   "skipping ...: SDK degraded to inert". A test that skips because the driver
+   degraded skips exactly when there is something to find. Those deserve to be
+   errors, not skips, and are worth calling out separately from the PATH problem.
+
+DESIGN DIRECTION chosen for the dispatch: one sentinel test per test binary that
+fails when tooling its gated tests need is absent, plus a per-tool environment
+opt-out, plus routing the existing guards through one shared helper so the gated
+set is discoverable in one place. Converting 63 call sites into 63 hard failures
+was rejected: it would stop anyone without claude on PATH from running the suite
+at all, which is how an escape hatch becomes permanent.
 
 * BACKLOG TASK-K4G1D Run the mux-dependent daemon tests under tmux as well as rmux, so 'is rmux at fault' becomes a measurement    :testing:daemon:drivers:rmux:
 :PROPERTIES:
