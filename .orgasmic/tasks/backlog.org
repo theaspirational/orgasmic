@@ -711,90 +711,6 @@ The dual-key write is itself questionable — one value under two names is what
 made an ordinary alias a landmine. Consider emitting only `reasoning_effort`
 once every adapter reads that key.
 
-* BACKLOG TASK-8W30B RmuxControl::release aborts its tasks before kill, leaking a session, pty and harness process per run    :drivers:rmux:bug:production:
-:PROPERTIES:
-:ID: TASK-8W30B
-:PRIORITY: P1
-:END:
-
-Production defect, root-caused by the TASK-STWVB implementer while diagnosing a
-test flake. It is not a test problem.
-
-THE DEFECT
-
-`RmuxControl::release` (crates/orgasmic-drivers/src/modes/rmux.rs:1760) aborts
-its lifecycle task and its startup task BEFORE calling `Session::kill()`. The
-kill is then issued over a torn-down SDK transport and fails. Instrumented probe:
-
-    PROBE rmux Session::kill -> Err(Transport { operation: "complete
-      `kill-session` request/response exchange with rmux daemon",
-      source: BrokenPipe: "rmux SDK request was cancelled while its ordered
-      response was pending" })
-
-The session survives. The only report is a `tracing::warn!`, invisible under
-`cargo test` and easy to miss in a daemon log.
-
-WHY IT MATTERS BEYOND TESTS
-
-Every released rmux run leaks a session, a pty and a harness process into the
-per-user rmux daemon — a singleton on `$TMPDIR/rmux-$uid`, shared across every
-run and every test binary, started by launchd and therefore inheriting a 256-fd
-soft limit (`launchctl limit maxfiles` → `maxfiles 256 unlimited`, confirmed
-independently on this machine 2026-07-26).
-
-Once saturated the daemon cannot create sessions, and the rmux driver degrades
-to INERT — silently. A developer's machine reaches that state on its own, and
-from then on every rmux dispatch quietly does nothing useful.
-
-MEASURED
-
-- 8 leaked sessions per `--lib artifact` run (109 → 189 across 12 runs; 7 still
-  present 15 s after the process exited)
-- 236 stale `orgasmic-rmux-run-*` sessions and 69 orphaned
-  `artifactor-test-harness.sh` processes found accumulated, oldest predating the
-  dispatch that found them
-- at 236 sessions the daemon held 253 open fds against the 256 limit
-- dose-response over 10 consecutive full-suite runs: green at 204/210/217/221/226
-  leaked sessions, failing at 233/236/236/236/236. The count stopped growing
-  exactly when failures began — the daemon could no longer create sessions.
-- the resulting symptom is `409 capability_unsupported: send_input` on all 40
-  retries, not a deadline that wanted lengthening
-
-SUGGESTED FIX
-
-`RmuxControl` already carries `rmux_bin` and `session_target`. Either kill the
-session before aborting the tasks, or add a CLI `kill-session` fallback for when
-the SDK transport is already gone. Prefer both: the CLI path also cleans up
-sessions leaked by earlier builds.
-
-Also make the failure visible. A kill that fails is currently a warn on a path
-nobody watches; it should be an error the release path surfaces.
-
-NOTE ON CURRENT MACHINE STATE: the accumulation was cleared incidentally during
-this session (rmux servers were killed during unrelated cleanup), so a check
-right now reports 0 sessions and no running daemon. That is not the defect being
-fixed — it will re-accumulate from the next rmux run.
-
-Downstream: this is the production root cause of
-`api::post_artifact_regenerate_hot_path_reuses_live_run_id` flaking, which is why
-TASK-STWVB deliberately did not patch that test.
-INDEPENDENTLY CONFIRMED [2026-07-26] by the manager, on different runs than the
-implementer's, from a known-empty daemon.
-
-23 leaked `orgasmic-rmux-run-*` sessions before one
-`cargo test -p orgasmic-daemon --lib` run, 31 after: **+8 per run**, matching the
-implementer's 8/run exactly. rmux-daemon fds 47/256. The 23 had accumulated from
-three earlier verification runs in the same hour (~7.7/run) starting from zero,
-so this is a clean growth curve rather than an inherited pile.
-
-CONSEQUENCE FOR MEASUREMENT, not only for users: at 8 sessions per run,
-saturation (~236 sessions / 253 fds) arrives after roughly 29 more full-suite
-runs. Any 'N consecutive green runs' gate on this crate therefore measures a
-monotonically degrading environment — later runs are strictly likelier to fail
-than earlier ones for reasons unrelated to the change under test. That is why
-TASK-STWVB's implementer saw its only green streak in runs 1-2 of a 10-run gate
-and none after, and why that gate should be re-run only once this lands.
-
 * BACKLOG TASK-HAREX A worker that exits without finalize stays live for tens of minutes instead of being released    :daemon:supervisor:dispatch:recovery:
 :PROPERTIES:
 :ID: TASK-HAREX
@@ -850,3 +766,325 @@ this state at all and that is the bug.
 Either way the observable acceptance is the same: a worker that exits without
 finalize produces a daemon-written release tombstone and an orphan tx without
 any manager action.
+
+* BACKLOG TASK-099T6 driver_modes equivalence test spawns real claude twice on one session id and now collides    :drivers:test:claude:bug:
+:PROPERTIES:
+:ID: TASK-099T6
+:priority: P1
+:END:
+
+Found 2026-07-26 running the TASK-8W30B merge gates on main (433fef1 + merge).
+
+SYMPTOM
+
+`cargo test -p orgasmic-drivers --test driver_modes` fails:
+
+    ---- legacy_drivers_and_explicit_pairs_emit_equivalent_start_events ----
+    assertion `left == right` failed: legacy=claude-acp mode=acp-stdio harness=claude
+      left:  Ready { protocol_version: "claude-code-stream-json/1", ... }
+      right: TextChunk { stream: Stderr,
+             chunk: "Error: Session ID 6fc90d23-2093-4957-9fa9-ccb9488e0bb1 is already in use." }
+
+CAUSE
+
+The test deliberately shares one identity across the two spawns it compares
+(driver_modes.rs:1665-1684, comment: "Share one identity so harness-aware native
+metadata (e.g. the tmux claude --session-id pinned to runtime_id) is identical
+across the legacy and explicit drivers being compared"). That was harmless while
+`--session-id` was computed and then dropped. TASK-SGRTX (f5c6913) and 0f65de5
+made the flag actually reach the claude process, so the second spawn of each pair
+now asks claude for a session id the first spawn just claimed.
+
+This is fallout from making the claude driver real, not from TASK-8W30B. The
+8W30B implementer saw this suite green (28/28) in its worktree and the manager
+saw 27/1 on the merged tree an hour later, so it presents as intermittent — the
+collision depends on whether the first spawn has registered the session by the
+time the second starts. Treat it as a race that is always latent, not as a test
+that sometimes breaks.
+
+TWO SEPARATE PROBLEMS, BOTH WORTH FIXING
+
+1. The equivalence assertion needs identical *metadata* across the pair, not an
+   identical live session. Give each spawn its own session id and normalize the
+   id out of the compared Ready event, the way `normalize_volatile_ready_event`
+   already removes `session_id` at line 1724 — or make the case inert.
+
+2. This test spawns a REAL `claude` process, twice per case. Per the gotcha
+   "Asking a harness to prove it can work costs real money", a claude turn cost
+   $0.0994 and 24.5k tokens when measured 2026-07-25. A default-suite test that
+   bills the operator on every run is a problem independent of the collision, and
+   it got worse the moment the driver stopped being inert. Decide whether this
+   case belongs behind an opt-in gate.
+
+Acceptance:
+- `cargo test -p orgasmic-drivers --test driver_modes` is green on repeated
+  consecutive runs, not once
+- the claude case either does not spawn a billable real turn by default, or its
+  cost is a deliberate, documented choice
+- the equivalence property being asserted is still actually asserted
+
+* BACKLOG TASK-A55J7 Persist model and effort on the run record and the dispatch tx    :dispatch:runtime:observability:
+:PROPERTIES:
+:ID: TASK-A55J7
+:priority: P1
+:END:
+
+Filed 2026-07-26 alongside a manager prompt change requiring every dispatch to
+state driver, harness, model and effort. That rule is currently unenforceable
+after the fact, because two of the four are never written down.
+
+WHAT IS RECORDED TODAY
+
+`manager.dispatch_started` carries `:WORKER:`, `:DRIVER:`, `:HARNESS:` and no
+model or effort (verified on tx-20260726-orgasmic-2861 and -2869).
+`orgasmic run list` reports `driver`, `harness`, `worker_id`, `kind`, `role`,
+`sub_state` — and no model or effort field on the live run object.
+
+`orgasmic manager dispatch` accepts `--model` and `--effort` and passes them
+through to the adapter, so the values exist at dispatch time. They are simply
+dropped before anything durable is written. A manager who sets them cannot prove
+it afterwards, and a manager who omits them cannot discover what the harness
+chose instead.
+
+WHY IT MATTERS
+
+Two failures on 2026-07-26 came from exactly this blind spot. A reviewer was
+dispatched over a P1 concurrency fix and the manager could not afterwards say
+what model was reviewing it. Separately, a TASK-STWVB implementer ran on
+claude-opus-5 when nothing had selected it, discovered only by reading argv on a
+live process (TASK-SGRTX).
+
+The cost is not tidiness. Worker output is treated as a claim to be weighed, and
+weighing a claim requires knowing its author. An evidence section that says "the
+implementer measured +5 sessions per run" means something different depending on
+what produced it, and today that is unrecoverable the moment the process exits.
+
+WORK
+
+1. Thread the resolved model and effort — the values actually sent to the
+   adapter, not the ones requested — onto RunMeta, so they survive boot reattach
+   the way last_path/stdout_path/worktree do.
+2. Emit them on `manager.dispatch_started` as `:MODEL:` / `:EFFORT:`, and on
+   `run.created`.
+3. Surface them in `orgasmic run list` and `orgasmic manager dispatch-status`.
+4. Record what the harness actually resolved when the manager passed nothing.
+   The default is the case most worth capturing — it is the one nobody chose.
+   Where the harness does not report its own resolved model, record the request
+   as absent rather than inventing a value, and say so in the field.
+5. Show them wherever a run is displayed in the UI Runs surface.
+
+Note the task node already carries `model` and `reasoning_effort` properties
+(both null on most headings). Decide whether those are the requested values and
+the new run fields are the resolved ones, or whether the task properties should
+be retired in favour of run-level truth. Two half-populated surfaces for the same
+fact is how this became invisible in the first place.
+
+Acceptance:
+- a completed dispatch can be asked what model and effort ran it, from state
+  alone, after the process is gone
+- a dispatch where the manager passed neither still records what was resolved,
+  or records explicitly that nothing was requested and the harness default
+  applied
+- `orgasmic run list` and `dispatch-status` both show all four of driver,
+  harness, model, effort
+
+* BACKLOG TASK-VSWZT A run can appear live with no release surface able to clear it, blocking the update fence    :runtime:supervisor:recovery:bug:
+:PROPERTIES:
+:ID: TASK-VSWZT
+:priority: P1
+:END:
+
+Observed 2026-07-26 clearing run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2
+(TASK-STWVB implementer). The run showed as `implementer.working` in
+`orgasmic run list` .live for ~80 minutes after its worker died, and NO surface
+could clear it.
+
+THE DEAD END
+
+- `POST /api/runs/:id/release` returned 404 `{"error":"active run <id>"}` — even
+  though the same run was present in `GET /runs` .live. Both the snapshot lookup
+  (api.rs:6173) and `SupervisorError::RunNotFound` (api.rs:6197) return that same
+  string, and `.live` is fed from `supervisor.snapshot()` (api.rs:7651), so the
+  run was in the snapshot while `release_with_finalization` could not find it.
+  Those two views of the supervisor disagreed.
+- `orgasmic manager lease-release` refuses while a live run holds the lease.
+- `orgasmic run recover` offers only reattach_tmux / resume_native_fork /
+  start_recovery_run. The rescue-policy convention lists *abandon* as one of four
+  manager judgments, but no verb implements it.
+- `orgasmic manager dispatch-close` had already run; the dispatch record was
+  closed and the run stayed live regardless.
+
+WHY IT IS NOT COSMETIC
+
+`refuse_if_live_runs` (crates/orgasmic-cli/src/update.rs:436-462) reads exactly
+`GET /runs` .live and refuses the runtime update for any entry. One phantom run
+therefore blocks `orgasmic update` and any publish behind that fence, with no
+documented way out. The only route that worked was a full daemon restart.
+
+WHY THE SESSION NEVER CLOSED
+
+The session JSONL ends at seq 1657 `run_complete` ("worker finalize for
+TASK-STWVB") and seq 1658 fatal `driver_error` ("claude exited with status exit
+status: 143"), with no `Lifecycle::Release`. The supervisor kept its entry; the
+tombstone was never written. On the next boot the classifier read the same file
+and correctly returned terminal_noop ("session ended with terminal driver
+event") via `session_driver_terminal_event` (api.rs:9104), so the durable
+evidence was sufficient all along — only the live supervisor disagreed.
+
+Note this is the second wrong answer recorded about this same run. The prior
+handoff asserted it had been released and that `run list` reported 0 live; it had
+not been, and did not.
+
+WORK
+
+1. Reconcile the two supervisor views, or make `POST /runs/:id/release` able to
+   clear anything that `GET /runs` .live reports. A run the fence refuses to
+   ignore must be releasable by the surface documented to release it.
+2. Implement abandon as a first-class manager verb so the fourth branch of
+   rescue-policy is executable, not just describable.
+3. Write the release tombstone when a driver reports a fatal terminal event.
+   `run_complete` followed by a fatal `driver_error` should end the run rather
+   than leave it working; the boot classifier already treats that pair as
+   terminal, so the two paths disagree about the same evidence.
+4. Consider having `refuse_if_live_runs` name the escape hatch in its error text.
+   It currently says "Close them or use the existing force path deliberately"
+   without saying how, which is what sent this session looking for a verb that
+   does not exist.
+
+Acceptance:
+- a run reported in `GET /runs` .live can always be cleared without restarting
+  the daemon
+- a worker whose harness dies after run_complete leaves a release tombstone
+- `orgasmic run list` .live and the release path never disagree about whether a
+  run exists
+
+* BACKLOG TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact    :drivers:rmux:bug:production:
+:PROPERTIES:
+:ID: TASK-6FNAY
+:priority: P1
+:test_cmd: cargo test -p orgasmic-drivers
+:write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/tests/ crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+Fix round for the reviewer BLOCK on TASK-8W30B (merged d60c4ed / d3fae4d).
+Reviewer: reviewer-codex-acp-stdio (acp-stdio / codex / unknown / unknown),
+run-20260726T110214. Findings are also in tx as reviewer.finding
+tx-20260726-orgasmic-2872..2876. The merged change is NOT reverted: measured
+release growth did go from +8 to 0 on the happy path. What follows is the
+failure path it did not make reliable.
+
+1. HIGH — the reaper can be cancelled before its fallback ever runs.
+`run_live_session` builds the SDK facade with a 5s default timeout;
+`reap_rmux_session` awaits `Session::kill()` before starting a separately
+bounded 5s CLI fallback; and `stop_and_join_driver_producer`
+(supervisor.rs:3983-3989) wraps the whole `release` in a third 5s timeout. A
+transport that is gone but does not fail fast eats the entire outer budget in
+the SDK attempt, and the fallback gets no guaranteed opportunity to start.
+
+The severe part is what cancellation costs. `release` sets `released = true` and
+does `self.session.take()` BEFORE the await, so when the outer timeout drops the
+future the only `Session` handle drops with it. The following `drop(control)`
+sees `session == None` and the Drop backstop cannot retry. That reproduces the
+original production symptom exactly: session, pty and harness survive release.
+Fix: one authoritative release budget with the SDK attempt strictly shorter than
+the total and time reserved for the CLI fallback, or a caller budget large enough
+for both. Do not `take()` the only handle before a cancellable await without a
+durable retry owner.
+
+2. MEDIUM — the reap error is still invisible. `release` returns `reap_result`,
+but supervisor.rs:3988 assigns the nested timeout result to `_`, discarding both
+`Ok(Err(DriverError::Transport(..)))` and `Err(Elapsed)`. `release_one` then
+removes the record, writes `Lifecycle::Release` and returns success. The
+invisible warn became an invisible Result. Fix: inspect both layers; keep
+producer/drain/lifecycle cleanup unconditional so an error can never strand a
+run, but emit an error with run and transport context after cleanup.
+
+3. MEDIUM — the CLI fallback can address the wrong daemon. It shells out to bare
+`rmux kill-session -t <stored string>`, but rmux-sdk 0.9.0 stores the resolved
+endpoint AND the sanitized protocol-owned name on `Session`, and its builder
+honours `RMUX_SDK_ENDPOINT`, while the CLI resolves `-S`/`-L`/`$RMUX`/default
+instead. A session acquired via a custom endpoint falls back against a different
+daemon: usually it just leaks, but if that daemon holds the same target name it
+kills the wrong session. The name happens to match today only because
+`make_run_id`/`RuntimeIdentity::new` emit safe components —
+`RuntimeIdentity::planned` accepts arbitrary strings and `run_live_session`
+copies `session_target` before `SessionName::new` sanitizes `.` and `:`. Fix:
+capture `session.name()` and `session.endpoint()` from the handle before the
+primary kill and pass the endpoint explicitly. Do not maintain a second, weaker
+identity.
+
+4. MEDIUM — a cancelled release loses its `RunComplete`. Confirmed, with the
+manager s no-strand reasoning upheld: explicit release keeps the RunRecord until
+the drain joins, then removes it and writes `Lifecycle::Release`, and a
+terminal-event-driven release already persisted its terminal event first. So no
+run is stranded — but the latch is set before the reap, Drop aborts the competing
+watcher, and the driver summary is simply lost. Fix: publish the release-owned
+`RunComplete` claim before the fallible reap, or make terminal publication
+cancellation-safe.
+
+5. MEDIUM — the regression test cannot gate anything. It returns success when the
+binary is missing/incompatible and again when acquire reports inert, and it calls
+`control.release` directly, so it cannot reach any of the four failures above.
+Keep it as a live smoke and add deterministic coverage for SDK failure, CLI
+fallback, cancellation, and endpoint/target propagation — including a
+supervisor-path regression that stalls the SDK request and proves the fallback
+runs and the session is gone after `Supervisor::release`.
+
+Out of scope: the known-red trio, and TASK-099T6.
+
+Acceptance:
+- a stalled SDK kill still results in a reaped session via the CLI fallback,
+  proven by a supervisor-path test that goes through the real 5s caller timeout
+- a reap failure appears in the daemon log with run and transport context, and
+  cleanup still happens unconditionally
+- the fallback targets the endpoint and name owned by the SDK handle
+- a cancelled release does not silently drop its RunComplete
+- at least one test fails, rather than skips, when rmux is absent in a lane
+  designated as a gate
+
+* BACKLOG TASK-S2KM0 No CI workflow runs the test suite; every green gate in this project is a local claim    :ci:process:test:
+:PROPERTIES:
+:ID: TASK-S2KM0
+:priority: P1
+:END:
+
+Verified 2026-07-26 while ruling on reviewer finding 5 on TASK-8W30B.
+
+`.github/workflows/` contains six files — nightly-android, nightly-macos,
+nightly-runtime, release-android, release-macos, runtime-bundles. `grep -rn
+"cargo test\|cargo nextest" .github/workflows/` returns nothing. No workflow runs
+the Rust test suite, clippy or fmt.
+
+Every "gates green" claim in every task Evidence section in this repository is
+therefore a local run by whoever happened to run it, on their machine, in
+whatever state that machine was in. Nothing re-checks it on merge, and nothing
+would catch a regression landed by a contributor who skipped the local run.
+
+This session is a direct illustration. The full suite degrades as it runs
+(TASK-8W30B: leaked rmux sessions), a driver test now bills real money and fails
+intermittently (TASK-099T6), three daemon tests are known-red, and all of that
+was discovered by hand, twice, because two different agents ran the suite in two
+different local states and got two different answers.
+
+The reviewer raised the narrow version — the new rmux regression test skips
+rather than fails when rmux is absent, so adding `cargo test` to CI naively would
+make it green forever without ever creating a session. That is real, but it is
+downstream of the larger gap.
+
+Work:
+1. Add a CI lane that runs `cargo test --workspace`, `cargo clippy --workspace
+   --all-targets -- -D warnings` and `cargo fmt --all --check`.
+2. Decide what to do about the three known-red daemon tests before turning the
+   lane required — a lane that is red on arrival teaches everyone to ignore it.
+3. Decide which live-harness tests may run in CI at all. Some spawn real claude
+   and cost money per run (see the gotcha "Asking a harness to prove it can work
+   costs real money"); those need an opt-in gate, not a default lane.
+4. For tests that skip when their runtime is unavailable, add a required-environment
+   mode where a skip is a failure, and provision rmux in whatever lane is
+   designated as the gate.
+
+Acceptance:
+- a pull request that breaks the workspace suite fails a check
+- the suite CI runs is honest about what it did not run, rather than skipping
+  silently
+- no default CI lane bills the operator for a provider turn

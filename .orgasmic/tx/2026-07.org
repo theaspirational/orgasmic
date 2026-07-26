@@ -27966,3 +27966,419 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       observed on the TASK-STWVB dispatch; rescue-policy makes this the daemon's job and it did not happen
 :END:
+
+* TX 2026-07-26 Sun 10:19:18 task.state_transitioned TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2857
+:TIME:         [2026-07-26 Sun 10:19:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager: opening TASK-8W30B (rmux session leak) for dispatch
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 10:19:27 task.property_updated TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2858
+:TIME:         [2026-07-26 Sun 10:19:27]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager: declare scope for dispatch
+:test_cmd:     cargo test -p orgasmic-drivers
+:write_scope:  crates/orgasmic-drivers/src/modes/rmux.rs
+:END:
+
+* TX 2026-07-26 Sun 10:19:33 task.property_updated TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2859
+:TIME:         [2026-07-26 Sun 10:19:33]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager: full scope for TASK-8W30B dispatch
+:read_scope:   crates/orgasmic-drivers/src/ crates/orgasmic-daemon/src/supervisor.rs .orgasmic/gotchas.org
+:write_scope:  crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs
+:END:
+
+* TX 2026-07-26 Sun 10:27:09 task.state_transitioned TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2860
+:TIME:         [2026-07-26 Sun 10:27:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       manager: dispatch requires BACKLOG/TODO; reverting stage before dispatch
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-26 Sun 10:27:23 task.state_transitioned TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2861
+:TIME:         [2026-07-26 Sun 10:27:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-8W30B to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 10:27:24 manager.dispatch_started TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2862
+:TIME:         [2026-07-26 Sun 10:27:24]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:REASON:
+:KIND:         implementer
+:MODE:         acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8w30b/worktree
+:BRANCH:       task-8w30b-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-8W30B/task-8W30B-brief.md
+:STARTED_AT:   [2026-07-26 Sun 10:27:24]
+:LIVENESS:     433fef1d83f7faaa11d23ffede0f76ff56bca74d
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: P1 rmux session leak: release aborts transport before kill
+:END:
+
+* TX 2026-07-26 Sun 10:27:24 run.created TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2863
+:TIME:         [2026-07-26 Sun 10:27:24]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8W30B-implementer-20260726T102724.jsonl
+:REASON:       P1 rmux session leak: release aborts transport before kill
+:RUN_ID:       run-20260726T102724-017d09d68326406ba9abc62a6b2c34a4
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp-stdio
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8w30b/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-8W30B/task-8W30B-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-8W30B/task-8W30B-33b367d1927a474b96a7d4dfc68e77cb-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-8W30B/task-8W30B-33b367d1927a474b96a7d4dfc68e77cb-stdout.log
+:DISPATCH_ATTEMPT: 33b367d1927a474b96a7d4dfc68e77cb
+:PID:          8316
+:DISPATCH_TX:  tx-20260726-orgasmic-2862
+:END:
+
+* TX 2026-07-26 Sun 10:51:23 implementer.done TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2864
+:TIME:         [2026-07-26 Sun 10:51:23]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:RUN_ID:       run-20260726T102724-017d09d68326406ba9abc62a6b2c34a4
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8W30B/worktree
+:SHA:          d60c4ed4f190b60f487ff4e4172c951c66eae44d
+:MERGE_SHA:    d60c4ed4f190b60f487ff4e4172c951c66eae44d
+:END:
+
+* TX 2026-07-26 Sun 10:57:14 task.created TASK-099T6
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2865
+:TIME:         [2026-07-26 Sun 10:57:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-099T6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: found while running TASK-8W30B gates on main
+:END:
+
+* TX 2026-07-26 Sun 11:01:29 task.edited TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2866
+:TIME:         [2026-07-26 Sun 11:01:29]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-8W30B
+:NODE_ID:      TASK-8W30B
+:END:
+
+* TX 2026-07-26 Sun 11:01:36 task.state_transitioned TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2867
+:TIME:         [2026-07-26 Sun 11:01:36]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       manager: merged d60c4ed, gates recorded; reviewer pass due
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-26 Sun 11:02:14 manager.dispatch_started TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2868
+:TIME:         [2026-07-26 Sun 11:02:14]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:REASON:
+:KIND:         reviewer
+:MODE:         acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8w30b-review/worktree
+:BRANCH:       task-8w30b-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-8W30B-review/task-8W30B-review-brief.md
+:STARTED_AT:   [2026-07-26 Sun 11:02:14]
+:LIVENESS:     d3fae4dd32a1cce2f5054edd406d415598ec6245
+:NEXT:         reviewer-watch-then-fix-or-close
+:REASON_INITIAL: reviewer pass over merged d60c4ed; rule on three manager claims
+:END:
+
+* TX 2026-07-26 Sun 11:02:14 run.created TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2869
+:TIME:         [2026-07-26 Sun 11:02:14]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-8W30B-reviewer-20260726T110214.jsonl
+:REASON:       reviewer pass over merged d60c4ed; rule on three manager claims
+:RUN_ID:       run-20260726T110214-805d92301b76476c827a3da9b6d2fe7c
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-acp-stdio
+:KIND:         reviewer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8w30b-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-8W30B-review/task-8W30B-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-8W30B-review/task-8W30B-review-a2c2be76ea0a4b758c0809e59b1cd610-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-8W30B-review/task-8W30B-review-a2c2be76ea0a4b758c0809e59b1cd610-stdout.log
+:DISPATCH_ATTEMPT: a2c2be76ea0a4b758c0809e59b1cd610
+:PID:          33044
+:DISPATCH_TX:  tx-20260726-orgasmic-2868
+:END:
+
+* TX 2026-07-26 Sun 11:06:31 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2870
+:TIME:         [2026-07-26 Sun 11:06:31]
+:TYPE:         manager.action
+:ACTOR:        manager
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       shipped/prompt-studio
+:REASON:       TIER DECLARATION (manager-direct, trivial): operator asked that the manager always state and pass driver/harness/model/effort for a run. Editing prompt-spec and convention prose only — no source, schema or config. Prose about a failure the manager just witnessed first-hand (reviewer dispatched with no recordable model/effort); delegating it would produce weaker text than the witness can write. Declared before the first edit per the intent of TASK-3CM0Q, which targets silent undeclared editing rather than editing as such.
+:tier:         trivial
+:scope:        shipped/prompt-studio/prompt-specs/manager.org shipped/prompt-studio/conventions/manager-dispatch.org
+:END:
+
+* TX 2026-07-26 Sun 11:07:37 task.created TASK-A55J7
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2871
+:TIME:         [2026-07-26 Sun 11:07:37]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A55J7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: prompt rule to always state model/effort is unenforceable while neither is recorded
+:END:
+
+* TX 2026-07-26 Sun 11:12:22 reviewer.finding TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2872
+:TIME:         [2026-07-26 Sun 11:12:22]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       crates/orgasmic-daemon/src/supervisor.rs:3988
+:REASON:       HIGH correctness: the supervisor gives the whole release the same 5s budget as the SDK kill, so a slow failed SDK attempt is cancelled before the CLI fallback can run; release already took the only Session handle and marked itself released, leaving Drop unable to retry and preserving the production leak.
+:SEVERITY:     HIGH
+:KIND:         correctness
+:REVIEWED_DIFF: d60c4ed
+:END:
+
+* TX 2026-07-26 Sun 11:12:23 reviewer.finding TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2873
+:TIME:         [2026-07-26 Sun 11:12:23]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       crates/orgasmic-daemon/src/supervisor.rs:3988
+:REASON:       MEDIUM correctness: stop_and_join_driver_producer discards both the inner DriverError returned by RmuxControl::release and the outer timeout, so the old invisible warning has become an invisible Result and the requested reap-failure visibility is still absent.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:REVIEWED_DIFF: d60c4ed
+:END:
+
+* TX 2026-07-26 Sun 11:12:23 reviewer.finding TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2874
+:TIME:         [2026-07-26 Sun 11:12:23]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       crates/orgasmic-drivers/src/modes/rmux.rs:1236
+:REASON:       MEDIUM correctness: the fallback invokes bare rmux kill-session with a separately stored pre-sanitization target instead of the SDK Session exact endpoint/name. RMUX_SDK_ENDPOINT sessions can be leaked or a same-named session on the default daemon can be killed; planned identities also have no type-level target-sanitization guarantee.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:REVIEWED_DIFF: d60c4ed
+:END:
+
+* TX 2026-07-26 Sun 11:12:23 reviewer.finding TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2875
+:TIME:         [2026-07-26 Sun 11:12:23]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       crates/orgasmic-drivers/src/modes/rmux.rs:1799
+:REASON:       MEDIUM correctness: release latches terminal_emitted before the cancellable reap, so the supervisor 5s timeout can prevent any RunComplete from being sent. The drain still closes, removes the record and writes Lifecycle::Release, so this loses the summary event but does not strand a live run.
+:SEVERITY:     MEDIUM
+:KIND:         correctness
+:REVIEWED_DIFF: d60c4ed
+:END:
+
+* TX 2026-07-26 Sun 11:12:23 reviewer.finding TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2876
+:TIME:         [2026-07-26 Sun 11:12:23]
+:TYPE:         reviewer.finding
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs:64
+:REASON:       MEDIUM test: the regression returns success when rmux is absent/incompatible or acquire is inert, and no checked-in GitHub workflow runs cargo test or provisions rmux. It can remain permanently non-exercising in CI and direct control.release coverage misses the supervisor timeout/error path.
+:SEVERITY:     MEDIUM
+:KIND:         test
+:REVIEWED_DIFF: d60c4ed
+:END:
+
+* TX 2026-07-26 Sun 11:12:57 reviewer.done TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2877
+:TIME:         [2026-07-26 Sun 11:12:57]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:RUN_ID:       run-20260726T110214-805d92301b76476c827a3da9b6d2fe7c
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-8W30B-review/worktree
+:SHA:          d3fae4d
+:END:
+
+
+* TX 2026-07-26 Sun 11:16:47 manager.action TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2878
+:TIME:         [2026-07-26 Sun 11:16:47]
+:TYPE:         manager.action
+:ACTOR:        manager
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2
+:REASON:       Rescue-policy abandon of the stranded STWVB run. Evidence: session seq 1657 run_complete 09:54:47, seq 1658 fatal driver_error claude exit 143 at 09:54:48, no Lifecycle::Release tombstone; worktree and branch already removed; work merged at 42cc263. Nothing to reattach, resume or recover. POST /api/runs/:id/release returned 404 despite the run appearing in GET /runs .live, so the only route was a controlled daemon restart (boot d51e57c3 -> 4da4c5c3), after which the boot classifier reclassified it terminal_noop. Not recorded as success: the harness was SIGTERMed. Filed TASK-QCSE1 for the unclearable-live-run defect.
+:disposition:  abandon
+:END:
+
+* TX 2026-07-26 Sun 11:17:11 task.created TASK-VSWZT
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2879
+:TIME:         [2026-07-26 Sun 11:17:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VSWZT
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: hit while clearing the stranded STWVB run 2026-07-26
+:END:
+
+* TX 2026-07-26 Sun 11:17:19 manager.action TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2880
+:TIME:         [2026-07-26 Sun 11:17:19]
+:TYPE:         manager.action
+:ACTOR:        manager
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2
+:REASON:       CORRECTION to tx-20260726-orgasmic-2878: the unclearable-live-run defect was filed as TASK-VSWZT, not TASK-QCSE1. That id was written into the prior tx before the task was minted and never existed.
+:END:
+
+* TX 2026-07-26 Sun 11:35:51 task.created TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2881
+:TIME:         [2026-07-26 Sun 11:35:51]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: reviewer BLOCK on merged d60c4ed; five findings, one HIGH
+:END:
+
+* TX 2026-07-26 Sun 11:36:08 task.created TASK-S2KM0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2882
+:TIME:         [2026-07-26 Sun 11:36:08]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S2KM0
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager: verified while ruling on a reviewer finding 2026-07-26
+:END:
