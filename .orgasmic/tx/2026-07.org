@@ -29130,3 +29130,67 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-07-26 Sun 14:30:11 implementer.done TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2931
+:TIME:         [2026-07-26 Sun 14:30:11]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:REASON:       orphan pre-flight tx from 2026-07-23 closed retroactively; worker never called dispatch finalize, but its commit is an ancestor of main via e4b6b7b and the task is done
+:MODEL:        gpt-5.6-terra
+:EFFORT:       high
+:WORKER_COMMIT: 4c0a151e7acf8ce55595ec1ca196654f4c2d4bf2
+:MERGE_SHA:    e4b6b7b5edf622db8bb29cdfbe3885a8f2087554
+:BRANCH:       task-870yx-impl
+:CLOSED_TX:    tx-20260723-orgasmic-2468
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-26 Sun 14:30:11 task.state_transitioned TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2932
+:TIME:         [2026-07-26 Sun 14:30:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-870YX to in_review
+:FROM_STATE:   done
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-26 Sun 14:30:23 manager.dispatch_aborted TASK-RRVX0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2933
+:TIME:         [2026-07-26 Sun 14:30:23]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRVX0
+:REASON:       orphan pre-flight tx from 2026-07-23 closed retroactively; task was cancelled, worktree clean and branch already an ancestor of main, nothing to salvage
+:CLOSED_TX:    tx-20260723-orgasmic-2472
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrvx0-fix-r2/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-26 Sun 14:30:24 task.state_transitioned TASK-RRVX0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2934
+:TIME:         [2026-07-26 Sun 14:30:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRVX0
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-RRVX0 to todo
+:FROM_STATE:   cancelled
+:TO_STATE:     todo
+:END:
