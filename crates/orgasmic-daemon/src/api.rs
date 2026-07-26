@@ -6570,9 +6570,41 @@ struct RecoveryOriginAuthority {
     origin_envelopes: Vec<SessionEnvelope>,
 }
 
+/// Test-only fault injection for the window after `POST /runs/:id/recover` has
+/// taken origin authority, keyed by the origin `run_id` it was armed for.
+///
+/// Same shape as `recovery_claim::PENDING_RECONCILE_AFTER_OPEN_HOOK`: the static
+/// is shared by every test in this binary, and the site below is reached by
+/// *every* `POST /runs/:id/recover` — a dozen-plus tests. An unkeyed hook is
+/// consumed by whichever recover request arrives first, so the arming test sees
+/// an unperturbed recovery while an unrelated test runs a closure written
+/// against the arming test's tempdir. Keying makes the hook fire for exactly one
+/// origin run, so arming is exclusive without serializing any test.
 #[cfg(test)]
-static RECOVERY_POST_ORIGIN_AUTHORITY_HOOK: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
-    std::sync::Mutex::new(None);
+#[allow(clippy::type_complexity)]
+static RECOVERY_POST_ORIGIN_AUTHORITY_HOOK: std::sync::Mutex<
+    Option<(String, Box<dyn FnOnce() + Send>)>,
+> = std::sync::Mutex::new(None);
+
+/// Arm [`RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`] for one origin `run_id`.
+#[cfg(test)]
+fn arm_recovery_post_origin_authority_hook(run_id: &str, hook: Box<dyn FnOnce() + Send>) {
+    *RECOVERY_POST_ORIGIN_AUTHORITY_HOOK
+        .lock()
+        .expect("recovery origin authority hook lock") = Some((run_id.to_string(), hook));
+}
+
+/// Take the hook only when it was armed for `run_id`.
+#[cfg(test)]
+fn take_recovery_post_origin_authority_hook(run_id: &str) -> Option<Box<dyn FnOnce() + Send>> {
+    let mut slot = RECOVERY_POST_ORIGIN_AUTHORITY_HOOK
+        .lock()
+        .expect("recovery origin authority hook lock");
+    match slot.as_ref() {
+        Some((armed_for, _)) if armed_for == run_id => slot.take().map(|(_, hook)| hook),
+        _ => None,
+    }
+}
 
 impl RecoveryOriginAuthority {
     fn envelopes(&self) -> Result<&[SessionEnvelope], ApiError> {
@@ -6678,11 +6710,7 @@ async fn post_run_recover(
         .ok_or_else(|| ApiError::not_found(format!("recoverable run {id}")))?;
     let origin_authority = recovery_origin_authority(&state, &project_id, &prior).await?;
     #[cfg(test)]
-    if let Some(hook) = RECOVERY_POST_ORIGIN_AUTHORITY_HOOK
-        .lock()
-        .expect("recovery origin authority hook lock")
-        .take()
-    {
+    if let Some(hook) = take_recovery_post_origin_authority_hook(&id) {
         hook();
     }
     let board = state.index.snapshot().await.board;
@@ -21796,14 +21824,17 @@ mod tests {
             );
             let displaced = origin.with_extension("opened");
             let origin_for_hook = origin.clone();
-            *RECOVERY_POST_ORIGIN_AUTHORITY_HOOK.lock().unwrap() = Some(Box::new(move || {
-                std::fs::rename(&origin_for_hook, &displaced).unwrap();
-                if symlink_swap {
-                    std::os::unix::fs::symlink(&displaced, &origin_for_hook).unwrap();
-                } else {
-                    std::fs::copy(&displaced, &origin_for_hook).unwrap();
-                }
-            }));
+            arm_recovery_post_origin_authority_hook(
+                run_id,
+                Box::new(move || {
+                    std::fs::rename(&origin_for_hook, &displaced).unwrap();
+                    if symlink_swap {
+                        std::os::unix::fs::symlink(&displaced, &origin_for_hook).unwrap();
+                    } else {
+                        std::fs::copy(&displaced, &origin_for_hook).unwrap();
+                    }
+                }),
+            );
 
             let running = crate::Daemon::run(home.clone(), test_options())
                 .await
@@ -22392,12 +22423,15 @@ mod tests {
 
         let (entered_tx, entered_rx) = std::sync::mpsc::channel();
         let (release_tx, release_rx) = std::sync::mpsc::channel();
-        *RECOVERY_POST_ORIGIN_AUTHORITY_HOOK.lock().unwrap() = Some(Box::new(move || {
-            entered_tx.send(()).unwrap();
-            release_rx
-                .recv_timeout(Duration::from_secs(5))
-                .expect("test releases recovery after concurrent inventory starts");
-        }));
+        arm_recovery_post_origin_authority_hook(
+            run_id,
+            Box::new(move || {
+                entered_tx.send(()).unwrap();
+                release_rx
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("test releases recovery after concurrent inventory starts");
+            }),
+        );
 
         let running = crate::Daemon::run(home.clone(), test_options())
             .await

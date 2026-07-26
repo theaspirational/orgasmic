@@ -146,9 +146,46 @@ pub struct PendingRecoveryPlan {
     pub(crate) session_file: Option<SessionFile>,
 }
 
+/// Test-only fault injection for the window between opening the replacement
+/// JSONL and validating it, keyed by the `replacement_run_id` it was armed for.
+///
+/// The static is shared by every test in this binary, and `reconcile_pending_claim`
+/// is called concurrently by several of them: three sibling `reconcile_pending_*`
+/// tests plus every `POST /runs/:id/recover` test whose origin carries a pending
+/// claim. An *unkeyed* hook is consumed by whichever call reaches the site
+/// first, which is not necessarily the one the arming test made — the arming
+/// test then observes an unperturbed reconcile and fails its `is_err()`
+/// assertion. Keying makes the hook fire for exactly one claim, so arming is
+/// exclusive without serializing any test against any other.
 #[cfg(test)]
-static PENDING_RECONCILE_AFTER_OPEN_HOOK: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
-    std::sync::Mutex::new(None);
+#[allow(clippy::type_complexity)]
+static PENDING_RECONCILE_AFTER_OPEN_HOOK: std::sync::Mutex<
+    Option<(String, Box<dyn FnOnce() + Send>)>,
+> = std::sync::Mutex::new(None);
+
+/// Arm [`PENDING_RECONCILE_AFTER_OPEN_HOOK`] for one `replacement_run_id`.
+#[cfg(test)]
+fn arm_pending_reconcile_after_open_hook(replacement_run_id: &str, hook: Box<dyn FnOnce() + Send>) {
+    *PENDING_RECONCILE_AFTER_OPEN_HOOK
+        .lock()
+        .expect("pending reconcile hook lock") = Some((replacement_run_id.to_string(), hook));
+}
+
+/// Take the hook only when it was armed for `replacement_run_id`.
+#[cfg(test)]
+fn take_pending_reconcile_after_open_hook(
+    replacement_run_id: &str,
+) -> Option<Box<dyn FnOnce() + Send>> {
+    let mut slot = PENDING_RECONCILE_AFTER_OPEN_HOOK
+        .lock()
+        .expect("pending reconcile hook lock");
+    match slot.as_ref() {
+        Some((armed_for, _)) if armed_for == replacement_run_id => {
+            slot.take().map(|(_, hook)| hook)
+        }
+        _ => None,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolvedRecoveryClaim {
@@ -2109,11 +2146,7 @@ pub fn reconcile_pending_claim(
             Err(err) => return Err(err),
         };
     #[cfg(test)]
-    if let Some(hook) = PENDING_RECONCILE_AFTER_OPEN_HOOK
-        .lock()
-        .expect("pending reconcile hook lock")
-        .take()
-    {
+    if let Some(hook) = take_pending_reconcile_after_open_hook(&claim.replacement_run_id) {
         hook();
     }
     if created_for_pending_append {
@@ -2723,12 +2756,19 @@ mod tests {
         std::fs::write(&replacement_path, "").unwrap();
         let displaced = replacement_path.with_extension("opened");
         let replacement_for_hook = replacement_path.clone();
-        *PENDING_RECONCILE_AFTER_OPEN_HOOK.lock().unwrap() = Some(Box::new(move || {
-            std::fs::rename(&replacement_for_hook, &displaced).unwrap();
-            std::fs::write(&replacement_for_hook, "").unwrap();
-        }));
+        arm_pending_reconcile_after_open_hook(
+            &plan.claim.replacement_run_id,
+            Box::new(move || {
+                std::fs::rename(&replacement_for_hook, &displaced).unwrap();
+                std::fs::write(&replacement_for_hook, "").unwrap();
+            }),
+        );
 
         assert!(reconcile_pending_claim(&home, &project_root, &plan.claim).is_err());
+        assert!(
+            take_pending_reconcile_after_open_hook(&plan.claim.replacement_run_id).is_none(),
+            "this test's own reconcile must be the call that consumed the hook"
+        );
     }
 
     #[test]
