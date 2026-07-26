@@ -352,6 +352,9 @@ struct DispatchRecord {
     goal_id: Option<String>,
     closed_tasks: BTreeSet<String>,
     cleanup_already_run: bool,
+    /// The worker finalized (`*.reported`) but the manager has not closed yet
+    /// (TASK-6AYEJ). Only meaningful while `closed` is false.
+    reported: bool,
     closed: bool,
 }
 
@@ -587,12 +590,33 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     let project_root = find_project_root()?;
     let project_id = read_project_id(&project_root)?;
     let tasks = normalize_tasks(args.task.clone())?;
-    let open = latest_open_dispatch_for_tasks(&project_root, &tasks)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "no open manager.dispatch_started tx for {}",
-            task_list_property(&tasks)
-        )
-    })?;
+    let open = match latest_open_dispatch_for_tasks(&project_root, &tasks)? {
+        Some(open) => open,
+        None => {
+            // Closing an already-closed dispatch is a no-op, not an error
+            // (TASK-6AYEJ): a manager that died mid-integration and re-runs
+            // the close must not be punished, and neither must a dispatch
+            // closed before this fix by the worker's own finalize. Only a task
+            // with no dispatch record at all is still an error.
+            let closed =
+                latest_closed_dispatch_for_tasks(&project_root, &tasks)?.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "no open manager.dispatch_started tx for {}",
+                        task_list_property(&tasks)
+                    )
+                })?;
+            let tx_type = match args.status {
+                DispatchCloseStatus::Done => done_tx_type(&closed).unwrap_or("dispatch"),
+                DispatchCloseStatus::Aborted => "manager.dispatch_aborted",
+            };
+            println!(
+                "closed: {} {} tx=already_closed",
+                task_list_property(&tasks),
+                tx_type
+            );
+            return Ok(());
+        }
+    };
     for task in &tasks {
         if !open.tasks.iter().any(|open_task| open_task == task) {
             bail!(
@@ -1063,11 +1087,16 @@ struct LiveRunResponse {
 
 /// The worker-driven counterpart to `dispatch-close` (dec_3M7M0 / TASK-AFE5Q):
 /// a dispatched worker calls this as its terminal action — the sole success
-/// authority. In one daemon call it optionally commits the worktree, writes
-/// `last.txt` verbatim from `--summary-file`, emits the terminal tx
-/// (`implementer.done`/`reviewer.done`/`manager.dispatch_aborted`), and
+/// authority for the WORKER's completion. In one daemon call it optionally
+/// commits the worktree, writes `last.txt` verbatim from `--summary-file`,
+/// emits the worker-completion tx
+/// (`implementer.reported`/`reviewer.reported`/`manager.dispatch_aborted`), and
 /// releases the lease — converging on the same `release_dispatch_run`/`/tx`
 /// plumbing `dispatch-close` uses.
+///
+/// It does NOT close the dispatch (TASK-6AYEJ): the worktree, the branch, the
+/// merge sha and the closing tx belong to the manager's `dispatch-close`. See
+/// [`finalize_tx_type_for_kind`].
 pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<()> {
     // The commit/branch/worktree boundary is the git worktree toplevel, NOT
     // the `.orgasmic/project.org` marker walk: a dispatch worktree checkout
@@ -1153,7 +1182,7 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     };
 
     let tx_type = match args.status {
-        FinalizeStatus::Done => done_tx_type_for_kind(&run.kind)?,
+        FinalizeStatus::Done => finalize_tx_type_for_kind(&run.kind)?,
         FinalizeStatus::Blocked => "manager.dispatch_aborted",
     };
 
@@ -1162,17 +1191,19 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         ("WORKTREE".to_string(), git_root.display().to_string()),
     ];
     if let Some(sha) = sha.as_deref() {
+        // The worker's own commit, and only that. `MERGE_SHA` is the sha the
+        // MANAGER merged to its base branch; it is recorded by `dispatch-close`
+        // and is not knowable here (TASK-6AYEJ). A worker branch tip written as
+        // MERGE_SHA points at a commit that was never on main as such.
         extra.push(("SHA".to_string(), sha.to_string()));
-        if matches!(tx_type, "implementer.done" | "architector.done") {
-            extra.push(("MERGE_SHA".to_string(), sha.to_string()));
-        }
     }
 
-    // Order matters (reviewer #2): the terminal `*.done` tx is the LAST thing
+    // Order matters (reviewer #2): the worker's terminal tx is the LAST thing
     // we emit, only after the durable artifacts (commit above, last.txt) and
     // the lease release have all succeeded. If any earlier step fails or the
-    // process dies, no `done` tx is on record — the run stalls and is flagged
-    // orphan (rescuable), never a "done" claim with no report + a held lease.
+    // process dies, no completion tx is on record — the run stalls and is
+    // flagged orphan (rescuable), never a "done" claim with no report + a held
+    // lease.
 
     // 1. Write last.txt verbatim — the run's own artifact path, resolved from
     //    the daemon's live run record, never scraped scrollback.
@@ -1728,7 +1759,7 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
             continue;
         }
         println!(
-            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {}{}",
+            "TX_ID={} TASK={} KIND={} STARTED_AT={} WORKTREE={} WORKER_PID={} RUN_ID={} WORKER={} DRIVER={} HARNESS={} {} {} {} {}{}",
             record.tx_id,
             task_list_property(&record.tasks),
             record.kind,
@@ -1762,6 +1793,13 @@ pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> 
                 "[run-live]"
             } else {
                 "[run-gone]"
+            },
+            // TASK-6AYEJ: distinguishes "the worker finalized, this is waiting
+            // on `dispatch-close`" from "the run vanished without reporting".
+            if record.reported {
+                "[reported]"
+            } else {
+                "[unreported]"
             },
             partial_closed
                 .map(|annotation| format!(" {annotation}"))
@@ -2131,6 +2169,31 @@ fn done_tx_type_for_kind(kind: &str) -> Result<&'static str> {
         "griller" => Ok("griller.done"),
         "planner" => Ok("planner.done"),
         other => bail!("cannot close dispatch kind `{other}` as done"),
+    }
+}
+
+/// The tx a worker's own `dispatch finalize --status done` emits.
+///
+/// orgasmic:TASK-6AYEJ — a worker reports that IT is finished; it does not get
+/// to declare the DISPATCH closed. Closing means the manager read the report,
+/// merged, and released the worktree and branch, and only `dispatch-close` can
+/// say that. So the dispatch-worker kinds — the ones
+/// [`scan_open_dispatches`] treats as terminal — finalize with a
+/// `*.reported` tx that leaves the dispatch open, and `*.done` stays the
+/// manager's word. dec_3M7M0 is untouched: finalize is still the worker's sole
+/// success signal (report + commit + lease release in one call), still the last
+/// thing a worker persona does, and the daemon still keys completion off the
+/// finalize tombstone rather than the tx type.
+///
+/// Stage kinds (`griller`/`planner`) keep the terminal `*.done`: they have no
+/// `manager.dispatch_started` record and no manager close, so there is nothing
+/// for a report-only tx to leave open.
+fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
+    match kind {
+        "implementer" => Ok("implementer.reported"),
+        "reviewer" => Ok("reviewer.reported"),
+        "architector" => Ok("architector.reported"),
+        other => done_tx_type_for_kind(other),
     }
 }
 
@@ -3292,6 +3355,23 @@ fn latest_open_dispatch_for_tasks(
     }))
 }
 
+/// The newest already-closed dispatch covering every requested task, used only
+/// to make a repeated `dispatch-close` a clean no-op (TASK-6AYEJ).
+fn latest_closed_dispatch_for_tasks(
+    project_root: &Path,
+    tasks: &[String],
+) -> Result<Option<DispatchRecord>> {
+    Ok(scan_dispatches(project_root)?
+        .into_iter()
+        .rev()
+        .find(|record| {
+            record.closed
+                && tasks
+                    .iter()
+                    .all(|task| record.tasks.iter().any(|got| got == task))
+        }))
+}
+
 fn latest_open_dispatch_overlapping_tasks(
     project_root: &Path,
     tasks: &[String],
@@ -3313,7 +3393,11 @@ fn overlapping_tasks(open_tasks: &[String], requested_tasks: &[String]) -> Vec<S
         .collect()
 }
 
-fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
+/// Every `manager.dispatch_started` in the tx log, each carrying whether it has
+/// since been closed. [`scan_open_dispatches`] is this filtered to the still-open
+/// ones; `dispatch-close` also needs the closed ones so a re-run is a no-op
+/// instead of "no open dispatch" (TASK-6AYEJ).
+fn scan_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
     let mut open = Vec::<DispatchRecord>::new();
     for entry in read_tx_entries(project_root)? {
         match entry.ty.as_str() {
@@ -3335,6 +3419,17 @@ fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
             "run.created" => {
                 attach_run_created_to_dispatch(&mut open, &entry);
             }
+            // A worker's own finalize (TASK-6AYEJ): the worker is done, the
+            // dispatch is not. Record it so `dispatch-status` can tell
+            // "awaiting the manager's close" apart from "the worker died",
+            // but leave the dispatch open for `dispatch-close`.
+            "implementer.reported" | "reviewer.reported" | "architector.reported" => {
+                mark_matching_dispatch_reported(&mut open, &entry)
+            }
+            // Historical note: until TASK-6AYEJ these same `*.done` types were
+            // ALSO emitted by `dispatch finalize`, so ~10 dispatches on this
+            // repo are closed by a worker-authored tx. They stay closed — the
+            // terminal set is unchanged, so no backfill or migration is needed.
             "implementer.done"
             | "reviewer.done"
             | "architector.done"
@@ -3342,7 +3437,14 @@ fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
             _ => {}
         }
     }
-    Ok(open.into_iter().filter(|record| !record.closed).collect())
+    Ok(open)
+}
+
+fn scan_open_dispatches(project_root: &Path) -> Result<Vec<DispatchRecord>> {
+    Ok(scan_dispatches(project_root)?
+        .into_iter()
+        .filter(|record| !record.closed)
+        .collect())
 }
 
 fn read_tx_entries(project_root: &Path) -> Result<Vec<TxEntry>> {
@@ -3404,6 +3506,7 @@ fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
         goal_id: extra(entry, "GOAL_ID").map(str::to_string),
         closed_tasks: BTreeSet::new(),
         cleanup_already_run: false,
+        reported: false,
         closed: false,
     })
 }
@@ -3449,6 +3552,36 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
             if dispatch_attempt_token.is_some() {
                 record.dispatch_attempt_token = dispatch_attempt_token;
             }
+            return;
+        }
+    }
+}
+
+/// Attach a worker's `*.reported` finalize tx to its still-open dispatch
+/// (TASK-6AYEJ). Matches on the exact run id when both sides carry one, and
+/// otherwise falls back to the same newest-unclosed-overlapping-task rule
+/// [`close_matching_dispatch`] uses.
+fn mark_matching_dispatch_reported(open: &mut [DispatchRecord], reported: &TxEntry) {
+    if let Some(run_id) = extra(reported, "RUN_ID") {
+        for record in open.iter_mut().rev() {
+            if !record.closed && record.run_id.as_deref() == Some(run_id) {
+                record.reported = true;
+                return;
+            }
+        }
+    }
+    let reported_tasks = reported
+        .task
+        .as_deref()
+        .map(split_task_list)
+        .unwrap_or_default();
+    for record in open.iter_mut().rev() {
+        if !record.closed
+            && reported_tasks
+                .iter()
+                .any(|task| record.tasks.iter().any(|got| got == task))
+        {
+            record.reported = true;
             return;
         }
     }
@@ -3748,6 +3881,7 @@ mod tests {
             goal_id: None,
             closed_tasks: BTreeSet::new(),
             cleanup_already_run: false,
+            reported: false,
             closed: false,
         }
     }
@@ -4085,6 +4219,64 @@ mod tests {
         assert_eq!(open[0].tx_id, "tx-start-2");
         assert_eq!(open[0].tasks, vec!["TASK-2".to_string()]);
         assert_eq!(open[0].kind, "reviewer");
+
+        // The TASK-1 close above is the HISTORICAL shape: an `implementer.done`
+        // authored by `agent.implementer` — a worker's own finalize, from
+        // before TASK-6AYEJ split reporting from closing. Those ~10 records on
+        // this repo must stay closed with no migration, and `dispatch-close`
+        // must find them so a re-close is a no-op rather than an error.
+        let closed = latest_closed_dispatch_for_tasks(tmp.path(), &["TASK-1".to_string()])
+            .unwrap()
+            .expect("historical worker-closed dispatch must still resolve as closed");
+        assert_eq!(closed.tx_id, "tx-start-1");
+        assert!(closed.closed);
+        assert!(
+            latest_closed_dispatch_for_tasks(tmp.path(), &["TASK-2".to_string()])
+                .unwrap()
+                .is_none(),
+            "an open dispatch must not be reported as already closed"
+        );
+    }
+
+    /// TASK-6AYEJ: a worker's finalize reports completion; it does not close
+    /// the dispatch. The dispatch stays open (and is flagged reported) until
+    /// the manager's `dispatch-close` emits the `*.done` tx.
+    #[test]
+    fn worker_reported_tx_keeps_dispatch_open_until_manager_done() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_dir = tmp.path().join(".orgasmic/tx");
+        std::fs::create_dir_all(&tx_dir).unwrap();
+        let started = "* TX 2026-07-26 Sun 10:00:00 manager.dispatch_started TASK-9\n:PROPERTIES:\n:TX_ID:        tx-start-9\n:TIME:         [2026-07-26 Sun 10:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-9\n:KIND:         implementer\n:WORKTREE:     /tmp/orgasmic-worktrees/task-9\n:BRANCH:       task-9-impl\n:STARTED_AT:   [2026-07-26 Sun 10:00:00]\n:END:\n\n";
+        let reported = "* TX 2026-07-26 Sun 10:10:00 implementer.reported TASK-9\n:PROPERTIES:\n:TX_ID:        tx-reported-9\n:TIME:         [2026-07-26 Sun 10:10:00]\n:TYPE:         implementer.reported\n:ACTOR:        agent.implementer\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-9\n:SHA:          e7837f1\n:END:\n\n";
+        let closed = "* TX 2026-07-26 Sun 11:00:00 implementer.done TASK-9\n:PROPERTIES:\n:TX_ID:        tx-done-9\n:TIME:         [2026-07-26 Sun 11:00:00]\n:TYPE:         implementer.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-9\n:MERGE_SHA:    0daa77c\n:CLOSED_TX:    tx-start-9\n:END:\n";
+        let header = "#+title: tx\n#+orgasmic_version: 1\n\n";
+
+        std::fs::write(
+            tx_dir.join("2026-07.org"),
+            format!("{header}{started}{reported}"),
+        )
+        .unwrap();
+        let open = scan_open_dispatches(tmp.path()).unwrap();
+        assert_eq!(
+            open.len(),
+            1,
+            "a worker finalize must leave the dispatch open for the manager"
+        );
+        assert_eq!(open[0].tx_id, "tx-start-9");
+        assert!(
+            open[0].reported,
+            "the open dispatch should be flagged as reported by its worker"
+        );
+
+        std::fs::write(
+            tx_dir.join("2026-07.org"),
+            format!("{header}{started}{reported}{closed}"),
+        )
+        .unwrap();
+        assert!(
+            scan_open_dispatches(tmp.path()).unwrap().is_empty(),
+            "the manager's `*.done` must close the dispatch"
+        );
     }
 
     #[test]

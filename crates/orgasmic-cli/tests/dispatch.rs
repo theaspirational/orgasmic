@@ -2718,7 +2718,7 @@ async fn dispatch_finalize_writes_last_txt_verbatim_no_scrollback_contamination(
         ],
     );
     assert!(
-        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "unexpected finalize output: {finalize_stdout}"
     );
     let last_path = finalized_last_path(&finalize_stdout);
@@ -2795,7 +2795,7 @@ async fn dispatch_finalize_commit_flag_leaves_clean_committed_worktree() {
         ],
     );
     assert!(
-        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "unexpected finalize output: {finalize_stdout}"
     );
 
@@ -2817,25 +2817,28 @@ async fn dispatch_finalize_commit_flag_leaves_clean_committed_worktree() {
             .any(|line| line.trim_start().starts_with(":SHA:") && line.contains(&head_after)),
         "tx should capture the sha --commit produced: {tx_raw}"
     );
+    // TASK-6AYEJ: the worker's commit is its own branch tip, recorded as
+    // `:SHA:`. It is NOT a merge sha — nothing has merged yet — and writing it
+    // as `:MERGE_SHA:` made every audit trust a commit that was never on main
+    // as such. Only the manager's `dispatch-close` records `:MERGE_SHA:`.
     assert!(
-        tx_raw
+        !tx_raw
             .lines()
-            .any(|line| line.trim_start().starts_with(":MERGE_SHA:") && line.contains(&head_after)),
-        "implementer.done tx should carry MERGE_SHA: {tx_raw}"
+            .any(|line| line.trim_start().starts_with(":MERGE_SHA:")),
+        "a worker finalize must not claim a MERGE_SHA: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
 
-/// Acceptance #3 (TASK-WFW1N): finalize emits the correct terminal tx
-/// (`implementer.done`/`reviewer.done`), releases the lease, and
-/// `manager dispatch-status` shows the run closed. Also proves the lease
-/// itself (not just the tx record) is released: a second dispatch against
-/// the same task+kind after finalize is accepted rather than rejected as
-/// overlapping.
+/// Acceptance #3 (TASK-WFW1N), amended by TASK-6AYEJ: finalize emits the
+/// correct worker-completion tx (`implementer.reported`/`reviewer.reported`)
+/// and releases the lease — but does NOT close the dispatch, so
+/// `manager dispatch-status` still lists it, flagged `[reported]`, waiting on
+/// the manager's `dispatch-close`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
+async fn dispatch_finalize_reports_without_closing_and_releases_lease() {
     let _live_guard = live_session_guard();
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -2880,12 +2883,16 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
         ],
     );
     assert!(
-        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "unexpected finalize output: {finalize_stdout}"
     );
 
     let tx_raw = tx_log(&project_root);
-    assert!(tx_raw.contains(":TYPE:         implementer.done"));
+    assert!(tx_raw.contains(":TYPE:         implementer.reported"));
+    assert!(
+        !tx_raw.contains(":TYPE:         implementer.done"),
+        "the worker must not emit the manager's closing tx: {tx_raw}"
+    );
     assert!(tx_raw.contains(":TASK:         TASK-DISPATCH"));
 
     let status_stdout = run_orgasmic(
@@ -2896,8 +2903,13 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
         &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
     );
     assert!(
-        status_stdout.trim().is_empty(),
-        "finalized dispatch should not appear as open in dispatch-status: {status_stdout}"
+        status_stdout.contains("TASK=TASK-DISPATCH"),
+        "a finalized dispatch stays open until the manager closes it: {status_stdout}"
+    );
+    assert!(
+        status_stdout.contains("[reported]"),
+        "dispatch-status must show the worker reported, so the manager can tell \
+         `awaiting close` from `the run died`: {status_stdout}"
     );
 
     // The supervisor lease itself (not just the tx record) must be
@@ -2923,8 +2935,9 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
         "finalize must release the supervisor lease: {lease_stdout}"
     );
 
-    // Finalize the reviewer kind too, proving the terminal-tx type follows
-    // the run's own kind (`reviewer.done`), not a hardcoded implementer path.
+    // Finalize the reviewer kind too, proving the completion-tx type follows
+    // the run's own kind (`reviewer.reported`), not a hardcoded implementer
+    // path.
     let review_worktree = tmp.path().join("worktrees/task-review");
     let review_brief = tmp.path().join("codex/task-review-brief.md");
     write(&review_brief, "stub reviewer brief");
@@ -2974,7 +2987,7 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
         ],
     );
     assert!(
-        review_finalize_stdout.contains("finalized: TASK-REVIEW reviewer.done tx="),
+        review_finalize_stdout.contains("finalized: TASK-REVIEW reviewer.reported tx="),
         "unexpected reviewer finalize output: {review_finalize_stdout}"
     );
     let review_status_stdout = run_orgasmic(
@@ -2985,8 +2998,8 @@ async fn dispatch_finalize_emits_terminal_tx_and_releases_lease() {
         &["manager", "dispatch-status", "--task", "TASK-REVIEW"],
     );
     assert!(
-        review_status_stdout.trim().is_empty(),
-        "finalized reviewer dispatch should not appear as open: {review_status_stdout}"
+        review_status_stdout.contains("TASK=TASK-REVIEW") && review_status_stdout.contains("[reported]"),
+        "a finalized reviewer dispatch also stays open for the manager: {review_status_stdout}"
     );
 
     let _ = running.shutdown.send(());
@@ -3091,8 +3104,9 @@ async fn dispatch_finalize_blocked_status_emits_dispatch_aborted_and_requires_re
     let tx_raw = tx_log(&project_root);
     assert!(tx_raw.contains(":TYPE:         manager.dispatch_aborted"));
     assert!(
-        !tx_raw.contains(":TYPE:         implementer.done"),
-        "blocked finalize must not emit a done tx: {tx_raw}"
+        !tx_raw.contains(":TYPE:         implementer.done")
+            && !tx_raw.contains(":TYPE:         implementer.reported"),
+        "blocked finalize must not emit a done or reported tx: {tx_raw}"
     );
 
     let lease_stdout = run_orgasmic(
@@ -3246,7 +3260,7 @@ async fn dispatch_finalize_survives_stall_sweep_race_and_still_records_done() {
         "finalize must not hard-error on the stall-sweep race\nstdout={stdout}\nstderr={stderr}"
     );
     assert!(
-        stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "expected a done tx despite the race: stdout={stdout} stderr={stderr}"
     );
     assert!(
@@ -3263,7 +3277,7 @@ async fn dispatch_finalize_survives_stall_sweep_race_and_still_records_done() {
 
     let tx_raw = tx_log(&project_root);
     assert!(
-        tx_raw.contains(":TYPE:         implementer.done"),
+        tx_raw.contains(":TYPE:         implementer.reported"),
         "a run whose worker committed + wrote its report must be recorded done, \
          never left a bare orphan: {tx_raw}"
     );
@@ -3387,7 +3401,7 @@ async fn dispatch_finalize_commit_binds_to_worktree_when_orgasmic_is_uncommitted
         ],
     );
     assert!(
-        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "unexpected finalize output: {finalize_stdout}"
     );
 
@@ -3600,7 +3614,7 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
         ],
     );
     assert!(
-        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "unexpected finalize output: {finalize_stdout}"
     );
     let last_path = finalized_last_path(&finalize_stdout);
@@ -3610,8 +3624,8 @@ async fn dispatch_finalize_from_acp_stdio_mode() {
     );
     let tx_raw = tx_log(&project_root);
     assert!(
-        tx_raw.contains(":TYPE:         implementer.done"),
-        "acp-stdio finalize must emit implementer.done: {tx_raw}"
+        tx_raw.contains(":TYPE:         implementer.reported"),
+        "acp-stdio finalize must emit implementer.reported: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());
@@ -3692,7 +3706,7 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
         ],
     );
     assert!(
-        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.done tx="),
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
         "unexpected finalize output: {finalize_stdout}"
     );
     let last_path = finalized_last_path(&finalize_stdout);
@@ -3702,8 +3716,8 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
     );
     let tx_raw = tx_log(&project_root);
     assert!(
-        tx_raw.contains(":TYPE:         implementer.done"),
-        "subprocess-stream-json finalize must emit implementer.done: {tx_raw}"
+        tx_raw.contains(":TYPE:         implementer.reported"),
+        "subprocess-stream-json finalize must emit implementer.reported: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());
@@ -3711,7 +3725,8 @@ async fn dispatch_finalize_from_subprocess_stream_json_mode() {
 }
 
 /// TASK-8PXDP / HIGH1: when protocol-end wins the finalize race, finalize must
-/// not mask the 404 and emit `implementer.done` (which would orphan AND done).
+/// not mask the 404 and emit `implementer.reported` (which would orphan AND
+/// report completion).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
     // orgasmic:TASK-8PXDP
@@ -3849,8 +3864,9 @@ async fn dispatch_finalize_protocol_end_during_release_refuses_done_tx() {
 
     let tx_raw = tx_log(&project_root);
     assert!(
-        !tx_raw.contains(":TYPE:         implementer.done"),
-        "protocol-end race must never emit implementer.done: {tx_raw}"
+        !tx_raw.contains(":TYPE:         implementer.done")
+            && !tx_raw.contains(":TYPE:         implementer.reported"),
+        "protocol-end race must never emit a worker completion tx: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());
@@ -3948,10 +3964,12 @@ async fn dispatch_finalize_concurrent_double_finalize_emits_single_done_tx() {
     );
 
     let tx_raw = tx_log(&project_root);
-    let done_count = tx_raw.matches(":TYPE:         implementer.done").count();
+    let done_count = tx_raw
+        .matches(":TYPE:         implementer.reported")
+        .count();
     assert_eq!(
         done_count, 1,
-        "concurrent double-finalize must emit exactly one implementer.done: {tx_raw}"
+        "concurrent double-finalize must emit exactly one implementer.reported: {tx_raw}"
     );
 
     let _ = running.shutdown.send(());
