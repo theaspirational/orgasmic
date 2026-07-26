@@ -127,6 +127,37 @@ TASK-870YX and TASK-RRVX0. Untouched, and older than this session.
 until TASK-2BPWM lands: the current `dispatch-close` default is exactly the
 data-loss path being fixed.
 
+OPERATOR HOLD [2026-07-26]: DO NOT SPAWN CLAUDE WORKERS. Standing instruction
+given after TASK-6AYEJ merged — "do not spawn new claude workers for now". No
+`--harness claude` dispatch of any kind, implementer or fixer, until the
+operator lifts it explicitly. Read it as a hold on dispatching generally rather
+than a narrow one: the reviewer stage is codex and so is not literally covered,
+but every dispatch this session was authorized turn by turn and nothing on the
+board is urgent enough to launch unasked. Ask first, including for a codex
+reviewer. Nothing was running when the hold arrived. This does NOT retract the
+standing worker matrix in `manager-dispatch` — that stays the default for when
+dispatching resumes. Do not "helpfully" rewrite it to codex-only. For whoever
+lifts the hold: the claude lane has two known problems of its own, either of
+which may be the reason for it — TASK-RWCRN (P0, every rmux dispatch is killed
+at exactly 600s unless `--governance-json '{"stall_timeout_secs": 0}'` is
+passed) and TASK-NYF7Z (P1, rmux claude workers get no `--strict-mcp-config`
+and hold live handles to nine of the operator's MCP servers).
+
+SUPERSEDED ABOVE: the TASK-2BPWM entry at the top of this section is stale.
+TASK-2BPWM is done (its reviewer BLOCK SHIP was cleared by TASK-D0GA3, merged
+0daa77c). TASK-D0GA3 is done. TASK-6AYEJ is merged at 5f5670f and in_review,
+reviewer pass owed. Nothing is in flight.
+
+THE 6AYEJ FIX IS MERGED BUT DORMANT. Workers resolve `orgasmic` from the
+daemon's launchd PATH, which is the installed 0.0.15-dev.1 build, not the source
+tree. Until the runtime is rebuilt, workers still emit `implementer.done` and
+close their own dispatches, so `manager dispatch-close` stays unreachable and
+the manager must remove each worktree and branch by hand after merging. The
+rebuild is an operator decision and has not been taken.
+
+The 17 stale dispatch worktrees can now be cleaned safely — the reason to wait
+(TASK-2BPWM's force-removal data-loss path) is fixed and merged. Not yet done.
+
 ** Divergence / Risks
 - WORKER TEST CLAIMS ON THE DAEMON CRATE ARE NOT EVIDENCE until TASK-RRT4T lands.
   Three over-reports today, one mechanism. Re-run the scoped test yourself and
