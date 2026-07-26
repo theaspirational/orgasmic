@@ -41,6 +41,20 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 rand = "0.8"
 tokio-tungstenite = "0.24"
 
+# On macOS the dev profile defaults to split-debuginfo = "unpacked", so full
+# DWARF lives in per-codegen-unit .o files that cargo must retain and never
+# garbage-collects. Measured 2026-07-26 on this workspace: 164,619 .o files and
+# 27.5 GB in target/debug/deps alone, every one of them written in the preceding
+# seven days, plus 31 GB of incremental state and 14 retained copies of
+# liborgasmic_daemon.rlib at ~130 MB each.
+#
+# "line-tables-only" keeps what panics and backtraces actually use — file, line,
+# and symbol names — and drops variable/type DWARF, which is the bulk. Debugger
+# stepping and variable inspection lose fidelity; if you need a full-DWARF build
+# for an lldb session, override per-invocation with CARGO_PROFILE_DEV_DEBUG=2.
+[profile.dev]
+debug = "line-tables-only"
+
 # Size-optimized release build for the CLI/daemon runtime bundle.
 # Uses opt-level "s" (not "z") and keeps the default unwind panic strategy so a
 # panicking request handler does not abort the long-running daemon. The embedded

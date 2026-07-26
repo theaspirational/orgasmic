@@ -647,7 +647,20 @@ impl GitDiffSummarizer {
 
 impl Supervisor {
     pub fn new(writer: WriterHandle, boot: Arc<BootIdentity>) -> Self {
-        let supervisor = Self {
+        let supervisor = Self::unmonitored(writer, boot);
+        spawn_run_timeout_monitor(supervisor.clone());
+        supervisor
+    }
+
+    /// A supervisor with no background run-timeout monitor.
+    ///
+    /// The monitor ticks every [`RUN_TIMEOUT_CHECK_INTERVAL`] (50ms) and calls
+    /// `release_first_timed_out_run`. Any test that ages a run past its
+    /// threshold and then awaits is therefore racing a second releaser for the
+    /// same run, and cannot make a stable claim about what the release it
+    /// drives by hand did or did not do.
+    fn unmonitored(writer: WriterHandle, boot: Arc<BootIdentity>) -> Self {
+        Self {
             inner: Arc::new(Mutex::new(Inner {
                 acquisition_paused: false,
                 leases: HashMap::new(),
@@ -657,9 +670,7 @@ impl Supervisor {
             })),
             writer,
             boot,
-        };
-        spawn_run_timeout_monitor(supervisor.clone());
-        supervisor
+        }
     }
 
     /// Acquire a new run.
@@ -5144,6 +5155,20 @@ mod tests {
         (sup, dir, writer)
     }
 
+    /// A supervisor whose only releaser is the test itself.
+    ///
+    /// Use this whenever a test ages a run past a timeout and then drives
+    /// `release_first_timed_out_run*` by hand. The monitor `Supervisor::new`
+    /// spawns ticks every 50ms against the same run, so with it running the
+    /// test is asserting on whichever releaser happened to win.
+    fn make_unmonitored_supervisor() -> (Supervisor, tempfile::TempDir, WriterHandle) {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = spawn_writer(EventBus::new());
+        let boot = Arc::new(BootIdentity::new());
+        let sup = Supervisor::unmonitored(writer.clone(), boot);
+        (sup, dir, writer)
+    }
+
     #[cfg(unix)]
     #[test]
     fn process_probe_distinguishes_esrch_eperm_and_unexpected_errors() {
@@ -5746,19 +5771,28 @@ mod tests {
         // (Under start_paused runtimes the sleep auto-advances virtual time.)
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
+            // A released run is absent, not zero. Collapsing the two costs a
+            // debugging session every time: "reached event_count 0" reads as a
+            // slow event task when it actually means something else released
+            // the run, and no amount of waiting will ever satisfy the count.
             let seen = sup
                 .snapshot()
                 .await
                 .runs
                 .iter()
                 .find(|run| run.run_id == run_id)
-                .map(|run| run.event_count)
-                .unwrap_or(0);
-            if seen >= count {
-                return;
-            }
-            if tokio::time::Instant::now() >= deadline {
-                panic!("run {run_id} reached event_count {seen}, wanted {count}");
+                .map(|run| run.event_count);
+            match seen {
+                Some(seen) if seen >= count => return,
+                None => panic!(
+                    "run {run_id} left the supervisor while waiting for event_count {count}; \
+                     something released it (a background timeout monitor?), so this wait \
+                     can never be satisfied"
+                ),
+                Some(seen) if tokio::time::Instant::now() >= deadline => {
+                    panic!("run {run_id} reached event_count {seen}, wanted {count}")
+                }
+                Some(_) => {}
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -6091,7 +6125,11 @@ mod tests {
 
     #[tokio::test]
     async fn stall_detector_revalidates_after_driver_event_race() {
-        let (sup, dir, _w) = make_supervisor();
+        // Unmonitored on purpose: this test asserts the run is STILL LIVE after
+        // the release it drives revalidates and backs off. The background
+        // monitor would release the same aged run during the hook's awaits —
+        // rarely when the test runs alone, ~2 runs in 3 under module load.
+        let (sup, dir, _w) = make_unmonitored_supervisor();
         let driver = TmuxTuiDriver;
         let req = manual_req("TASK-STALL-RACE", dir.path(), Some(1), None);
         let session_path = req.session_path.clone();
