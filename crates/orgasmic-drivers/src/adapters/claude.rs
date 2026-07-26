@@ -130,11 +130,30 @@ struct ClaudeAcpConfig {
     endpoint: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    /// Reasoning effort, forwarded as `claude --effort <level>`.
+    ///
+    /// Deliberately NOT `alias = "effort"`. The daemon writes the value under
+    /// BOTH keys (`api.rs`: `"effort"` and `"reasoning_effort"`), so an alias
+    /// makes serde see one field twice and the whole dispatch fails with
+    /// "driver configuration is invalid" — a 400 that names nothing useful.
+    /// Hermes carries that alias today and is presumably broken the same way
+    /// whenever an effort is set; filed separately.
+    #[serde(default)]
+    reasoning_effort: Option<String>,
     #[serde(default)]
     api_key_env: Option<String>,
     #[serde(default)]
     prompt_bundle_text: Option<String>,
 }
+
+/// Levels `claude --effort` documents (2.1.220: "low, medium, high, xhigh, max").
+///
+/// Used to warn, not to reject. An unknown level is still forwarded, matching
+/// how an off-list `--model` passes through: the harness owns its own
+/// vocabulary, and hardcoding a closed list here would block the day claude
+/// adds a level. Genuinely invalid values fail at launch, which the dispatch
+/// startup gate now surfaces without leaving an orphan.
+const KNOWN_EFFORT_LEVELS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
 
 #[async_trait]
 impl HarnessEventAdapter for ClaudeAdapter {
@@ -360,6 +379,21 @@ impl HarnessEventAdapter for ClaudeAdapter {
             if !model.is_empty() {
                 args.push("--model".into());
                 args.push(model.to_string());
+            }
+        }
+
+        if let Some(effort) = cfg.reasoning_effort.as_deref() {
+            let effort = effort.trim();
+            if !effort.is_empty() {
+                if !KNOWN_EFFORT_LEVELS.contains(&effort) {
+                    tracing::warn!(
+                        effort,
+                        known = ?KNOWN_EFFORT_LEVELS,
+                        "claude: unrecognised effort level; forwarding it anyway"
+                    );
+                }
+                args.push("--effort".into());
+                args.push(effort.to_string());
             }
         }
 
@@ -1080,11 +1114,74 @@ mod tests {
         (args, adapter.native_runtime())
     }
 
-    /// A config that forces the real (non-simulated) path: a non-empty
-    /// endpoint, with no api_key_env so credential resolution picks the
-    /// operator's own login.
+    /// A config on the real (non-simulated) path, with no api_key_env so
+    /// credential resolution picks the operator's own login.
+    ///
+    /// The endpoint here is incidental now. It used to be load-bearing — an
+    /// empty one meant "simulate" — which is exactly why every test in this
+    /// file set one and none of them exercised the shape production actually
+    /// sends (dec_S18RH). See
+    /// `production_shape_with_no_endpoint_composes_a_real_run`.
     fn subprocess_config() -> Value {
         json!({"endpoint": "stdio://claude"})
+    }
+
+    /// The config shape a real dispatch sends: no endpoint at all.
+    ///
+    /// This is the one that mattered and the one nothing covered. Every
+    /// dispatch leaves `endpoint` empty, so this shape returning `Simulated`
+    /// is what made TASK-VB9DQ's argv unreachable in production while its
+    /// tests passed.
+    #[tokio::test]
+    async fn production_shape_with_no_endpoint_composes_a_real_run() {
+        let _guard = env_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+
+        // Exactly what the daemon sends: harness set, endpoint empty.
+        let (args, native) = composed_args(json!({"endpoint": ""}));
+
+        assert!(
+            args.windows(2).any(|w| w[0] == "--session-id"),
+            "an endpoint-less run is a real run and must pin a session id: {args:?}"
+        );
+        assert!(
+            native.is_some(),
+            "an endpoint-less run must still report NativeRuntime metadata"
+        );
+    }
+
+    /// `--effort` is forwarded, using the exact driver_config shape the
+    /// daemon emits — which carries the value under two keys at once.
+    #[tokio::test]
+    async fn effort_reaches_the_argv_from_the_daemons_config_shape() {
+        let _guard = env_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        if !claude_available() {
+            eprintln!("skipping: `claude` not on PATH");
+            return;
+        }
+
+        // The daemon writes the value under both keys; the config must accept
+        // that exact shape rather than choking on it (see the field comment).
+        let (args, _) =
+            composed_args(json!({"endpoint": "", "effort": "xhigh", "reasoning_effort": "xhigh"}));
+        assert!(
+            args.windows(2).any(|w| w == ["--effort", "xhigh"]),
+            "effort must reach the argv from the daemon's own config shape: {args:?}"
+        );
+
+        // Absent effort adds no flag at all, rather than an empty one.
+        let (args, _) = composed_args(json!({"endpoint": ""}));
+        assert!(
+            !args.iter().any(|a| a == "--effort"),
+            "no effort configured must mean no --effort flag: {args:?}"
+        );
     }
 
     #[tokio::test]

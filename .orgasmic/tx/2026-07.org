@@ -27721,3 +27721,30 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       found while verifying TASK-SGRTX; pre-existing on HEAD, not caused by that change
 :END:
+
+* TX 2026-07-26 Sun 09:51:38 task.edited TASK-Y9BY6
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2839
+:TIME:         [2026-07-26 Sun 09:51:38]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y9BY6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-Y9BY6
+:NODE_ID:      TASK-Y9BY6
+:END:
+
+* TX 2026-07-26 Sun 09:54:46 task.created TASK-4YC8E
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2840
+:TIME:         [2026-07-26 Sun 09:54:46]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YC8E
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found while wiring claude --effort; same shape broke claude with a 400 that named nothing
+:END:

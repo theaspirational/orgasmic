@@ -640,3 +640,73 @@ explanation. Candidates worth checking first:
 
 Belongs with TASK-STWVB's theme: the drivers suite cannot answer "did my change
 break something?" while one test fails every run for an unrelated reason.
+CORRECTION [2026-07-26], same session. This task's opening claim that the test
+"fails deterministically" is wrong.
+
+It failed 5/5 when filed (3/3 on the working tree, 2/2 on stashed HEAD). Roughly
+ninety minutes later the same test passes, and the full drivers lib suite is
+231/231 green on 3 consecutive runs. Nothing in the test or in rmux changed
+between those measurements.
+
+What did change is machine state. Between the two, an isolated smoke daemon was
+started and stopped twice on port 4899, rmux servers were killed during cleanup,
+and a dispatched worker was running full test suites in a worktree. So the
+trigger is environmental and shared — most likely the default rmux socket
+ownership described in the isolated-smoke recipe — not the test's own logic.
+
+Two other tests were also seen failing exactly once in that window and passing
+on every run since:
+- adapters::claude::tests::acp_stdio_accepts_a_dispatch_for_a_logged_in_claude
+- adapters::claude::tests::acp_stdio_rejects_a_dispatch_for_a_logged_out_claude
+- adapters::claude::tests::an_empty_endpoint_still_gets_a_verdict_because_it_still_spawns_claude
+
+Those three manipulate process-global PATH and HOME to simulate a logged-out
+harness, which is the documented shared-environment hazard in gotchas
+("Tests that set PATH break every other test in the binary"). They are the
+drivers-crate instance of TASK-STWVB's disease.
+
+So re-scope: this is not one deterministic rmux failure. It is that the drivers
+suite has environment-coupled tests whose result depends on what else is running
+on the machine, which is the same reason the daemon suite could not answer "did
+my change break something?". Reproduce by running the suite WHILE a second
+daemon or an rmux server is live, not by running it alone.
+
+* BACKLOG TASK-4YC8E hermes reasoning_effort alias collides with the daemon's dual-key driver_config    :drivers:bug:
+:PROPERTIES:
+:ID: TASK-4YC8E
+:PRIORITY: P1
+:END:
+
+`adapters/hermes.rs` declares
+
+    #[serde(default, alias = "effort")]
+    reasoning_effort: Option<String>
+
+while the daemon writes the value under BOTH keys at once (`api.rs`:
+`"effort": effort` and `"reasoning_effort": reasoning_effort`, lines 3573-3574;
+also 2329-2330). Serde then sees one field populated twice and fails
+deserialization, so `validate_config` returns `InvalidConfig` and the dispatch
+dies with
+
+    400 Bad Request: {"error":"driver configuration is invalid"}
+
+Measured on claude 2026-07-26: adding that exact alias to `ClaudeAcpConfig`
+reproduced this immediately, and removing it fixed it. Hermes carries the alias
+today, so a hermes dispatch that sets an effort should fail the same way.
+
+NOT VERIFIED for hermes itself — inferred from identical code and a reproduced
+failure in a sibling adapter, not from a hermes dispatch. Confirm before fixing:
+run a hermes acp-stdio dispatch with `--effort high` and check for the 400.
+
+If confirmed the fix is one line — drop `alias = "effort"`, since the daemon
+already writes `reasoning_effort`. Check codex too; it also carries
+`reasoning_effort` and needs the same read.
+
+Worth fixing beyond the crash: the error text names neither the field nor the
+adapter. `InvalidConfig(e.to_string())` has serde's message in hand and drops it
+on the floor at the API boundary. Surfacing it would have made this a ten-second
+diagnosis instead of a grep through api.rs.
+
+The dual-key write is itself questionable — one value under two names is what
+made an ordinary alias a landmine. Consider emitting only `reasoning_effort`
+once every adapter reads that key.
