@@ -69,6 +69,20 @@ spawn rather than reporting a missing tool. Note also that rmux sessions are not
 currently reaped — check `rmux ls` for accumulation and kill stale
 `orgasmic-rmux-run-*` sessions during housekeeping.
 
+*Every rmux dispatch needs `--governance-json '{"stall_timeout_secs": 0}'` until
+TASK-RWCRN lands.* A pane emits no driver events, so the supervisor's 600-second
+stall detector fires on a healthy worker and releases the run at exactly ten
+minutes — measured, with the worker mid-edit one second before the kill. Without
+the override every rmux dispatch dies at 00:10:00 and is recorded as
+`manager.dispatch_orphaned`, which reads like a worker failure and is not one.
+Remove the override once TASK-RWCRN lands; it disables the only guard against a
+genuinely wedged pane, leaving the four-hour ceiling as the sole backstop.
+
+An orphaned dispatch also blocks re-dispatch: `manager.dispatch_orphaned` is not
+in `scan_open_dispatches`'s terminal set, so the next attempt fails with
+"dispatch already open for overlapping task(s)". Close it first with
+`manager dispatch-close --status aborted`.
+
 ** Typed stage authority
 Prefer explicit stage transitions over implicit continuation. Implementer,
 verifier, adversarial reviewer, fixer, lander, and housekeeping are distinct jobs
