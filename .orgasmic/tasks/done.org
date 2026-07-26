@@ -12973,3 +12973,349 @@ NOT DONE HERE, and why:
 - Boot reattach still reads whole session files. That is cost, not a hang, now
   that it is off the critical path; filed as TASK-7QM8M with the correctness
   subtlety that blocks a naive swap to the bounded scanner.
+
+* DONE TASK-D0GA3 TASK-2BPWM fix: anchor the salvage commit to a real ref and close the late-writer window :dispatch:recovery:data-loss:fix:
+:PROPERTIES:
+:ID: TASK-D0GA3
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-cli
+:WRITE_SCOPE: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:FIX_SUBTASK: t
+:PARENT_TASK: TASK-2BPWM
+:END:
+
+One-round fix for the five findings from the TASK-2BPWM reviewer pass
+(reviewer-codex-acp-stdio, acp-stdio / codex / gpt-5.6-sol / xhigh, run
+run-20260726T145141-a55bd48661ac43208123f295cb5a4632). Verdict was BLOCK SHIP.
+
+Findings, as filed: tx-20260726-orgasmic-2942 through -2946.
+
+HIGH 1 — the salvage commit is not anchored to the recorded dispatch branch.
+manager.rs:1432-1445 and api.rs:4496-4551 commit whatever HEAD the worktree
+currently has; neither helper is told which branch was recorded. The later
+retention guards keep the RECORDED branch merely because salvage.is_some().
+
+MANAGER-CONFIRMED EMPIRICALLY, not taken on the reviewer's word. In a scratch
+repo: worktree on task-probe-impl, dirty file, `git checkout --detach`, then
+add+commit exactly as commit_worktree does. Result — the salvage sha is NOT an
+ancestor of the recorded branch, and `git for-each-ref --points-at` returns
+nothing. The commit is unreferenced and prunable by `git gc`. So the close tx
+advertises a recovery path that git is free to delete.
+
+HIGH 2 — a late writer between the dirty check and `--force`. The CLI's last
+clean check is manager.rs:1414-1440 and removal is manager.rs:2080-2084; the
+daemon has the same gap at api.rs:4534-4551 vs 4569-4573. Anything writing in
+that window produces a dirty worktree that `--force` then deletes silently. No
+lock, and removal is not fail-closed.
+
+MEDIUM 3 — a concurrent CLI close can delete another close's salvage branch.
+manager.rs:2268-2273 checks only whether THIS invocation salvaged, then runs
+unfenced `git branch -D`. Two concurrent `--branch-delete` closes: one salvages
+and removes, the other sees salvage=None and deletes the branch now pointing at
+the first salvage. The daemon path is already fenced with an expected OID; the
+CLI is not.
+
+LOW 4 — the CLI dirty + --branch-delete path is untested. Confirmed: the three
+new CLI tests all pass branch_delete=false. This was the manager's own finding
+and the reviewer ranked it correctly BELOW the three above.
+
+LOW 5 — SALVAGE_FILE_COUNT under-reports. manager.rs:1381-1385 and
+api.rs:4504-4507 count porcelain records, and default `git status --porcelain`
+collapses an untracked directory into a single `?? dir/` entry. The tx promises a
+file count and records a status-entry count.
+
+FIX DIRECTION, from the reviewer and endorsed:
+1. Pass the expected dispatch branch and OID into both salvage helpers. Require
+   symbolic HEAD to match, or atomically move the intended ref from its
+   pre-salvage OID to SALVAGE_SHA. Fail BEFORE removal on mismatch. Consider the
+   reviewer's open question: a dedicated durable ref under refs/orgasmic/salvage/
+   would make the tx sha independently reachable and simplify --branch-delete.
+2. Stop using unconditional `--force` after salvage. Fail-closed removal plus a
+   cleanup lock spanning final validation through removal, and a deterministic
+   late-writer test.
+3. In CLI close, never delete a branch after worktree missing/failure, and
+   replace `git branch -D` with expected-OID `update-ref -d` fencing.
+4. Tests: dirty + --branch-delete, detached HEAD / switched branch, removal
+   failure after salvage, duplicate close, nested untracked directory. Mirror
+   branch-identity and late-writer coverage on the daemon side.
+
+WHAT THE REVIEWER REFUTED, so it is not re-litigated. Three of the manager's six
+suspicions were wrong, each refuted with code:
+- error propagation is NOT a regression — cmd_dispatch still bails on non-OK,
+  dispatch-close warned and returned zero before this patch too, and daemon
+  removal failures map to failed/partial rather than ok
+- --no-worktree-remove does NOT commit a dirty retained worktree; salvage is
+  called only inside `if remove_worktree`
+- the post-commit porcelain check has no false-failure case worth fixing;
+  partially staged changes are captured by `git add -A` and ignored files do not
+  appear
+Also: the clean-close path adds one `git status --porcelain` and nothing else,
+which the reviewer classified as fail-closed rather than a regression. Agreed.
+
+The default-true --worktree-remove for aborted closes is sound ONLY after HIGH 1
+and HIGH 2 are fixed. The reviewer would not accept it as safe against the
+current implementation, and neither would I.
+
+Acceptance:
+- a salvage commit is reachable from a ref that the close tx names, on a detached
+  or switched HEAD as well as the normal case
+- no `--force` removal can run against a worktree that became dirty after the
+  last check
+- two concurrent closes cannot leave SALVAGE_SHA dangling
+- the recorded file count equals the number of files committed
+
+ID DECISION [2026-07-26], operator-settled: this task keeps the id TASK-D0GA3
+rather than being re-minted as TASK-2BPWM.1, so it carries NO derived parent edge
+to TASK-2BPWM. That is deliberate, not an oversight — do not "repair" it later.
+
+The relationship is recorded in prose here and in the reviewer findings
+(tx-20260726-orgasmic-2942 .. -2946), and the drawer holds an inert
+:PARENT_TASK: TASK-2BPWM that no reader consults. Re-minting mid-dispatch was
+judged more churn than the edge is worth.
+
+The convention was corrected the same day so the next fix subtask is minted as
+TASK-<parent>.N and gets a real edge. This task is the last one filed under the
+wrong instruction.
+
+MANAGER VERDICT [2026-07-26] — MERGED at 0daa77c (worker commit e7837f1,
+implementer-codex-acp-stdio, acp-stdio / codex / gpt-5.6-sol / xhigh, run
+run-20260726T185523-533834f2f3f14d2f8cf0adedcd06b694, 22 min, 35+ tool calls).
+
+The worker chose the reviewer's second shape: a dedicated durable ref. Salvage
+now builds the commit with `git write-tree` + `git commit-tree -p <recorded
+branch OID>` instead of `git commit`, anchors it at refs/orgasmic/salvage/<sha>
+with a zero-OID-fenced update-ref, then detaches the worktree onto it. The
+recorded branch is never moved and an unrelated checked-out branch is never
+touched.
+
+VERIFIED BY THE MANAGER, not taken from the report:
+- cargo test -p orgasmic-cli — 140 passed, 0 failed, 1 ignored, plus 17 other
+  binaries all green. All four new CLI tests ran and passed.
+- cargo test -p orgasmic-daemon --lib — 505 passed, 3 failed. All three new
+  daemon tests ran and passed. See the test note below; none of the three
+  failures is this change.
+- cargo clippy --workspace --all-targets -- -D warnings — clean.
+- cargo fmt --all --check — clean.
+- The gc probe the unit tests do NOT cover. In a scratch repo, on a detached
+  HEAD, running the new command sequence verbatim, then `git branch -D` the
+  dispatch branch, `git reflog expire --expire=now --all` and `git gc
+  --prune=now`: the salvage ref still resolves, `git show <ref>:nested/deeper/
+  two.txt` still returns the content, and for-each-ref --points-at names the
+  ref. Before the fix the same probe left the sha unreferenced and prunable.
+  That is the original finding, inverted.
+- Nested file count: `git diff-tree --name-only -r -z` reports 2 for a nested
+  untracked directory where `git status --porcelain` reported 1. Finding 5 is
+  genuinely fixed, not merely re-worded.
+
+TEST NOTE. The worker reported "508 passed, 0 failed". My full-suite run gave
+505 passed / 3 failed: post_artifact_regenerate_hot_path_reuses_live_run_id and
+poll_direct_child_pid_prefers_worker_server_over_generic_sibling (both named
+known-red in the brief) plus a THIRD, previously unseen:
+recovery_reattaches_tmux_session_when_handle_exists ("interrupted" vs
+"reattached"). All three pass when run alone — 3 passed, 0.54s. This is
+TASK-STWVB in-suite interference, not a D0GA3 regression, and it is now a
+three-test family rather than two. Recorded on TASK-STWVB.
+
+MANAGER FINDINGS, none blocking, all filed rather than fixed:
+1. The ref is refs/orgasmic/salvage/<sha>, not <task>/<attempt>. Recovery works
+   because the tx names SALVAGE_REF, but you cannot enumerate "what did TASK-X
+   salvage" from the ref namespace alone. The reviewer's own suggestion carried
+   the task in the path.
+2. Salvage refs are never pruned. The worker flagged this as residual risk. They
+   accumulate silently and pin their objects against gc forever, which is the
+   point, but nothing ever decides they are no longer needed.
+3. A SECOND `dispatch-close --branch-delete` after the worktree is already gone
+   no longer deletes the branch and reports no branch error: with
+   worktree_missing set, neither arm of the new branch_delete condition fires.
+   Before this change that path deleted the branch. Stale branches survive a
+   re-close. Low.
+4. delete_dispatch_branch_after_removal now ignores its salvage argument
+   entirely (renamed to `_salvage`). The parameter should go, along with its
+   callers' now-pointless plumbing.
+5. The worktree is left DETACHED at the salvage commit when removal then fails.
+   Correct for durability, but an operator who opens the retained worktree to
+   continue the work finds no branch checked out. Worth one line of output.
+
+Findings 1-5 are recorded here rather than filed as their own tasks; fold them
+into whatever next touches this code.
+
+TASK-2BPWM's BLOCK SHIP is cleared by this change.
+
+* DONE TASK-2BPWM dispatch-close destroys uncommitted worker output by default (git worktree remove --force, no dirty check) :dispatch:recovery:data-loss:bug:
+:PROPERTIES:
+:ID: TASK-2BPWM
+:priority: 
+:PRIORITY: P1
+:test_cmd: 
+:write_scope: 
+:WRITE_SCOPE: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:READ_SCOPE:  crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:TEST_CMD:    cargo test -p orgasmic-cli
+:END:
+
+Verified 2026-07-26 by reading the cleanup paths after the operator asked
+whether a stuck dispatch can end with its work unrecoverable. It can, and the
+destructive behaviour is the default.
+
+THE PATH
+
+`orgasmic manager dispatch-close` declares `--worktree-remove` with
+`default_value_t = true` (crates/orgasmic-cli/src/manager.rs:124) and
+`--branch-delete` with `default_value_t = false`. Removal is
+`git worktree remove --force` (manager.rs:2007; the daemon does the same at
+crates/orgasmic-daemon/src/api.rs:4438). `--force` is exactly the flag that makes
+git delete a DIRTY worktree instead of refusing.
+
+No dirty check guards it. `worktree_has_uncommitted_changes` exists at
+manager.rs:1331 but is only consumed by `commit_worktree` on the worker-driven
+`dispatch finalize --commit` path. Nothing consults it before removal.
+
+The two guards that do run before removal —
+`validate_dispatch_cleanup_targets` and `verify_dispatch_worktree_identity` —
+protect against deleting the WRONG worktree. Neither protects against deleting
+UNSAVED WORK.
+
+THE SCENARIO, WHICH IS NOT HYPOTHETICAL
+
+1. A worker does real work and never reaches `dispatch finalize --commit`,
+   because its harness dies. Observed today: the TASK-STWVB run emitted
+   `run_complete` at 09:54:47 and `claude exited with status exit status: 143`
+   at 09:54:48.
+2. The run can then sit live for a long time (80 minutes, observed).
+3. The manager reaches for the documented cleanup verb,
+   `dispatch-close --status aborted`.
+4. Default flags delete the worktree with `--force`. Uncommitted work is gone,
+   with no prompt, and no tx entry recording that anything was discarded.
+5. The branch survives, because branch-delete defaults false. If the worker never
+   committed, that branch sits at the base commit and holds nothing — so the
+   surviving branch creates a false impression of recoverability.
+
+WHAT IS NOT WRONG, so nobody widens this
+
+There is no automatic or background pruning of dispatch worktrees. No retention
+sweep touches them. The loss always requires an explicit manager action. The
+problem is not a daemon deleting things unasked; it is that the verb the manager
+is instructed to use is destructive by default, at exactly the moment a worker
+has failed and its output is most likely to be uncommitted.
+
+In practice the opposite failure dominates: 17 worktrees are on disk right now,
+including several from 2026-07-23. Cleanup usually is not run at all. That makes
+the risk distribution the worst possible shape — litter for the careless, silent
+data loss for the conscientious.
+
+FIX
+
+`commit_worktree` already exists, so the cheap fix loses nothing and needs no
+judgment call:
+1. Before removing a worktree, test it with `worktree_has_uncommitted_changes`.
+   If dirty, make a salvage commit on the dispatch branch (which already survives
+   by default) with a message naming the task and that it was manager-salvaged,
+   then remove.
+2. Record the salvage in the close tx — sha and file count — so the recovery
+   story is discoverable from state rather than from memory.
+3. Consider making `--worktree-remove` default false for `--status aborted`
+   specifically. A done close follows a worker that committed; an aborted close
+   is by definition the case where it did not.
+4. Say what happened in the CLI output. "worktree removed" should distinguish
+   clean removal from salvaged-then-removed.
+
+Related: TASK-TJKFC already states the right principle for the other half of this
+("once startup has been accepted and meaningful work has occurred, later failures
+retain normal failed-run history and inspection artifacts"), and that half is
+unimplemented.
+
+Acceptance:
+- closing a dispatch whose worktree is dirty never loses the diff
+- the salvage is recoverable from tx alone, without knowing the branch name
+- a clean close behaves exactly as it does today
+LANDED [2026-07-26]. Merged 93a3151 as 26e0000-pending; implementer
+implementer-codex-acp-stdio (acp-stdio / codex / gpt-5.6-sol / xhigh), run
+run-20260726T133651-60f38adc34c349cd9800c0aaed726807, 47 minutes, +644/-65 across
+crates/orgasmic-cli/src/manager.rs and crates/orgasmic-daemon/src/api.rs.
+
+WHAT LANDED
+- `salvage_worktree_if_dirty` runs before every `git worktree remove --force`, on
+  both the CLI path (remove_worktree_required) and the daemon's
+  (remove_dispatch_worktree). Commit subject is
+  "<TASK>: manager-salvaged uncommitted worker output".
+- The dispatch branch is RETAINED whenever salvage occurred, even if
+  --branch-delete was requested — `if branch_delete && salvage.is_none()`.
+  Deleting it would have destroyed the salvage commit, so this is load-bearing.
+- Close tx carries SALVAGE_SHA and SALVAGE_FILE_COUNT, so recovery is
+  discoverable from tx alone without knowing the branch name.
+- CLI output distinguishes "worktree salvaged sha=... files=...; worktree
+  removed" from "...; worktree retained after removal failure".
+- A failing salvage stops before removal — asserted by
+  dispatch_close_does_not_remove_worktree_when_salvage_commit_fails and its
+  daemon twin.
+- commit_worktree now re-checks porcelain after committing and bails if anything
+  remains, so a partial commit cannot be mistaken for a complete salvage.
+
+THE JUDGMENT CALL, decided and argued
+--worktree-remove stays default-true for --status aborted. The worker's reasoning:
+salvage removes the data-loss risk, so flipping the default would only trade a
+solved problem for more stale-worktree litter, and the litter is already the
+dominant failure (17 worktrees on disk). Accepted.
+
+MANAGER VERIFICATION, independent of the worker's report
+- cargo test -p orgasmic-cli: green, 136 + 39 + smaller binaries, 0 failed
+  (skipping the money-billing TASK-099T6 test, as instructed).
+- cargo test -p orgasmic-daemon --lib: 503 passed / 2 failed / 505 total. The two
+  are exactly the pre-existing TASK-STWVB pair, unchanged. Test count rose by
+  one, matching the new daemon test. No regression.
+- dispatch_cleanup_salvages_dirty_worktree_and_retains_branch: ok.
+- Read the must-fail-first test rather than trusting the claim. It writes a dirty
+  file, closes with the real default flags, then recovers the exact bytes via
+  `git show <branch>:worker-output.txt`, checks the commit subject, and checks
+  SALVAGE_SHA/SALVAGE_FILE_COUNT reach the close request. It tests the acceptance
+  criteria, not a proxy for them.
+
+REVIEW FINDING, for the reviewer pass and not a blocker
+The CLI has no test for --branch-delete together with a dirty worktree, which is
+the branch-retention-on-salvage path — the single line that keeps the salvage
+commit reachable. The daemon side does cover it
+(dispatch_cleanup_salvages_dirty_worktree_and_retains_branch). The CLI's three
+tests cover dirty-default, clean, and salvage-failure. Worth closing that gap.
+
+NOT YET LIVE. This is merged in source only. The installed runtime is
+0.0.15-dev.1 and its dispatch-close still force-removes dirty worktrees. The fix
+protects nothing on this machine until 0.0.15 is published or the runtime is
+rebuilt from source.
+
+REVIEWER PASS: BLOCK SHIP [2026-07-26]. reviewer-codex-acp-stdio (acp-stdio /
+codex / gpt-5.6-sol / xhigh), run
+run-20260726T145141-a55bd48661ac43208123f295cb5a4632, 12 minutes. Five findings
+filed as reviewer.finding tx-20260726-orgasmic-2942 .. -2946, closed with
+reviewer.done at -2947. Fix subtask: TASK-D0GA3.
+
+Two HIGH data-loss windows remain, both missed by the manager and by the
+implementer:
+1. The salvage commit is not anchored to the recorded dispatch branch — on a
+   detached or switched HEAD it lands unreferenced and is prunable by git gc, so
+   the close tx advertises a sha git may delete. Manager-confirmed empirically in
+   a scratch repo, not accepted on the reviewer's word: the salvage is not an
+   ancestor of the recorded branch and no ref points at it.
+2. `--force` still runs after the last clean check, so a writer in that window
+   loses bytes exactly as before the fix.
+
+Plus MEDIUM: a concurrent CLI close can delete another close's salvage branch via
+unfenced `git branch -D`; the daemon path is fenced with an expected OID and the
+CLI is not.
+
+The review also refuted three of the four suspicions in the review brief, each
+with code rather than assertion — error propagation is not a regression,
+--no-worktree-remove does not commit a retained worktree, and the post-commit
+porcelain check has no false-failure case. It ranked the manager's own CLI test
+gap correctly BELOW the three real defects. That is the right shape for a review:
+it did not simply confirm what it was handed.
+
+Worth recording for the RRT4T argument: the reviewer stated that rmux resolved in
+its environment and explicitly declined to claim a full-suite count, running only
+targeted tests. That is the discipline the brief asked for, and it is what the
+three earlier over-reports lacked.
+
+So this task stays in_review pending TASK-D0GA3. The fix cannot be dispatched
+immediately: its write scope needs crates/orgasmic-daemon/src/api.rs, which the
+in-flight TASK-RRT4T worker holds, and both would add tests to the same api.rs
+test module.
+

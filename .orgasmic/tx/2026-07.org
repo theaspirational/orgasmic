@@ -29750,3 +29750,146 @@
 :REASON:       edited task node TASK-D0GA3
 :NODE_ID:      TASK-D0GA3
 :END:
+
+* TX 2026-07-26 Sun 19:17:48 implementer.done TASK-D0GA3
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2967
+:TIME:         [2026-07-26 Sun 19:17:48]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D0GA3
+:RUN_ID:       run-20260726T185523-533834f2f3f14d2f8cf0adedcd06b694
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-D0GA3/worktree
+:SHA:          e7837f1eb8a95d830a6454f2b16f99416a6849b6
+:MERGE_SHA:    e7837f1eb8a95d830a6454f2b16f99416a6849b6
+:END:
+
+* TX 2026-07-26 Sun 19:27:50 task.created TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2968
+:TIME:         [2026-07-26 Sun 19:27:50]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-6AYEJ
+:END:
+
+* TX 2026-07-26 Sun 19:28:28 task.edited TASK-D0GA3
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2969
+:TIME:         [2026-07-26 Sun 19:28:28]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D0GA3
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-D0GA3
+:NODE_ID:      TASK-D0GA3
+:END:
+
+* TX 2026-07-26 Sun 19:28:43 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2970
+:TIME:         [2026-07-26 Sun 19:28:43]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-26 Sun 19:28:51 task.state_transitioned TASK-D0GA3
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2971
+:TIME:         [2026-07-26 Sun 19:28:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D0GA3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged at 0daa77c; manager-verified all four gates plus a gc-survival probe the unit tests do not cover
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-26 Sun 19:28:52 task.state_transitioned TASK-2BPWM
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2972
+:TIME:         [2026-07-26 Sun 19:28:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2BPWM
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewer BLOCK SHIP cleared by TASK-D0GA3 (merged 0daa77c): salvage sha is now anchored at a tx-named ref and removal is no longer forced
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-26 Sun 19:29:44 manager.action TASK-D0GA3
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2973
+:TIME:         [2026-07-26 Sun 19:29:44]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D0GA3
+:REASON:       TASK-D0GA3 merged and verified; TASK-2BPWM unblocked and closed.
+
+MERGED 0daa77c (worker e7837f1, implementer-codex-acp-stdio, acp-stdio / codex /
+gpt-5.6-sol / xhigh, 22 min). Salvage commits are now built with commit-tree
+parented on the recorded dispatch branch OID and anchored at
+refs/orgasmic/salvage/<sha>, named in the close tx as SALVAGE_REF. Worktree
+removal is no longer --force and a repo-scoped advisory lock spans validation
+through removal. CLI branch deletion is fenced with expected-OID update-ref.
+SALVAGE_FILE_COUNT comes from the tree diff.
+
+GATES, run by the manager: orgasmic-cli 140+ passed / 0 failed across 18
+binaries; orgasmic-daemon --lib 505 passed / 3 failed, all three pre-existing
+in-suite flakes that pass in isolation; clippy -D warnings clean; fmt clean.
+Independent gc probe: on a detached HEAD, after branch deletion, reflog expiry
+and `git gc --prune=now`, the salvage content is still recoverable from the
+named ref. That is the original TASK-2BPWM finding inverted.
+
+FILED TASK-6AYEJ (P1): the manager's dispatch-close is unreachable after a
+worker's `dispatch finalize`. scan_open_dispatches treats implementer.done as
+terminal (manager.rs:3338), and finalize emits implementer.done itself, so the
+dispatch is closed before the manager reads the report. Consequence: the
+success-path worktree/branch cleanup never runs (17 stale worktrees on disk),
+MERGE_SHA records the worker commit rather than the merge, and REVIEWED_DIFF is
+never recorded. Discovered by trying to close this very task. The D0GA3
+worktree and branch were removed by hand instead.
+
+Recorded a third member of the TASK-STWVB flake family:
+recovery_reattaches_tmux_session_when_handle_exists, which points at shared
+tmux-namespace contention rather than at the executable fixture.
+:MERGE_SHA:    0daa77c115a9f8e44313a25f24af855248870f30
+:WORKER_COMMIT: e7837f1eb8a95d830a6454f2b16f99416a6849b6
+:FILED:        TASK-6AYEJ
+:END:
+
+* TX 2026-07-26 Sun 19:29:56 task.edited TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2974
+:TIME:         [2026-07-26 Sun 19:29:56]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-HXSW0
+:NODE_ID:      TASK-HXSW0
+:END:

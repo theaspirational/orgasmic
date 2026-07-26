@@ -1160,6 +1160,24 @@ five special cases. It is (a) validate keys against the schema at write time and
 reject unknown or miscased ones with a message naming the correct key, and
 (b) make `create` and `update` accept the same set, or say why they differ.
 
+INSTANCE 6 [2026-07-26]. `orgasmic tx record` is the only mutation verb that is
+NOT project-scoped by default. Without `--project`, it writes to
+$ORGASMIC_HOME/state/tx/YYYY-MM.org — the global home file — and reports success
+with a differently-shaped tx id (tx-20260726192932-05e34dce) rather than the
+project's tx-20260726-orgasmic-NNNN. Every sibling verb (`task update`, `node
+body append`, `task create`) resolves the project from the cwd and needs no
+flag. The help text for --tx-path says "defaults to $ORGASMIC_HOME/state/tx/
+YYYY-MM.org", which is accurate and is the only warning you get; nothing in
+`tx record --help` suggests --project is load-bearing.
+
+Cost: one manager.action for TASK-D0GA3 was written to the home tx file and had
+to be re-recorded with --project. The stray entry is still there. A manager
+following the obvious invocation silently loses every tx it records off the
+project ledger and cannot tell from the exit code.
+
+Fix direction: default `tx record` to the cwd project like its siblings, and
+keep --project / --tx-path as explicit overrides.
+
 * BACKLOG TASK-K4G1D Run the mux-dependent daemon tests under tmux as well as rmux, so 'is rmux at fault' becomes a measurement    :testing:daemon:drivers:rmux:
 :PROPERTIES:
 :DEPENDS_ON: TASK-RRT4T
@@ -1322,3 +1340,73 @@ recur at any time, so the daemon cannot rely on knowing the cause in advance.
 
 Worth filing separately if it happens again: a run that reaches `ready` and never
 starts a turn, with no explanation in its session events.
+
+* BACKLOG TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs    :dispatch:lifecycle:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-cli
+:END:
+
+The worker's own success signal closes the dispatch record, so the manager's
+`dispatch-close` can never run on a successful dispatch. Found while trying to
+close TASK-D0GA3 after merging it.
+
+REPRODUCED, not inferred:
+- TASK-D0GA3 merged at 0daa77c. `orgasmic manager dispatch-close --task
+  TASK-D0GA3 --status done --merge-sha 0daa77c ... --worktree-remove
+  --branch-delete` fails with "no open manager.dispatch_started tx for
+  TASK-D0GA3".
+- `orgasmic manager dispatch-status` prints nothing — zero open dispatches —
+  while `git worktree list` shows 17 live dispatch worktrees and their branches.
+
+MECHANISM, read from code: scan_open_dispatches (crates/orgasmic-cli/src/manager.rs:3316)
+pairs each manager.dispatch_started with the first terminal tx it sees, and
+manager.rs:3338-3341 counts `implementer.done` / `reviewer.done` /
+`architector.done` / `manager.dispatch_aborted` as terminal. Per dec_3M7M0 the
+worker's `orgasmic dispatch finalize --commit` is the SOLE success signal and it
+emits `implementer.done` itself. So the dispatch is closed by the worker before
+the manager has even read the report.
+
+The tx history shows the switchover cleanly. Every terminal tx up to 2026-07-23
+carries ACTOR theaspirational@users.noreply.github.com (the manager, via
+dispatch-close). Every one from 2026-07-26 carries ACTOR agent.implementer or
+agent.reviewer (the worker, via finalize). Not one manager-recorded close since.
+
+WHAT IS LOST, per successful dispatch:
+1. Worktree and branch cleanup never runs. cleanup_dispatch — and with it the
+   whole salvage path just hardened by TASK-2BPWM and TASK-D0GA3 — is dead on
+   the success path. 17 stale worktrees is the accumulated evidence.
+2. MERGE_SHA in the close tx is the WORKER's commit, not the manager's merge.
+   TASK-D0GA3's implementer.done (tx-20260726-orgasmic-2967) records
+   SHA = MERGE_SHA = e7837f1; the actual merge is 0daa77c. Any later audit that
+   trusts MERGE_SHA is looking at a commit that was never on main as such.
+3. REVIEWED_DIFF, worker-session, tokens and wall are never recorded, because
+   only dispatch-close accepts them.
+4. The manager's verdict is not the closing record. The worker's self-report is.
+   That inverts the "treat worker summaries as claims" rule at the tx layer.
+
+NOT AFFECTED, so scope this correctly: the salvage machinery still runs on the
+failure paths, which is where it matters most — cleanup_created_resources
+(dispatch rollback), the daemon POST cleanup endpoint, and dispatch-close on an
+orphan dispatch that never finalized. TASK-2BPWM and TASK-D0GA3 are not wasted
+work.
+
+DIRECTION, to be argued rather than assumed:
+- The likely fix is that `finalize` should record worker completion WITHOUT
+  closing the dispatch — a distinct tx type (implementer.reported?) that
+  scan_open_dispatches does not treat as terminal — leaving implementer.done to
+  the manager. That preserves dec_3M7M0's "finalize is the sole success signal"
+  for the WATCHER while restoring the manager's close.
+- Whatever shape is chosen, closing must stay idempotent and must not strand a
+  dispatch open forever when the manager dies mid-integration.
+- Backfill is out of scope, but the fix must not choke on the ~10 dispatches
+  already closed this way.
+
+Acceptance:
+- after a worker runs `dispatch finalize --commit`, `manager dispatch-status`
+  still lists the dispatch as open
+- `manager dispatch-close --status done --merge-sha <real merge>` succeeds and
+  records the manager's merge sha, and removes the worktree and branch
+- a dispatch that is never finalized still closes via dispatch-close, unchanged
+- double-close is a clean no-op, not an error
