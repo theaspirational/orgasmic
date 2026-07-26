@@ -27927,3 +27927,42 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-26 Sun 10:14:12 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2854
+:TIME:         [2026-07-26 Sun 10:14:12]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-26 Sun 10:14:46 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2855
+:TIME:         [2026-07-26 Sun 10:14:46]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
+
+* TX 2026-07-26 Sun 10:15:08 task.created TASK-HAREX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2856
+:TIME:         [2026-07-26 Sun 10:15:08]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HAREX
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       observed on the TASK-STWVB dispatch; rescue-policy makes this the daemon's job and it did not happen
+:END:

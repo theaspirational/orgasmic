@@ -138,3 +138,21 @@ TASK-870YX and TASK-RRVX0. They predate this session and were not touched.
   released it after ~600s and did not, which is worth a look: the running daemon
   is 0.0.15-dev.1 and predates f80b577 ("a declared failure ends the run instead
   of waiting for the harness"), so this may already be fixed on main.
+- CORRECTION to the stranded-live-run note above, same session: it is wrong on
+  both counts and is retained only so the error is not repeated.
+
+  There is no `orgasmic run release` verb BY DESIGN, not by omission. Per the
+  rescue-policy convention, release is the daemon's job — it writes the
+  authoritative tombstone on protocol_end_without_finalize / stall /
+  max-duration and emits manager.dispatch_orphaned; the manager's surface is
+  `orgasmic run recover` (reattach / resume-fork / fresh / abandon), not
+  release. And `manager dispatch-close` DOES release the supervisor run when
+  the record carries a run_id — `release_dispatch_run`, manager.rs:627.
+
+  `orgasmic run list` now reports 0 total / 0 live, so the run was released by
+  the dispatch-close at tx-20260726-orgasmic-2844 and nothing is blocking the
+  update fence. Do not restart the daemon on account of that note.
+
+  What remains real and is filed separately: the run stayed live for roughly
+  forty minutes after its worker exited, which the daemon should have ended on
+  its own well before a manager closed the record.
