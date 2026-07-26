@@ -28382,3 +28382,214 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       manager: verified while ruling on a reviewer finding 2026-07-26
 :END:
+
+* TX 2026-07-26 Sun 11:40:22 task.state_transitioned TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2883
+:TIME:         [2026-07-26 Sun 11:40:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-6FNAY to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 11:40:23 manager.dispatch_started TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2884
+:TIME:         [2026-07-26 Sun 11:40:23]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:REASON:
+:KIND:         implementer
+:MODE:         acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay/worktree
+:BRANCH:       task-6fnay-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-6FNAY/task-6FNAY-brief.md
+:STARTED_AT:   [2026-07-26 Sun 11:40:23]
+:LIVENESS:     6d514357ea7c1741a9cee97ad5124711360f0ff0
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        gpt-5.6-sol
+:EFFORT:       xhigh
+:REASON_INITIAL: fix round on reviewer BLOCK: cancellation-safe rmux reap (gpt-5.6-sol/xhigh — hardest item in the chain)
+:END:
+
+* TX 2026-07-26 Sun 11:40:23 run.created TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2885
+:TIME:         [2026-07-26 Sun 11:40:23]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-6FNAY-implementer-20260726T114023.jsonl
+:REASON:       fix round on reviewer BLOCK: cancellation-safe rmux reap (gpt-5.6-sol/xhigh — hardest item in the chain)
+:RUN_ID:       run-20260726T114023-30b5536c677847c7932a0e86e935742e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-codex-acp-stdio
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-6FNAY/task-6FNAY-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-6FNAY/task-6FNAY-eca6a343ade5487380cc751e96fe2542-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-6FNAY/task-6FNAY-eca6a343ade5487380cc751e96fe2542-stdout.log
+:DISPATCH_ATTEMPT: eca6a343ade5487380cc751e96fe2542
+:PID:          75347
+:DISPATCH_TX:  tx-20260726-orgasmic-2884
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: xhigh
+:END:
+
+* TX 2026-07-26 Sun 12:03:19 task.state_transitioned TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2886
+:TIME:         [2026-07-26 Sun 12:03:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager: heading declares PARTIAL IMPLEMENTATION with no adapter probes and no atomic abort; nothing is under review
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 12:03:20 task.state_transitioned TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2887
+:TIME:         [2026-07-26 Sun 12:03:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       manager: two named flakes remain and its 8W30B block is lifted; nothing is under review
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 12:03:30 task.edited TASK-TJKFC
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2888
+:TIME:         [2026-07-26 Sun 12:03:30]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TJKFC
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-TJKFC
+:NODE_ID:      TASK-TJKFC
+:END:
+
+* TX 2026-07-26 Sun 12:03:47 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2889
+:TIME:         [2026-07-26 Sun 12:03:47]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-26 Sun 12:04:01 task.edited TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2890
+:TIME:         [2026-07-26 Sun 12:04:01]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-Z8WEJ
+:NODE_ID:      TASK-Z8WEJ
+:END:
+
+* TX 2026-07-26 Sun 12:04:13 task.edited TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2891
+:TIME:         [2026-07-26 Sun 12:04:13]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-VB9DQ
+:NODE_ID:      TASK-VB9DQ
+:END:
+
+* TX 2026-07-26 Sun 12:12:37 implementer.done TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2892
+:TIME:         [2026-07-26 Sun 12:12:37]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:RUN_ID:       run-20260726T114023-30b5536c677847c7932a0e86e935742e
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6FNAY/worktree
+:SHA:          83ea420b52c25ff7dac3a9fc90d1038a0c76ca3f
+:MERGE_SHA:    83ea420b52c25ff7dac3a9fc90d1038a0c76ca3f
+:END:
+
+* TX 2026-07-26 Sun 12:40:26 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2893
+:TIME:         [2026-07-26 Sun 12:40:26]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-26 Sun 12:41:23 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2894
+:TIME:         [2026-07-26 Sun 12:41:23]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-26 Sun 12:48:41 task.state_transitioned TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2895
+:TIME:         [2026-07-26 Sun 12:48:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       manager: root cause measured; staging for dispatch (dispatch requires BACKLOG/TODO)
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
