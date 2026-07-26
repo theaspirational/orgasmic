@@ -82,6 +82,24 @@ supervisor-test `process_group(0)` reap). The production-side group reap is
 `reap_process_group` (TASK-AJZCK.3); don't reintroduce direct-child-only kills.
 Durable invariant.
 
+** Warm one shared executable fixture instead of creating scripts per test on macOS
+Measured 2026-07-26 on macOS: the first exec of each newly created script took
+0.15-0.18 s while its second exec took 0.00 s. Gatekeeper/syspolicy evaluates
+that first exec through a serialized system daemon. A full parallel daemon
+suite that created many distinct executable fixtures therefore queued the
+checks: a trivial two-line script took 3 s, 6 s, and once 63 s before executing,
+even though it started instantly in isolation.
+
+Spawn-based tests must reuse the pre-warmed executable in
+=crates/orgasmic-daemon/src/test_fixtures.rs=. Put per-test behavior and paths
+in argv; when a production-shaped path cannot accept fixture-only argv, hard
+link the shared file and keep the variation in adjacent data files. Do not
+raise a test deadline or serialize the tests: both retain the per-file cost and
+only change where it queues. This is primarily a developer-Mac failure mode;
+Linux CI has no Gatekeeper and will likely stay green even when a fresh-script
+regression makes the macOS suite fail in parallel. Durable invariant as of
+TASK-STWVB.
+
 ** Test daemon port isolation from checkout-resident production daemon
 Tests that spawn isolated test daemons must ensure the daemons don't default to
 port 4848 when running in parallel from a checkout where a production daemon is

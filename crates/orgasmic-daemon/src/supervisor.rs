@@ -8745,24 +8745,15 @@ mod tests {
     #[tokio::test]
     async fn poll_direct_child_pid_prefers_worker_server_over_generic_sibling() {
         let tmp = tempfile::tempdir().unwrap();
-        let bin = tmp.path().join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        let agent = bin.join("cursor-agent");
         let ready = tmp.path().join("children-ready");
-        let script = format!(
-            "#!/bin/bash\nsleep 300 &\nexec -a worker-server sleep 300 &\ntouch {}\nsleep 3600\n",
-            ready.display()
-        );
-        std::fs::write(&agent, script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
         // Put the wrapper in its own process group and null its stdio so the
         // backgrounded `sleep` children it spawns neither inherit the test
         // runner's stdout/stderr (which would hold a piped `cargo test | tail`
         // open past test completion) nor survive cleanup as orphans reparented
         // to init. We kill the entire group below, not just the foreground pid.
         use std::os::unix::process::CommandExt as _;
-        let mut wrapper = Command::new(&agent)
+        let mut wrapper = Command::new(crate::test_fixtures::shared_test_executable())
+            .args(["cursor-worker-sibling", ready.to_str().unwrap()])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())

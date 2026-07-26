@@ -2191,16 +2191,10 @@ mod tests {
     #[tokio::test]
     #[cfg(unix)]
     async fn blocking_git_origin_child_is_killed_and_reaped_on_timeout() {
-        use std::os::unix::fs::PermissionsExt;
-
         let tmp = tempfile::tempdir().unwrap();
         let project = tmp.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
-        let fake_git = tmp.path().join("git");
-        write(&fake_git, "#!/bin/sh\nexec sleep 30\n");
-        let mut permissions = std::fs::metadata(&fake_git).unwrap().permissions();
-        permissions.set_mode(0o755);
-        std::fs::set_permissions(&fake_git, permissions).unwrap();
+        let fake_git = crate::test_fixtures::shared_test_executable();
 
         let started = std::time::Instant::now();
         let value = git_remote_origin_url_with_program(
