@@ -31,6 +31,9 @@ pub mod watcher;
 pub mod writer;
 pub mod ws;
 
+#[cfg(test)]
+pub(crate) mod test_fixtures;
+
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::net::SocketAddr;

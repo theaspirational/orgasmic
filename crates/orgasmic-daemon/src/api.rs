@@ -15087,13 +15087,7 @@ mod tests {
 
     fn seed_trusted_claude_executable(home: &Home) -> PathBuf {
         let path = home.bin().join("claude");
-        std::fs::create_dir_all(home.bin()).unwrap();
-        std::fs::write(&path, "#!/bin/sh\nexec true\n").unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        crate::test_fixtures::link_shared_test_executable(&path);
         path
     }
 
@@ -23001,32 +22995,18 @@ mod tests {
         let versions = home_root.join(".local/share/claude/versions");
         std::fs::create_dir_all(&versions).unwrap();
         let target = versions.join("2.1.217");
-        let script = format!(
-            "#!/bin/sh\n\
-             echo \"$0 $*\" > {trusted_log}\n\
-             previous=\n\
-             resumed=\n\
-             for arg in \"$@\"; do [ \"$previous\" != --resume ] || resumed=$arg; previous=$arg; done\n\
-             mkdir -p {projects_dir}\n\
-             printf '{{\"sessionId\":\"{fork_id}\",\"cwd\":\"{cwd}\",\"forkedFrom\":{{\"sessionId\":\"%s\"}}}}\\n' \"$resumed\" > {projects_dir}/{fork_id}.jsonl\n\
-             exec sleep 600\n",
-            trusted_log = trusted_log.display(),
-            projects_dir = projects_dir.display(),
-            fork_id = fork_id,
-            cwd = cwd.display(),
-        );
-        std::fs::write(&target, script).unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
-            let entry = home_root.join(".local/bin/claude");
-            std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
-            if entry.exists() {
-                std::fs::remove_file(&entry).ok();
-            }
-            std::os::unix::fs::symlink(&target, &entry).unwrap();
+        crate::test_fixtures::link_shared_test_executable(&target);
+        crate::test_fixtures::write_linked_fixture_text(&target, "orgasmic-mode", "claude-capture");
+        crate::test_fixtures::write_linked_fixture_value(&target, "trusted-log", trusted_log);
+        crate::test_fixtures::write_linked_fixture_value(&target, "projects-dir", projects_dir);
+        crate::test_fixtures::write_linked_fixture_text(&target, "fork-id", fork_id);
+        crate::test_fixtures::write_linked_fixture_value(&target, "cwd", cwd);
+        let entry = home_root.join(".local/bin/claude");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        if entry.exists() {
+            std::fs::remove_file(&entry).ok();
         }
+        std::os::unix::fs::symlink(&target, &entry).unwrap();
         pin_trusted_claude_binary(&Home::at(home_root.join("orgasmic-home")))
             .expect("argv-capture trusted claude layout")
     }
@@ -23050,13 +23030,7 @@ mod tests {
     #[cfg(unix)]
     fn seed_test_pinned_exec_wrapper(home: &Home) {
         let wrapper = home.bin_orgasmic();
-        std::fs::write(
-            &wrapper,
-            "#!/bin/sh\n[ \"$1\" = __exec-pinned ] || exit 97\nshift\ntarget=$1\nshift\nshift 3\nexec \"$target\" \"$@\"\n",
-        )
-        .unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_fixtures::link_shared_test_executable(&wrapper);
     }
 
     #[cfg(unix)]
@@ -23114,29 +23088,12 @@ mod tests {
         let versions = home_root.join(".local/share/claude/versions");
         std::fs::create_dir_all(&versions).unwrap();
         let target = versions.join("2.1.217");
-        let script = format!(
-            "#!/bin/sh\n\
-             n=0\n\
-             [ ! -f {counter} ] || n=$(cat {counter})\n\
-             n=$((n + 1))\n\
-             echo \"$n\" > {counter}\n\
-             if [ \"$n\" -eq 1 ]; then fork=fork-chain-first; else fork=fork-chain-second; fi\n\
-             previous=\n\
-             resumed=\n\
-             for arg in \"$@\"; do [ \"$previous\" != --resume ] || resumed=$arg; previous=$arg; done\n\
-             echo \"$0 $*\" >> {argv_log}\n\
-             mkdir -p {projects_dir}\n\
-             printf '{{\"sessionId\":\"%s\",\"cwd\":\"{cwd}\",\"forkedFrom\":{{\"sessionId\":\"%s\"}}}}\\n' \"$fork\" \"$resumed\" > {projects_dir}/$fork.jsonl\n\
-             sleep 2\n\
-             exit 42\n",
-            counter = counter.display(),
-            argv_log = argv_log.display(),
-            projects_dir = projects_dir.display(),
-            cwd = cwd.display(),
-        );
-        std::fs::write(&target, script).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        crate::test_fixtures::link_shared_test_executable(&target);
+        crate::test_fixtures::write_linked_fixture_text(&target, "orgasmic-mode", "claude-chain");
+        crate::test_fixtures::write_linked_fixture_value(&target, "argv-log", argv_log);
+        crate::test_fixtures::write_linked_fixture_value(&target, "counter", counter);
+        crate::test_fixtures::write_linked_fixture_value(&target, "projects-dir", projects_dir);
+        crate::test_fixtures::write_linked_fixture_value(&target, "cwd", cwd);
         let entry = home_root.join(".local/bin/claude");
         std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&target, &entry).unwrap();
@@ -24763,20 +24720,13 @@ mod tests {
     /// minimal interactive script that stays live and accepts `send_input`
     /// followups (hot-session regenerate path). Skips when rmux is unavailable
     /// — same pattern as orgasmic-drivers rmux live tests.
-    fn seed_test_artifactor_harness(home: &Home) -> Vec<String> {
-        let harness = home.user().join("artifactor-test-harness.sh");
-        write(
-            harness.clone(),
-            "#!/bin/sh\nwhile true; do\n  echo '> ready'\n  echo READY\n  IFS= read -r line || exit 0\n  echo \"ECHO:$line\"\ndone\n",
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&harness).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&harness, perms).unwrap();
-        }
-        vec![harness.display().to_string()]
+    fn seed_test_artifactor_harness(_home: &Home) -> Vec<String> {
+        vec![
+            crate::test_fixtures::shared_test_executable()
+                .display()
+                .to_string(),
+            "artifact-ready".into(),
+        ]
     }
 
     fn rmux_available_for_test() -> bool {
@@ -24785,20 +24735,13 @@ mod tests {
 
     /// Like `seed_test_artifactor_harness` but the harness sleeps before showing
     /// its composer prompt so an immediate followup hits the busy gate.
-    fn seed_busy_artifactor_harness(home: &Home) -> Vec<String> {
-        let harness = home.user().join("artifactor-busy-harness.sh");
-        write(
-            harness.clone(),
-            "#!/bin/sh\necho BOOTING\nsleep 120\nwhile true; do\n  echo '> ready'\n  IFS= read -r line || exit 0\n  echo \"ECHO:$line\"\ndone\n",
-        );
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(&harness).unwrap().permissions();
-            perms.set_mode(0o755);
-            std::fs::set_permissions(&harness, perms).unwrap();
-        }
-        vec![harness.display().to_string()]
+    fn seed_busy_artifactor_harness(_home: &Home) -> Vec<String> {
+        vec![
+            crate::test_fixtures::shared_test_executable()
+                .display()
+                .to_string(),
+            "artifact-busy".into(),
+        ]
     }
 
     #[test]
