@@ -2447,6 +2447,13 @@ pub fn inert_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::rmux::{
+        probe_rmux_binary,
+        test_tooling::{
+            assert_required_test_tooling, command_succeeds, skip_test_if_missing,
+            test_environment_lock, ToolRequirement,
+        },
+    };
     use serde_json::Value;
     use std::collections::VecDeque;
     #[cfg(unix)]
@@ -2511,6 +2518,28 @@ mod tests {
             kill_tmux_session(&session).await;
         }
         ok
+    }
+
+    async fn tmux_and_command_available(command: Option<&str>) -> (bool, bool) {
+        let _environment = test_environment_lock().lock().await;
+        (
+            tmux_spawn_usable().await,
+            command.is_none_or(command_available),
+        )
+    }
+
+    #[tokio::test]
+    async fn required_test_tooling_is_present() {
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        assert_required_test_tooling(&[
+            ToolRequirement::new("rmux", 9, probe_rmux_binary().usable()),
+            ToolRequirement::new("tmux", 8, tmux_spawn_usable().await),
+            ToolRequirement::new("sleep", 1, command_available("sleep")),
+            ToolRequirement::new("bash", 1, command_available("bash")),
+            ToolRequirement::new("claude", 7, command_succeeds("claude", &["--version"])),
+            ToolRequirement::new("codex", 1, command_available("codex")),
+        ]);
     }
 
     fn ctx(run_id: &str, kind: RunKind) -> DriverContext {
@@ -2962,8 +2991,11 @@ mod tests {
     #[allow(clippy::await_holding_lock)]
     async fn gated_launch_excludes_candidate_inserted_before_release_boundary() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await || !command_available("sleep") {
-            eprintln!("skipping gated launch gap regression: tmux/sleep unavailable");
+        let (tmux_available, sleep_available) = tmux_and_command_available(Some("sleep")).await;
+        if skip_test_if_missing(
+            "gated_launch_excludes_candidate_inserted_before_release_boundary",
+            &[("tmux", tmux_available), ("sleep", sleep_available)],
+        ) {
             return;
         }
         let _lock = FORK_DISCOVERY_TEST_LOCK
@@ -3887,14 +3919,14 @@ mod tests {
         assert_eq!(driver().transport(), "tmux");
     }
 
-    /// Real-tmux smoke. Skipped on hosts without `tmux` on PATH so CI
-    /// without tmux still passes. When tmux is present we verify the
-    /// driver actually spawns + tears down a session.
+    /// Real-tmux smoke. The binary sentinel reports hosts without `tmux`;
+    /// when tmux is present we verify the driver actually spawns + tears
+    /// down a session.
     #[tokio::test]
     async fn real_tmux_session_lifecycle() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await {
-            eprintln!("skipping real_tmux_session_lifecycle: tmux unavailable or unusable");
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing("real_tmux_session_lifecycle", &[("tmux", tmux_available)]) {
             return;
         }
         let d = driver();
@@ -3950,10 +3982,11 @@ mod tests {
         // prove the spawned pane actually has it set, not just that the
         // spawn plan carries a run id.
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await {
-            eprintln!(
-                "skipping real_tmux_session_exports_orgasmic_run_id: tmux unavailable or unusable"
-            );
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "real_tmux_session_exports_orgasmic_run_id",
+            &[("tmux", tmux_available)],
+        ) {
             return;
         }
         let out_dir = tempfile::tempdir().unwrap();
@@ -3986,10 +4019,11 @@ mod tests {
     #[tokio::test]
     async fn real_tmux_control_drop_without_release_kills_session() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await {
-            eprintln!(
-                "skipping real_tmux_control_drop_without_release_kills_session: tmux unavailable or unusable"
-            );
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "real_tmux_control_drop_without_release_kills_session",
+            &[("tmux", tmux_available)],
+        ) {
             return;
         }
         let session_name = {
@@ -4023,19 +4057,21 @@ mod tests {
         assert!(!listed.success(), "tmux session should be gone after drop");
     }
 
-    /// Real claude TUI smoke. Skipped unless both `tmux` and `claude` are
-    /// available. This verifies the prompt-ready detector against the live
-    /// pane before the driver pastes an initial prompt.
+    /// Real claude TUI smoke. This verifies the prompt-ready detector against
+    /// the live pane before the driver pastes an initial prompt.
     #[tokio::test]
+    #[ignore = "requires a live Claude TUI; run this test explicitly"]
     async fn real_claude_input_ready_smoke() {
-        if !tmux_spawn_usable().await || !command_available("claude") {
-            eprintln!("skipping real_claude_input_ready_smoke: tmux/claude unavailable");
-            return;
-        }
-        if std::env::var_os("ORGASMIC_RUN_REAL_CLAUDE_SMOKE").is_none() {
-            eprintln!(
-                "skipping real_claude_input_ready_smoke: set ORGASMIC_RUN_REAL_CLAUDE_SMOKE=1 to exercise real claude"
-            );
+        let _live_guard = live_session_guard();
+        let (tmux_available, claude_available) = tmux_and_command_available(Some("claude")).await;
+        if skip_test_if_missing(
+            "real_claude_input_ready_smoke",
+            &[("tmux", tmux_available), ("claude", claude_available)],
+        ) {
+            assert_required_test_tooling(&[
+                ToolRequirement::new("tmux", 1, tmux_available),
+                ToolRequirement::new("claude", 1, claude_available),
+            ]);
             return;
         }
 
@@ -4072,10 +4108,11 @@ mod tests {
     #[tokio::test]
     async fn real_tmux_acquire_returns_before_prompt_delivery() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await {
-            eprintln!(
-                "skipping real_tmux_acquire_returns_before_prompt_delivery: tmux unavailable"
-            );
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "real_tmux_acquire_returns_before_prompt_delivery",
+            &[("tmux", tmux_available)],
+        ) {
             return;
         }
         let d = driver();
@@ -4103,10 +4140,11 @@ mod tests {
     #[tokio::test]
     async fn real_tmux_early_exit_without_finalize_is_failure() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await || !command_available("bash") {
-            eprintln!(
-                "skipping real_tmux_early_exit_without_finalize_is_failure: tmux/bash unavailable"
-            );
+        let (tmux_available, bash_available) = tmux_and_command_available(Some("bash")).await;
+        if skip_test_if_missing(
+            "real_tmux_early_exit_without_finalize_is_failure",
+            &[("tmux", tmux_available), ("bash", bash_available)],
+        ) {
             return;
         }
         let d = driver();
@@ -4147,8 +4185,11 @@ mod tests {
     #[tokio::test]
     async fn real_tmux_prompt_bundle_is_consumed() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await {
-            eprintln!("skipping real_tmux_prompt_bundle_is_consumed: tmux unavailable or unusable");
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "real_tmux_prompt_bundle_is_consumed",
+            &[("tmux", tmux_available)],
+        ) {
             return;
         }
         let d = driver();
@@ -4191,10 +4232,11 @@ mod tests {
     #[tokio::test]
     async fn real_tmux_attach_proves_existing_session() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable().await {
-            eprintln!(
-                "skipping real_tmux_attach_proves_existing_session: tmux unavailable or unusable"
-            );
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "real_tmux_attach_proves_existing_session",
+            &[("tmux", tmux_available)],
+        ) {
             return;
         }
         let d = driver();

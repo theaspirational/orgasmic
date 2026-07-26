@@ -5,6 +5,9 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+};
 use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
     CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
@@ -18,6 +21,15 @@ use tokio::net::TcpListener;
 use tokio::time::{timeout, Duration};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+
+#[test]
+fn required_test_tooling_is_present() {
+    assert_required_test_tooling(&[
+        ToolRequirement::new("claude", 1, which("claude").is_some()),
+        ToolRequirement::new("cursor-agent", 1, which("cursor-agent").is_some()),
+        ToolRequirement::new("codex", 1, which("codex").is_some()),
+    ]);
+}
 
 #[derive(Clone)]
 struct MockAdapter {
@@ -1903,8 +1915,10 @@ async fn installed_harnesses_answer_their_own_readiness_probe() {
 
     let mut exercised = 0;
     for case in cases {
-        if which(case.binary).is_none() {
-            eprintln!("skipping {}: not installed", case.binary);
+        if skip_test_if_missing(
+            "installed_harnesses_answer_their_own_readiness_probe",
+            &[(case.binary, which(case.binary).is_some())],
+        ) {
             continue;
         }
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");

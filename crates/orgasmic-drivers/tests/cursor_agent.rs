@@ -1,6 +1,9 @@
 use std::process::{Command, Stdio};
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+};
 use orgasmic_drivers::{
     driver_for, CursorAgentDriver, DriverConfig, DriverContext, RunKind, WorkerDriver, TRANSPORTS,
 };
@@ -126,26 +129,18 @@ fn unsupported_endpoint_fails_validation() {
         .contains("endpoint must be 'stdio' or empty"));
 }
 
-/// Live smoke against the real `cursor-agent` CLI. Double-gated so it never runs
-/// (and never flakes on auth/network) by accident: it requires BOTH an explicit
-/// opt-in env var `ORGASMIC_LIVE_CURSOR_SMOKE=1` AND `cursor-agent` on PATH. The
-/// env gate exists because a host can have cursor-agent installed but not
-/// authenticated, which otherwise makes this test time out environmentally in
-/// CI (TASK-104.2). Run it deliberately with:
-///   ORGASMIC_LIVE_CURSOR_SMOKE=1 cargo test -p orgasmic-drivers real_cursor_agent
+/// Live smoke against the real `cursor-agent` CLI. Ignored so it never runs
+/// (and never flakes on auth/network) by accident. Run it deliberately with:
+///   cargo test -p orgasmic-drivers --test cursor_agent real_cursor_agent -- --ignored
 #[tokio::test]
+#[ignore = "requires a live authenticated cursor-agent; run this test explicitly"]
 async fn real_cursor_agent_stream_json_bridge_emits_events_and_releases() {
-    if std::env::var("ORGASMIC_LIVE_CURSOR_SMOKE").as_deref() != Ok("1") {
-        eprintln!(
-            "skipping real_cursor_agent_stream_json_bridge_emits_events_and_releases: \
-             set ORGASMIC_LIVE_CURSOR_SMOKE=1 to opt in"
-        );
-        return;
-    }
-    if !cursor_agent_available() {
-        eprintln!(
-            "skipping real_cursor_agent_stream_json_bridge_emits_events_and_releases: cursor-agent not on PATH"
-        );
+    let available = cursor_agent_available();
+    if skip_test_if_missing(
+        "real_cursor_agent_stream_json_bridge_emits_events_and_releases",
+        &[("cursor-agent", available)],
+    ) {
+        assert_required_test_tooling(&[ToolRequirement::new("cursor-agent", 1, available)]);
         return;
     }
 

@@ -4179,8 +4179,17 @@ mod tests {
     use orgasmic_core::session::TextStream;
     use orgasmic_core::{read_session_file, SessionEnvelope};
     use orgasmic_drivers::{
-        modes::tmux, BabysitterAck, BabysitterRequest, DriverError, DriverSession, TmuxTuiDriver,
-        TransitionAck, UserInputAck,
+        modes::{
+            rmux::{
+                probe_rmux_binary,
+                test_tooling::{
+                    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+                },
+            },
+            tmux,
+        },
+        BabysitterAck, BabysitterRequest, DriverError, DriverSession, TmuxTuiDriver, TransitionAck,
+        UserInputAck,
     };
     use serde_json::json;
 
@@ -6493,6 +6502,16 @@ mod tests {
         ok
     }
 
+    #[tokio::test]
+    async fn required_test_tooling_is_present() {
+        let _live_guard = live_session_guard();
+        assert_required_test_tooling(&[
+            ToolRequirement::new("rmux", 7, probe_rmux_binary().found),
+            ToolRequirement::new("tmux", 6, tmux_spawn_usable_for_test().await),
+            ToolRequirement::new("bash", 1, command_available_for_test("bash")),
+        ]);
+    }
+
     async fn tmux_has_session_for_test(session: &str) -> bool {
         tokio::process::Command::new("tmux")
             .args(["has-session", "-t", session])
@@ -6637,10 +6656,13 @@ mod tests {
     #[tokio::test]
     async fn tmux_process_exit_releases_supervisor_run_and_session() {
         let _live_guard = live_session_guard();
-        if !tmux_spawn_usable_for_test().await || !command_available_for_test("bash") {
-            eprintln!(
-                "skipping tmux_process_exit_releases_supervisor_run_and_session: tmux/bash unavailable"
-            );
+        if skip_test_if_missing(
+            "tmux_process_exit_releases_supervisor_run_and_session",
+            &[
+                ("tmux", tmux_spawn_usable_for_test().await),
+                ("bash", command_available_for_test("bash")),
+            ],
+        ) {
             return;
         }
         let (sup, dir, _w) = make_supervisor();

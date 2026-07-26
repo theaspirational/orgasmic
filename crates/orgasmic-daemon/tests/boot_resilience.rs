@@ -22,10 +22,34 @@ use std::time::Duration;
 
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions};
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+};
 
 /// Generous next to a healthy boot (~50 ms measured) and still decisive: the
 /// pre-fix daemon did not bind in minutes, so this only fails on a real hang.
 const BOOT_DEADLINE: Duration = Duration::from_secs(20);
+
+fn unix_permission_denial_available_for_test() -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let locked = tmp.path().join("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let denied = std::fs::read_dir(&locked).is_err();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+    denied
+}
+
+#[test]
+fn required_test_tooling_is_present() {
+    assert_required_test_tooling(&[ToolRequirement::new(
+        "unix-permissions",
+        1,
+        unix_permission_denial_available_for_test(),
+    )]);
+}
 
 fn test_options() -> DaemonOptions {
     DaemonOptions {
@@ -189,9 +213,12 @@ fn an_unreadable_project_directory_cannot_stop_the_daemon_binding() {
     let locked_orgasmic = locked.join(".orgasmic");
     std::fs::set_permissions(&locked_orgasmic, std::fs::Permissions::from_mode(0o000)).unwrap();
     // root ignores the mode bits, so there would be nothing to assert.
-    if std::fs::read_dir(&locked_orgasmic).is_ok() {
+    let permission_denial_available = std::fs::read_dir(&locked_orgasmic).is_err();
+    if skip_test_if_missing(
+        "an_unreadable_project_directory_cannot_stop_the_daemon_binding",
+        &[("unix-permissions", permission_denial_available)],
+    ) {
         std::fs::set_permissions(&locked_orgasmic, std::fs::Permissions::from_mode(0o755)).unwrap();
-        eprintln!("skipping: this process can read a 0o000 directory (running as root?)");
         return;
     }
 

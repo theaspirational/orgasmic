@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+};
 use reqwest::header::AUTHORIZATION;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -35,6 +38,18 @@ impl Drop for LiveSessionGuard {
     fn drop(&mut self) {
         let _ = fs2::FileExt::unlock(&self.0);
     }
+}
+
+fn tmux_available_for_test() -> bool {
+    Command::new("tmux")
+        .arg("-V")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+#[test]
+fn required_test_tooling_is_present() {
+    assert_required_test_tooling(&[ToolRequirement::new("tmux", 1, tmux_available_for_test())]);
 }
 
 fn dispatch_artifact_has_content(path: &Path) -> bool {
@@ -4223,13 +4238,10 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn app_manager_release_via_cli_orgasmic_run_id() {
     let _live_guard = live_session_guard();
-    if !Command::new("tmux")
-        .arg("-V")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-    {
-        eprintln!("skipping app_manager_release_via_cli_orgasmic_run_id: tmux not on PATH");
+    if skip_test_if_missing(
+        "app_manager_release_via_cli_orgasmic_run_id",
+        &[("tmux", tmux_available_for_test())],
+    ) {
         return;
     }
     let tmp = tempfile::tempdir().unwrap();

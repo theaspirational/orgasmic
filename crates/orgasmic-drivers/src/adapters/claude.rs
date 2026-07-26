@@ -1081,6 +1081,7 @@ pub fn simulated_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
     use crate::{AcpStdioDriver, AcpWsDriver, AttachOutcome, ClaudeAcpDriver, WorkerDriver};
     use orgasmic_core::RuntimeIdentity;
     use tokio::time::{timeout, Duration};
@@ -1137,8 +1138,10 @@ mod tests {
         let _guard = env_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        if !claude_available() {
-            eprintln!("skipping: `claude` not on PATH");
+        if skip_test_if_missing(
+            "production_shape_with_no_endpoint_composes_a_real_run",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
 
@@ -1162,8 +1165,10 @@ mod tests {
         let _guard = env_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        if !claude_available() {
-            eprintln!("skipping: `claude` not on PATH");
+        if skip_test_if_missing(
+            "effort_reaches_the_argv_from_the_daemons_config_shape",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
 
@@ -1189,8 +1194,10 @@ mod tests {
         let _guard = env_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        if !claude_available() {
-            eprintln!("skipping: `claude` not on PATH");
+        if skip_test_if_missing(
+            "native_login_mode_drops_bare_and_isolates_without_it",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
         let (args, _) = composed_args(subprocess_config());
@@ -1214,8 +1221,10 @@ mod tests {
     async fn api_key_mode_keeps_the_light_bare_path() {
         let _guard = env_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
-        if !claude_available() {
-            eprintln!("skipping: `claude` not on PATH");
+        if skip_test_if_missing(
+            "api_key_mode_keeps_the_light_bare_path",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
         std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-test-not-real");
@@ -1363,8 +1372,10 @@ mod tests {
     async fn the_probe_and_the_launch_resolve_the_same_credential() {
         let _guard = env_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
-        if !claude_available() {
-            eprintln!("skipping: `claude` not on PATH");
+        if skip_test_if_missing(
+            "the_probe_and_the_launch_resolve_the_same_credential",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
         std::env::set_var("ANTHROPIC_API_KEY", "");
@@ -1497,8 +1508,10 @@ mod tests {
         let _guard = env_lock().lock().await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        if !claude_available() {
-            eprintln!("skipping: `claude` not on PATH");
+        if skip_test_if_missing(
+            "every_mode_persists_a_locatable_native_session",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
         let (args, native) = composed_args(subprocess_config());
@@ -1709,8 +1722,7 @@ mod tests {
     // may be held across await points without triggering the
     // `await_holding_lock` clippy lint — that lint targets only std::sync::Mutex.
     fn env_lock() -> &'static tokio::sync::Mutex<()> {
-        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+        test_environment_lock()
     }
 
     /// A `claude` that answers `--version` (so the adapter sees a real binary
@@ -1912,10 +1924,10 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
     /// verifies stdio JSONL parsing without spending tokens.
     #[tokio::test]
     async fn real_claude_stream_json_bridge_reports_auth_error() {
-        if !claude_available() {
-            eprintln!(
-                "skipping real_claude_stream_json_bridge_reports_auth_error: claude not on PATH"
-            );
+        if skip_test_if_missing(
+            "real_claude_stream_json_bridge_reports_auth_error",
+            &[("claude", claude_available())],
+        ) {
             return;
         }
         // Hold the env lock to prevent simulated_acquire_emits_ready_and_release
