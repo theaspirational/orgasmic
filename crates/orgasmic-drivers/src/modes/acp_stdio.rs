@@ -307,15 +307,38 @@ fn compose_stdio_request(
     }
 
     match request {
+        // Keep the adapter's `binary` and `args`. `stdio_spawn` is only the base
+        // the adapter extends — it composes credential-mode flags, the pinned
+        // `--session-id` and `--model` on top of it. Rebuilding from `spawn`
+        // here discarded all of them and spawned the bare base instead, so the
+        // session id was minted, recorded in NativeRuntime, and never given to
+        // the harness (TASK-SGRTX). The `..` that swallowed `args` is why that
+        // read as deliberate for as long as it did.
         HarnessRequest::Subprocess {
+            binary,
+            args,
             stdin_payload,
             close_stdin,
             env: request_env,
-            ..
-        } => Ok((
-            subprocess_from_stdio_spawn(spawn, ctx, request_env, stdin_payload, close_stdin),
-            None,
-        )),
+            cwd: request_cwd,
+        } => {
+            let mut env: BTreeMap<String, String> = spawn.env.iter().cloned().collect();
+            // adapter-composed env (e.g. api key) overrides spawn defaults
+            env.extend(request_env);
+            Ok((
+                HarnessRequest::Subprocess {
+                    binary,
+                    args,
+                    env,
+                    cwd: request_cwd
+                        .or_else(|| spawn.cwd.clone())
+                        .or_else(|| ctx.worktree.clone()),
+                    stdin_payload,
+                    close_stdin,
+                },
+                None,
+            ))
+        }
         HarnessRequest::Simulated { .. }
             if adapter.upgrades_simulated_to_subprocess() && command_available(&spawn.command) =>
         {
@@ -1131,5 +1154,100 @@ impl DriverControl for AcpStdioControl {
                     .map_err(|_| DriverError::Transport("acp-stdio release ack dropped".into()))?
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::shell::ShellAdapter;
+    use orgasmic_core::RuntimeIdentity;
+
+    fn base_spawn() -> StdioSpawn {
+        StdioSpawn {
+            command: "claude".into(),
+            args: vec!["-p".into(), "--verbose".into()],
+            cwd: None,
+            env: vec![("FROM_SPAWN".into(), "spawn".into())],
+        }
+    }
+
+    fn ctx() -> DriverContext {
+        DriverContext {
+            identity: RuntimeIdentity::new("run-acp-stdio-test", "boot-test"),
+            run_kind: RunKind::Worker,
+            task_id: "TASK-ACP-STDIO".into(),
+            worker_id: "test".into(),
+            project_id: None,
+            worktree: None,
+            babysitter_target: None,
+        }
+    }
+
+    /// The adapter extends `stdio_spawn`; the mode must not undo that.
+    ///
+    /// This asserts on what `compose_stdio_request` RETURNS — the argv that is
+    /// actually spawned. The pre-existing coverage asserted on what the claude
+    /// adapter composes, one layer below, and so passed for as long as the mode
+    /// discarded it: the session id was minted, recorded in NativeRuntime, and
+    /// never handed to the harness (TASK-SGRTX).
+    #[test]
+    fn composed_argv_survives_the_mode_instead_of_being_rebuilt_from_spawn() {
+        let spawn = base_spawn();
+        let mut adapter = ShellAdapter::new();
+        // What an adapter composes: the spawn base plus credential-mode,
+        // session-id and model flags layered on top.
+        let composed = HarnessRequest::Subprocess {
+            binary: "claude".into(),
+            args: vec![
+                "--strict-mcp-config".into(),
+                "-p".into(),
+                "--verbose".into(),
+                "--session-id".into(),
+                "pinned-session-id".into(),
+                "--model".into(),
+                "claude-sonnet-5".into(),
+            ],
+            env: BTreeMap::from([("FROM_ADAPTER".to_string(), "adapter".to_string())]),
+            cwd: None,
+            stdin_payload: Some(b"payload".to_vec()),
+            close_stdin: false,
+        };
+
+        let (request, session_init) = compose_stdio_request(
+            &spawn,
+            &ctx(),
+            &DriverConfig::empty(),
+            &mut adapter,
+            composed,
+        )
+        .expect("compose");
+
+        assert!(session_init.is_none());
+        let HarnessRequest::Subprocess {
+            binary, args, env, ..
+        } = request
+        else {
+            panic!("expected a Subprocess request");
+        };
+
+        assert_eq!(binary, "claude");
+        // The three flags the mode used to drop on the floor.
+        assert!(
+            args.windows(2)
+                .any(|w| w == ["--session-id", "pinned-session-id"]),
+            "the pinned session id must reach the spawned process: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "--strict-mcp-config"),
+            "the resolved credential mode must reach the spawned process: {args:?}"
+        );
+        assert!(
+            args.windows(2).any(|w| w == ["--model", "claude-sonnet-5"]),
+            "the model must reach the spawned process: {args:?}"
+        );
+        // env still merges, with the adapter's values layered over spawn's.
+        assert_eq!(env.get("FROM_SPAWN").map(String::as_str), Some("spawn"));
+        assert_eq!(env.get("FROM_ADAPTER").map(String::as_str), Some("adapter"));
     }
 }
