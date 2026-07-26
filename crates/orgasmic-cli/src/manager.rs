@@ -374,6 +374,20 @@ struct TaskLifecycleInfo {
 struct CleanupOutcome {
     status: CleanupStatus,
     error: Option<String>,
+    salvage: Option<SalvageCommit>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SalvageCommit {
+    sha: String,
+    file_count: usize,
+    worktree_removed: bool,
+}
+
+#[derive(Debug)]
+struct WorktreeRemovalOutcome {
+    salvage: Option<SalvageCommit>,
+    error: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -475,6 +489,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
             &plan.project_root,
             &plan.worktree_path,
             &plan.branch,
+            &plan.dispatch_task(),
             &plan.last_path,
             &plan.stdout_path,
         );
@@ -515,6 +530,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
                             plan.worktree_path.display(),
                             plan.branch
                         ))),
+                        salvage: None,
                     },
                 }
             } else {
@@ -522,6 +538,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
                     &plan.project_root,
                     &plan.worktree_path,
                     &plan.branch,
+                    &plan.dispatch_task(),
                     &plan.last_path,
                     &plan.stdout_path,
                 )
@@ -651,6 +668,7 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
         CleanupOutcome {
             status: CleanupStatus::CleanupAlreadyRun,
             error: None,
+            salvage: None,
         }
     } else {
         let remove_worktree = args.worktree_remove && !args.no_worktree_remove;
@@ -662,6 +680,19 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
             cleanup.status.as_str(),
             cleanup.error.as_deref().unwrap_or("-")
         );
+    }
+    if let Some(salvage) = &cleanup.salvage {
+        if salvage.worktree_removed {
+            println!(
+                "cleanup: worktree salvaged sha={} files={}; worktree removed",
+                salvage.sha, salvage.file_count
+            );
+        } else {
+            println!(
+                "cleanup: worktree salvaged sha={} files={}; worktree retained after removal failure",
+                salvage.sha, salvage.file_count
+            );
+        }
     }
     let mut responses = Vec::new();
     match args.status {
@@ -1328,19 +1359,36 @@ fn strip_markdown_heading(line: &str) -> &str {
     }
 }
 
-fn worktree_has_uncommitted_changes(project_root: &Path) -> bool {
-    Command::new("git")
+fn worktree_status_porcelain(project_root: &Path) -> Result<Vec<u8>> {
+    let output = Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(project_root)
         .output()
-        .map(|output| output.status.success() && !output.stdout.is_empty())
-        .unwrap_or(false)
+        .context("git status --porcelain")?;
+    if !output.status.success() {
+        bail!(
+            "git status --porcelain failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    Ok(output.stdout)
+}
+
+fn worktree_has_uncommitted_changes(project_root: &Path) -> Result<bool> {
+    Ok(!worktree_status_porcelain(project_root)?.is_empty())
+}
+
+fn worktree_changed_file_count(project_root: &Path) -> Result<usize> {
+    Ok(worktree_status_porcelain(project_root)?
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .count())
 }
 
 /// Commit the worktree if dirty (so commit-stall is structurally impossible,
 /// acceptance #2), then return the resulting HEAD sha either way.
 fn commit_worktree(project_root: &Path, message: &str) -> Result<String> {
-    if worktree_has_uncommitted_changes(project_root) {
+    if worktree_has_uncommitted_changes(project_root)? {
         let add = Command::new("git")
             .args(["add", "-A"])
             .current_dir(project_root)
@@ -1363,6 +1411,9 @@ fn commit_worktree(project_root: &Path, message: &str) -> Result<String> {
                 String::from_utf8_lossy(&commit.stderr)
             );
         }
+        if worktree_has_uncommitted_changes(project_root)? {
+            bail!("git commit left uncommitted changes in the worktree");
+        }
     }
     let sha = Command::new("git")
         .args(["rev-parse", "HEAD"])
@@ -1376,6 +1427,22 @@ fn commit_worktree(project_root: &Path, message: &str) -> Result<String> {
         );
     }
     Ok(String::from_utf8_lossy(&sha.stdout).trim().to_string())
+}
+
+fn salvage_worktree_if_dirty(worktree: &Path, task: &str) -> Result<Option<SalvageCommit>> {
+    if !worktree_has_uncommitted_changes(worktree)? {
+        return Ok(None);
+    }
+    let file_count = worktree_changed_file_count(worktree)?;
+    let sha = commit_worktree(
+        worktree,
+        &format!("{task}: manager-salvaged uncommitted worker output"),
+    )?;
+    Ok(Some(SalvageCommit {
+        sha,
+        file_count,
+        worktree_removed: false,
+    }))
 }
 
 fn current_git_branch(project_root: &Path) -> Result<String> {
@@ -1979,11 +2046,15 @@ fn remove_worktree_if_present(
     path: &Path,
     last_path: Option<&Path>,
     stdout_path: Option<&Path>,
-) -> Result<()> {
+    task: &str,
+) -> Result<WorktreeRemovalOutcome> {
     if !path.exists() {
-        return Ok(());
+        return Ok(WorktreeRemovalOutcome {
+            salvage: None,
+            error: None,
+        });
     }
-    remove_worktree_required(project_root, path, last_path, stdout_path)
+    remove_worktree_required(project_root, path, last_path, stdout_path, task)
 }
 
 fn remove_worktree_required(
@@ -1991,7 +2062,8 @@ fn remove_worktree_required(
     path: &Path,
     last_path: Option<&Path>,
     stdout_path: Option<&Path>,
-) -> Result<()> {
+    task: &str,
+) -> Result<WorktreeRemovalOutcome> {
     if !path.exists() {
         bail!("worktree path missing: {}", path.display());
     }
@@ -2004,23 +2076,38 @@ fn remove_worktree_required(
     .map_err(|err| anyhow::anyhow!(err))?;
     orgasmic_core::verify_dispatch_worktree_identity(&artifacts, path)
         .map_err(|err| anyhow::anyhow!(err))?;
-    let output = Command::new("git")
+    let mut salvage = salvage_worktree_if_dirty(path, task)?;
+    let output = match Command::new("git")
         .args(["worktree", "remove", "--force"])
         .arg(path)
         .current_dir(project_root)
         .output()
-        .with_context(|| format!("git worktree remove {}", path.display()))?;
+    {
+        Ok(output) => output,
+        Err(err) => {
+            return Ok(WorktreeRemovalOutcome {
+                salvage,
+                error: Some(format!("git worktree remove {}: {err}", path.display())),
+            });
+        }
+    };
     if !output.status.success() {
-        bail!(
-            "git worktree remove failed: {}{}",
-            String::from_utf8_lossy(&output.stderr),
-            String::from_utf8_lossy(&output.stdout)
-        );
+        return Ok(WorktreeRemovalOutcome {
+            salvage,
+            error: Some(format!(
+                "git worktree remove failed: {}{}",
+                String::from_utf8_lossy(&output.stderr),
+                String::from_utf8_lossy(&output.stdout)
+            )),
+        });
     }
-    orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
-        .map_err(|err| anyhow::anyhow!(err))
-        .with_context(|| format!("prune dispatch artifacts for {}", path.display()))?;
-    Ok(())
+    if let Some(salvage) = &mut salvage {
+        salvage.worktree_removed = true;
+    }
+    let error = orgasmic_core::prune_validated_dispatch_attempt(&artifacts)
+        .err()
+        .map(|err| format!("prune dispatch artifacts for {}: {err}", path.display()));
+    Ok(WorktreeRemovalOutcome { salvage, error })
 }
 
 async fn request_daemon_dispatch_cleanup(
@@ -2059,6 +2146,7 @@ fn daemon_cleanup_to_outcome(
         } else {
             Some(sanitize_tx_value(&errors.join("; ")))
         },
+        salvage: None,
     })
 }
 
@@ -2066,6 +2154,7 @@ fn cleanup_created_resources(
     project_root: &Path,
     path: &Path,
     branch: &str,
+    task: &str,
     last_path: &Path,
     stdout_path: &Path,
 ) -> CleanupOutcome {
@@ -2078,18 +2167,26 @@ fn cleanup_created_resources(
             return CleanupOutcome {
                 status: CleanupStatus::BranchFailed,
                 error: Some(sanitize_tx_value(&format!("branch validation: {err}"))),
+                salvage: None,
             };
         }
     };
 
-    match remove_worktree_if_present(project_root, path, Some(last_path), Some(stdout_path)) {
-        Ok(()) => {}
+    let mut salvage = None;
+    match remove_worktree_if_present(project_root, path, Some(last_path), Some(stdout_path), task) {
+        Ok(outcome) => {
+            salvage = outcome.salvage;
+            if let Some(err) = outcome.error {
+                worktree_failed = true;
+                errors.push(format!("worktree: {err}"));
+            }
+        }
         Err(err) => {
             worktree_failed = true;
             errors.push(format!("worktree: {err}"));
         }
     }
-    if !worktree_failed {
+    if !worktree_failed && salvage.is_none() {
         if let Err(err) =
             delete_branch_if_matches(project_root, branch, expected_branch_oid.as_deref())
         {
@@ -2111,6 +2208,7 @@ fn cleanup_created_resources(
         } else {
             Some(sanitize_tx_value(&errors.join("; ")))
         },
+        salvage,
     }
 }
 
@@ -2135,18 +2233,29 @@ fn cleanup_dispatch(
     let mut branch_failed = false;
     let mut worktree_missing = false;
     let mut errors = Vec::new();
+    let mut salvage = None;
 
     if remove_worktree {
         match &open.worktree {
             Some(worktree) => {
-                if let Err(err) = remove_worktree_required(
+                match remove_worktree_required(
                     project_root,
                     worktree,
                     last_path.as_deref(),
                     stdout_path.as_deref(),
+                    &task_list_property(&open.tasks),
                 ) {
-                    worktree_failed = true;
-                    errors.push(format!("worktree: {err}"));
+                    Ok(outcome) => {
+                        salvage = outcome.salvage;
+                        if let Some(err) = outcome.error {
+                            worktree_failed = true;
+                            errors.push(format!("worktree: {err}"));
+                        }
+                    }
+                    Err(err) => {
+                        worktree_failed = true;
+                        errors.push(format!("worktree: {err}"));
+                    }
                 }
             }
             None => {
@@ -2156,7 +2265,7 @@ fn cleanup_dispatch(
         }
     }
 
-    if branch_delete {
+    if branch_delete && salvage.is_none() {
         match &open.branch {
             Some(branch) => {
                 if let Err(err) = delete_branch(project_root, branch) {
@@ -2185,6 +2294,7 @@ fn cleanup_dispatch(
         } else {
             Some(sanitize_tx_value(&errors.join("; ")))
         },
+        salvage,
     }
 }
 
@@ -2195,6 +2305,13 @@ fn push_cleanup_extra(extra: &mut Vec<(String, String)>, cleanup: &CleanupOutcom
     ));
     if let Some(error) = optional_value(cleanup.error.as_deref()) {
         extra.push(("CLEANUP_ERROR".to_string(), error));
+    }
+    if let Some(salvage) = &cleanup.salvage {
+        extra.push(("SALVAGE_SHA".to_string(), salvage.sha.clone()));
+        extra.push((
+            "SALVAGE_FILE_COUNT".to_string(),
+            salvage.file_count.to_string(),
+        ));
     }
 }
 
@@ -3797,6 +3914,7 @@ mod tests {
             root,
             &invalid_worktree,
             "cleanup-candidate",
+            "TASK-CLEANUP",
             &root.join("missing-last.txt"),
             &root.join("missing-stdout.log"),
         );
@@ -3804,5 +3922,194 @@ mod tests {
         assert!(resolve_branch_oid(root, "cleanup-candidate")
             .unwrap()
             .is_some());
+    }
+
+    struct DispatchCleanupFixture {
+        _tmp: tempfile::TempDir,
+        root: PathBuf,
+        worktree: PathBuf,
+        branch: String,
+        last: PathBuf,
+        stdout: PathBuf,
+    }
+
+    fn dispatch_cleanup_fixture(slug: &str) -> DispatchCleanupFixture {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().to_path_buf();
+        for args in [
+            vec!["init", "-q"],
+            vec!["config", "user.name", "Test"],
+            vec!["config", "user.email", "test@example.com"],
+        ] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        std::fs::write(root.join("base.txt"), "base\n").unwrap();
+        for args in [vec!["add", "base.txt"], vec!["commit", "-qm", "init"]] {
+            assert!(Command::new("git")
+                .args(args)
+                .current_dir(&root)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let branch = format!("{slug}-impl");
+        let dispatch_dir = root.join(".orgasmic/tmp/dispatch").join(slug);
+        let worktree = dispatch_dir.join("worktree");
+        std::fs::create_dir_all(worktree.parent().unwrap()).unwrap();
+        assert!(Command::new("git")
+            .args(["worktree", "add", "-q", "-b", &branch])
+            .arg(&worktree)
+            .current_dir(&root)
+            .status()
+            .unwrap()
+            .success());
+        let brief = dispatch_dir.join(format!("{slug}-impl-brief.md"));
+        let (_, last, stdout) =
+            dispatch_artifact_paths_for_attempt(&root, &brief, "aaaaaaaa11111111bbbbbbbb22222222");
+        std::fs::create_dir_all(last.parent().unwrap()).unwrap();
+        std::fs::write(&last, "summary\n").unwrap();
+        std::fs::write(&stdout, "output\n").unwrap();
+        DispatchCleanupFixture {
+            _tmp: tmp,
+            root,
+            worktree,
+            branch,
+            last,
+            stdout,
+        }
+    }
+
+    fn dispatch_cleanup_record(fixture: &DispatchCleanupFixture, task: &str) -> DispatchRecord {
+        let mut open = architector_record();
+        open.tasks = vec![task.to_string()];
+        open.kind = "implementer".to_string();
+        open.worktree = Some(fixture.worktree.clone());
+        open.branch = Some(fixture.branch.clone());
+        open.last_path = Some(fixture.last.clone());
+        open.stdout_path = Some(fixture.stdout.clone());
+        open
+    }
+
+    #[test]
+    fn dispatch_close_preserves_dirty_worktree_output_on_branch() {
+        let fixture = dispatch_cleanup_fixture("task-salvage");
+        std::fs::write(
+            fixture.worktree.join("worker-output.txt"),
+            "unfinished work\n",
+        )
+        .unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-SALVAGE");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
+        let salvage = cleanup.salvage.as_ref().expect("dirty worktree salvaged");
+        assert_eq!(salvage.file_count, 1);
+        assert!(salvage.worktree_removed);
+        assert!(!fixture.worktree.exists());
+        let recovered = Command::new("git")
+            .args(["show", &format!("{}:worker-output.txt", fixture.branch)])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(
+            recovered.status.success(),
+            "dirty output was not recoverable from {}: {}",
+            fixture.branch,
+            String::from_utf8_lossy(&recovered.stderr)
+        );
+        assert_eq!(recovered.stdout, b"unfinished work\n");
+
+        let subject = Command::new("git")
+            .args(["show", "-s", "--format=%s", &salvage.sha])
+            .current_dir(&fixture.root)
+            .output()
+            .unwrap();
+        assert!(subject.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&subject.stdout).trim(),
+            "TASK-SALVAGE: manager-salvaged uncommitted worker output"
+        );
+
+        let close = close_aborted_request(
+            "orgasmic",
+            &open,
+            "TASK-SALVAGE",
+            "worker interrupted",
+            &cleanup,
+        );
+        assert_eq!(
+            close
+                .extra
+                .iter()
+                .find(|(key, _)| key == "SALVAGE_SHA")
+                .map(|(_, value)| value.as_str()),
+            Some(salvage.sha.as_str())
+        );
+        assert_eq!(
+            close
+                .extra
+                .iter()
+                .find(|(key, _)| key == "SALVAGE_FILE_COUNT")
+                .map(|(_, value)| value.as_str()),
+            Some("1")
+        );
+    }
+
+    #[test]
+    fn dispatch_close_clean_worktree_has_no_salvage_side_effects() {
+        let fixture = dispatch_cleanup_fixture("task-clean");
+        let before = resolve_branch_oid(&fixture.root, &fixture.branch).unwrap();
+        let open = dispatch_cleanup_record(&fixture, "TASK-CLEAN");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::Ok, "{:?}", cleanup.error);
+        assert_eq!(cleanup.salvage, None);
+        assert!(!fixture.worktree.exists());
+        assert_eq!(
+            resolve_branch_oid(&fixture.root, &fixture.branch).unwrap(),
+            before
+        );
+
+        let close = close_aborted_request("orgasmic", &open, "TASK-CLEAN", "clean close", &cleanup);
+        assert!(!close
+            .extra
+            .iter()
+            .any(|(key, _)| key.starts_with("SALVAGE_")));
+    }
+
+    #[test]
+    fn dispatch_close_does_not_remove_worktree_when_salvage_commit_fails() {
+        let fixture = dispatch_cleanup_fixture("task-failed-salvage");
+        std::fs::write(
+            fixture.worktree.join("worker-output.txt"),
+            "unfinished work\n",
+        )
+        .unwrap();
+        assert!(Command::new("git")
+            .args(["config", "user.name", ""])
+            .current_dir(&fixture.root)
+            .status()
+            .unwrap()
+            .success());
+        let open = dispatch_cleanup_record(&fixture, "TASK-FAILED-SALVAGE");
+
+        let cleanup = cleanup_dispatch(&fixture.root, &open, true, false);
+        assert_eq!(cleanup.status, CleanupStatus::WorktreeFailed);
+        assert!(cleanup.salvage.is_none());
+        assert!(cleanup
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("git commit failed")));
+        assert!(fixture.worktree.exists());
+        assert_eq!(
+            std::fs::read_to_string(fixture.worktree.join("worker-output.txt")).unwrap(),
+            "unfinished work\n"
+        );
+        assert!(worktree_has_uncommitted_changes(&fixture.worktree).unwrap());
     }
 }
