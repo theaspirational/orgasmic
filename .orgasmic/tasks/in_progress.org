@@ -725,6 +725,40 @@ Also weakened, worth restoring: the old pinned-exec wrapper asserted
 passing that argv failed loudly. The shared fixture falls through to exit 0
 instead.
 
+CORRECTION TO THE ABOVE [2026-07-26], same session: the sentence "the pressure is
+inside the rmux test path" states a real correlation but the mechanism it implies
+is DISPROVEN. rmux does not trip Gatekeeper.
+
+Measured directly, rmux 0.9.0 (crates.io, pinned =0.9.0) against tmux 3.x on the
+same machine:
+
+| operation                                | tmux    | rmux    | syspolicyd |
+|------------------------------------------|---------|---------|------------|
+| 15x create session + kill session         | 13.1 ms | 12.1 ms | +0.01 / +0.00 s |
+| 20x pane runs an already-warm script      |  6.9 ms | 12.8 ms | +0.00 / +0.01 s |
+| leftover sessions after all kills         | none    | none    | — |
+
+So rmux is leak-free and Gatekeeper-neutral at this level, and roughly 2x slower
+than tmux per pane spawn — which at 6 ms of absolute difference explains nothing.
+
+What survives: with rmux on PATH the suite is 106 s and syspolicyd burns +281 s;
+with rmux hidden it is 22 s and +32 s, one variable changed. The correlation is
+solid. The attribution is not. Whatever spends that CPU has not been identified,
+and it is NOT rmux exec-ing things.
+
+A better lead, found while checking: the hot-path test polls for the harness
+prompt `for _ in 0..40` at 250 ms — a 10 s ceiling, which is exactly the 10 s gap
+between the two run_ids in the original failure. The eight rmux tests also all
+take `live_session_guard()`, so they are serialized against each other while the
+other ~496 tests run in parallel around them. A serialized 10 s deadline under
+full-suite load is a plausible mechanism that needs no Gatekeeper story at all.
+
+THE EXPERIMENT THAT WOULD SETTLE IT
+These tests exist only in the rmux mode. Parameterize post_artifact_regenerate_*
+over rmux AND tmux. Red under rmux and green under tmux indicts rmux; red under
+both is ours. Right now the question cannot be answered, which is the actual
+problem.
+
 * IN_PROGRESS TASK-2BPWM dispatch-close destroys uncommitted worker output by default (git worktree remove --force, no dirty check) :dispatch:recovery:data-loss:bug:
 :PROPERTIES:
 :ID: TASK-2BPWM
