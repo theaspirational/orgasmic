@@ -79,6 +79,10 @@ pub const RMUX_REQUIRED_VERSION: &str = "0.9.0";
 /// honors the same override the SDK would.
 const RMUX_SDK_DAEMON_BINARY_ENV: &str = "RMUX_SDK_DAEMON_BINARY";
 
+/// Bound the CLI backstop used when the retained SDK transport cannot reap a
+/// session. Release is awaited on the daemon teardown path and must not hang.
+const RMUX_SESSION_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+
 pub struct RmuxDriver {
     adapter: Box<dyn HarnessEventAdapter>,
 }
@@ -659,8 +663,8 @@ impl WorkerDriver for RmuxDriver {
 
         // A live (non-inert) run owns a detached rmux session that must be
         // reaped on release/drop, or it lingers on the rmux daemon. The typed
-        // `Session` handle is the teardown path (`Session::kill`); inert runs
-        // own no session.
+        // `Session` handle is the primary teardown path and the CLI target is
+        // its bounded fallback; inert runs own no session.
         let rmux_bin = probe
             .path
             .clone()
@@ -848,8 +852,8 @@ struct LiveSession {
     lifecycle_task: JoinHandle<()>,
     startup_task: Option<JoinHandle<()>>,
     web_share: RmuxWebShareProof,
-    /// Typed session handle, retained so `release`/`Drop` can tear the detached
-    /// session down through `Session::kill` (no `kill-session` shell-out).
+    /// Typed session handle retained as the primary teardown path. A bounded
+    /// CLI `kill-session` is the backstop if this handle's transport is gone.
     session: rmux_sdk::Session,
 }
 
@@ -1212,6 +1216,35 @@ fn rmux_mouse_args(session: &str) -> [&str; 5] {
 
 async fn enable_rmux_mouse(bin: &str, session: &str) -> Result<(), DriverError> {
     run_rmux_cli(bin, &rmux_mouse_args(session)).await
+}
+
+async fn reap_rmux_session(
+    session: rmux_sdk::Session,
+    rmux_bin: Option<String>,
+    session_target: Option<String>,
+) -> Result<(), DriverError> {
+    let sdk_error = match session.kill().await {
+        Ok(_) => return Ok(()),
+        Err(error) => error,
+    };
+
+    let (Some(rmux_bin), Some(session_target)) = (rmux_bin, session_target) else {
+        return Err(DriverError::Transport(format!(
+            "rmux session reap failed through SDK ({sdk_error}); CLI fallback unavailable"
+        )));
+    };
+    let cli_args = ["kill-session", "-t", session_target.as_str()];
+    let cli_kill = run_rmux_cli(&rmux_bin, &cli_args);
+    match tokio::time::timeout(RMUX_SESSION_REAP_TIMEOUT, cli_kill).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(cli_error)) => Err(DriverError::Transport(format!(
+            "rmux session reap failed through SDK ({sdk_error}) and CLI fallback ({cli_error})"
+        ))),
+        Err(_) => Err(DriverError::Transport(format!(
+            "rmux session reap failed through SDK ({sdk_error}); CLI fallback timed out after \
+             {RMUX_SESSION_REAP_TIMEOUT:?}"
+        ))),
+    }
 }
 
 async fn rmux_capture_pane(bin: &str, session: &str) -> Result<String, DriverError> {
@@ -1609,16 +1642,15 @@ struct RmuxControl {
     send_child: SendChildOwner,
     terminal_emitted: Arc<AtomicBool>,
     released: bool,
-    /// Typed session handle for a live run, so `release`/`Drop` can tear it
-    /// down through `Session::kill`. `None` for inert runs, which own no rmux
-    /// session.
+    /// Typed session handle for a live run and the primary `release`/`Drop`
+    /// teardown path. `None` for inert runs, which own no rmux session.
     session: Option<rmux_sdk::Session>,
     /// Whether an implicit `Drop` (e.g. daemon shutdown) should reap the rmux
     /// session. `false` for system-wide and reattached runs, whose sessions are
     /// meant to outlive the daemon. Explicit `release` always reaps regardless.
     kill_on_drop: bool,
-    /// rmux CLI binary for paste-buffer/send-keys followup delivery. `None` on
-    /// inert runs (no live session to paste into).
+    /// rmux CLI binary for paste-buffer/send-keys delivery and reap fallback.
+    /// `None` on inert runs (no live session to address).
     rmux_bin: Option<String>,
     /// Detached session target name for CLI verbs. `None` on inert runs.
     session_target: Option<String>,
@@ -1762,6 +1794,20 @@ impl DriverControl for RmuxControl {
             return Ok(());
         }
         self.released = true;
+        // A release owns the terminal result. Mark it before killing the
+        // session so the lifecycle watcher cannot race in a pane-exit result.
+        let emit_completion = !self.terminal_emitted.swap(true, Ordering::SeqCst);
+
+        // The lifecycle watcher owns a Pane handle on the same ordered SDK
+        // transport as Session. Killing first is mandatory: aborting the
+        // watcher while its response is pending cancels that shared transport.
+        let reap_result = match self.session.take() {
+            Some(session) => {
+                reap_rmux_session(session, self.rmux_bin.clone(), self.session_target.clone()).await
+            }
+            None => Ok(()),
+        };
+
         if let Some(abort) = self.lifecycle_abort.take() {
             abort.abort();
         }
@@ -1771,15 +1817,7 @@ impl DriverControl for RmuxControl {
             Some(&self.send_child),
         )
         .await;
-        // Reap the detached rmux session through the typed SDK (inert runs own
-        // no session). Awaited so the session is gone when `release` returns;
-        // teardown failures are non-fatal and only logged.
-        if let Some(session) = self.session.take() {
-            if let Err(err) = session.kill().await {
-                tracing::warn!(?err, "rmux Session::kill failed during release");
-            }
-        }
-        if !self.terminal_emitted.swap(true, Ordering::SeqCst) {
+        if emit_completion {
             let _ = self
                 .events
                 .send(DriverEvent::RunComplete {
@@ -1787,45 +1825,63 @@ impl DriverControl for RmuxControl {
                 })
                 .await;
         }
-        Ok(())
+        reap_result
     }
 }
 
 impl Drop for RmuxControl {
     fn drop(&mut self) {
         self.startup_cancel.store(true, Ordering::SeqCst);
-        if let Some(abort) = self.lifecycle_abort.take() {
-            abort.abort();
-        }
-        abort_rmux_task(self.startup_task.take());
+        let lifecycle_abort = self.lifecycle_abort.take();
+        let startup_task = self.startup_task.take();
         // System-wide / reattached runs intentionally outlive the daemon: never
         // reap their session on an implicit Drop (only explicit `release`
         // does). Dropping the `Session` handle does not reap the session — only
         // an explicit `Session::kill` does — so simply let the field drop.
         if !self.kill_on_drop {
+            if let Some(abort) = lifecycle_abort {
+                abort.abort();
+            }
+            abort_rmux_task(startup_task);
             return;
         }
-        // Backstop when release() never ran (panic / early drop): fire a
-        // detached `Session::kill` on the current runtime so the rmux session is
-        // reaped without blocking Drop. `take()` means a prior release() already
-        // cleared this. Best-effort: if there is no runtime handle (drop off the
-        // async runtime), the detached session is left for the daemon to reap.
+        // Backstop when release() never ran (panic / early drop): retain the
+        // lifecycle task until the kill finishes because its Pane shares the
+        // Session's ordered SDK transport. `take()` means a prior release()
+        // already cleared this.
         if let Some(session) = self.session.take() {
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
+                    let rmux_bin = self.rmux_bin.take();
+                    let session_target = self.session_target.take();
                     handle.spawn(async move {
-                        if let Err(err) = session.kill().await {
-                            tracing::warn!(?err, "rmux Session::kill failed during drop backstop");
+                        let reap_result =
+                            reap_rmux_session(session, rmux_bin, session_target).await;
+                        if let Some(abort) = lifecycle_abort {
+                            abort.abort();
+                        }
+                        abort_rmux_task(startup_task);
+                        if let Err(err) = reap_result {
+                            tracing::error!(?err, "rmux session reap failed during drop backstop");
                         }
                     });
                 }
                 Err(_) => {
+                    if let Some(abort) = lifecycle_abort {
+                        abort.abort();
+                    }
+                    abort_rmux_task(startup_task);
                     tracing::warn!(
                         "rmux control dropped without release and no runtime handle; \
                          detached session left for daemon reaping"
                     );
                 }
             }
+        } else {
+            if let Some(abort) = lifecycle_abort {
+                abort.abort();
+            }
+            abort_rmux_task(startup_task);
         }
     }
 }
