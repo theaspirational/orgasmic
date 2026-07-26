@@ -430,3 +430,113 @@ Preflight design note this supports, sharpened by the root cause: the check must
 
 Also relevant to the preflight's non-interactive requirement: the harness's own answer here was "Please run /login", i.e. an instruction to start an interactive flow. A preflight must classify that as a definitive fatal reason and reject the dispatch, never surface it into a worker that then waits on a prompt nobody will answer.
 
+* IN_REVIEW TASK-STWVB Four daemon tests fail on every full-suite run and pass alone :testing:daemon:flake:
+:PROPERTIES:
+:ID: TASK-STWVB
+:PRIORITY: P2
+:END:
+
+Every full `cargo test -p orgasmic-daemon --lib` run fails the same four tests,
+and each passes alone:
+
+- api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id
+- api::tests::recovery_inventory_waits_for_atomic_claim_commit
+- api::tests::recovery_reattaches_tmux_session_when_handle_exists
+- supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling
+
+Measured 2026-07-25: 496 passed / 4 failed, and the identical four with an
+unrelated change stashed out. They only fail under full-suite parallelism, not
+in a filtered subset, so the trigger is cross-test interference rather than any
+one test's logic.
+
+Why this is worth fixing rather than tolerating: a suite that always fails four
+tests cannot answer "did my change break something?". Establishing that these
+four were pre-existing cost two full 13-minute runs during TASK-KKGKM — a
+stash-and-compare that every future change to this crate has to repeat. A red
+suite is also indistinguishable from a red suite with one new real failure in
+it.
+
+Leads, not conclusions:
+- These tests share process-global state: `live_session_guard()` and static
+  hooks such as `RECOVERY_POST_ORIGIN_AUTHORITY_HOOK`, which serialize some
+  tests against each other but not against everything that observes the same
+  state.
+- The same class of bug was found and fixed in the CLI crate on the same day:
+  `path_env`'s tests set process-global PATH to a bare tempdir, so any
+  concurrently running test spawning a PATH-resolved tool failed with a bare
+  `NotFound` (~3 runs in 4). Worth checking whether these four have an analogous
+  shared-environment dependency before assuming a timing race.
+- Two of the four are tmux/mux-dependent, so a real external session leaking
+  between tests is also plausible.
+
+Acceptance:
+- `cargo test -p orgasmic-daemon --lib` is green, repeatedly, at full
+  parallelism
+- the cause is named per test, not worked around by serializing the whole suite
+- if any test genuinely requires exclusive global state, it says so and enforces
+  it, rather than depending on scheduling luck
+RE-MEASURED [2026-07-26], and the original inventory does not hold.
+
+The "four tests fail on every full run" claim was made while the build
+environment was badly degraded: the disk was 89% full, target/ was 57 GB with
+164,619 retained .o files, and a full `cargo test -p orgasmic-daemon --lib` run
+took 13 minutes. After clearing that (dead worktree targets, 31 GB of
+incremental, a stale Time Machine snapshot, and switching the dev profile to
+line-tables-only) the same suite runs in ~45 seconds and target/debug is 3.4 GB.
+
+Five consecutive full runs at default parallelism on the repaired environment:
+
+| test                                                          | failed |
+|---------------------------------------------------------------|--------|
+| api::post_artifact_regenerate_hot_path_reuses_live_run_id       | 3/5    |
+| recovery_claim::reconcile_pending_rejects_rename_swap_after_open| 2/5    |
+| api::post_artifact_regenerate_cold_changed_address_replaces_... | 1/5    |
+| api::recovery_inventory_waits_for_atomic_claim_commit           | 0/5    |
+| api::recovery_reattaches_tmux_session_when_handle_exists        | 0/5    |
+| supervisor::poll_direct_child_pid_prefers_worker_server_over_...| 0/5    |
+
+So three of the four originally named tests did not fail once, and two tests
+that were never on the list do fail. The suite is green outright in 1 run of 5.
+
+What this means: a 13-minute run on a thrashing disk stretches every await long
+enough to tip deadline-bounded waits, which is why the failure set looked stable
+and looked like those four. The environment was a confound. The remaining three
+are real flakes but a smaller and different problem than recorded.
+
+Also fixed and split out of this task:
+- stall_detector_revalidates_after_driver_event_race — root-caused to
+  Supervisor::new's own 50ms timeout monitor releasing the aged run out from
+  under the test, not to load. Fixed in a629a51 with Supervisor::unmonitored.
+  wait_for_event_count no longer reports a released run as "event_count 0".
+- The 3 dispatch_endpoint failures were a separate, deterministic defect
+  (TASK-5T575, fixed in 05d029b).
+
+Remaining scope for this task is the three flakes in the table, not the original
+four. The regenerate pair are the priority — both touch the same hot/cold
+artifact-regenerate launch-record path, so they are likely one cause.
+GATE IS BLOCKED BY TASK-8W30B [2026-07-26], and this is a measurement problem
+rather than a remaining-work problem.
+
+The rmux session leak adds 8 leaked sessions per full-suite run (manager-
+confirmed: 23 -> 31 across one run, from a known-empty daemon). Saturation
+degrades the rmux driver to inert, at which point
+`post_artifact_regenerate_hot_path_reuses_live_run_id` fails on all retries with
+`409 capability_unsupported: send_input`.
+
+So '5 consecutive green full-suite runs' cannot be satisfied on a machine where
+each run makes the next one worse. The gate should be re-run only after
+TASK-8W30B lands, and the two fixed tests should be judged on the controlled
+before/after they already have rather than on an absolute streak.
+
+Post-merge state, 3 runs on a quiet machine (499-500 passed):
+- reconcile_pending_rejects_rename_swap_after_open: 0/3 — FIXED, was 4/6
+- post_artifact_regenerate_hot_path_reuses_live_run_id: 3/3 — TASK-8W30B
+- poll_direct_child_pid_prefers_worker_server_over_generic_sibling: 3/3 in-suite
+  but PASSES ALONE on both the pre-merge and post-merge commits, so it is
+  in-suite interference and specifically NOT a regression from the merge
+  (checked deliberately, since the implementer touched its sibling)
+- recovery_inventory_waits_for_atomic_claim_commit: 1/3
+
+Remaining scope after the merge: the interference behind poll_direct_child_pid
+and recovery_inventory, both of which pass in isolation.
+

@@ -5,9 +5,9 @@
 * HANDOFF current :handoff:
 :PROPERTIES:
 :ID:               handoff-current
-:LIVENESS:         40f70591a323ebb8fbbeb2a4caa31d81138e106c
-:LIVENESS_AT:      [2026-07-24 Fri]
-:UPDATED_AT:       [2026-07-24 Fri]
+:LIVENESS:         42cc2638c08e50639b7921eb46e72d43fb90a132
+:LIVENESS_AT:      [2026-07-26 Sun]
+:UPDATED_AT:       [2026-07-26 Sun]
 :GOAL_ID:          goal-20260725-land-the-committed
 :END:
 
@@ -58,20 +58,83 @@ NEXT
 - The process arc (YGB1R, TW3N3, JQARS, 8ED6V, 3CM0Q, 4YX1K, 0JY7M) is untouched.
 
 ** Done so far
-- Published runtime 0.0.14 to https://github.com/theaspirational/orgasmic/releases/tag/stable with four refreshed macOS/Linux targets and the existing Windows 0.0.7 target preserved.
-- Published apps 0.0.8 to https://github.com/theaspirational/orgasmic/releases/tag/apps-stable with macOS updater/DMG assets and an Android aarch64 APK.
-- Attached approved release notes to both releases and verified both tags target 40f70591a323ebb8fbbeb2a4caa31d81138e106c.
-- Downloaded and verified runtime-latest.json, latest.json, and android-latest.json versions, commit provenance, target inventory, and hashes.
+Session 2026-07-26 (manager-direct + one live dispatch). The theme was that the
+test suite could not answer "did my change break something?", and fixing that
+exposed two production defects whose tests had been passing all along.
+
+TEST SIGNAL
+- TASK-5T575 (05d029b): three dispatch_endpoint tests failed every run. seed_worker
+  wrote to user/workers/, ignored since templates were retired, and the body sent
+  worker_id, which DispatchRequest does not declare and serde drops. They asked
+  for a worker by a name with no reader over a field with no receiver. 30/30.
+- TASK-STWVB partial (a629a51 + merge 42cc263): stall_detector was racing
+  Supervisor::new's own 50ms timeout monitor, not losing to load; unwrap_or(0)
+  reported the released run as "event_count 0". A dispatched implementer then
+  keyed two unkeyed test hooks that tests were stealing from each other
+  (4/6 -> 0/16 each, controlled before/after).
+
+PRODUCTION DEFECTS FOUND BY LOOKING AT LIVE PROCESSES
+- TASK-SGRTX (b43fc70, f5c6913): TASK-VB9DQ and TASK-Z8WEJ were INERT in
+  production. claude's simulation_reason treated an empty endpoint as a reason
+  to simulate, which is every dispatch, so compose_request returned Simulated
+  before building any argv; the mode then spawned the bare stdio_spawn base.
+  --session-id, the credential mode and --model were computed, recorded and
+  dropped. Verified by argv on a live process, not by test.
+- --effort (0f65de5): never wired for claude at all.
+- TASK-8W30B: RmuxControl::release aborts its tasks before Session::kill, so the
+  kill fails on a dead transport and every rmux run leaks a session, pty and
+  harness process. Confirmed +8 per suite run, twice, independently. At
+  saturation the driver degrades to inert silently.
+
+BUILD ENVIRONMENT
+target/ was 57 GB with 164,619 retained .o files, disk 89% full, suite runs 13
+minutes. Now 8.6 GB, 273 GB free, runs ~45-90s. [profile.dev]
+debug = "line-tables-only" stops the .o churn (rlib 130 MB -> 69 MB).
 
 ** Next likely actions
-1. Begin the next round from clean synchronized main.
-2. Update or launch a fresh runtime 0.0.14 process only when ready to handle the macOS Documents permission prompt.
-3. Run the dedicated Windows stable workflow when a Windows runtime newer than retained 0.0.7 is required.
+1. TASK-8W30B (rmux session leak). Highest value open item: it is user-facing,
+   it silently degrades every rmux dispatch once saturated, and it makes any
+   consecutive-green test gate unmeasurable because each run degrades the next.
+2. Re-run TASK-STWVB's 5-green gate once 8W30B lands, then close it. Its two
+   fixed tests already have controlled before/after; the residual failures
+   (poll_direct_child_pid, recovery_inventory) pass in isolation.
+3. Publish 0.0.15 — NOT before the above. It now carries the SGRTX fixes, so
+   VB9DQ/Z8WEJ finally work in production; shipping earlier would have shipped
+   them inert.
+4. TASK-4YC8E (hermes alias collision) — one line if confirmed, and unverified
+   for hermes itself.
+5. Set an explicit default model/effort now that both actually reach the process.
+   Nothing configures them today, so every dispatch takes the harness default —
+   the STWVB worker silently ran on claude-opus-5.
 
 ** In flight
-None. Runtime and app stable releases are published and verified; no worker dispatch is active.
+None. The TASK-STWVB dispatch is closed (manager-rescued: the worker reported
+fully but never called dispatch finalize) and its worktree and branch are gone.
+
+Two orphan dispatch records remain from 2026-07-23, both [pid-gone] [run-gone]:
+TASK-870YX and TASK-RRVX0. They predate this session and were not touched.
 
 ** Divergence / Risks
-- The foreground daemon at PID 15304 / boot d43b38ae-a23d-4b75-91a3-e5ef3066a58a intentionally remains on runtime 0.0.13 and was not restarted. Every newly launched daemon under Documents may prompt for access again.
-- The Windows stable runtime remains 0.0.7 because Windows cannot be built locally from macOS.
-- The macOS app publisher produced updater signatures but skipped Apple notarization because notarization credentials were not present in the environment.
+- 0.0.15 is still unpublished and the operator's daemon runs 0.0.15-dev.1, which
+  predates every fix from this session. install.json still names the stable
+  channel and the installer is equality-based, so → checking stable runtime manifest: https://github.com/theaspirational/orgasmic/releases/download/stable/runtime-latest.json
+→ downloading stable runtime 0.0.14 for darwin-aarch64 would revert
+  the machine to 0.0.14. Do not run it.
+- TASK-VB9DQ and TASK-Z8WEJ sit in in_review with Evidence written against the
+  pre-SGRTX behaviour. VB9DQ's line "Not verified end to end" is now stale in the
+  opposite direction: it IS verified, but only after SGRTX. Re-read both before
+  closing.
+- The daemon suite is not green: post_artifact_regenerate_hot_path (8W30B),
+  poll_direct_child_pid and recovery_inventory fail in-suite while passing alone.
+- Two 2026-07-23 orphan dispatch records remain open (TASK-870YX, TASK-RRVX0).
+- A live dispatch is now the only acceptable evidence for driver argv changes.
+  Every defect found today had a passing test standing over it.
+- STRANDED LIVE RUN: run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2 is
+  still `implementer.working` in the supervisor with its worker process gone and
+  its dispatch record closed. There is no `orgasmic run release` verb, and the
+  run blocks the runtime-update fence ("refusing runtime update while live
+  run(s) exist"), so publishing or updating needs it cleared first — a daemon
+  restart is the simplest route. The supervisor's stall monitor should have
+  released it after ~600s and did not, which is worth a look: the running daemon
+  is 0.0.15-dev.1 and predates f80b577 ("a declared failure ends the run instead
+  of waiting for the harness"), so this may already be fixed on main.
