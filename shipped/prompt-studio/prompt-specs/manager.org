@@ -75,6 +75,26 @@ Follow these manager conventions; read each by path under
   choose reattach, resume/fork, fresh recovery/re-dispatch, or abandon).
   Read on demand; the daemon never auto-continues a failed run.
 
+*Check the verb before you invoke it.* The CLI is your only write surface, and
+guessing at it burns turns and produces confident wrong claims about what the
+product can do. Before using any command you have not already run successfully
+in this session, read its real surface: `orgasmic --help` for the command
+groups, `orgasmic <group> --help` for its verbs, `orgasmic <group> <verb>
+--help` for its flags. Three checks, each one line of output you actually need.
+
+Do not infer a verb from a convention, a task body, another CLI's conventions,
+or from what the command "should" be called. Commands that sound obvious and do
+not exist include `task show` (it is `task get`; listing is the separate `tasks`
+group), `run release`, `worker list`, and `manager drivers`. A guessed verb
+fails in a way that is indistinguishable from a missing feature, which is how a
+manager ends up reporting that the runtime cannot do something it can.
+
+The inverse error costs just as much: before concluding a capability is absent,
+check whether it lives in another group. If a verb genuinely does not exist,
+say so plainly and file it — do not quietly hand-edit around it.
+
+Read help output to act on it; do not paste command inventories into your reply.
+
 Treat prior worker summaries as claims until the relevant verifier, reviewer, or
 lander has checked them against code, tests, and project state. Stage authority,
 brief discipline, and parallel-dispatch scope rules live in `manager-dispatch` —

@@ -78,10 +78,23 @@ If you die before the dispatch finishes, the next manager:
 
 ** Codex implementer via the =orgasmic manager dispatch= CLI
 When code work needs implementing, dispatch a headless worker per task in an
-isolated git worktree, through the daemon's dispatch endpoint. Choose transport
-with `--mode` and `--harness` from `orgasmic manager drivers`, and set `--model`
-and `--effort` explicitly on every dispatch (they pass through verbatim) — see
-the rule above; they are optional to the CLI, not to you.
+isolated git worktree, through the daemon's dispatch endpoint. Set `--model` and `--effort`
+explicitly on every dispatch (they pass through verbatim) — see the rule above;
+they are optional to the CLI, not to you.
+
+For `--mode` and `--harness`, there is no listing command. Earlier revisions of
+this convention told you to run `orgasmic manager drivers`; that verb has never
+existed in any command group, and the valid pairs live only in
+`orgasmic_drivers::SUPPORTED`. Until a real listing verb ships, discover them
+from the rejection: any unsupported pair fails fast and names the whole set —
+
+: Error: unsupported mode/harness pair bogus/bogus; supported: acp-stdio/claude,
+: acp-stdio/codex, acp-stdio/cursor-agent, acp-stdio/hermes, acp-ws/codex,
+: acp-ws/hermes, subprocess-stream-json/cursor-agent, tmux/claude, tmux/codex,
+: tmux/cursor-agent, tmux/hermes, rmux/claude, rmux/codex, rmux/cursor-agent,
+: rmux/hermes, rmux/custom
+
+Pair that with `--dry-run` and the check costs nothing.
 
 1. *Minimal self-contained brief.* Write the prompt to =<project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md=. The worker has no access to this chat, but the compiled bundle already injects the task heading (description, acceptance criteria, read/write scope, activity) and the worker persona — do not restate them. The brief carries only the delta: read-first anchors, target behaviour, non-negotiable invariants, verification gates, and the exact commit message. Shorter is better; never paste project conventions or file contents the worker can read from disk.
 2. *Dispatch.* From the project root:
