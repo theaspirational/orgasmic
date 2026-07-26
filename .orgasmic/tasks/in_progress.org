@@ -849,3 +849,16 @@ Acceptance:
 - two concurrent closes cannot leave SALVAGE_SHA dangling
 - the recorded file count equals the number of files committed
 
+ID DECISION [2026-07-26], operator-settled: this task keeps the id TASK-D0GA3
+rather than being re-minted as TASK-2BPWM.1, so it carries NO derived parent edge
+to TASK-2BPWM. That is deliberate, not an oversight — do not "repair" it later.
+
+The relationship is recorded in prose here and in the reviewer findings
+(tx-20260726-orgasmic-2942 .. -2946), and the drawer holds an inert
+:PARENT_TASK: TASK-2BPWM that no reader consults. Re-minting mid-dispatch was
+judged more churn than the edge is worth.
+
+The convention was corrected the same day so the next fix subtask is minted as
+TASK-<parent>.N and gets a real edge. This task is the last one filed under the
+wrong instruction.
+
