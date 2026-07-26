@@ -64,6 +64,14 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
     ) -> Result<DriverSession, DriverError> {
         let mut adapter = self.adapter.clone_box();
         let request = adapter.compose_request(&ctx, &config)?;
+        // Read straight after composing, before `adapter` is moved into the
+        // control below. The adapter pins its harness-native session id while
+        // building the argv; this used to be hardcoded `None` here, so a run
+        // reaching this driver — which is every acp-stdio claude run, via the
+        // delegation in `AcpStdioDriver::acquire` — recorded no NativeRuntime
+        // lifecycle event at all, and recovery could never offer
+        // `resume_native_fork` (TASK-VB9DQ item 3, TASK-SGRTX).
+        let native_runtime = adapter.native_runtime();
         let (tx, rx) = mpsc::channel(64);
 
         let (control, producer) = match request {
@@ -168,7 +176,7 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
                 released: false,
             }),
             producer,
-            native_runtime: None,
+            native_runtime,
         })
     }
 

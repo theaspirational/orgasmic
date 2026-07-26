@@ -27532,3 +27532,192 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       filed from a measured 3-test failure on HEAD; fix landing in the same commit
 :END:
+
+
+* TX 2026-07-26 Sun 08:05:43 task.property_updated TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2827
+:TIME:         [2026-07-26 Sun 08:05:43]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       re-measured 2026-07-26 after the build-environment fix; inventory was stale
+:PRIORITY:     P2
+:END:
+
+* TX 2026-07-26 Sun 08:06:05 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2828
+:TIME:         [2026-07-26 Sun 08:06:05]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-26 Sun 08:07:50 task.state_transitioned TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2829
+:TIME:         [2026-07-26 Sun 08:07:50]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatching an implementer for the three re-measured flakes
+:FROM_STATE:   backlog
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-26 Sun 08:08:01 task.state_transitioned TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2830
+:TIME:         [2026-07-26 Sun 08:08:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-STWVB to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-26 Sun 08:08:01 manager.dispatch_started TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2831
+:TIME:         [2026-07-26 Sun 08:08:01]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:REASON:
+:KIND:         implementer
+:MODE:         acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:BRANCH:       task-stwvb-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb/task-stwvb-brief.md
+:STARTED_AT:   [2026-07-26 Sun 08:08:01]
+:LIVENESS:     a629a51aca19243fb39901d778fdd76c247fa892
+:NEXT:         fix-implementer-watch-then-integrate
+:REASON_INITIAL: three re-measured daemon test flakes; also the first live acp-stdio claude dispatch since VB9DQ landed
+:END:
+
+* TX 2026-07-26 Sun 08:08:01 run.created TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2832
+:TIME:         [2026-07-26 Sun 08:08:01]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-STWVB-implementer-20260726T080801.jsonl
+:REASON:       three re-measured daemon test flakes; also the first live acp-stdio claude dispatch since VB9DQ landed
+:RUN_ID:       run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-acp-stdio
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-stwvb/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-stwvb/task-stwvb-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-stwvb/task-stwvb-edc69d07f4224a0eb92243921b3a980d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-stwvb/task-stwvb-edc69d07f4224a0eb92243921b3a980d-stdout.log
+:DISPATCH_ATTEMPT: edc69d07f4224a0eb92243921b3a980d
+:PID:          69729
+:DISPATCH_TX:  tx-20260726-orgasmic-2831
+:END:
+
+* TX 2026-07-26 Sun 08:11:19 task.created TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2833
+:TIME:         [2026-07-26 Sun 08:11:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found by the first live acp-stdio claude dispatch; both fixes pass their tests and do nothing at runtime
+:END:
+
+* TX 2026-07-26 Sun 08:25:08 task.edited TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2834
+:TIME:         [2026-07-26 Sun 08:25:08]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-SGRTX
+:NODE_ID:      TASK-SGRTX
+:END:
+
+* TX 2026-07-26 Sun 08:40:43 graph.decision.created orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2835
+:TIME:         [2026-07-26 Sun 08:40:43]
+:TYPE:         graph.decision.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       created graph node dec_S18RH
+:NODE_ID:      dec_S18RH
+:END:
+
+* TX 2026-07-26 Sun 08:41:22 task.edited TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2836
+:TIME:         [2026-07-26 Sun 08:41:22]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-SGRTX
+:NODE_ID:      TASK-SGRTX
+:END:
+
+* TX 2026-07-26 Sun 08:41:22 task.property_updated TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2837
+:TIME:         [2026-07-26 Sun 08:41:22]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       gates the 0.0.15 release; scope expanded per dec_S18RH
+:PRIORITY:     P0
+:END:
+
+
+* TX 2026-07-26 Sun 08:55:09 task.created TASK-Y9BY6
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2838
+:TIME:         [2026-07-26 Sun 08:55:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y9BY6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       found while verifying TASK-SGRTX; pre-existing on HEAD, not caused by that change
+:END:

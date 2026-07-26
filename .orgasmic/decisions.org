@@ -2128,3 +2128,50 @@ The rule makes existing defects legible rather than debatable. The acp-stdio cla
 Externally this matches how comparable tools divide the responsibility: t3code requires the operator to authenticate each vendor CLI (`claude auth login`, `codex login`, `cursor-agent login`) and orchestrates the authenticated tool rather than owning its identity or state.
 
 Bounded derived evidence is unaffected: TASK-VBSG2 may convert vendor JSONL into a versioned, size-capped, derived-only cache under `.orgasmic/tmp/retro/evidence`, because that cache is orgasmic-owned and regenerable. Deriving from the vendor file is always permitted; mutating or deleting it never is.
+
+* dec_S18RH A transport with no configured endpoint is not a simulation
+:PROPERTIES:
+:ID: dec_S18RH
+:RELATES_TO: TASK-SGRTX TASK-VB9DQ TASK-Z8WEJ
+:END:
+
+Ruled by the operator [2026-07-26] after TASK-SGRTX showed TASK-VB9DQ's
+implementation was unreachable in production.
+
+Every acp-stdio adapter returns `HarnessRequest::Simulated` on its normal path
+and relies on `upgrades_simulated_to_subprocess` to turn that back into a real
+process. `cursor_acp` states it outright: "acp-stdio upgrades this simulated
+request to `cursor-agent acp` when the binary is present".
+
+- claude: Simulated when `endpoint` is empty — every ordinary dispatch
+- codex: Simulated when `endpoint` is empty
+- hermes: Simulated when `endpoint` is empty
+- cursor_acp: Simulated unconditionally
+
+"Simulated" is therefore carrying two unrelated meanings: (1) genuinely fake
+this run, for CI determinism or an explicit override, and (2) I have no ACP
+endpoint to dial, so spawn the local binary — which is a REAL run of a REAL
+transport.
+
+The conflation is not cosmetic. The upgrade path rebuilds argv from
+`stdio_spawn`, so anything an adapter composes on top is discarded. That is how
+TASK-VB9DQ's `--session-id`, TASK-Z8WEJ's credential mode, and `--model` all
+came to be computed, recorded in NativeRuntime, and never passed to the harness,
+while their tests passed — the tests supply an endpoint, so they exercise the
+one branch production never takes.
+
+RULING: do not call a real transport simulated. `Simulated` means only an
+explicit override or a genuinely absent binary. "No endpoint configured" means
+spawn the local binary, and the request the adapter composed is the request that
+gets spawned — argv included.
+
+Consequences to implement:
+- adapters return their real composed request on the no-endpoint path
+- the mode keeps the availability check (`command_available`) and falls back to
+  genuine simulation only when the binary is missing, which needs a hook for
+  simulated events since codex, hermes and cursor_acp have no module-level
+  availability probe of their own
+- `upgrades_simulated_to_subprocess` becomes vestigial and should be removed
+  rather than left as a second meaning
+- a driver's acceptance evidence is the argv of a live spawned process, never a
+  composed request inspected in a test

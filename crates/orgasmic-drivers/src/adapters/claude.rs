@@ -477,13 +477,12 @@ enum SimulationReason {
     ExplicitOverride,
     /// No `claude` binary is detectable.
     BinaryMissing,
-    /// No endpoint configured, so there is no real wire to speak.
-    EndpointEmpty,
 }
 
 impl SimulationReason {
-    /// The launch path warns for the two surprising reasons and stays quiet for
-    /// the ordinary one; the probe reuses the classification without the noise.
+    /// Both remaining reasons are worth saying out loud: each means no real
+    /// harness will run. There is deliberately no quiet reason left — a silent
+    /// simulation is how an unreachable code path stays unreachable (dec_S18RH).
     fn warning(self) -> Option<&'static str> {
         match self {
             Self::ExplicitOverride => Some(
@@ -492,7 +491,6 @@ impl SimulationReason {
             Self::BinaryMissing => Some(
                 "claude-acp: 'claude' binary not found on PATH; using simulated mode (binary not detectable)",
             ),
-            Self::EndpointEmpty => None,
         }
     }
 }
@@ -504,15 +502,25 @@ fn simulate_override() -> bool {
         .unwrap_or(false)
 }
 
-fn simulation_reason(cfg: &ClaudeAcpConfig) -> Option<SimulationReason> {
+/// An empty `endpoint` is deliberately NOT a simulation reason (dec_S18RH).
+///
+/// It used to be, and every ordinary dispatch leaves `endpoint` empty — so
+/// `compose_request` returned `Simulated` and never reached the argv it builds
+/// below. The mode then "upgraded" that back into a real process spawned from
+/// the bare `stdio_spawn` base, so the pinned `--session-id`, the resolved
+/// credential mode and `--model` were computed, recorded, and dropped. The
+/// tests passed because they pass an endpoint, exercising the one branch
+/// production never takes (TASK-SGRTX, TASK-VB9DQ).
+///
+/// `claude -p` with line-delimited stream JSON is a real transport, not a
+/// simulation of one. Having no ACP endpoint to dial does not make the run
+/// fake; it only means this transport is the local binary.
+fn simulation_reason(_cfg: &ClaudeAcpConfig) -> Option<SimulationReason> {
     if simulate_override() {
         return Some(SimulationReason::ExplicitOverride);
     }
     if !claude_available() {
         return Some(SimulationReason::BinaryMissing);
-    }
-    if cfg.endpoint.as_deref().map(str::is_empty).unwrap_or(true) {
-        return Some(SimulationReason::EndpointEmpty);
     }
     None
 }
@@ -1700,10 +1708,21 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         let _ = session.control.release("test cleanup").await;
     }
 
-    /// Endpoint-empty + ACP-WS + detectable `claude` remains simulated because
-    /// WS mode has no `stdio_spawn` upgrade and requires a configured URL.
+    /// Endpoint-empty + ACP-WS + detectable `claude` is now an explicit
+    /// unsupported-shape error rather than a silent simulation.
+    ///
+    /// This test used to assert the simulation. It was guarding a pairing the
+    /// registry forbids — `("acp-ws", "claude")` is not in `SUPPORTED`, and
+    /// `driver_for_mode_harness` returns `None` for it; only this direct
+    /// construction reaches it. With an empty endpoint no longer meaning
+    /// "simulate" (dec_S18RH), the adapter composes the real local-spawn
+    /// request it always meant to, and a WS driver correctly refuses it.
+    ///
+    /// Refusing is the better answer: the endpoint requirement belongs to the
+    /// transport, not the harness, and a silent simulated Ready for an
+    /// impossible pairing is how the acp-stdio discard stayed invisible.
     #[tokio::test]
-    async fn gate_simulates_for_empty_endpoint_ws_when_claude_stub_on_path() {
+    async fn ws_refuses_the_local_spawn_request_claude_composes_without_an_endpoint() {
         let dir = tempfile::tempdir().expect("tempdir");
         make_claude_stub(dir.path());
 
@@ -1714,20 +1733,18 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
 
         let driver = AcpWsDriver::new(Box::new(ClaudeAdapter::new()));
-        let mut session = driver
+        let outcome = driver
             .acquire(ctx("run-gate-ws-sim", RunKind::Worker), simulated_config())
-            .await
-            .expect("ws acquire should stay simulated for empty endpoint");
+            .await;
         std::env::set_var("PATH", &saved_path);
 
-        let event = session.events.recv().await.expect("simulated Ready");
-        match event {
-            DriverEvent::Ready { capabilities, .. } => assert_eq!(
-                capabilities["simulated"],
-                serde_json::Value::Bool(true),
-                "ws + empty endpoint must remain simulated"
+        match outcome {
+            Err(DriverError::Unsupported(what)) => assert!(
+                what.contains("acp-ws request shape"),
+                "expected a request-shape refusal, got {what:?}"
             ),
-            other => panic!("expected Ready, got {other:?}"),
+            Ok(_) => panic!("ws must not accept a local-spawn request"),
+            Err(other) => panic!("expected Unsupported, got {other:?}"),
         }
     }
 
