@@ -31,6 +31,7 @@
 //! never persists tokens. Spectator URLs are read-only and may be surfaced in
 //! full. See [`RmuxWebShareProof`].
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command as StdCommand, Stdio};
 use std::sync::{
@@ -79,9 +80,11 @@ pub const RMUX_REQUIRED_VERSION: &str = "0.9.0";
 /// honors the same override the SDK would.
 const RMUX_SDK_DAEMON_BINARY_ENV: &str = "RMUX_SDK_DAEMON_BINARY";
 
-/// Bound the CLI backstop used when the retained SDK transport cannot reap a
-/// session. Release is awaited on the daemon teardown path and must not hang.
-const RMUX_SESSION_REAP_TIMEOUT: Duration = Duration::from_secs(5);
+/// The supervisor gives the whole driver release five seconds. Keep both reap
+/// attempts strictly inside that caller budget so a stalled SDK transport
+/// cannot consume the CLI fallback's opportunity to run.
+const RMUX_SESSION_SDK_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+const RMUX_SESSION_CLI_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct RmuxDriver {
     adapter: Box<dyn HarnessEventAdapter>,
@@ -635,14 +638,18 @@ impl WorkerDriver for RmuxDriver {
             }
         };
 
-        let (web_share, lifecycle_task, startup_task, session) = match live {
-            Some(live) => (
-                live.web_share,
-                Some(live.lifecycle_task),
-                live.startup_task,
-                Some(live.session),
-            ),
-            None => (RmuxWebShareProof::default(), None, None, None),
+        let (web_share, lifecycle_task, startup_task, session, session_target) = match live {
+            Some(live) => {
+                let session_target = live.session.name().as_str().to_string();
+                (
+                    live.web_share,
+                    Some(live.lifecycle_task),
+                    live.startup_task,
+                    Some(live.session),
+                    Some(session_target),
+                )
+            }
+            None => (RmuxWebShareProof::default(), None, None, None, None),
         };
         let lifecycle_abort = lifecycle_task.as_ref().map(JoinHandle::abort_handle);
 
@@ -655,7 +662,7 @@ impl WorkerDriver for RmuxDriver {
                     &ctx,
                     &plan,
                     &probe,
-                    (!inert).then(|| session_name.clone()),
+                    session_target.clone(),
                     &web_share,
                 ),
             })
@@ -690,7 +697,7 @@ impl WorkerDriver for RmuxDriver {
                     // implicit Drop backstop must not reap it.
                     kill_on_drop: !cfg.system_wide,
                     rmux_bin: Some(rmux_bin),
-                    session_target: Some(session_name.clone()),
+                    session_target,
                     run_id: Some(ctx.identity.run_id.clone()),
                     harness_command: Some(plan.command.clone()),
                     input_ready_timeout: cfg.input_ready_timeout,
@@ -727,9 +734,9 @@ impl WorkerDriver for RmuxDriver {
             }
         };
 
-        let session_name_str = rmux_session_name(&ctx.identity);
-        let session_name = rmux_sdk::SessionName::new(session_name_str.clone())
+        let session_name = rmux_sdk::SessionName::new(rmux_session_name(&ctx.identity))
             .map_err(|e| DriverError::Transport(format!("rmux session name: {e}")))?;
+        let session_name_str = session_name.as_str().to_string();
         match rmux.has_session(session_name.clone()).await {
             Ok(true) => {}
             Ok(false) => return Ok(AttachOutcome::NotReattachable),
@@ -876,7 +883,9 @@ async fn run_live_session(
 ) -> Result<LiveSession, DriverError> {
     use rmux_sdk::{EnsureSession, EnsureSessionPolicy, ProcessSpec, Rmux, TerminalSizeSpec};
 
-    let session_target = session_name.to_string();
+    let session_name = rmux_sdk::SessionName::new(session_name.to_string())
+        .map_err(|e| DriverError::Transport(format!("rmux session name: {e}")))?;
+    let session_target = session_name.as_str().to_string();
     let rmux = Rmux::builder()
         .default_timeout(Duration::from_secs(5))
         .connect_or_start()
@@ -886,9 +895,6 @@ async fn run_live_session(
     if harness == "cursor-agent" {
         preflight_cursor_keychain(&rmux, &session_target, &plan.cwd).await?;
     }
-
-    let session_name = rmux_sdk::SessionName::new(session_name.to_string())
-        .map_err(|e| DriverError::Transport(format!("rmux session name: {e}")))?;
 
     // Create an addressable pane first, then respawn it with remain-on-exit.
     // RMUX 0.9 retains the real exit code/signal only for a dead pane that is
@@ -1146,6 +1152,25 @@ async fn run_rmux_cli(bin: &str, args: &[&str]) -> Result<(), DriverError> {
     run_rmux_cli_with_owner(bin, args, None, None).await
 }
 
+async fn run_rmux_cli_os(bin: &str, args: &[OsString]) -> Result<(), DriverError> {
+    let mut command = tokio::process::Command::new(bin);
+    command.kill_on_drop(true);
+    let child = command
+        .args(args)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| {
+            DriverError::Transport(format!(
+                "rmux {}: {e}",
+                args.first()
+                    .map(|arg| arg.to_string_lossy())
+                    .unwrap_or_default()
+            ))
+        })?;
+    wait_for_rmux_child(child, None).await
+}
+
 async fn run_rmux_cli_with_owner(
     bin: &str,
     args: &[&str],
@@ -1218,33 +1243,98 @@ async fn enable_rmux_mouse(bin: &str, session: &str) -> Result<(), DriverError> 
     run_rmux_cli(bin, &rmux_mouse_args(session)).await
 }
 
-async fn reap_rmux_session(
-    session: rmux_sdk::Session,
-    rmux_bin: Option<String>,
-    session_target: Option<String>,
-) -> Result<(), DriverError> {
-    let sdk_error = match session.kill().await {
-        Ok(_) => return Ok(()),
-        Err(error) => error,
+fn rmux_session_reap_args(
+    endpoint: &rmux_sdk::RmuxEndpoint,
+    name: &rmux_sdk::SessionName,
+) -> Result<Vec<OsString>, DriverError> {
+    let mut args = Vec::with_capacity(5);
+    match endpoint {
+        rmux_sdk::RmuxEndpoint::Default => {}
+        rmux_sdk::RmuxEndpoint::UnixSocket(path) => {
+            args.push(OsString::from("-S"));
+            args.push(path.as_os_str().to_owned());
+        }
+        rmux_sdk::RmuxEndpoint::WindowsPipe(pipe) => {
+            args.push(OsString::from("-S"));
+            args.push(OsString::from(pipe));
+        }
+        _ => {
+            return Err(DriverError::Transport(format!(
+                "rmux CLI fallback does not support SDK endpoint {endpoint:?}"
+            )));
+        }
+    }
+    args.extend([
+        OsString::from("kill-session"),
+        OsString::from("-t"),
+        OsString::from(name.as_str()),
+    ]);
+    Ok(args)
+}
+
+async fn reap_rmux_session_with<SdkFuture, CliFallback, CliFuture>(
+    sdk_kill: SdkFuture,
+    cli_fallback: Option<CliFallback>,
+    sdk_timeout: Duration,
+    cli_timeout: Duration,
+) -> Result<(), DriverError>
+where
+    SdkFuture: std::future::Future<Output = Result<(), String>>,
+    CliFallback: FnOnce() -> CliFuture,
+    CliFuture: std::future::Future<Output = Result<(), String>>,
+{
+    let sdk_error = match tokio::time::timeout(sdk_timeout, sdk_kill).await {
+        Ok(Ok(())) => return Ok(()),
+        Ok(Err(error)) => error,
+        Err(_) => format!("timed out after {sdk_timeout:?}"),
     };
 
-    let (Some(rmux_bin), Some(session_target)) = (rmux_bin, session_target) else {
+    let Some(cli_fallback) = cli_fallback else {
         return Err(DriverError::Transport(format!(
             "rmux session reap failed through SDK ({sdk_error}); CLI fallback unavailable"
         )));
     };
-    let cli_args = ["kill-session", "-t", session_target.as_str()];
-    let cli_kill = run_rmux_cli(&rmux_bin, &cli_args);
-    match tokio::time::timeout(RMUX_SESSION_REAP_TIMEOUT, cli_kill).await {
+    match tokio::time::timeout(cli_timeout, cli_fallback()).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(cli_error)) => Err(DriverError::Transport(format!(
             "rmux session reap failed through SDK ({sdk_error}) and CLI fallback ({cli_error})"
         ))),
         Err(_) => Err(DriverError::Transport(format!(
             "rmux session reap failed through SDK ({sdk_error}); CLI fallback timed out after \
-             {RMUX_SESSION_REAP_TIMEOUT:?}"
+             {cli_timeout:?}"
         ))),
     }
+}
+
+async fn reap_rmux_session(
+    session: &rmux_sdk::Session,
+    rmux_bin: Option<String>,
+) -> Result<(), DriverError> {
+    // The SDK handle is the identity authority. Capture its resolved endpoint
+    // and sanitized protocol-owned name before the primary request so fallback
+    // cannot drift to a different daemon or pre-sanitization target.
+    let cli_args = rmux_session_reap_args(session.endpoint(), session.name());
+    let cli_fallback = rmux_bin.map(|rmux_bin| {
+        move || async move {
+            let cli_args = cli_args.map_err(|error| error.to_string())?;
+            run_rmux_cli_os(&rmux_bin, &cli_args)
+                .await
+                .map_err(|error| error.to_string())
+        }
+    });
+    reap_rmux_session_with(
+        async {
+            session
+                .kill()
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        },
+        cli_fallback,
+        RMUX_SESSION_SDK_REAP_TIMEOUT,
+        RMUX_SESSION_CLI_REAP_TIMEOUT,
+    )
+    .await
 }
 
 async fn rmux_capture_pane(bin: &str, session: &str) -> Result<String, DriverError> {
@@ -1584,8 +1674,22 @@ async fn emit_run_complete_once(
     terminal_emitted: &AtomicBool,
     summary: Option<String>,
 ) {
+    spawn_run_complete_once(events, terminal_emitted, summary);
+}
+
+fn spawn_run_complete_once(
+    events: &mpsc::Sender<DriverEvent>,
+    terminal_emitted: &AtomicBool,
+    summary: Option<String>,
+) {
     if !terminal_emitted.swap(true, Ordering::SeqCst) {
-        let _ = events.send(DriverEvent::RunComplete { summary }).await;
+        let events = events.clone();
+        // The task is the durable publication owner. If the supervisor's
+        // release timeout cancels the caller while the event channel is full,
+        // this send remains alive and the drain still receives RunComplete.
+        tokio::spawn(async move {
+            let _ = events.send(DriverEvent::RunComplete { summary }).await;
+        });
     }
 }
 
@@ -1794,19 +1898,24 @@ impl DriverControl for RmuxControl {
             return Ok(());
         }
         self.released = true;
-        // A release owns the terminal result. Mark it before killing the
-        // session so the lifecycle watcher cannot race in a pane-exit result.
-        let emit_completion = !self.terminal_emitted.swap(true, Ordering::SeqCst);
+        // Publish the release-owned terminal claim before the fallible reap.
+        // Its detached sender survives cancellation of this release future.
+        spawn_run_complete_once(
+            &self.events,
+            &self.terminal_emitted,
+            Some(reason.to_string()),
+        );
 
         // The lifecycle watcher owns a Pane handle on the same ordered SDK
         // transport as Session. Killing first is mandatory: aborting the
         // watcher while its response is pending cancels that shared transport.
-        let reap_result = match self.session.take() {
-            Some(session) => {
-                reap_rmux_session(session, self.rmux_bin.clone(), self.session_target.clone()).await
-            }
+        let reap_result = match self.session.as_ref() {
+            Some(session) => reap_rmux_session(session, self.rmux_bin.clone()).await,
             None => Ok(()),
         };
+        // Retain the sole SDK handle across every cancellable await above. If
+        // the caller cancels release, Drop still owns a durable retry path.
+        self.session.take();
 
         if let Some(abort) = self.lifecycle_abort.take() {
             abort.abort();
@@ -1817,14 +1926,6 @@ impl DriverControl for RmuxControl {
             Some(&self.send_child),
         )
         .await;
-        if emit_completion {
-            let _ = self
-                .events
-                .send(DriverEvent::RunComplete {
-                    summary: Some(reason.to_string()),
-                })
-                .await;
-        }
         reap_result
     }
 }
@@ -1853,10 +1954,8 @@ impl Drop for RmuxControl {
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
                     let rmux_bin = self.rmux_bin.take();
-                    let session_target = self.session_target.take();
                     handle.spawn(async move {
-                        let reap_result =
-                            reap_rmux_session(session, rmux_bin, session_target).await;
+                        let reap_result = reap_rmux_session(&session, rmux_bin).await;
                         if let Some(abort) = lifecycle_abort {
                             abort.abort();
                         }
@@ -2302,6 +2401,108 @@ mod tests {
             joined.is_ok(),
             "release must kill/join a blocked fake rmux CLI child promptly"
         );
+    }
+
+    #[test]
+    fn rmux_reap_fallback_uses_sdk_owned_endpoint_and_sanitized_name() {
+        let endpoint =
+            rmux_sdk::RmuxEndpoint::UnixSocket(PathBuf::from("/tmp/rmux-custom-endpoint.sock"));
+        let name = rmux_sdk::SessionName::new("planned.name:with-separators").unwrap();
+
+        assert_eq!(
+            rmux_session_reap_args(&endpoint, &name).unwrap(),
+            vec![
+                OsString::from("-S"),
+                OsString::from("/tmp/rmux-custom-endpoint.sock"),
+                OsString::from("kill-session"),
+                OsString::from("-t"),
+                OsString::from("planned_name_with-separators"),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_runs_cli_fallback_after_sdk_failure() {
+        let cli_ran = Arc::new(AtomicBool::new(false));
+        let cli_probe = Arc::clone(&cli_ran);
+        reap_rmux_session_with(
+            async { Err("sdk transport gone".to_string()) },
+            Some(move || async move {
+                cli_probe.store(true, Ordering::SeqCst);
+                Ok(())
+            }),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("CLI fallback should recover an SDK failure");
+        assert!(cli_ran.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_times_out_stalled_sdk_and_reserves_cli_fallback_time() {
+        let cli_ran = Arc::new(AtomicBool::new(false));
+        let cli_probe = Arc::clone(&cli_ran);
+        reap_rmux_session_with(
+            std::future::pending::<Result<(), String>>(),
+            Some(move || async move {
+                cli_probe.store(true, Ordering::SeqCst);
+                Ok(())
+            }),
+            Duration::from_millis(10),
+            Duration::from_millis(50),
+        )
+        .await
+        .expect("stalled SDK kill should fall back within the total budget");
+        assert!(cli_ran.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn rmux_reap_reports_both_sdk_and_cli_failures() {
+        let error = reap_rmux_session_with(
+            async { Err("sdk refused".to_string()) },
+            Some(|| async { Err("cli refused".to_string()) }),
+            Duration::from_millis(50),
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("two failed reap attempts must remain visible");
+        let message = error.to_string();
+        assert!(message.contains("sdk refused"), "{message}");
+        assert!(message.contains("cli refused"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn run_complete_publication_survives_release_owner_cancellation() {
+        let (events, mut rx) = mpsc::channel(1);
+        events
+            .send(DriverEvent::Ready {
+                protocol_version: "test/1".into(),
+                capabilities: json!({}),
+            })
+            .await
+            .unwrap();
+        let terminal_emitted = Arc::new(AtomicBool::new(false));
+        let owner_events = events.clone();
+        let owner_terminal = Arc::clone(&terminal_emitted);
+        let owner = tokio::spawn(async move {
+            spawn_run_complete_once(
+                &owner_events,
+                owner_terminal.as_ref(),
+                Some("release-owned".into()),
+            );
+            std::future::pending::<()>().await;
+        });
+        tokio::task::yield_now().await;
+        owner.abort();
+        let _ = owner.await;
+
+        assert!(matches!(rx.recv().await, Some(DriverEvent::Ready { .. })));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_secs(1), rx.recv()).await,
+            Ok(Some(DriverEvent::RunComplete { summary }))
+                if summary.as_deref() == Some("release-owned")
+        ));
     }
 
     #[tokio::test]
