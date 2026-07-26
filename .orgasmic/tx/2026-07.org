@@ -29457,3 +29457,75 @@
 :REASON:       edited task node TASK-2BPWM
 :NODE_ID:      TASK-2BPWM
 :END:
+
+* TX 2026-07-26 Sun 15:47:22 task.created TASK-VZMZE
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2950
+:TIME:         [2026-07-26 Sun 15:47:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VZMZE
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       observed: 60 minutes, 118 heartbeats, 0 tool calls, never released by the daemon
+:END:
+
+* TX 2026-07-26 Sun 15:47:29 manager.dispatch_aborted TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2951
+:TIME:         [2026-07-26 Sun 15:47:29]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:REASON:       harness reached ready and never began a turn: 0 tool calls, 118 heartbeats, 6.77s CPU in 60 minutes, zero worktree writes; abandoned per rescue-policy and re-dispatched fresh (TASK-VZMZE files the daemon-side detection gap)
+:CLOSED_TX:    tx-20260726-orgasmic-2938
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrt4t/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-26 Sun 15:47:29 manager.dispatch_orphaned TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2952
+:TIME:         [2026-07-26 Sun 15:47:29]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RRT4T-implementer-20260726T144430.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260726T144430-aa47b867840f42f282b30d3469949731
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrt4t/worktree
+:END:
+
+* TX 2026-07-26 Sun 15:47:30 task.state_transitioned TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2953
+:TIME:         [2026-07-26 Sun 15:47:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-RRT4T to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-26 Sun 15:48:11 task.edited TASK-VZMZE
+:PROPERTIES:
+:TX_ID:        tx-20260726-orgasmic-2954
+:TIME:         [2026-07-26 Sun 15:48:11]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VZMZE
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-VZMZE
+:NODE_ID:      TASK-VZMZE
+:END:

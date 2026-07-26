@@ -241,3 +241,113 @@ Claude Opus review of b18808c..bd3d7bd returned SHIP but identified one medium n
 ** Notes
 The two originally assigned Codex gpt-5.6-terra/high attempts were interrupted by shared daemon restarts and produced no edits. A concurrently dispatched equivalent fix completed under TASK-870YX: commit 4c0a151, merged to main as e4b6b7b. Manager independently reran the focused daemon-lock, CLI boot-owner, and double-serve regressions; all passed. This duplicate record is cancelled as superseded, not left as an unfixed defect.
 
+* TODO TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
+:PROPERTIES:
+:ID: TASK-RRT4T
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
+:TEST_CMD:    cargo test -p orgasmic-daemon --lib
+:END:
+
+Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
+return (and therefore PASS) when `rmux` is not on PATH:
+
+    if !rmux_available_for_test() {
+        eprintln!("skipping <name>: rmux binary not found");
+        return;
+    }
+
+`rmux_available_for_test()` is `probe_rmux_binary().found`, which resolves
+`rmux` from PATH only (crates/orgasmic-drivers/src/modes/rmux.rs:197-210). The
+skip prints to stderr, which `cargo test` swallows without `--nocapture`. The
+run then reports `504 passed; 0 failed` — literally true, and completely
+misleading.
+
+MEASURED 2026-07-26, manager-direct, on main at the TASK-STWVB merge, same
+machine, same commit, one variable changed:
+
+| PATH                             | result          | wall   | syspolicyd CPU |
+|----------------------------------|-----------------|--------|----------------|
+| normal (rmux on ~/.local/bin)    | 502 passed, 2 failed | 106.5 s | +281 s |
+| /usr/bin:/bin:/usr/sbin:/sbin... | 504 passed, 0 failed |  22.3 s | + 32 s |
+
+The second row reproduces, to the second, what the TASK-STWVB round-2
+implementer reported as proof its fix worked: 504/0 at 24.9 / 27.5 / 26.1 s.
+Its fix did not green those tests; its environment skipped them.
+
+WHY THIS IS P0
+
+This is the mechanism behind three consecutive over-reports today:
+- TASK-8W30B: worker measured +5 leaked sessions/run, manager measured +1
+- TASK-6FNAY: worker reported 504/0, manager measured 502/2 three times
+- TASK-STWVB r2: worker reported 504/0 x3, manager measured 502/2 four times
+
+Every one is the same shape, and the shape is not worker dishonesty — each
+phrased its claim carefully. A dispatched worker inherits the daemon's PATH.
+The daemon runs under launchd, which does not carry `~/.local/bin`, so `rmux`
+is absent for workers and present for the operator. Worker green on this crate
+therefore does not mean what it says, and no amount of brief discipline fixes
+it.
+
+Corroborating evidence in the round-2 report itself: it recorded
+`orgasmic-rmux-run-*` sessions as 7 before / 7 after three runs. A real run of
+`post_artifact_regenerate_hot_path_reuses_live_run_id` creates rmux sessions,
+and the manager's runs grew 7 -> 10 (+1 per run, the known panic-abandon).
+Zero growth was the tell that the test never ran.
+
+FIX
+
+1. A skipped test must be visible in the default `cargo test` summary. Options,
+   in preference order: (a) make the guard `panic!` unless an explicit
+   `ORGASMIC_ALLOW_SKIP_RMUX_TESTS=1` opt-out is set, so the default is loud;
+   (b) mark them `#[ignore]` and run them via an explicit filtered gate, so the
+   summary counts them as ignored rather than passed.
+2. Whatever the mechanism, `cargo test -p orgasmic-daemon --lib` must not be
+   able to print `504 passed; 0 failed` while eight tests did nothing.
+3. Give dispatched workers a PATH that finds the tools their gates need, OR
+   make the worker persona report the skip count with every test claim. Prefer
+   the first; the second is a documentation fix for an environment defect.
+4. Audit for the same pattern elsewhere: any `if !X_available() { return }` in
+   a test is the same trap. tmux and cursor-agent guards are the likely
+   siblings.
+
+Acceptance:
+- with rmux absent, the daemon suite cannot report a clean all-passed summary
+- the count of skipped-for-missing-tooling tests is visible without --nocapture
+- a manager reading a worker's test claim can tell whether the scoped test ran
+
+FOOTPRINT CORRECTED [2026-07-26], before dispatch. Two changes to the numbers
+above; neither weakens the finding and one widens it considerably.
+
+1. The count is SEVEN `if !rmux_available_for_test()` call sites in api.rs, not
+   eight. The eighth match in the original grep was the helper's own definition.
+   Every measurement in this task stands; only the count was wrong, and it was
+   repeated into gotchas.org and three commit messages.
+
+2. The pattern is not confined to api.rs. Fourteen files across three crates
+   carry a tooling skip:
+   - crates/orgasmic-daemon/src/api.rs (7 rmux guards), supervisor.rs
+     (command_available_for_test("tmux")), watcher.rs
+   - crates/orgasmic-drivers/src/modes/rmux.rs, modes/tmux.rs,
+     adapters/claude.rs, adapters/codex.rs
+   - crates/orgasmic-daemon/tests/{dispatch_endpoint,boot_resilience,
+     recovery_fault_restart}.rs
+   - crates/orgasmic-drivers/tests/{driver_modes,cursor_agent}.rs
+   - crates/orgasmic-cli/tests/dispatch.rs, crates/orgasmic-cli/src/manager.rs
+
+   So `cargo test -p orgasmic-drivers` reporting "236 passed / 0 failed" has the
+   same hole, and that figure was already quoted as evidence in a worker report
+   today.
+
+3. Four of the skips are worse than tool-absent — they read
+   "skipping ...: SDK degraded to inert". A test that skips because the driver
+   degraded skips exactly when there is something to find. Those deserve to be
+   errors, not skips, and are worth calling out separately from the PATH problem.
+
+DESIGN DIRECTION chosen for the dispatch: one sentinel test per test binary that
+fails when tooling its gated tests need is absent, plus a per-tool environment
+opt-out, plus routing the existing guards through one shared helper so the gated
+set is discoverable in one place. Converting 63 call sites into 63 hard failures
+was rejected: it would stop anyone without claude on PATH from running the suite
+at all, which is how an escape hatch becomes permanent.
+
