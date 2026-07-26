@@ -50,8 +50,12 @@ After an implementer merge:
 1. Dispatch a reviewer agent (kind `reviewer`) over the merged diff.
 2. Reviewer files findings as `reviewer.finding` tx entries linked to the
    original task.
-3. Non-trivial findings → file a fix sprint task as a subtask
-   (`:PARENT_TASK:` back-edge), then dispatch a fresh implementer.
+3. Non-trivial findings → file a fix sprint task as a subtask, then dispatch a
+   fresh implementer. Parentage lives in the ID, not in a property: mint the fix
+   task as `TASK-<parent>.N` (`TASK-2BPWM.1`), because the schema derives
+   `parent_task` from the id grammar via `derive_task_parent_id` and reads no
+   `:PARENT_TASK:` drawer key. A `:PARENT_TASK:` property is accepted, stored and
+   never read — verified 2026-07-26.
 4. Trivial findings → note and roll into the next pass over the same area.
 
 This applies even when the implementer's verification (tests, clippy, fmt)
@@ -130,7 +134,7 @@ Pair that with `--dry-run` and the check costs nothing.
    manager decision; it does not redefine supervisor heartbeat or stall-timeout
    semantics.
 4. *Integrate.* Read =<project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt= for the worker summary, then from your base branch — the branch HEAD was on at dispatch (=git branch --show-current=): =main= in the default upstream flow, or your feature branch when developing a feature via parallel worktrees for a PR — run =git merge --no-ff task-NNN-impl=, resolve any same-file conflicts (usually only =use= statements when two tasks added imports to the same crate), run =cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings=, record evidence in the sprint task's =** Evidence= section, then =git worktree remove <path> --force && git branch -D task-NNN-impl=. The =implementer.done= close tx is normally emitted by the worker itself, as its terminal action, via =orgasmic dispatch finalize --summary-file <path> [--commit]= (dec_3M7M0) — the SOLE success signal: it writes the report verbatim, optionally commits the worktree, emits the terminal tx, and releases the lease in one call over the same worker→daemon channel used for every other write. Every worker persona's contract ends with this call. Pane/process exit or stall/max-duration timeout without finalize is a failed/orphaned run (=manager.dispatch_orphaned=) — there is no scrollback-scrape or end-of-turn-marker fallback. If the worker never finalized (manager-rescued merge, aborted dispatch), record the close yourself via =orgasmic tx record= or =orgasmic manager dispatch-close=. Never leave orphan pre-flight tx — see the exit checklist.
-5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer --worker reviewer-codex-acp=. Reviewer findings → fix subtasks with =:PARENT_TASK:= pointing at the reviewed task and =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
+5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer=. (There is no =--worker= flag; earlier revisions said =--worker reviewer-codex-acp= and that flag has never existed. =--kind= selects the persona.) Reviewer findings → fix subtasks minted as =TASK-<parent>.N= per the ID rule above, with =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
 6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").
 7. *Lockfile pitfall.* Pre-stage workspace deps before parallel rounds. If multiple codex runs need new =Cargo.toml= deps they will revert =Cargo.lock= to honour their stated write scope, leaving a stale lockfile on main. Add likely deps to the workspace =Cargo.toml= and commit =Cargo.lock= before the dispatch.
 

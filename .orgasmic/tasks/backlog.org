@@ -1129,6 +1129,37 @@ Note the failure is silent in BOTH directions worth testing: an unknown key
 (`priority` on create, dropped). Fixing only the first would leave this case
 intact.
 
+TWO MORE CONFIRMED INSTANCES [2026-07-26], both found while filing a fix subtask.
+
+4. `task create` accepts and silently discards property keys that `task update`
+   accepts and persists. Reproduced on TASK-D0GA3: the same
+   `--property "PARENT_TASK=TASK-2BPWM" --property "FIX_SUBTASK=t"` pair was
+   dropped by `create` (drawer contained only ID, PRIORITY, TEST_CMD,
+   WRITE_SCOPE) and then written verbatim by `update`, whose response echoed both
+   keys under "changed". PRIORITY, TEST_CMD and WRITE_SCOPE survived `create` in
+   the same invocation, so this is a per-key filter on create, not a general
+   restriction. The user-visible effect is that the same command produces
+   different state depending on which verb you happen to use.
+
+5. `:PARENT_TASK:` is never read by anything. `parent_task` is derived purely
+   from the id grammar — `derive_task_parent_id` (crates/orgasmic-core/src/id.rs:319)
+   splits `TASK-<stem>.<digits>` and returns `TASK-<stem>`. So the property is
+   accepted by `update`, stored in the drawer, echoed as changed, and ignored by
+   every reader. `orgasmic task get TASK-D0GA3` still reports
+   `parent_task: null` with `:PARENT_TASK: TASK-2BPWM` sitting in the file.
+
+   This one had a downstream cost: the shipped `manager-dispatch` convention
+   instructed managers to file fix subtasks with a `:PARENT_TASK:` back-edge, so
+   the documented mechanism produced no edge at all. Corrected in the convention
+   the same day — parentage must be minted into the id as `TASK-<parent>.N`.
+
+The pattern across all five instances is one defect: `--property` is an untyped
+passthrough with no schema, so every layer is free to accept, store, filter or
+ignore a key independently, and every combination reports success. The fix is not
+five special cases. It is (a) validate keys against the schema at write time and
+reject unknown or miscased ones with a message naming the correct key, and
+(b) make `create` and `update` accept the same set, or say why they differ.
+
 * BACKLOG TASK-K4G1D Run the mux-dependent daemon tests under tmux as well as rmux, so 'is rmux at fault' becomes a measurement    :testing:daemon:drivers:rmux:
 :PROPERTIES:
 :DEPENDS_ON: TASK-RRT4T
@@ -1186,96 +1217,6 @@ Acceptance:
   modes
 - a failure names which mode it failed under
 - the answer to "is rmux at fault" is a test result, not a judgement call
-
-* BACKLOG TASK-D0GA3 TASK-2BPWM fix: anchor the salvage commit to a real ref and close the late-writer window    :dispatch:recovery:data-loss:fix:
-:PROPERTIES:
-:ID: TASK-D0GA3
-:PRIORITY: P1
-:TEST_CMD: cargo test -p orgasmic-cli
-:WRITE_SCOPE: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
-:FIX_SUBTASK: t
-:PARENT_TASK: TASK-2BPWM
-:END:
-
-One-round fix for the five findings from the TASK-2BPWM reviewer pass
-(reviewer-codex-acp-stdio, acp-stdio / codex / gpt-5.6-sol / xhigh, run
-run-20260726T145141-a55bd48661ac43208123f295cb5a4632). Verdict was BLOCK SHIP.
-
-Findings, as filed: tx-20260726-orgasmic-2942 through -2946.
-
-HIGH 1 — the salvage commit is not anchored to the recorded dispatch branch.
-manager.rs:1432-1445 and api.rs:4496-4551 commit whatever HEAD the worktree
-currently has; neither helper is told which branch was recorded. The later
-retention guards keep the RECORDED branch merely because salvage.is_some().
-
-MANAGER-CONFIRMED EMPIRICALLY, not taken on the reviewer's word. In a scratch
-repo: worktree on task-probe-impl, dirty file, `git checkout --detach`, then
-add+commit exactly as commit_worktree does. Result — the salvage sha is NOT an
-ancestor of the recorded branch, and `git for-each-ref --points-at` returns
-nothing. The commit is unreferenced and prunable by `git gc`. So the close tx
-advertises a recovery path that git is free to delete.
-
-HIGH 2 — a late writer between the dirty check and `--force`. The CLI's last
-clean check is manager.rs:1414-1440 and removal is manager.rs:2080-2084; the
-daemon has the same gap at api.rs:4534-4551 vs 4569-4573. Anything writing in
-that window produces a dirty worktree that `--force` then deletes silently. No
-lock, and removal is not fail-closed.
-
-MEDIUM 3 — a concurrent CLI close can delete another close's salvage branch.
-manager.rs:2268-2273 checks only whether THIS invocation salvaged, then runs
-unfenced `git branch -D`. Two concurrent `--branch-delete` closes: one salvages
-and removes, the other sees salvage=None and deletes the branch now pointing at
-the first salvage. The daemon path is already fenced with an expected OID; the
-CLI is not.
-
-LOW 4 — the CLI dirty + --branch-delete path is untested. Confirmed: the three
-new CLI tests all pass branch_delete=false. This was the manager's own finding
-and the reviewer ranked it correctly BELOW the three above.
-
-LOW 5 — SALVAGE_FILE_COUNT under-reports. manager.rs:1381-1385 and
-api.rs:4504-4507 count porcelain records, and default `git status --porcelain`
-collapses an untracked directory into a single `?? dir/` entry. The tx promises a
-file count and records a status-entry count.
-
-FIX DIRECTION, from the reviewer and endorsed:
-1. Pass the expected dispatch branch and OID into both salvage helpers. Require
-   symbolic HEAD to match, or atomically move the intended ref from its
-   pre-salvage OID to SALVAGE_SHA. Fail BEFORE removal on mismatch. Consider the
-   reviewer's open question: a dedicated durable ref under refs/orgasmic/salvage/
-   would make the tx sha independently reachable and simplify --branch-delete.
-2. Stop using unconditional `--force` after salvage. Fail-closed removal plus a
-   cleanup lock spanning final validation through removal, and a deterministic
-   late-writer test.
-3. In CLI close, never delete a branch after worktree missing/failure, and
-   replace `git branch -D` with expected-OID `update-ref -d` fencing.
-4. Tests: dirty + --branch-delete, detached HEAD / switched branch, removal
-   failure after salvage, duplicate close, nested untracked directory. Mirror
-   branch-identity and late-writer coverage on the daemon side.
-
-WHAT THE REVIEWER REFUTED, so it is not re-litigated. Three of the manager's six
-suspicions were wrong, each refuted with code:
-- error propagation is NOT a regression — cmd_dispatch still bails on non-OK,
-  dispatch-close warned and returned zero before this patch too, and daemon
-  removal failures map to failed/partial rather than ok
-- --no-worktree-remove does NOT commit a dirty retained worktree; salvage is
-  called only inside `if remove_worktree`
-- the post-commit porcelain check has no false-failure case worth fixing;
-  partially staged changes are captured by `git add -A` and ignored files do not
-  appear
-Also: the clean-close path adds one `git status --porcelain` and nothing else,
-which the reviewer classified as fail-closed rather than a regression. Agreed.
-
-The default-true --worktree-remove for aborted closes is sound ONLY after HIGH 1
-and HIGH 2 are fixed. The reviewer would not accept it as safe against the
-current implementation, and neither would I.
-
-Acceptance:
-- a salvage commit is reachable from a ref that the close tx names, on a detached
-  or switched HEAD as well as the normal case
-- no `--force` removal can run against a worktree that became dirty after the
-  last check
-- two concurrent closes cannot leave SALVAGE_SHA dangling
-- the recorded file count equals the number of files committed
 
 * BACKLOG TASK-VZMZE Heartbeats reset the stall timer, so a wedged run that never starts a turn is immortal for four hours    :daemon:supervisor:dispatch:reliability:
 :PROPERTIES:
