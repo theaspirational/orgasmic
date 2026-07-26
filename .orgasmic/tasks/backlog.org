@@ -1193,6 +1193,8 @@ Acceptance:
 :PRIORITY: P1
 :TEST_CMD: cargo test -p orgasmic-cli
 :WRITE_SCOPE: crates/orgasmic-cli/src/manager.rs crates/orgasmic-daemon/src/api.rs
+:FIX_SUBTASK: t
+:PARENT_TASK: TASK-2BPWM
 :END:
 
 One-round fix for the five findings from the TASK-2BPWM reviewer pass
