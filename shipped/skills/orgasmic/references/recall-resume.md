@@ -51,7 +51,9 @@ Open these only when the condition actually holds:
 - **No CLI but handoff names in-flight work**: scan the most recent
   `.orgasmic/tx/*.org` for `manager.dispatch_started` entries without a
   matching close (`implementer.done` / `reviewer.done` /
-  `manager.dispatch_aborted`).
+  `manager.dispatch_aborted`). A `*.reported` entry (`implementer.reported`
+  etc.) is NOT a close — it means the worker finished but the manager has not
+  integrated yet, so the dispatch is awaiting `dispatch-close`, not orphaned.
 - **Next action targets a specific task**: read that task's heading in
   the correct state file (`tasks/backlog.org`, `tasks/in_progress.org`, …) by
   searching its ID. Never read every state file wholesale.

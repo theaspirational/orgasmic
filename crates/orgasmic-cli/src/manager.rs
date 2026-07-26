@@ -605,15 +605,27 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
                         task_list_property(&tasks)
                     )
                 })?;
-            let tx_type = match args.status {
-                DispatchCloseStatus::Done => done_tx_type(&closed).unwrap_or("dispatch"),
-                DispatchCloseStatus::Aborted => "manager.dispatch_aborted",
-            };
+            // Deliberately NOT re-running cleanup: "no-op" is the contract, and
+            // the caller can tell the difference from a real close because the
+            // line says `already-closed` and carries no new tx id. For the
+            // historical worker-closed dispatches the worktree may well still
+            // be on disk, so say so rather than let `--worktree-remove` look
+            // like it ran.
             println!(
-                "closed: {} {} tx=already_closed",
+                "already-closed: {} started_tx={} (no-op)",
                 task_list_property(&tasks),
-                tx_type
+                closed.tx_id
             );
+            if args.worktree_remove && !args.no_worktree_remove {
+                if let Some(worktree) = closed.worktree.as_deref().filter(|path| path.exists()) {
+                    eprintln!(
+                        "warning: dispatch {} was already closed, so --worktree-remove did not \
+                         run; worktree {} is still on disk (remove it with `git worktree remove`)",
+                        closed.tx_id,
+                        worktree.display()
+                    );
+                }
+            }
             return Ok(());
         }
     };
@@ -1816,11 +1828,26 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
     let tasks = normalize_tasks(args.task)?;
     if let Some(open) = latest_open_dispatch_overlapping_tasks(&project_root, &tasks)? {
         let overlapping = overlapping_tasks(&open.tasks, &tasks);
+        // TASK-6AYEJ made a reported-but-unclosed dispatch a normal state, so
+        // this guard now fires on the ordinary "worker finished, manager hasn't
+        // closed yet" case — e.g. dispatching the reviewer before closing the
+        // implementer. Name the remedy instead of leaving the manager to
+        // rediscover it.
+        let hint = if open.reported {
+            format!(
+                " — its worker has reported; close it first with \
+                 `orgasmic manager dispatch-close --task {} --status done --merge-sha <sha>`",
+                task_list_property(&open.tasks)
+            )
+        } else {
+            String::new()
+        };
         bail!(
-            "dispatch already open for overlapping task(s) {} in {} (tx {})",
+            "dispatch already open for overlapping task(s) {} in {} (tx {}){}",
             task_list_property(&overlapping),
             task_list_property(&open.tasks),
-            open.tx_id
+            open.tx_id,
+            hint
         );
     }
     for task in &tasks {
@@ -2188,6 +2215,15 @@ fn done_tx_type_for_kind(kind: &str) -> Result<&'static str> {
 /// Stage kinds (`griller`/`planner`) keep the terminal `*.done`: they have no
 /// `manager.dispatch_started` record and no manager close, so there is nothing
 /// for a report-only tx to leave open.
+///
+/// `architector` is deliberately in the reported set even though it is ALSO a
+/// stage kind, because finalize sees only `run.kind` and cannot tell a
+/// dispatched architector from `stage architect` on main. Dispatched
+/// architectors are closed by the manager (`architector-watch-then-integrate`,
+/// `--merge-sha` required), so treating them as terminal would leave this whole
+/// defect in place for that kind; the stage direction costs nothing, since a
+/// stage run has no dispatch record to leave open and stage completion is
+/// derived from the finalize tombstone, not the tx type.
 fn finalize_tx_type_for_kind(kind: &str) -> Result<&'static str> {
     match kind {
         "implementer" => Ok("implementer.reported"),

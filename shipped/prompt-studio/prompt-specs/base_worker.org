@@ -51,8 +51,9 @@ verification are complete, call it as your terminal action:
 (worker→daemon write channel; see `orgasmic dispatch finalize --help`). In one
 call it writes your report verbatim (no scrollback scrape), optionally
 commits the worktree so commit-stall is impossible, emits the correct
-terminal tx (`implementer.done` / `reviewer.done` / etc.), and releases the
-lease. This is the sole success authority for every dispatch mode
+completion tx (`implementer.reported` / `reviewer.reported` / etc. — the
+manager records the matching `*.done` when it closes the dispatch), and
+releases the lease. This is the sole success authority for every dispatch mode
 (acp-stdio, acp-ws, subprocess-stream-json, tmux, rmux). Pane/process exit
 or protocol end without finalize is a failed run — there is no end-of-turn
 marker or scrollback-scrape fallback. If your assignment cannot be

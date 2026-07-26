@@ -2998,8 +2998,206 @@ async fn dispatch_finalize_reports_without_closing_and_releases_lease() {
         &["manager", "dispatch-status", "--task", "TASK-REVIEW"],
     );
     assert!(
-        review_status_stdout.contains("TASK=TASK-REVIEW") && review_status_stdout.contains("[reported]"),
+        review_status_stdout.contains("TASK=TASK-REVIEW")
+            && review_status_stdout.contains("[reported]"),
         "a finalized reviewer dispatch also stays open for the manager: {review_status_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-6AYEJ, the headline acceptance: after a worker runs `dispatch finalize
+/// --commit`, the manager's `dispatch-close` must actually work. Every one of
+/// its five clauses failed before this fix — the close bailed with "no open
+/// manager.dispatch_started tx", so no manager tx, no merge sha, no worktree
+/// removal, no branch deletion, and no lifecycle flip ever happened on a
+/// successful dispatch.
+///
+/// Also covers the double-close criterion: re-running the same close (a manager
+/// that died mid-integration) is a clean no-op, not an error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    // The worker does real work and finalizes with --commit, exactly as a
+    // dispatched persona ends its turn.
+    write(&worktree.join("worker-change.txt"), "worker output\n");
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "implementer report");
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--commit",
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+    let worker_sha = run_git(&worktree, &["rev-parse", "HEAD"]);
+    assert_ne!(
+        worker_sha, head,
+        "--commit must have produced a new worker commit"
+    );
+
+    // The manager merges. Its merge sha is a DIFFERENT commit from the worker's
+    // branch tip — the exact distinction the old MERGE_SHA-from-finalize lost.
+    run_git(
+        &project_root,
+        &[
+            "merge",
+            "--no-ff",
+            "-m",
+            "merge worker",
+            "task-dispatch-test-impl",
+        ],
+    );
+    let merge_sha = run_git(&project_root, &["rev-parse", "HEAD"]);
+    assert_ne!(merge_sha, worker_sha, "a --no-ff merge is its own commit");
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--status",
+            "done",
+            "--merge-sha",
+            &merge_sha,
+            "--worktree-remove",
+            "--branch-delete",
+            "--reason",
+            "merged",
+        ],
+    );
+    assert!(
+        close_stdout.contains("closed: TASK-DISPATCH implementer.done tx="),
+        "the manager's close must succeed after a worker finalize: {close_stdout}"
+    );
+    assert!(
+        !worktree.exists(),
+        "close must remove the worktree — the whole point of making it reachable"
+    );
+    let branches = run_git(
+        &project_root,
+        &["branch", "--list", "task-dispatch-test-impl"],
+    );
+    assert!(
+        branches.trim().is_empty(),
+        "close must delete the dispatch branch: {branches}"
+    );
+
+    let tx_raw = tx_log(&project_root);
+    assert!(
+        tx_raw.contains(":TYPE:         implementer.reported")
+            && tx_raw.contains(":TYPE:         implementer.done"),
+        "both the worker's report and the manager's close must be on record: {tx_raw}"
+    );
+    assert!(
+        tx_raw
+            .lines()
+            .any(|line| line.trim_start().starts_with(":MERGE_SHA:") && line.contains(&merge_sha)),
+        "the close tx must carry the MANAGER's merge sha {merge_sha}: {tx_raw}"
+    );
+    assert!(
+        !tx_raw
+            .lines()
+            .any(|line| line.trim_start().starts_with(":MERGE_SHA:") && line.contains(&worker_sha)),
+        "no tx may record the worker's branch tip as a merge sha: {tx_raw}"
+    );
+    assert!(tx_raw.contains(":CLEANUP_STATUS: ok"));
+    // The lifecycle flip lives in dispatch-close, so it too was unreachable.
+    assert_task_stage(&project_root, "TASK-DISPATCH", "IN_REVIEW", "in_review");
+
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.trim().is_empty(),
+        "the manager's close must close the dispatch: {status_stdout}"
+    );
+
+    // Double close: a manager that died mid-integration re-runs the same
+    // command. Clean no-op, distinguishable from a real close, no second tx.
+    let reclose = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--status",
+            "done",
+            "--merge-sha",
+            &merge_sha,
+            "--worktree-remove",
+            "--branch-delete",
+            "--reason",
+            "merged",
+        ],
+    );
+    let reclose_stdout = String::from_utf8_lossy(&reclose.stdout).to_string();
+    assert!(
+        reclose.status.success(),
+        "double close must not be an error\nstdout={reclose_stdout}\nstderr={}",
+        String::from_utf8_lossy(&reclose.stderr)
+    );
+    assert!(
+        reclose_stdout.contains("already-closed: TASK-DISPATCH started_tx="),
+        "a repeated close must announce itself as a no-op: {reclose_stdout}"
+    );
+    let tx_after = tx_log(&project_root);
+    assert_eq!(
+        count_occurrences(&tx_after, ":TYPE:         implementer.done"),
+        1,
+        "a repeated close must not append a second closing tx: {tx_after}"
     );
 
     let _ = running.shutdown.send(());
@@ -4239,9 +4437,19 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
         String::from_utf8_lossy(&stdout.stderr)
     );
     let out = String::from_utf8_lossy(&stdout.stdout);
+    // TASK-6AYEJ: `architector` is BOTH a dispatch kind (`manager dispatch
+    // --kind architector`, whose close is `architector-watch-then-integrate`)
+    // and this stage kind, and finalize sees only `run.kind` — it cannot tell
+    // them apart. It resolves to `architector.reported` for both, because
+    // getting it wrong in the dispatch direction leaves the original bug in
+    // place while getting it "wrong" here costs nothing: a stage run on main
+    // has no `manager.dispatch_started`, so there is no dispatch for a
+    // report-only tx to leave open, and no consumer keys off the tx type
+    // (stage completion comes from the finalize tombstone). What this test
+    // actually pins — ORGASMIC_RUN_ID resolution from main — is unchanged.
     assert!(
-        out.contains("architector.done"),
-        "expected architector.done in finalize output: {out}"
+        out.contains("architector.reported"),
+        "expected architector.reported in finalize output: {out}"
     );
     assert_eq!(
         std::fs::read_to_string(&last_path).unwrap(),
