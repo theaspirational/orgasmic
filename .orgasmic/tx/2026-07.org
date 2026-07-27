@@ -30195,3 +30195,124 @@
 :PROJECT:      orgasmic
 :REASON:       Runtime rebuilt and installed at operator request; the dormant merged fixes are now live. The installed runtime was built 2026-07-25 19:45 at commit 05f2194, so everything merged since was inert — verified by marker absence in the binary rather than inferred: SALVAGE_REF, refs/orgasmic/salvage, implementer.reported and already-closed were all 0 in the installed image and non-zero in source. Built via scripts/package-runtime.sh --version 0.0.15-dev.1, release profile, 2m18s, new bundle sha256 9025ea64c12b7d91fc8730fe865ef9f618dcb9513a9427417fee22781196198f, manifest commit 4d1369a built_at 2026-07-27T13:16:12Z. Did NOT use orgasmic update (install.json is mode=bundle channel=stable, and the equality-based installer would have reverted the machine to the stable head) and did NOT use scripts/install.sh --from-source (its source mode runs git fetch/checkout/pull --ff-only origin main, which would fail or move HEAD since local commits are unpushed, and it also rewrites install.json to source mode and relinks the content root). Used the sanctioned install_managed_binary shape by hand instead: fresh inode staged beside the destination and renamed into place, never overwriting the running codesigned Mach-O, which is the documented SIGKILL hazard (TASK-9P810); confirmed the old daemon pid 67452 survived the swap. CODESIGNING was the real hazard and was resolved before the swap: package-runtime.sh only signs when ORGASMIC_CODESIGN_IDENTITY is set, it was unset, and an ad-hoc signature keys TCC to a per-build cdhash, which for a headless LaunchAgent would silently drop file access to the project under ~/Documents. Imported the identity from ~/.tauri/orgasmic-codesign.p12 into the login keychain; its hash A70531007CD128FF081597CB27BEE0816613D86D is the same certificate root named in the installed binary's designated requirement, and the rebuilt binary's DR matches byte for byte, so TCC grants carry over. Reversible with security delete-identity. Also refreshed shipped content, which a binary-only swap would have missed: six files drifted, including prompt-studio/conventions/manager-dispatch.org (the standing worker matrix), manager-handoff.org, base_worker.org, manager.org, schema/tx.org and skills/orgasmic/references/recall-resume.md; the runtime's shipped tree now diffs clean against source. Rollback is a directory swap: the previous runtime is intact at ~/.orgasmic/runtimes/0.0.15-dev.1-darwin-aarch64.bak-20260727, matching the existing convention of retaining 0.0.13 and 0.0.14. POST-SWAP VERIFICATION: daemon restarted onto the new image via the installed binary (not a worktree build), pid 9054, new boot_id 306cf994, 5 projects, 0 parse errors, tx_count 3405; orgasmic doctor reports zero non-ok lines; the daemon still reads the project (425 task ids) so TCC survived; all three fix markers present in the serving binary. TASK-6AYEJ, TASK-D0GA3, TASK-2BPWM, TASK-RRT4T, TASK-6FNAY, TASK-8W30B and the drivers fixes f5c6913/b43fc70/0f65de5 are no longer dormant.
 :END:
+
+* TX 2026-07-27 Mon 13:19:51 task.state_transitioned TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-2996
+:TIME:         [2026-07-27 Mon 13:19:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RWCRN to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-27 Mon 13:19:52 manager.dispatch_started TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-2997
+:TIME:         [2026-07-27 Mon 13:19:52]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:REASON:
+:KIND:         implementer
+:MODE:         acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rwcrn/worktree
+:BRANCH:       task-rwcrn-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RWCRN/task-RWCRN-brief.md
+:STARTED_AT:   [2026-07-27 Mon 13:19:52]
+:LIVENESS:     9c1538384cacd5ed16645a7e23a470baa1d0beb1
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: rmux stall detector kills healthy dispatches at 600s; acp-stdio deliberately, to also measure SGRTX argv
+:END:
+
+* TX 2026-07-27 Mon 13:19:53 run.created TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-2998
+:TIME:         [2026-07-27 Mon 13:19:53]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RWCRN-implementer-20260727T131952.jsonl
+:REASON:       rmux stall detector kills healthy dispatches at 600s; acp-stdio deliberately, to also measure SGRTX argv
+:RUN_ID:       run-20260727T131952-9138610466c24c469819ac27e3f6c504
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-acp-stdio
+:KIND:         implementer
+:DRIVER:       acp-stdio
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rwcrn/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RWCRN/task-RWCRN-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-RWCRN/task-RWCRN-0320ab7539954869a7e70a2c8e5e13d7-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-RWCRN/task-RWCRN-0320ab7539954869a7e70a2c8e5e13d7-stdout.log
+:DISPATCH_ATTEMPT: 0320ab7539954869a7e70a2c8e5e13d7
+:PID:          19245
+:DISPATCH_TX:  tx-20260727-orgasmic-2997
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-27 Mon 13:21:41 task.edited TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-2999
+:TIME:         [2026-07-27 Mon 13:21:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-Z8WEJ
+:NODE_ID:      TASK-Z8WEJ
+:END:
+
+* TX 2026-07-27 Mon 13:21:41 task.edited TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3000
+:TIME:         [2026-07-27 Mon 13:21:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_review.org
+:REASON:       edited task node TASK-VB9DQ
+:NODE_ID:      TASK-VB9DQ
+:END:
+
+* TX 2026-07-27 Mon 13:21:57 task.edited TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3001
+:TIME:         [2026-07-27 Mon 13:21:57]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-SGRTX
+:NODE_ID:      TASK-SGRTX
+:END:
+
+* TX 2026-07-27 Mon 13:22:16 manager.action TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3002
+:TIME:         [2026-07-27 Mon 13:22:16]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:REASON:       SGRTX/Z8WEJ/VB9DQ re-measured live on the rebuilt runtime; the claude path is fixed, the shared design flaw is not. Method: dispatched TASK-RWCRN as implementer-claude-acp-stdio (run run-20260727T131952-9138610466c24c469819ac27e3f6c504) so one real dispatch does step 2 of the agreed order and supplies step 1's live acp-stdio measurement at the same time. Deliberate deviation from the standing worker matrix, which says rmux: rmux is the transport RWCRN itself kills at 600s, and SGRTX's acceptance is specifically about the acp-stdio spawn. RESULT, observed via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. SGRTX recorded the pre-fix argv as the bare stdio_spawn list with no session id, model, effort or mcp flag, so the discard is gone. Session pinning is end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82, passed it as --session-id, and the vendor transcript landed at exactly df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so filename equals runtime_id and the live-only acceptance is met. I initially mis-called this a miss by comparing the transcript name to the 32-hex suffix inside run_id; that suffix is the dispatch attempt token and never matches — the correct comparand is runtime_id. capabilities.simulated=false with endpoint="" confirms f5c6913 is live, not merely merged. CONSEQUENCE: TASK-Z8WEJ's credential-mode selection is real (NativeLogin resolved to --strict-mcp-config) and TASK-VB9DQ's session pinning and native evidence persistence are real; both were declared inert by SGRTX and are no longer, so both are now genuinely reviewable rather than blocked. TASK-SGRTX STAYS OPEN: dec_S18RH requires removing upgrades_simulated_to_subprocess, which still exists at 13 sites, and the Simulated arm at modes/acp_stdio.rs:342-364 still spawns from the bare spawn base. Claude is fixed only because its adapter stopped returning Simulated on an empty endpoint; every other acp-stdio adapter still routes Simulated-then-upgrade, so the next adapter to compose argv inherits the same silent discard. The task's second named discard is closed: subprocess_stream_json.rs now reads adapter.native_runtime() instead of hardcoding None. Also note --strict-mcp-config now reaching a live worker is the acp-stdio half of TASK-NYF7Z; the rmux half is untouched.
+:END:

@@ -790,3 +790,77 @@ was already in place and would have fired. Either the worker's run genuinely
 came up green (making this load- or order-dependent, which fits) or the number
 was not measured. Do not treat any single green run of this suite as evidence.
 
+* IN_PROGRESS TASK-RWCRN the 600s stall detector kills every rmux dispatch at exactly ten minutes :supervisor:rmux:defect:blocker:
+:PROPERTIES:
+:ID: TASK-RWCRN
+:PRIORITY: P0
+:TEST_CMD: cargo test -p orgasmic-daemon --lib
+:END:
+
+An rmux TUI worker emits no driver events while it works, so the supervisor's
+600-second stall detector fires on a healthy, actively-working run and kills it.
+Every rmux dispatch dies at exactly ten minutes. This makes the standing worker
+matrix (operator-set 2026-07-26: every dispatch runs in an rmux pane)
+unusable as written.
+
+MEASURED, first rmux dispatch under the new matrix. TASK-6AYEJ,
+implementer-claude-rmux (rmux / claude / claude-opus-5 / high), run
+run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d. Its whole event stream,
+from .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ-implementer-20260726T193954.jsonl:
+
+    seq 0-2  19:39:54.697-.717  lifecycle
+    seq 3    19:39:54.752       driver_event  ready
+             ...600 seconds of silence...
+    seq 4    19:49:54.786       driver_event  run_complete
+    seq 5    19:49:54.798       lifecycle     released
+
+`manager.dispatch_orphaned` (tx-20260726-orgasmic-2979) landed at 19:49:55 with
+"worker never called `orgasmic dispatch finalize` before the run was released".
+The worker's own transcript shows it editing crates/orgasmic-cli/tests/dispatch.rs
+at 19:49:51 — one second before the kill — and its claude process was left as a
+zombie (pid 37956, STAT Z). It had produced 266 insertions across two files and
+the tree compiles. It was not stalled by any definition except the daemon's.
+
+MECHANISM. supervisor.rs:3410 computes
+`last_activity_at = rec.last_input_at.max(rec.last_driver_event_at)`, and
+DEFAULT_STALL_TIMEOUT (supervisor.rs:65) is 600s. In acp-stdio the driver
+streams events continuously, so this is at worst too lenient — that is
+TASK-VZMZE, where 30-second heartbeats defeat the timeout entirely. In rmux the
+opposite holds: the pane is a terminal, not an event source, so
+`last_driver_event_at` freezes at `ready` and the timeout is guaranteed to fire
+at exactly 600s no matter what the worker is doing. Same line of code, two
+opposite failures, and the pair should probably be fixed together.
+
+THE MECHANISM FOR THE FIX ALREADY EXISTS AND IS DOCUMENTED. `stall_timeout_secs:
+Some(0)` disables the detector, described at supervisor.rs:149-152 as being for
+"interactive, operator-paced runs (the manager) that legitimately idle at a
+prompt". supervisor.rs:1732 already applies exactly that to manager tasks via
+`is_interactive_manager_task`. An rmux worker has the same shape: no driver
+events, attachable, operator-paced.
+
+DO NOT JUST SET IT TO ZERO AND STOP. Disabling the detector for rmux removes the
+only thing that catches a genuinely wedged pane, leaving DEFAULT_MAX_RUN_DURATION
+(14400s = 4 hours) as the sole backstop. A wedged rmux worker would then burn
+four hours before anyone noticed. TASK-RRT4T's first attempt wedged for 60
+minutes with 0 tool calls and 6.77s of CPU, so this is a real shape, not a
+hypothetical. Whatever lands must still be able to distinguish "working" from
+"wedged" for a pane. Candidates worth weighing in the report: pane output
+activity as a liveness signal, the worker's own tool-call cadence in the session
+jsonl, sampled CPU time of the pane's process group, or a periodic driver_event
+emitted by the rmux driver itself. Argue the choice; do not silently pick the
+cheapest.
+
+Interim workaround, already in use: pass
+`--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches. Record it in
+the manager-dispatch convention until this lands, and remove it after.
+
+Acceptance:
+- an rmux dispatch that works continuously for well over 10 minutes is not
+  released, proven by an actual long dispatch rather than a unit test alone
+- a genuinely wedged rmux pane is still detected and released, with the
+  detection signal named and tested
+- the acp-stdio path is unchanged, or changed only in coordination with
+  TASK-VZMZE
+- a released rmux run does not leave a zombie harness process or an orphaned
+  rmux session behind
+
