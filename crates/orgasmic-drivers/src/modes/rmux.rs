@@ -86,6 +86,15 @@ const RMUX_SDK_DAEMON_BINARY_ENV: &str = "RMUX_SDK_DAEMON_BINARY";
 const RMUX_SESSION_SDK_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 const RMUX_SESSION_CLI_REAP_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How often pane output is coalesced into one [`DriverEvent::PaneActivity`]
+/// (TASK-RWCRN). A working TUI writes lines continuously, so this only has to
+/// be short enough that the supervisor's 600 s `DEFAULT_STALL_TIMEOUT` cannot
+/// expire between two events — 30 s matches the acp-stdio heartbeat cadence and
+/// leaves 20x headroom. It must stay long enough that a chatty pane cannot
+/// re-create the JSONL bloat `dec_WDR5K` item 7 removed: at 30 s a four-hour
+/// run adds at most 480 content-free lines.
+const PANE_ACTIVITY_INTERVAL: Duration = Duration::from_secs(30);
+
 pub struct RmuxDriver {
     adapter: Box<dyn HarnessEventAdapter>,
 }
@@ -1316,6 +1325,7 @@ async fn spawn_pane_exit_watch(
         line_stream,
         events,
         terminal_emitted,
+        PANE_ACTIVITY_INTERVAL,
     )))
 }
 
@@ -1749,21 +1759,71 @@ async fn wait_for_pane_stable(
     }
 }
 
+/// Coalesces pane line observations into at most one
+/// [`DriverEvent::PaneActivity`] per `interval` (TASK-RWCRN).
+///
+/// The window opens on the first observed line and only restarts when an event
+/// is emitted, so a pane that goes quiet for ten minutes and then writes again
+/// publishes activity on that first line instead of waiting out another
+/// interval. Time is a parameter rather than read from the clock so the cadence
+/// is unit-testable without sleeping.
+struct PaneActivityThrottle {
+    interval: Duration,
+    window_started_at: Option<tokio::time::Instant>,
+    lines: u64,
+    seq: u64,
+}
+
+impl PaneActivityThrottle {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            window_started_at: None,
+            lines: 0,
+            seq: 0,
+        }
+    }
+
+    fn observe_line(&mut self, now: tokio::time::Instant) -> Option<DriverEvent> {
+        self.lines = self.lines.saturating_add(1);
+        let window_started_at = *self.window_started_at.get_or_insert(now);
+        if now.duration_since(window_started_at) < self.interval {
+            return None;
+        }
+        self.window_started_at = Some(now);
+        let event = DriverEvent::PaneActivity {
+            seq: self.seq,
+            lines: std::mem::take(&mut self.lines),
+        };
+        self.seq += 1;
+        Some(event)
+    }
+}
+
 /// Drain the pane line stream until process exit. No TextChunk synthesis and
-/// no marker scanning (TASK-AFE5Q). `Ok(None)` means the pane process exited;
-/// the daemon maps that terminal event through the finalize contract
-/// (`protocol_end_without_finalize` when a declaration was required).
+/// no marker scanning (TASK-AFE5Q): the only thing derived from the drained
+/// lines is the coalesced [`DriverEvent::PaneActivity`] liveness signal the
+/// supervisor's stall detector reads (TASK-RWCRN). `Ok(None)` means the pane
+/// process exited; the daemon maps that terminal event through the finalize
+/// contract (`protocol_end_without_finalize` when a declaration was required).
 async fn watch_line_stream_exit(
     pane: rmux_sdk::Pane,
     mut lines: rmux_sdk::PaneLineStream,
     events: mpsc::Sender<DriverEvent>,
     terminal_emitted: Arc<AtomicBool>,
+    activity_interval: Duration,
 ) {
+    let mut activity = PaneActivityThrottle::new(activity_interval);
     loop {
         match lines.next().await {
             Ok(Some(_)) => {
                 if terminal_emitted.load(Ordering::SeqCst) {
                     break;
+                }
+                if let Some(event) = activity.observe_line(tokio::time::Instant::now()) {
+                    if events.send(event).await.is_err() {
+                        break;
+                    }
                 }
                 continue;
             }
@@ -2653,6 +2713,85 @@ mod tests {
         assert!(message.contains("cli refused"), "{message}");
     }
 
+    /// TASK-RWCRN. A pane that keeps writing must publish activity often enough
+    /// that the supervisor's stall clock can never expire, and it must coalesce:
+    /// one event per interval, not one per line. 10 lines/s for 95 s of a
+    /// working claude TUI is 950 lines and must produce exactly 3 events.
+    #[test]
+    fn pane_activity_is_coalesced_to_one_event_per_interval() {
+        let interval = Duration::from_secs(30);
+        let mut throttle = PaneActivityThrottle::new(interval);
+        let start = tokio::time::Instant::now();
+        let mut events = Vec::new();
+        for tick in 0..950u64 {
+            let now = start + Duration::from_millis(100 * tick);
+            if let Some(event) = throttle.observe_line(now) {
+                events.push((now.duration_since(start), event));
+            }
+        }
+
+        assert_eq!(events.len(), 3, "{events:?}");
+        for (elapsed, event) in &events {
+            assert!(
+                *elapsed < DEFAULT_STALL_TIMEOUT_FOR_TESTS,
+                "the first event must land well inside the supervisor's stall window, got {elapsed:?}"
+            );
+            assert!(matches!(event, DriverEvent::PaneActivity { .. }));
+        }
+        // Sequence numbers are monotonic and `lines` reports the window's real
+        // volume, which is what makes a spinner-only pane distinguishable from a
+        // working one in the JSONL.
+        assert!(matches!(
+            events[0].1,
+            DriverEvent::PaneActivity { seq: 0, lines: 301 }
+        ));
+        assert!(matches!(
+            events[1].1,
+            DriverEvent::PaneActivity { seq: 1, lines: 300 }
+        ));
+        assert!(matches!(
+            events[2].1,
+            DriverEvent::PaneActivity { seq: 2, lines: 300 }
+        ));
+    }
+
+    /// The supervisor's `DEFAULT_STALL_TIMEOUT`, restated here so the drivers
+    /// crate can assert its cadence is safely inside it without depending on the
+    /// daemon crate.
+    const DEFAULT_STALL_TIMEOUT_FOR_TESTS: Duration = Duration::from_secs(600);
+
+    /// TASK-RWCRN. A pane that produces nothing must publish nothing: the whole
+    /// point of choosing pane output over an unconditional periodic event is
+    /// that a wedged pane stays silent and is still released as stalled.
+    #[test]
+    fn a_silent_pane_publishes_no_activity() {
+        let mut throttle = PaneActivityThrottle::new(Duration::from_secs(30));
+        let start = tokio::time::Instant::now();
+        // No `observe_line` calls at all: nothing to emit, however long we wait.
+        assert!(throttle.window_started_at.is_none());
+        assert_eq!(throttle.lines, 0);
+
+        // One burst, then silence: the burst's own window never completes, so a
+        // pane that dies after its startup banner publishes nothing either.
+        assert!(throttle.observe_line(start).is_none());
+        assert!(throttle
+            .observe_line(start + Duration::from_millis(50))
+            .is_none());
+    }
+
+    /// TASK-RWCRN. After a long quiet stretch the very next line publishes
+    /// immediately rather than waiting out another full interval, so liveness
+    /// resumes as soon as the pane does.
+    #[test]
+    fn pane_activity_resumes_on_the_first_line_after_a_quiet_stretch() {
+        let mut throttle = PaneActivityThrottle::new(Duration::from_secs(30));
+        let start = tokio::time::Instant::now();
+        assert!(throttle.observe_line(start).is_none());
+        assert!(throttle
+            .observe_line(start + Duration::from_secs(500))
+            .is_some());
+    }
+
     #[tokio::test]
     async fn run_complete_publication_survives_release_owner_cancellation() {
         let (events, mut rx) = mpsc::channel(1);
@@ -3083,6 +3222,69 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(out, AttachOutcome::NotReattachable));
+    }
+
+    /// TASK-RWCRN production-path smoke: a real rmux pane writing real lines
+    /// must publish `PaneActivity` on the driver's own event channel — the whole
+    /// path the daemon consumes (`acquire` → `run_live_session` →
+    /// `spawn_pane_exit_watch` → `watch_line_stream_exit`). The unit tests above
+    /// cover the cadence but cannot prove the pane is wired to it, because
+    /// `PaneLineStream` cannot be constructed outside the SDK.
+    ///
+    /// `#[ignore]` because it spawns a real rmux daemon and waits one full
+    /// `PANE_ACTIVITY_INTERVAL` (TASK-RRT4T: live smokes are ignored so the
+    /// default summary counts them instead of silently passing). Run with
+    /// `cargo test -p orgasmic-drivers -- --ignored live_rmux_pane_publishes`.
+    #[tokio::test]
+    #[ignore = "live rmux smoke: real rmux session, waits one PANE_ACTIVITY_INTERVAL"]
+    async fn live_rmux_pane_publishes_pane_activity_while_it_writes() {
+        let _live_guard = live_session_guard();
+        let probe = live_rmux_probe().await;
+        assert!(
+            probe.found,
+            "live_rmux_pane_publishes_pane_activity_while_it_writes needs rmux on PATH"
+        );
+        let d = driver();
+        let cfg = DriverConfig::from_value(json!({
+            "command": "/bin/sh",
+            "args": ["-c", "while :; do echo tick; sleep 0.05; done"],
+        }));
+        let mut s = d
+            .acquire(ctx("run-pane-activity", RunKind::Worker), cfg)
+            .await
+            .unwrap();
+        let ready = s.events.recv().await.expect("ready event");
+        let DriverEvent::Ready { capabilities, .. } = ready else {
+            panic!("expected Ready, got {ready:?}");
+        };
+        assert_not_degraded(
+            "live_rmux_pane_publishes_pane_activity_while_it_writes",
+            capabilities["inert"] == true,
+        );
+
+        let observed = tokio::time::timeout(PANE_ACTIVITY_INTERVAL * 2, async {
+            loop {
+                match s.events.recv().await {
+                    Some(DriverEvent::PaneActivity { seq, lines }) => break Some((seq, lines)),
+                    Some(_) => continue,
+                    None => break None,
+                }
+            }
+        })
+        .await;
+
+        // Reap before asserting: a failed assertion must not leak the session.
+        s.control.release("test done").await.unwrap();
+
+        let observed =
+            observed.expect("a writing pane must publish PaneActivity within 2 intervals");
+        let (seq, lines) = observed.expect("event channel closed before any pane activity");
+        assert_eq!(seq, 0);
+        assert!(
+            lines > 100,
+            "a pane writing ~20 lines/s across one {PANE_ACTIVITY_INTERVAL:?} window should \
+             report many lines, got {lines}"
+        );
     }
 
     #[tokio::test]

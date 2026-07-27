@@ -69,14 +69,22 @@ spawn rather than reporting a missing tool. Note also that rmux sessions are not
 currently reaped — check `rmux ls` for accumulation and kill stale
 `orgasmic-rmux-run-*` sessions during housekeeping.
 
-*Every rmux dispatch needs `--governance-json '{"stall_timeout_secs": 0}'` until
-TASK-RWCRN lands.* A pane emits no driver events, so the supervisor's 600-second
-stall detector fires on a healthy worker and releases the run at exactly ten
-minutes — measured, with the worker mid-edit one second before the kill. Without
-the override every rmux dispatch dies at 00:10:00 and is recorded as
-`manager.dispatch_orphaned`, which reads like a worker failure and is not one.
-Remove the override once TASK-RWCRN lands; it disables the only guard against a
-genuinely wedged pane, leaving the four-hour ceiling as the sole backstop.
+*Do not pass `--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches
+any more.* It was the interim workaround for TASK-RWCRN, where a pane emitted no
+driver events and the 600-second stall detector released every healthy worker at
+exactly ten minutes. The rmux driver now publishes a coalesced `pane_activity`
+driver event while the pane writes output, so the stall detector reads real pane
+liveness and the default 600 s threshold applies unchanged. Keeping the override
+would disable the only guard against a genuinely wedged pane, leaving the
+four-hour ceiling as the sole backstop.
+
+What the stall detector can and cannot see on a pane: silence means silence, so a
+harness parked on an interactive gate (trust prompt, login) or one that finished
+without calling `dispatch finalize` is still released at 600 s. A harness that
+hangs while its TUI keeps animating a spinner still looks alive — same blind spot
+the acp-stdio heartbeat has, and the one TASK-VZMZE is about. The `lines` count on
+each `pane_activity` event is the tell: a spinner-only pane reports a handful of
+lines per 30 s window where a working one reports hundreds.
 
 An orphaned dispatch also blocks re-dispatch: `manager.dispatch_orphaned` is not
 in `scan_open_dispatches`'s terminal set, so the next attempt fails with

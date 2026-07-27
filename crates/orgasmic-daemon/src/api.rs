@@ -6860,9 +6860,10 @@ fn build_recovery_prompt(
     for env in envelopes {
         if env.kind == SessionEventKind::DriverEvent {
             let ty = env.event.get("type").and_then(Value::as_str);
-            // Heartbeats are liveness pings, not work; counting them inflates the
-            // "driver events recorded" figure on long quiet runs.
-            if ty == Some("heartbeat") {
+            // Heartbeats and pane-activity signals are liveness pings, not
+            // work; counting them inflates the "driver events recorded" figure
+            // on long quiet runs (and on every rmux run).
+            if ty == Some("heartbeat") || ty == Some("pane_activity") {
                 continue;
             }
             driver_events += 1;

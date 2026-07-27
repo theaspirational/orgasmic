@@ -209,7 +209,10 @@ export function normalizeTranscriptParts(
       continue;
     }
 
-    if (eventType === 'ready' || eventType === 'heartbeat') continue;
+    // 'pane_activity' is a content-free rmux liveness signal (TASK-RWCRN),
+    // rendered nowhere for the same reason heartbeats are not.
+    if (eventType === 'ready' || eventType === 'heartbeat' || eventType === 'pane_activity')
+      continue;
 
     closeStreamingReasoning(parts);
 
