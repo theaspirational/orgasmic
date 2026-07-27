@@ -30316,3 +30316,90 @@
 :TASK:         TASK-SGRTX
 :REASON:       SGRTX/Z8WEJ/VB9DQ re-measured live on the rebuilt runtime; the claude path is fixed, the shared design flaw is not. Method: dispatched TASK-RWCRN as implementer-claude-acp-stdio (run run-20260727T131952-9138610466c24c469819ac27e3f6c504) so one real dispatch does step 2 of the agreed order and supplies step 1's live acp-stdio measurement at the same time. Deliberate deviation from the standing worker matrix, which says rmux: rmux is the transport RWCRN itself kills at 600s, and SGRTX's acceptance is specifically about the acp-stdio spawn. RESULT, observed via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. SGRTX recorded the pre-fix argv as the bare stdio_spawn list with no session id, model, effort or mcp flag, so the discard is gone. Session pinning is end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82, passed it as --session-id, and the vendor transcript landed at exactly df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so filename equals runtime_id and the live-only acceptance is met. I initially mis-called this a miss by comparing the transcript name to the 32-hex suffix inside run_id; that suffix is the dispatch attempt token and never matches — the correct comparand is runtime_id. capabilities.simulated=false with endpoint="" confirms f5c6913 is live, not merely merged. CONSEQUENCE: TASK-Z8WEJ's credential-mode selection is real (NativeLogin resolved to --strict-mcp-config) and TASK-VB9DQ's session pinning and native evidence persistence are real; both were declared inert by SGRTX and are no longer, so both are now genuinely reviewable rather than blocked. TASK-SGRTX STAYS OPEN: dec_S18RH requires removing upgrades_simulated_to_subprocess, which still exists at 13 sites, and the Simulated arm at modes/acp_stdio.rs:342-364 still spawns from the bare spawn base. Claude is fixed only because its adapter stopped returning Simulated on an empty endpoint; every other acp-stdio adapter still routes Simulated-then-upgrade, so the next adapter to compose argv inherits the same silent discard. The task's second named discard is closed: subprocess_stream_json.rs now reads adapter.native_runtime() instead of hardcoding None. Also note --strict-mcp-config now reaching a live worker is the acp-stdio half of TASK-NYF7Z; the rmux half is untouched.
 :END:
+
+* TX 2026-07-27 Mon 18:00:36 implementer.done TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3003
+:TIME:         [2026-07-27 Mon 18:00:36]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:REASON:       pane_activity liveness signal merged; manager gates green (daemon 508/3 known STWVB flakes all passing in isolation, drivers 239/4/28/1, core 132+26, clippy+fmt clean). Worker's finalize lost its terminal tx to a release/SIGKILL race — filed separately.
+:WORKER_SESSION: .orgasmic/tmp/sessions/dispatch-TASK-RWCRN-implementer-20260727T131952.jsonl
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 2a69f66
+:MERGE_SHA:    5eb8d63
+:BRANCH:       task-rwcrn-impl
+:CLOSED_TX:    tx-20260727-orgasmic-2997
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-27 Mon 18:00:38 task.state_transitioned TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3004
+:TIME:         [2026-07-27 Mon 18:00:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-RWCRN to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-27 Mon 18:01:21 task.created TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3005
+:TIME:         [2026-07-27 Mon 18:01:21]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       measured on the TASK-RWCRN dispatch; finalize half-applied and the run was invisible to both the success and rescue paths
+:END:
+
+* TX 2026-07-27 Mon 18:01:52 task.created TASK-Z9C73
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3006
+:TIME:         [2026-07-27 Mon 18:01:52]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z9C73
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       split out of TASK-RWCRN acceptance; measured pre-existing with a baseline control, needs its own decision
+:END:
+
+* TX 2026-07-27 Mon 18:01:52 task.edited TASK-099T6
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3007
+:TIME:         [2026-07-27 Mon 18:01:52]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-099T6
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-099T6
+:NODE_ID:      TASK-099T6
+:END:
+
+* TX 2026-07-27 Mon 18:02:16 manager.action TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3008
+:TIME:         [2026-07-27 Mon 18:02:16]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:REASON:       TASK-RWCRN merged at 5eb8d63 (worker commit 2a69f66, implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high, 32 min). The fix gives an rmux pane something to say instead of changing how stall is computed: a content-free DriverEvent::PaneActivity{seq,lines} coalesced to at most one per 30s, emitted from the line drain that spawn_pane_exit_watch was already running and discarding, so last_driver_event_at tracks real pane liveness. supervisor.rs:3410, the line TASK-VZMZE owns, is untouched, and the 600s threshold is unchanged so a silent pane is still released. The worker argued all four candidate signals rather than picking the cheapest: rejected tool-call cadence because transcript_finder can legitimately answer Unsupported/NotFound/Ambiguous and a stall clock built on it must either false-kill healthy custom-harness panes or never release a wedge; rejected CPU sampling as a noisier, more expensive read of the same blind spot on a process group orgasmic does not own; rejected an unconditional periodic event as reproducing TASK-VZMZE on a second transport. It also deliberately did NOT reuse DriverEvent::Heartbeat, on the grounds that VZMZE is chartered to stop heartbeats resetting the stall timer and reuse would have silently re-broken every rmux dispatch — that reasoning is correct and the constraint is recorded in the variant's doc comment. MANAGER GATES, independently run: cargo fmt clean; clippy --workspace --all-targets -D warnings clean; orgasmic-daemon --lib 508 passed / 3 failed where all three are the known TASK-STWVB family (post_artifact_regenerate_hot_path_reuses_live_run_id, recovery_reattaches_tmux_session_when_handle_exists, poll_direct_child_pid_prefers_worker_server_over_generic_sibling) and each passes in isolation, with '510 filtered out' independently confirming 511 total tests = the worker's 508 baseline plus its 3 new ones; orgasmic-drivers 239/4/28/1 with the billing test skipped; orgasmic-core 132+26. UNMET AND CARRIED FORWARD, as the worker stated plainly rather than claiming: the live long-dispatch proof (an rmux dispatch working past 10 minutes) is the manager's gate and is NOT yet run — this merge rests on the aged-clock supervisor test, the real-time integration test and a live pane probe with a negative control, not on the acceptance the task actually names. FILED TASK-Z9C73 (P2) for the zombie half of the acceptance, which the worker measured as pre-existing using a stashed-baseline control (3->4 on its tree, 4->5 on baseline) and correctly declined to fix inside this task. FILED TASK-WGXKD (P1) for a defect found while integrating: this worker's finalize half-applied. Commit, last.txt and lease release all succeeded and the daemon emitted run_complete, but no terminal tx was written to either ledger, because cmd_dispatch_finalize orders the tx last and the release it performs first SIGKILLs the harness whose shell is running the finalize CLI. The run was invisible to both the success path and the orphan-rescue path; only the [unreported] marker that TASK-6AYEJ added made it detectable. Recorded against TASK-099T6 that the drivers gate cannot avoid the money-billing test as written. SIDE RESULT: this dispatch was the first live exercise of the TASK-6AYEJ fix on the rebuilt runtime and it worked — dispatch-close was reachable after a worker finalize, success-path worktree and branch cleanup ran for the first time, and a repeat close printed the designed no-op.
+:END:

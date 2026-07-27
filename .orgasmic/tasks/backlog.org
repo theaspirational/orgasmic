@@ -824,6 +824,7 @@ Acceptance:
 - the claude case either does not spawn a billable real turn by default, or its
   cost is a deliberate, documented choice
 - the equivalence property being asserted is still actually asserted
+2026-07-27, TASK-RWCRN dispatch: this test is now actively costing money on ordinary gate runs, not just on deliberate invocation. The brief explicitly told the worker not to run it; the worker ran it once anyway and was right to flag why — `cargo test -p orgasmic-drivers` is a declared verification gate and this test is not #[ignore]d, so the gate as written cannot avoid it. It failed on a real claude spawn with "Error: Session ID 377794d3-... is already in use", the documented TASK-099T6 collision, made more likely because the suite ran inside a live claude dispatch. Until this is #[ignore]d, every brief must carry a --skip instruction and every gate run must use `-- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`, which is exactly the kind of tribal knowledge that does not survive. The manager's own gate run used the skip and was green: 239/4/28/1.
 
 * BACKLOG TASK-A55J7 Persist model and effort on the run record and the dispatch tx    :dispatch:runtime:observability:
 :PROPERTIES:
@@ -1509,3 +1510,45 @@ Acceptance:
 - the fixture, not the caller, is responsible for the isolation
 - an audit of other `ORGASMIC_*` variables that can steer CLI resolution is in
   the report, with each one either cleared or explicitly justified as safe
+
+* BACKLOG TASK-WGXKD a worker finalize can lose its terminal tx because releasing the lease kills the process that writes it    :dispatch:cli:defect:race:
+:PROPERTIES:
+:ID: TASK-WGXKD
+:PRIORITY: P1
+:END:
+
+MEASURED 2026-07-27 on run run-20260727T131952-9138610466c24c469819ac27e3f6c504 (TASK-RWCRN, implementer-claude-acp-stdio, rebuilt runtime 4d1369a). A worker called `orgasmic dispatch finalize --summary-file ... --commit` and it half-applied: the commit landed (2a69f66 at 13:51:57Z), last.txt was written (16566 bytes), the lease release succeeded and the daemon emitted run_complete with summary "worker finalize for TASK-RWCRN" (session seq 984) — but NO terminal tx was ever written, to either the project or the home ledger. dispatch-status reported [pid-gone] [run-live] [unreported]. The very next session event, seq 985, is a fatal driver_error: "claude exited with status signal: 9 (SIGKILL)".
+
+THE MECHANISM. cmd_dispatch_finalize (crates/orgasmic-cli/src/manager.rs:1213-1218) deliberately orders the terminal tx LAST, after commit, last.txt and lease release, and the comment states the intent: "If any earlier step fails or the process dies, no completion tx is on record — the run stalls and is flagged orphan (rescuable), never a done claim with no report + a held lease." The ordering is sound in isolation but is self-cancelling in production: step 2 (release_dispatch_run_with_reason, manager.rs:1246) tears down the driver, which SIGKILLs the harness process — and the `orgasmic dispatch finalize` CLI is a descendant of that same harness shell. Release kills the process that still has to perform step 3. The wider the gap between release and the tx POST, the more likely the loss.
+
+WHY IT IS NOT MERELY COSMETIC. The stated fallback did not occur either: the run was not flagged orphan, and the daemon log has no "release without worker finalize, flagging orphan" line for this run — because from the daemon side the release WAS a worker finalize. So the run lands in a fourth state the design did not anticipate: work durable, report durable, lease released, no terminal tx, no orphan flag. It is invisible to both the success path and the rescue path. The manager only noticed because dispatch-status printed [unreported], which exists solely because of TASK-6AYEJ.
+
+NOT a TASK-6AYEJ regression: 6AYEJ changed WHICH tx type finalize emits (implementer.reported instead of implementer.done), not when it is emitted. The ordering predates it. 6AYEJ is what made the failure visible rather than silent.
+
+FREQUENCY. Timing-dependent, not deterministic. The daemon log shows many successful "worker finalized via orgasmic dispatch finalize, skipping scrape" lines on 07-26, so the tx usually wins the race.
+
+CANDIDATE FIXES, to be argued rather than assumed:
+1. Move the terminal tx BEFORE the release, accepting the risk the design comment was avoiding (a done claim with a held lease) and mitigating it with the release immediately after.
+2. Have the daemon emit the terminal tx as part of the release-with-finalization call, so it is server-side and cannot be lost to client death. This looks strongest: the daemon already knows finalized_by_worker=true and the tx content is derivable from the run record.
+3. Keep the client-side tx but make the release non-fatal to the caller (defer harness teardown until the client disconnects or a grace period elapses).
+
+ACCEPTANCE. A worker finalize whose harness is killed the instant the lease is released still produces its terminal tx; proven by a test that kills the finalizing client between release and tx, plus one live dispatch. dispatch-status must never again show a released run as [unreported] after a successful finalize.
+
+* BACKLOG TASK-Z9C73 a released rmux run leaves one zombie harness child under the rmux daemon    :rmux:drivers:defect:
+:PROPERTIES:
+:ID: TASK-Z9C73
+:PRIORITY: P2
+:END:
+
+Split out of TASK-RWCRN, whose acceptance included "a released rmux run does not leave a zombie harness process or an orphaned rmux session behind". The session half is met — `rmux ls` is empty after release. The process half is NOT, and the TASK-RWCRN worker measured it with a proper baseline control rather than asserting it.
+
+MEASURED. One live acquire + release leaves exactly one <defunct> child under the rmux-daemon (pid 8920 at time of measurement). Zombie count under that ppid went 3 -> 4 across one release_reaps_live_rmux_session run on the TASK-RWCRN tree, and 4 -> 5 across the same test on the stashed baseline tree (git stash -> run -> git stash pop). Equal deltas on both trees, so the leak is pre-existing and TASK-RWCRN neither caused nor fixed it.
+
+MECHANISM, named at crates/orgasmic-drivers/src/modes/rmux.rs:1094: panes are spawned with keep_alive_on_exit(true) deliberately, because RMUX 0.9 retains a real exit code/signal only for a dead pane it keeps around. The exited child therefore stays unreaped by the rmux daemon, a process orgasmic does not own. So this is not a missing waitpid in orgasmic — any fix has to either negotiate reaping with the rmux daemon, drop keep_alive_on_exit and give up the exit code/signal fidelity that TASK-6FNAY and TASK-8W30B depend on, or accept and bound the leak.
+
+WHY IT MATTERS. One zombie per dispatch is small, but it accumulates across the lifetime of a long-lived rmux daemon, and the standing worker matrix puts every dispatch in an rmux pane. Bounded growth needs to be either proven acceptable or fixed.
+
+ACCEPTANCE:
+- name which of the three options is taken, with the tradeoff argued
+- if the leak is retained, bound it and prove the bound
+- the exit code/signal fidelity relied on by TASK-6FNAY and TASK-8W30B is preserved or its loss is explicitly accepted
