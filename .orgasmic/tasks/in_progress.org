@@ -790,3 +790,204 @@ was already in place and would have fired. Either the worker's run genuinely
 came up green (making this load- or order-dependent, which fits) or the number
 was not measured. Do not treat any single green run of this suite as evidence.
 
+* IN_PROGRESS TASK-RWCRN the 600s stall detector kills every rmux dispatch at exactly ten minutes :supervisor:rmux:defect:blocker:
+:PROPERTIES:
+:ID: TASK-RWCRN
+:PRIORITY: P0
+:TEST_CMD: cargo test -p orgasmic-daemon --lib
+:END:
+
+An rmux TUI worker emits no driver events while it works, so the supervisor's
+600-second stall detector fires on a healthy, actively-working run and kills it.
+Every rmux dispatch dies at exactly ten minutes. This makes the standing worker
+matrix (operator-set 2026-07-26: every dispatch runs in an rmux pane)
+unusable as written.
+
+MEASURED, first rmux dispatch under the new matrix. TASK-6AYEJ,
+implementer-claude-rmux (rmux / claude / claude-opus-5 / high), run
+run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d. Its whole event stream,
+from .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ-implementer-20260726T193954.jsonl:
+
+    seq 0-2  19:39:54.697-.717  lifecycle
+    seq 3    19:39:54.752       driver_event  ready
+             ...600 seconds of silence...
+    seq 4    19:49:54.786       driver_event  run_complete
+    seq 5    19:49:54.798       lifecycle     released
+
+`manager.dispatch_orphaned` (tx-20260726-orgasmic-2979) landed at 19:49:55 with
+"worker never called `orgasmic dispatch finalize` before the run was released".
+The worker's own transcript shows it editing crates/orgasmic-cli/tests/dispatch.rs
+at 19:49:51 — one second before the kill — and its claude process was left as a
+zombie (pid 37956, STAT Z). It had produced 266 insertions across two files and
+the tree compiles. It was not stalled by any definition except the daemon's.
+
+MECHANISM. supervisor.rs:3410 computes
+`last_activity_at = rec.last_input_at.max(rec.last_driver_event_at)`, and
+DEFAULT_STALL_TIMEOUT (supervisor.rs:65) is 600s. In acp-stdio the driver
+streams events continuously, so this is at worst too lenient — that is
+TASK-VZMZE, where 30-second heartbeats defeat the timeout entirely. In rmux the
+opposite holds: the pane is a terminal, not an event source, so
+`last_driver_event_at` freezes at `ready` and the timeout is guaranteed to fire
+at exactly 600s no matter what the worker is doing. Same line of code, two
+opposite failures, and the pair should probably be fixed together.
+
+THE MECHANISM FOR THE FIX ALREADY EXISTS AND IS DOCUMENTED. `stall_timeout_secs:
+Some(0)` disables the detector, described at supervisor.rs:149-152 as being for
+"interactive, operator-paced runs (the manager) that legitimately idle at a
+prompt". supervisor.rs:1732 already applies exactly that to manager tasks via
+`is_interactive_manager_task`. An rmux worker has the same shape: no driver
+events, attachable, operator-paced.
+
+DO NOT JUST SET IT TO ZERO AND STOP. Disabling the detector for rmux removes the
+only thing that catches a genuinely wedged pane, leaving DEFAULT_MAX_RUN_DURATION
+(14400s = 4 hours) as the sole backstop. A wedged rmux worker would then burn
+four hours before anyone noticed. TASK-RRT4T's first attempt wedged for 60
+minutes with 0 tool calls and 6.77s of CPU, so this is a real shape, not a
+hypothetical. Whatever lands must still be able to distinguish "working" from
+"wedged" for a pane. Candidates worth weighing in the report: pane output
+activity as a liveness signal, the worker's own tool-call cadence in the session
+jsonl, sampled CPU time of the pane's process group, or a periodic driver_event
+emitted by the rmux driver itself. Argue the choice; do not silently pick the
+cheapest.
+
+Interim workaround, already in use: pass
+`--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches. Record it in
+the manager-dispatch convention until this lands, and remove it after.
+
+Acceptance:
+- an rmux dispatch that works continuously for well over 10 minutes is not
+  released, proven by an actual long dispatch rather than a unit test alone
+- a genuinely wedged rmux pane is still detected and released, with the
+  detection signal named and tested
+- the acp-stdio path is unchanged, or changed only in coordination with
+  TASK-VZMZE
+- a released rmux run does not leave a zombie harness process or an orphaned
+  rmux session behind
+
+* IN_PROGRESS TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-cli
+:END:
+
+The worker's own success signal closes the dispatch record, so the manager's
+`dispatch-close` can never run on a successful dispatch. Found while trying to
+close TASK-D0GA3 after merging it.
+
+REPRODUCED, not inferred:
+- TASK-D0GA3 merged at 0daa77c. `orgasmic manager dispatch-close --task
+  TASK-D0GA3 --status done --merge-sha 0daa77c ... --worktree-remove
+  --branch-delete` fails with "no open manager.dispatch_started tx for
+  TASK-D0GA3".
+- `orgasmic manager dispatch-status` prints nothing — zero open dispatches —
+  while `git worktree list` shows 17 live dispatch worktrees and their branches.
+
+MECHANISM, read from code: scan_open_dispatches (crates/orgasmic-cli/src/manager.rs:3316)
+pairs each manager.dispatch_started with the first terminal tx it sees, and
+manager.rs:3338-3341 counts `implementer.done` / `reviewer.done` /
+`architector.done` / `manager.dispatch_aborted` as terminal. Per dec_3M7M0 the
+worker's `orgasmic dispatch finalize --commit` is the SOLE success signal and it
+emits `implementer.done` itself. So the dispatch is closed by the worker before
+the manager has even read the report.
+
+The tx history shows the switchover cleanly. Every terminal tx up to 2026-07-23
+carries ACTOR theaspirational@users.noreply.github.com (the manager, via
+dispatch-close). Every one from 2026-07-26 carries ACTOR agent.implementer or
+agent.reviewer (the worker, via finalize). Not one manager-recorded close since.
+
+WHAT IS LOST, per successful dispatch:
+1. Worktree and branch cleanup never runs. cleanup_dispatch — and with it the
+   whole salvage path just hardened by TASK-2BPWM and TASK-D0GA3 — is dead on
+   the success path. 17 stale worktrees is the accumulated evidence.
+2. MERGE_SHA in the close tx is the WORKER's commit, not the manager's merge.
+   TASK-D0GA3's implementer.done (tx-20260726-orgasmic-2967) records
+   SHA = MERGE_SHA = e7837f1; the actual merge is 0daa77c. Any later audit that
+   trusts MERGE_SHA is looking at a commit that was never on main as such.
+3. REVIEWED_DIFF, worker-session, tokens and wall are never recorded, because
+   only dispatch-close accepts them.
+4. The manager's verdict is not the closing record. The worker's self-report is.
+   That inverts the "treat worker summaries as claims" rule at the tx layer.
+
+NOT AFFECTED, so scope this correctly: the salvage machinery still runs on the
+failure paths, which is where it matters most — cleanup_created_resources
+(dispatch rollback), the daemon POST cleanup endpoint, and dispatch-close on an
+orphan dispatch that never finalized. TASK-2BPWM and TASK-D0GA3 are not wasted
+work.
+
+DIRECTION, to be argued rather than assumed:
+- The likely fix is that `finalize` should record worker completion WITHOUT
+  closing the dispatch — a distinct tx type (implementer.reported?) that
+  scan_open_dispatches does not treat as terminal — leaving implementer.done to
+  the manager. That preserves dec_3M7M0's "finalize is the sole success signal"
+  for the WATCHER while restoring the manager's close.
+- Whatever shape is chosen, closing must stay idempotent and must not strand a
+  dispatch open forever when the manager dies mid-integration.
+- Backfill is out of scope, but the fix must not choke on the ~10 dispatches
+  already closed this way.
+
+Acceptance:
+- after a worker runs `dispatch finalize --commit`, `manager dispatch-status`
+  still lists the dispatch as open
+- `manager dispatch-close --status done --merge-sha <real merge>` succeeds and
+  records the manager's merge sha, and removes the worktree and branch
+- a dispatch that is never finalized still closes via dispatch-close, unchanged
+- double-close is a clean no-op, not an error
+
+MANAGER VERDICT [2026-07-26] — MERGED at a41934a3d12d6a28c36eef75bfeffaefc7428d34 (worker commit ff902ee on top of
+the salvaged b40163f; implementer-claude-rmux, rmux / claude / claude-opus-5 /
+high, run run-20260726T195450-ca46c33862b7462fb515be5eef7c4da9, 21 min).
+
+This was round 2. Round 1 (run-20260726T193954) was killed at exactly 600s by
+the rmux stall-detector defect, TASK-RWCRN, with the worker mid-edit; its tree
+was salvaged to b40163f and round 2 resumed from it with the detector disabled.
+
+VERIFIED BY THE MANAGER:
+- cargo test -p orgasmic-cli — exit 0, all binaries green. Both headline tests
+  ran and passed: dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up
+  and dispatch_finalize_reports_without_closing_and_releases_lease.
+- cargo clippy --workspace --all-targets -- -D warnings — clean.
+- cargo fmt --all --check — clean.
+- The no-migration invariant, against real data rather than a fixture: built the
+  new binary and ran manager dispatch-status against this repo's live ledger,
+  which holds 141 historical *.done entries. Zero open dispatches, exit 0, no
+  crash. The old binary prints the same. Historical closes stay closed.
+
+TEST NOTE. cargo test -p orgasmic-daemon --lib gave 505 passed / 3 failed — the
+same three TASK-STWVB in-suite flakes as the D0GA3 merge, no new ones. The
+worker reported 508 / 0 for that command. That is now the third worker daemon-lib
+number this session that does not reproduce on the manager's machine. The
+failures are pre-existing and this change touches no daemon source, so the merge
+stands, but do not accept a daemon-lib count from a worker without re-running it.
+
+THE FIX IS MERGED BUT DORMANT. Workers resolve  from the daemon's
+launchd PATH, where both ~/.local/bin/orgasmic and ~/.orgasmic/bin/orgasmic are
+the INSTALLED runtime (0.0.15-dev.1, built 2026-07-25), not this build. Proof:
+this very dispatch's worker emitted implementer.done at 20:15:58, the old shape,
+so TASK-6AYEJ's own dispatch closed itself and dispatch-close was again
+unreachable — its worktree and branch were removed by hand for the second time.
+Nothing changes for live dispatches until the runtime is rebuilt. Until then the
+manager must keep removing worktrees by hand, and the 17 stale ones remain.
+
+MANAGER FINDINGS:
+1. The report's strongest evidence is understated. It frames the enumeration as
+   cheaper than the brief predicted, which is true, but the reason matters more
+   than the count: the daemon keys completion off the finalize TOMBSTONE
+   (requires_worker_finalize / finalized_by_worker), never the tx type. That is
+   why dec_3M7M0 survives a tx-type change at all. Worth carrying into
+   architecture notes rather than leaving in a dispatch report.
+2. The architector call is argued well and I accept it, but it rests on "a stage
+   run on main has no manager.dispatch_started, so a report-only tx leaves
+   nothing open". That invariant is load-bearing and is asserted in prose, not by
+   a test. If stage runs ever gain a dispatch record, this breaks silently.
+3. New ordering constraint, correctly flagged as a consequence rather than a
+   regression: a reviewer cannot be dispatched for a task whose implementer
+   dispatch is still open. That is the forcing function that makes cleanup
+   happen, and the error names the remedy — but it changes the manager's
+   habitual sequence and will surprise the first manager who hits it.
+4. mark_matching_dispatch_reported's task-overlap fallback can paint [reported]
+   on the wrong record for legacy entries with no RUN_ID. Cosmetic; it gates
+   nothing. Accepted as written.
+
+Reviewer pass still owed on the merged diff.
+

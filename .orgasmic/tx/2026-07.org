@@ -30403,3 +30403,274 @@
 :TASK:         TASK-RWCRN
 :REASON:       TASK-RWCRN merged at 5eb8d63 (worker commit 2a69f66, implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high, 32 min). The fix gives an rmux pane something to say instead of changing how stall is computed: a content-free DriverEvent::PaneActivity{seq,lines} coalesced to at most one per 30s, emitted from the line drain that spawn_pane_exit_watch was already running and discarding, so last_driver_event_at tracks real pane liveness. supervisor.rs:3410, the line TASK-VZMZE owns, is untouched, and the 600s threshold is unchanged so a silent pane is still released. The worker argued all four candidate signals rather than picking the cheapest: rejected tool-call cadence because transcript_finder can legitimately answer Unsupported/NotFound/Ambiguous and a stall clock built on it must either false-kill healthy custom-harness panes or never release a wedge; rejected CPU sampling as a noisier, more expensive read of the same blind spot on a process group orgasmic does not own; rejected an unconditional periodic event as reproducing TASK-VZMZE on a second transport. It also deliberately did NOT reuse DriverEvent::Heartbeat, on the grounds that VZMZE is chartered to stop heartbeats resetting the stall timer and reuse would have silently re-broken every rmux dispatch — that reasoning is correct and the constraint is recorded in the variant's doc comment. MANAGER GATES, independently run: cargo fmt clean; clippy --workspace --all-targets -D warnings clean; orgasmic-daemon --lib 508 passed / 3 failed where all three are the known TASK-STWVB family (post_artifact_regenerate_hot_path_reuses_live_run_id, recovery_reattaches_tmux_session_when_handle_exists, poll_direct_child_pid_prefers_worker_server_over_generic_sibling) and each passes in isolation, with '510 filtered out' independently confirming 511 total tests = the worker's 508 baseline plus its 3 new ones; orgasmic-drivers 239/4/28/1 with the billing test skipped; orgasmic-core 132+26. UNMET AND CARRIED FORWARD, as the worker stated plainly rather than claiming: the live long-dispatch proof (an rmux dispatch working past 10 minutes) is the manager's gate and is NOT yet run — this merge rests on the aged-clock supervisor test, the real-time integration test and a live pane probe with a negative control, not on the acceptance the task actually names. FILED TASK-Z9C73 (P2) for the zombie half of the acceptance, which the worker measured as pre-existing using a stashed-baseline control (3->4 on its tree, 4->5 on baseline) and correctly declined to fix inside this task. FILED TASK-WGXKD (P1) for a defect found while integrating: this worker's finalize half-applied. Commit, last.txt and lease release all succeeded and the daemon emitted run_complete, but no terminal tx was written to either ledger, because cmd_dispatch_finalize orders the tx last and the release it performs first SIGKILLs the harness whose shell is running the finalize CLI. The run was invisible to both the success path and the orphan-rescue path; only the [unreported] marker that TASK-6AYEJ added made it detectable. Recorded against TASK-099T6 that the drivers gate cannot avoid the money-billing test as written. SIDE RESULT: this dispatch was the first live exercise of the TASK-6AYEJ fix on the rebuilt runtime and it worked — dispatch-close was reachable after a worker finalize, success-path worktree and branch cleanup ran for the first time, and a repeat close printed the designed no-op.
 :END:
+
+
+* TX 2026-07-27 Mon 19:33:00 manager.dispatch_started TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3009
+:TIME:         [2026-07-27 Mon 19:33:00]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rwcrn-review/worktree
+:BRANCH:       task-rwcrn-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RWCRN-review/task-RWCRN-review-brief.md
+:STARTED_AT:   [2026-07-27 Mon 19:33:00]
+:LIVENESS:     6c6be58819f1b2a080d7f67a7d92be149e525759
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: reviewer pass over merged 5eb8d63; also the live >10min rmux proof for RWCRN's own acceptance
+:END:
+
+* TX 2026-07-27 Mon 19:33:01 run.created TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3010
+:TIME:         [2026-07-27 Mon 19:33:01]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RWCRN-reviewer-20260727T193300.jsonl
+:REASON:       reviewer pass over merged 5eb8d63; also the live >10min rmux proof for RWCRN's own acceptance
+:RUN_ID:       run-20260727T193300-0b4fef22d3ee49fab7d602020f5a4ef8
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rwcrn-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-RWCRN-review/task-RWCRN-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-RWCRN-review/task-RWCRN-review-ce586f09fdf346cc9c74e7806df6a73d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-RWCRN-review/task-RWCRN-review-ce586f09fdf346cc9c74e7806df6a73d-stdout.log
+:DISPATCH_ATTEMPT: ce586f09fdf346cc9c74e7806df6a73d
+:DISPATCH_TX:  tx-20260727-orgasmic-3009
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-27 Mon 19:33:01 manager.dispatch_started TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3011
+:TIME:         [2026-07-27 Mon 19:33:01]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej-review/worktree
+:BRANCH:       task-6ayej-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-6AYEJ-review/task-6AYEJ-review-brief.md
+:STARTED_AT:   [2026-07-27 Mon 19:33:01]
+:LIVENESS:     6c6be58819f1b2a080d7f67a7d92be149e525759
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: reviewer pass over merged a41934a
+:END:
+
+* TX 2026-07-27 Mon 19:33:02 run.created TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3012
+:TIME:         [2026-07-27 Mon 19:33:02]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ-reviewer-20260727T193301.jsonl
+:REASON:       reviewer pass over merged a41934a
+:RUN_ID:       run-20260727T193301-fc1a74ad8c7e4113b7abd0629a087a8b
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-6AYEJ-review/task-6AYEJ-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-6AYEJ-review/task-6AYEJ-review-01a9d7d41bcc4a0599c842c7b6b4459b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-6AYEJ-review/task-6AYEJ-review-01a9d7d41bcc4a0599c842c7b6b4459b-stdout.log
+:DISPATCH_ATTEMPT: 01a9d7d41bcc4a0599c842c7b6b4459b
+:DISPATCH_TX:  tx-20260727-orgasmic-3011
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-27 Mon 19:43:14 reviewer.reported TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3013
+:TIME:         [2026-07-27 Mon 19:43:14]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:RUN_ID:       run-20260727T193301-fc1a74ad8c7e4113b7abd0629a087a8b
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6AYEJ-review/worktree
+:END:
+
+* TX 2026-07-27 Mon 19:45:25 reviewer.reported TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3014
+:TIME:         [2026-07-27 Mon 19:45:25]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:RUN_ID:       run-20260727T193300-0b4fef22d3ee49fab7d602020f5a4ef8
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-RWCRN-review/worktree
+:END:
+
+* TX 2026-07-27 Mon 19:47:20 reviewer.done TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3015
+:TIME:         [2026-07-27 Mon 19:47:20]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:REASON:       reviewer BLOCK SHIP: 1 HIGH (line-based liveness misses a redrawing TUI), 1 MEDIUM (VZMZE task body needs the pane_activity constraint), 1 LOW (unmeasured lines heuristic in the convention)
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 9c15383..5eb8d63
+:CLOSED_TX:    tx-20260727-orgasmic-3009
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-27 Mon 19:47:20 task.state_transitioned TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3016
+:TIME:         [2026-07-27 Mon 19:47:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RWCRN to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-27 Mon 19:47:22 reviewer.done TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3017
+:TIME:         [2026-07-27 Mon 19:47:22]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:REASON:       reviewer BLOCK SHIP: 2 HIGH (convention still force-removes worktrees bypassing salvage; stale close can terminate a successor dispatch), 1 LOW (report matching marks wrong generation)
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: a41934a^..a41934a
+:CLOSED_TX:    tx-20260727-orgasmic-3011
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-27 Mon 19:47:22 task.state_transitioned TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3018
+:TIME:         [2026-07-27 Mon 19:47:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-6AYEJ to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-27 Mon 19:48:01 task.edited TASK-VZMZE
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3019
+:TIME:         [2026-07-27 Mon 19:48:01]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VZMZE
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-VZMZE
+:NODE_ID:      TASK-VZMZE
+:END:
+
+* TX 2026-07-27 Mon 19:48:28 task.created TASK-RWCRN.1
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3020
+:TIME:         [2026-07-27 Mon 19:48:28]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-RWCRN reviewer BLOCK SHIP finding 1 (HIGH) plus the event-shape decision it forces
+:END:
+
+* TX 2026-07-27 Mon 19:48:54 task.created TASK-6AYEJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3021
+:TIME:         [2026-07-27 Mon 19:48:54]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-6AYEJ reviewer BLOCK SHIP findings 2 (HIGH) and 3 (LOW), plus the shipped-content assertion for finding 1
+:END:
+
+* TX 2026-07-27 Mon 19:49:11 task.created TASK-XHP43
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3022
+:TIME:         [2026-07-27 Mon 19:49:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XHP43
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-RWCRN reviewer open question: tmux has the same unprotected shape
+:END:
+
+* TX 2026-07-27 Mon 19:49:12 task.edited TASK-RWCRN.1
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3023
+:TIME:         [2026-07-27 Mon 19:49:12]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN.1
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-RWCRN.1
+:NODE_ID:      TASK-RWCRN.1
+:END:
+
+* TX 2026-07-27 Mon 19:49:36 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260727-orgasmic-3024
+:TIME:         [2026-07-27 Mon 19:49:36]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Both reviewer passes returned BLOCK SHIP; fix rounds filed. Dispatched reviewer-codex-rmux for TASK-RWCRN (run ...193300) and TASK-6AYEJ (run ...193301), rmux/codex/gpt-5.6-sol/high per the standing matrix, after rebuilding the runtime to 6c6be58 — necessary because RWCRN merged AFTER the previous runtime was built, so its own fix was dormant and the worker had already removed the --governance-json stall_timeout_secs 0 workaround from the convention; dispatching on the old binary would have reproduced the 600s kill. LIVE PROOF OF TASK-RWCRN, partial: both rmux panes emitted pane_activity on the 30s cadence and both ran past the 600s threshold to a normal run_complete rather than a stall release — RWCRN reviewer ready+0.1s, last pane_activity +722.9s, run_complete +744.7s (12.4 min); 6AYEJ reviewer ready+0.0s, last pane_activity +597.0s, run_complete +613.0s (10.2 min); 16 and 12 pane_activity events. Before the fix both streams would have been silent from ready. IMPORTANT QUALIFICATION, and I am recording it against my own claim: this does NOT satisfy the acceptance generally, because codex emits newline-terminated output and the RWCRN reviewer found the liveness source is line-based. My own watcher also printed a false 'ACCEPTANCE FAILED' at its 11-minute checkpoint by treating one finished pane as a killed one; that was a probe bug, corrected by measuring the session timings directly. TASK-6AYEJ reviewer: BLOCK SHIP, 2 HIGH + 1 LOW. HIGH 1 is my own error — the convention edit I made kept the old 'git worktree remove --force && git branch -D' instruction in step 4 while adding the dispatch-close paragraph below it, so the shipped workflow told managers to destroy exactly the uncommitted worker output that TASK-2BPWM and TASK-D0GA3 exist to salvage. Fixed the prose immediately since it ships to every worker; the shipped-content assertion that stops it returning is in the fix round. HIGH 2: dispatch-close is task-bound, not generation-bound, so replaying an implementer close after the reviewer is open selects the REVIEWER record and releases and cleans up a live successor. Live hazard, not theoretical — the double-close I ran this session to verify the no-op was safe only because no successor existed yet. LOW 3: a present but unmatched RUN_ID falls through to task overlap and can mark the wrong generation reported. TASK-RWCRN reviewer: BLOCK SHIP, 1 HIGH + 1 MEDIUM + 1 LOW. HIGH: PaneLineStream splits on LF and rmux-sdk 0.9.0 buffers until LF, so a full-screen TUI redrawing in place with ANSI/CR emits no lines, produces no pane_activity, and is still released at 600s; the live smoke missed it because its fixture echoes a newline every iteration. MEDIUM: TASK-VZMZE's recorded fix direction kills rmux again if implemented literally, and the only warning was a doc comment outside VZMZE's write scope and task record — applied the constraint to VZMZE's body directly as a required cross-transport acceptance pair. LOW: the 'handful versus hundreds' lines heuristic in the convention is unmeasured and the supervisor never interprets lines — replaced with diagnostic-volume-only wording plus an explicit note of the HIGH gap. FILED: TASK-RWCRN.1 and TASK-6AYEJ.1 (both P0, FIX_SUBTASK=t) and TASK-XHP43 (P2, tmux has the same unprotected shape and its pairs are still advertised as supported). Both reviewer dispatches closed with REVIEWED_DIFF recorded — the first time that property has ever been written, since the 6AYEJ defect previously made dispatch-close unreachable.
+:END:
