@@ -261,6 +261,25 @@ pub enum DriverEvent {
     /// its `type` (`heartbeat`) so substantive views (evidence distillation,
     /// babysitter summaries, UI transcripts) filter it out.
     Heartbeat { seq: u64 },
+    /// A TUI pane wrote bytes to its terminal. Emitted only by the pane
+    /// transports (rmux), coalesced to at most one event per fixed interval,
+    /// and carrying no pane content — `lines` is just how many pane lines were
+    /// observed in the window (dec_WDR5K item 7 keeps rendered TUI output out
+    /// of the JSONL; see TASK-AFE5Q).
+    ///
+    /// What it proves: the harness process is still writing to its terminal.
+    /// What it does NOT prove: that the worker made progress — a TUI that
+    /// redraws a spinner while hung on the network keeps emitting these.
+    ///
+    /// It exists because a pane is a terminal, not an event source: without it
+    /// `last_driver_event_at` freezes at `ready` and the supervisor's stall
+    /// detector releases every healthy rmux dispatch at exactly
+    /// `DEFAULT_STALL_TIMEOUT` (TASK-RWCRN). This is the *only* stall input an
+    /// rmux run has, so anything that stops counting it against the stall
+    /// clock — e.g. TASK-VZMZE moving stall onto a progress-only clock — must
+    /// give the pane transports a replacement signal in the same change, or
+    /// TASK-RWCRN regresses.
+    PaneActivity { seq: u64, lines: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

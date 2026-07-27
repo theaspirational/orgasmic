@@ -228,6 +228,67 @@ async fn rmux_run_complete_releases_promptly_with_completion_reason() {
     );
 }
 
+/// TASK-RWCRN, in real time rather than against an aged clock: an rmux run whose
+/// only later events are `pane_activity` must outlive its stall threshold while
+/// the pane keeps writing, and must then be released as stalled once the pane
+/// goes silent. The measured defect
+/// (run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d) is the first half; the
+/// reason `stall_timeout_secs: Some(0)` was rejected is the second.
+#[tokio::test]
+async fn pane_activity_defers_the_stall_release_until_the_pane_goes_silent() {
+    let (supervisor, dir) = make_supervisor();
+    let session_path = dir.path().join("rmux-pane-activity.jsonl");
+    let (tx, rx) = mpsc::channel(8);
+    let (driver, releases) = MockDriver::new("rmux", rx, tx.clone());
+
+    // One-second stall threshold stands in for the production 600 s; the pane
+    // publishes every 300 ms, the same ratio of headroom the real 30 s interval
+    // has against 600 s.
+    let resp = supervisor
+        .acquire(
+            &driver,
+            request("TASK-RMUX-PANE-ACTIVITY", session_path.clone(), Some(1)),
+        )
+        .await
+        .expect("acquire");
+
+    for seq in 0..10 {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        tx.send(DriverEvent::PaneActivity { seq, lines: 37 })
+            .await
+            .expect("pane activity is accepted while the run is live");
+    }
+
+    // Three times the stall threshold has now elapsed since acquire.
+    let snapshot = supervisor.snapshot().await;
+    assert!(
+        snapshot.runs.iter().any(|run| run.run_id == resp.run_id),
+        "a pane writing output must not be released as stalled"
+    );
+    assert!(
+        releases.lock().unwrap().is_empty(),
+        "no release should have been driven yet, got {:?}",
+        releases.lock().unwrap()
+    );
+
+    // Pane goes silent (wedged, or finished without calling finalize). Dropping
+    // the test's sender stands in for the driver-side watcher task, whose sender
+    // goes away when the timeout release kills the pane — `release_one` drains
+    // the receiver to closure, so a test that held a live sender open would hang
+    // the release rather than observe it.
+    drop(tx);
+    wait_until_released(&supervisor, &resp.run_id, Duration::from_secs(6)).await;
+    let release = wait_for_release_event(&session_path, Duration::from_secs(7)).await;
+    assert_eq!(
+        release.get("reason"),
+        Some(&json!("stall_timeout_exceeded"))
+    );
+    assert_eq!(
+        releases.lock().unwrap().as_slice(),
+        &["stall_timeout_exceeded".to_string()]
+    );
+}
+
 #[tokio::test]
 async fn stall_detector_still_releases_non_completed_rmux_runs() {
     let (supervisor, dir) = make_supervisor();

@@ -123,6 +123,17 @@ describe('normalizeTranscriptParts', () => {
     expect(parts[0]).toMatchObject({ type: 'reasoning', state: 'streaming' });
   });
 
+  it('renders nothing for a content-free rmux pane_activity signal', () => {
+    const parts = normalizeTranscriptParts(
+      source(
+        event(1, { type: 'text_chunk', stream: 'system', chunk: 'Still thinking' }),
+        event(2, { type: 'pane_activity', seq: 0, lines: 412 }),
+      ),
+    );
+    expect(parts).toHaveLength(1);
+    expect(parts[0]).toMatchObject({ type: 'reasoning', state: 'streaming' });
+  });
+
   it('pairs a tool result into the matching call and marks it completed', () => {
     const output = 'Chunk ID: abc\nWall time: 0.2 seconds\nProcess exited with code 0\nOutput:\nok';
     const parts = normalizeTranscriptParts(

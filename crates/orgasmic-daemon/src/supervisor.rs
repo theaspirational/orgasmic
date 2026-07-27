@@ -3489,10 +3489,20 @@ fn apply_driver_event_to_record(
     }
 }
 
+/// Whether an event is evidence the *worker* did something, for the early-exit
+/// "reached ready and did no work" classification.
+///
+/// `PaneActivity` is excluded for the same reason `Heartbeat` is: a TUI paints
+/// its own banner the moment it launches, so pane output is guaranteed even for
+/// a harness that immediately wedges. It is a stall-clock signal (TASK-RWCRN),
+/// not proof of work.
 fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
     !matches!(
         evt,
-        DriverEvent::Ready { .. } | DriverEvent::DriverError { .. } | DriverEvent::Heartbeat { .. }
+        DriverEvent::Ready { .. }
+            | DriverEvent::DriverError { .. }
+            | DriverEvent::Heartbeat { .. }
+            | DriverEvent::PaneActivity { .. }
     )
 }
 
@@ -4100,12 +4110,14 @@ fn update_babysitter_buffer(
     seq: u64,
     event_at: Instant,
 ) {
-    // Heartbeats and turn-boundary protocol signals carry no substantive
-    // content; they must not inflate the summary window/count fed to the
-    // babysitter.
+    // Heartbeats, pane-activity liveness signals and turn-boundary protocol
+    // signals carry no substantive content; they must not inflate the summary
+    // window/count fed to the babysitter.
     if matches!(
         evt,
-        DriverEvent::Heartbeat { .. } | DriverEvent::AgentTurnComplete { .. }
+        DriverEvent::Heartbeat { .. }
+            | DriverEvent::AgentTurnComplete { .. }
+            | DriverEvent::PaneActivity { .. }
     ) {
         return;
     }
@@ -4117,7 +4129,9 @@ fn update_babysitter_buffer(
     buf.count += 1;
     match evt {
         // Unreachable: filtered above, but the match must stay exhaustive.
-        DriverEvent::Heartbeat { .. } | DriverEvent::AgentTurnComplete { .. } => {}
+        DriverEvent::Heartbeat { .. }
+        | DriverEvent::AgentTurnComplete { .. }
+        | DriverEvent::PaneActivity { .. } => {}
         DriverEvent::TextChunk { chunk, .. } => {
             buf.last_text = truncate(chunk, 4096);
             if buf.headline.is_empty() {
@@ -4266,6 +4280,94 @@ mod tests {
         // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
         fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
         LiveSessionGuard(file)
+    }
+
+    /// Pane-transport double for the TASK-RWCRN stall tests: it emits `Ready`
+    /// at acquire and then, like a real rmux pane, nothing at all unless the
+    /// test injects it. The event sender lives behind a shared handle so the
+    /// channel stays open (a closed channel is stream-end, which would release
+    /// the run before any stall sweep ran) and `release` closes it.
+    struct RmuxPaneDriver {
+        event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    impl RmuxPaneDriver {
+        fn new() -> Self {
+            Self {
+                event_tx: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        async fn inject(&self, evt: DriverEvent) {
+            if let Some(tx) = self.event_tx.lock().await.as_ref() {
+                tx.send(evt).await.expect("pane event channel is open");
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for RmuxPaneDriver {
+        fn transport(&self) -> &'static str {
+            "rmux"
+        }
+
+        fn harness(&self) -> Option<&'static str> {
+            Some("claude")
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            *self.event_tx.lock().await = Some(tx.clone());
+            let _ = tx
+                .send(DriverEvent::Ready {
+                    protocol_version: "rmux/1".into(),
+                    capabilities: json!({"tui": true}),
+                })
+                .await;
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(RmuxPaneControl {
+                    event_tx: Arc::clone(&self.event_tx),
+                }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+    }
+
+    struct RmuxPaneControl {
+        event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for RmuxPaneControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Ok(TransitionAck {
+                accepted: true,
+                message: None,
+            })
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            let _ = self.event_tx.lock().await.take();
+            Ok(())
+        }
     }
 
     /// Minimal in-process driver whose control always accepts `send_input` —
@@ -5479,6 +5581,33 @@ mod tests {
     }
 
     #[test]
+    fn pane_activity_is_non_terminal_and_is_not_evidence_of_work() {
+        // TASK-RWCRN. The pane liveness signal must reset the stall clock (which
+        // the drain does for every drained event) without releasing the lease
+        // and without satisfying the early-exit "did any work" test: a TUI
+        // paints its banner even when the harness immediately wedges, so pane
+        // output alone must never make a no-work run look productive.
+        let evt = DriverEvent::PaneActivity { seq: 0, lines: 12 };
+        assert!(terminal_outcome_for_event(&evt).is_none());
+        assert!(!driver_event_counts_as_work(&evt));
+        assert!(driver_event_counts_as_work(&DriverEvent::ToolCall {
+            call_id: "c1".into(),
+            name: "Edit".into(),
+            args: json!({}),
+            seq: 0,
+        }));
+
+        // And it must not inflate the babysitter's summary window, for the same
+        // reason a heartbeat must not.
+        let mut buf = BabysitterSummaryBuffer::default();
+        let now = Instant::now();
+        update_babysitter_buffer(&mut buf, &evt, 7, now);
+        assert_eq!(buf.count, 0);
+        assert_eq!(buf.window_end_seq, 0);
+        assert!(buf.headline.is_empty());
+    }
+
+    #[test]
     fn agent_turn_complete_does_not_pollute_babysitter_summary_window() {
         let mut buf = BabysitterSummaryBuffer::default();
         let now = Instant::now();
@@ -6320,6 +6449,74 @@ mod tests {
     fn manager_task_ids_are_interactive() {
         assert!(is_interactive_manager_task("manager.launch:orgasmic"));
         assert!(!is_interactive_manager_task("TASK-103.1"));
+    }
+
+    /// TASK-RWCRN, the working half. Reproduces the measured shape of
+    /// run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d: an rmux run whose
+    /// last driver event is `ready`, aged past the real 600 s
+    /// `DEFAULT_STALL_TIMEOUT` while the worker is still working. One
+    /// `pane_activity` event — what the driver now publishes while the pane
+    /// writes output — must save it. Before this signal existed the same run was
+    /// released at exactly ten minutes with the worker mid-edit.
+    ///
+    /// Unmonitored on purpose: the assertion is that the run is STILL LIVE, and
+    /// the background monitor would release the aged run during the awaits that
+    /// deliver the injected event.
+    #[tokio::test]
+    async fn pane_activity_saves_a_working_rmux_pane_from_the_stall_detector() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req(
+            "TASK-RMUX-PANE-WORKING",
+            dir.path(),
+            Some(DEFAULT_STALL_TIMEOUT.as_secs() as u32),
+            None,
+        );
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        age_run(
+            &sup,
+            &resp.run_id,
+            Some(DEFAULT_STALL_TIMEOUT + Duration::from_secs(1)),
+            None,
+        )
+        .await;
+
+        driver
+            .inject(DriverEvent::PaneActivity { seq: 0, lines: 412 })
+            .await;
+        wait_for_event_count(&sup, &resp.run_id, 2).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "a pane that is still writing output must not be released as stalled"
+        );
+        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
+    }
+
+    /// TASK-RWCRN, the wedged half — the case that makes this a liveness signal
+    /// rather than `stall_timeout_secs: Some(0)`. A pane that writes nothing
+    /// (harness parked on an interactive gate, or finished without calling
+    /// `dispatch finalize`) publishes no `pane_activity`, so the stall clock
+    /// stays frozen and the run is still released at the threshold instead of
+    /// burning the 4-hour `DEFAULT_MAX_RUN_DURATION`.
+    #[tokio::test]
+    async fn a_silent_rmux_pane_is_still_released_as_stalled() {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req("TASK-RMUX-PANE-WEDGED", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release_reason(&session_path, "stall_timeout_exceeded");
     }
 
     #[tokio::test]
