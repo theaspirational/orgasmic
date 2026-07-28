@@ -11,7 +11,7 @@ use orgasmic_core::{
 };
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use orgasmic_drivers::modes::rmux::test_tooling::{
-    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+    assert_required_test_tooling, skip_test_if_missing, test_environment_lock, ToolRequirement,
 };
 use orgasmic_drivers::{allowlist_from_driver_config, DriverConfig};
 
@@ -1494,9 +1494,8 @@ async fn wait_for_orphan_tx(project_root: &Path) {
 
 #[cfg(unix)]
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_empty() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1553,9 +1552,8 @@ async fn dispatch_protocol_end_without_finalize_orphans_and_leaves_artifacts_emp
 /// artifacts empty.
 #[cfg(unix)]
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1615,9 +1613,8 @@ async fn dispatch_delayed_protocol_end_without_finalize_orphans() {
 /// assistant chunks into completion artifacts.
 #[cfg(unix)]
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -1690,9 +1687,8 @@ async fn dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes() {
 
 #[cfg(unix)]
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -2058,9 +2054,8 @@ async fn dispatch_missing_skill_precedes_missing_brief() {
 /// not appear in dispatch stdout artifacts.
 #[cfg(unix)]
 #[tokio::test]
-#[allow(clippy::await_holding_lock)] // serializes process-global fake cursor PATH state
 async fn dispatch_system_only_session_without_finalize_orphans_not_scrapes() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -2279,15 +2274,16 @@ async fn dispatch_started_tx_empty_reason_has_no_trailing_whitespace() {
     let _ = running.join.await;
 }
 
-#[cfg(unix)]
-static FAKE_CURSOR_AGENT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-#[cfg(unix)]
-fn fake_cursor_agent_test_lock() -> std::sync::MutexGuard<'static, ()> {
-    FAKE_CURSOR_AGENT_TEST_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
+// orgasmic:TASK-5HBST
+// The fake-cursor tests used to serialize their `PATH` mutation on a lock
+// private to this binary. One process has one environment, so a private lock
+// is one more thing that has to be remembered rather than a guarantee: it
+// excluded these nine tests from each other and nothing else. They now hold
+// `test_environment_lock`, the workspace-wide environment lock (TASK-R2HDN),
+// which is also what the drivers-side probes and the daemon's own lib tests
+// take — so a future environment mutation added anywhere in this binary
+// excludes them for free. Being a `tokio` mutex, it is also held across the
+// awaits below without `clippy::await_holding_lock` suppressions.
 
 #[cfg(unix)]
 fn fake_cursor_protocol_exit_script(session_id: &str) -> String {
@@ -2515,10 +2511,9 @@ async fn get_project_invalid_task_returns_404_quickly_without_paths() {
 /// TASK-075: dispatch response pid should track the inner worker child, not the
 /// short-lived cursor-agent CLI wrapper.
 #[cfg(unix)]
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn dispatch_response_pid_is_inner_subprocess_child() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     if skip_test_if_missing(
         "dispatch_response_pid_is_inner_subprocess_child",
         &[("cc", cc_available_for_test())],
@@ -2593,10 +2588,9 @@ async fn dispatch_response_pid_is_inner_subprocess_child() {
 
 /// TASK-075.1 F-2: dispatch watch pid must prefer worker-server over a generic sibling.
 #[cfg(unix)]
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn dispatch_response_pid_prefers_worker_server_child() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     if skip_test_if_missing(
         "dispatch_response_pid_prefers_worker_server_child",
         &[("cc", cc_available_for_test())],
@@ -2665,10 +2659,9 @@ async fn dispatch_response_pid_prefers_worker_server_child() {
 
 /// TASK-074 item 2: acquire + ready then subprocess exit auto-releases the lease.
 #[cfg(unix)]
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn dispatch_early_exit_auto_releases_stuck_lease() {
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let bin = install_fake_cursor_agent(
         tmp.path(),
@@ -2868,11 +2861,10 @@ fn count_session_jsonl(dir: &Path) -> usize {
 /// longer a dispatch success signal — without `orgasmic dispatch finalize`
 /// the completion watcher orphans instead of scraping last.txt.
 #[cfg(unix)]
-#[allow(clippy::await_holding_lock)]
 #[tokio::test]
 async fn dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail() {
     // orgasmic:TASK-P4MGK
-    let _lock = fake_cursor_agent_test_lock();
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let mut script = String::from(
         "#!/bin/sh\nexec 0<&-\ncat >/dev/null\nprintf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",\"model\":\"composer-2.5-fast\",\"session_id\":\"synthetic-exit\"}'\n",

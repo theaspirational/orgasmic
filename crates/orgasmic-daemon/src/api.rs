@@ -15991,7 +15991,9 @@ mod tests {
 
     use futures::{SinkExt as _, StreamExt as _};
     use orgasmic_drivers::{
-        modes::rmux::test_tooling::{live_session_guard, rmux_session_names, skip_test_if_missing},
+        modes::rmux::test_tooling::{
+            live_session_guard, rmux_session_names, skip_test_if_missing, test_environment_lock,
+        },
         HarnessEventAdapter,
     };
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -16607,7 +16609,8 @@ mod tests {
     fn trusted_claude_symlink_layout_pins_canonical_target() {
         let _live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
-        let _home_guard = HomeEnvGuard::set(tmp.path());
+        let mut env = TestEnvGuard::acquire_blocking();
+        env.set("HOME", tmp.path());
         let pinned = seed_trusted_claude_symlink_layout(tmp.path());
         assert!(pinned.entry_path.ends_with(".local/bin/claude"));
         assert!(pinned.target_path.ends_with("versions/2.1.217"));
@@ -16618,7 +16621,8 @@ mod tests {
     fn pinned_claude_rejects_symlink_retarget_after_pin() {
         let _live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
-        let _home_guard = HomeEnvGuard::set(tmp.path());
+        let mut env = TestEnvGuard::acquire_blocking();
+        env.set("HOME", tmp.path());
         let pinned = seed_trusted_claude_symlink_layout(tmp.path());
         let replacement = tmp.path().join(".local/share/claude/versions/evil");
         std::fs::create_dir_all(replacement.parent().unwrap()).unwrap();
@@ -16640,7 +16644,8 @@ mod tests {
     fn pinned_claude_rejects_target_inode_replacement_after_pin() {
         let _live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
-        let _home_guard = HomeEnvGuard::set(tmp.path());
+        let mut env = TestEnvGuard::acquire_blocking();
+        env.set("HOME", tmp.path());
         let pinned = seed_trusted_claude_symlink_layout(tmp.path());
         let old_target = pinned.target_path.with_extension("old");
         std::fs::rename(&pinned.target_path, &old_target).unwrap();
@@ -18474,27 +18479,16 @@ mod tests {
     #[tokio::test]
     async fn get_run_native_transcript_uses_recorded_session_path() {
         // orgasmic:TASK-0SADP
-        struct RestoreEnv {
-            key: &'static str,
-            value: Option<std::ffi::OsString>,
-        }
-        impl Drop for RestoreEnv {
-            fn drop(&mut self) {
-                match &self.value {
-                    Some(v) => std::env::set_var(self.key, v),
-                    None => std::env::remove_var(self.key),
-                }
-            }
-        }
-
+        // Both locks, in the workspace order. The environment lock excludes the
+        // other `HOME` writers; the flock excludes the live daemon/tmux tests,
+        // which read `HOME` and `PATH` through the production paths they drive
+        // without ever taking the environment lock (TASK-5HBST).
+        let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
         let tmp = tempfile::tempdir().unwrap();
         let user_home = tmp.path().join("user-home");
         std::fs::create_dir_all(&user_home).unwrap();
-        let _restore_home = RestoreEnv {
-            key: "HOME",
-            value: std::env::var_os("HOME"),
-        };
-        std::env::set_var("HOME", &user_home);
+        env.set("HOME", &user_home);
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         let project_root = tmp.path().join("proj");
@@ -21013,7 +21007,11 @@ mod tests {
     #[test]
     fn dispatch_driver_config_applies_hermes_acp_ws_defaults() {
         let token_env = "ORGASMIC_TEST_HERMES_TOKEN_APPLY_DEFAULTS";
-        std::env::set_var(token_env, "fixture-token");
+        // Environment lock only, no flock: the key is unique to this test, so
+        // nothing else in the binary reads it and the heavy live tests have no
+        // reason to queue behind it.
+        let mut env = TestEnvGuard::acquire_blocking();
+        env.set(token_env, "fixture-token");
         let worker = StageWorker {
             id: "worker-hermes".to_string(),
             kind: WorkerKind::Implementer,
@@ -21232,6 +21230,12 @@ mod tests {
 
     #[tokio::test]
     async fn tmux_ws_mock_streams_and_echoes_send_keys() {
+        // Held from the top: the first half asserts the *absence* of the mock
+        // override, which only holds while no other test may set it. Both
+        // locks, in the workspace order — the override is read by the
+        // production websocket path every other live daemon test drives.
+        let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -21255,7 +21259,7 @@ mod tests {
         assert!(err.contains("missing-run"));
 
         // Forced mock streams pane frames and echoes composer send_keys.
-        std::env::set_var("ORGASMIC_TMUX_WS_MOCK", "1");
+        env.set("ORGASMIC_TMUX_WS_MOCK", "1");
         let mut ws = connect_tmux_ws(running.addr, &token, "missing-run").await;
         let first = next_ws_text_containing(&mut ws, "[mock tmux]").await;
         assert!(first.contains("missing-run") || first.contains("tick"));
@@ -21267,7 +21271,6 @@ mod tests {
         .unwrap();
         let echo = next_ws_text_containing(&mut ws, "hello from composer").await;
         assert!(echo.contains("[mock tmux] send_keys"));
-        std::env::remove_var("ORGASMIC_TMUX_WS_MOCK");
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
@@ -25011,46 +25014,65 @@ mod tests {
         crate::test_fixtures::link_shared_test_executable(&wrapper);
     }
 
-    #[cfg(unix)]
-    struct PrependPathGuard {
-        previous: Option<std::ffi::OsString>,
+    // orgasmic:TASK-5HBST
+    /// The one way this binary's tests may touch the process environment.
+    ///
+    /// `std::env::set_var` mutates state every concurrently running test in
+    /// this binary shares: `PATH` decides what every subprocess spawn resolves,
+    /// and `HOME` is read at daemon boot by [`pin_trusted_claude_binary`]. A
+    /// test that repoints either one without excluding the others is writing
+    /// into their runs, and they into its. `test_environment_lock` is the
+    /// workspace-wide answer (TASK-R2HDN) and the daemon crate already uses it
+    /// in `supervisor::tests`; this guard makes acquiring it and restoring the
+    /// environment one indivisible step, so restoration also happens on the
+    /// unwind path when an assertion between the two panics.
+    ///
+    /// Acquire once per test and route every key through the one guard: the
+    /// lock is not reentrant, so a second guard in the same test deadlocks.
+    /// Acquire it *after* `live_session_guard` where a test holds both — the
+    /// lock order is flock-then-environment everywhere in this workspace.
+    struct TestEnvGuard {
+        _lock: tokio::sync::MutexGuard<'static, ()>,
+        restore: Vec<(&'static str, Option<std::ffi::OsString>)>,
     }
 
-    #[cfg(unix)]
-    impl PrependPathGuard {
-        fn prepend(dir: &FsPath) -> Self {
-            let previous = std::env::var_os("PATH");
-            let current = std::env::var("PATH").unwrap_or_default();
-            std::env::set_var("PATH", format!("{}:{current}", dir.display()));
-            Self { previous }
+    impl TestEnvGuard {
+        async fn acquire() -> Self {
+            Self::with_lock(test_environment_lock().lock().await)
         }
-    }
 
-    #[cfg(unix)]
-    impl Drop for PrependPathGuard {
-        fn drop(&mut self) {
-            match &self.previous {
-                Some(path) => std::env::set_var("PATH", path),
-                None => std::env::remove_var("PATH"),
+        /// For a `#[test]` body with no runtime to await on.
+        fn acquire_blocking() -> Self {
+            Self::with_lock(test_environment_lock().blocking_lock())
+        }
+
+        fn with_lock(lock: tokio::sync::MutexGuard<'static, ()>) -> Self {
+            Self {
+                _lock: lock,
+                restore: Vec::new(),
             }
         }
-    }
 
-    struct HomeEnvGuard(Option<std::ffi::OsString>);
+        fn set(&mut self, key: &'static str, value: impl AsRef<std::ffi::OsStr>) -> &mut Self {
+            self.restore.push((key, std::env::var_os(key)));
+            std::env::set_var(key, value);
+            self
+        }
 
-    impl HomeEnvGuard {
-        fn set(path: &FsPath) -> Self {
-            let previous = std::env::var_os("HOME");
-            std::env::set_var("HOME", path);
-            Self(previous)
+        #[cfg(unix)]
+        fn prepend_path(&mut self, dir: &FsPath) -> &mut Self {
+            let current = std::env::var("PATH").unwrap_or_default();
+            self.set("PATH", format!("{}:{current}", dir.display()))
         }
     }
 
-    impl Drop for HomeEnvGuard {
+    impl Drop for TestEnvGuard {
         fn drop(&mut self) {
-            match self.0.take() {
-                Some(previous) => std::env::set_var("HOME", previous),
-                None => std::env::remove_var("HOME"),
+            for (key, previous) in self.restore.drain(..).rev() {
+                match previous {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
             }
         }
     }
@@ -25081,7 +25103,10 @@ mod tests {
 
     #[tokio::test]
     async fn production_resume_native_fork_uses_pinned_claude_not_path_shim() {
+        // Lock order is flock-then-environment: this test starts a real daemon
+        // and repoints process-global `HOME` and `PATH` for its whole body.
         let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
         if skip_test_if_missing(
             "production_resume_native_fork_uses_pinned_claude_not_path_shim",
             &[("tmux", tmux_on_path())],
@@ -25094,7 +25119,7 @@ mod tests {
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         seed_test_pinned_exec_wrapper(&home);
-        let _home_guard = HomeEnvGuard::set(&user_home);
+        env.set("HOME", &user_home);
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
         std::fs::remove_file(home.bin().join("claude")).ok();
@@ -25118,7 +25143,7 @@ mod tests {
         );
         let shim_dir = tmp.path().join("malicious-path");
         seed_malicious_path_claude_shim(&shim_dir, &malicious_log);
-        let _path_guard = PrependPathGuard::prepend(&shim_dir);
+        env.prepend_path(&shim_dir);
 
         let running = crate::Daemon::run(home.clone(), test_options())
             .await
@@ -25183,7 +25208,9 @@ mod tests {
 
     #[tokio::test]
     async fn two_recovery_chain_second_resume_uses_first_fork_session_id() {
+        // Lock order is flock-then-environment, as above.
         let _live_guard = live_session_guard();
+        let mut env = TestEnvGuard::acquire().await;
         if skip_test_if_missing(
             "two_recovery_chain_second_resume_uses_first_fork_session_id",
             &[("tmux", tmux_on_path())],
@@ -25196,7 +25223,7 @@ mod tests {
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
         seed_test_pinned_exec_wrapper(&home);
-        let _home_guard = HomeEnvGuard::set(&user_home);
+        env.set("HOME", &user_home);
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
         std::fs::remove_file(home.bin().join("claude")).ok();
