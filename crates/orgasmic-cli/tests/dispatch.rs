@@ -6785,3 +6785,309 @@ async fn task_update_from_dispatch_worktree_lands_in_the_live_ledger() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// A listener that completes the TCP handshake and then never answers, so a
+/// client request runs out its own timeout instead of failing to connect.
+/// This is what scheduler starvation looks like from the CLI's side of the
+/// socket: the daemon is *there*, it just does not get a turn (TASK-EP3H1).
+struct HangingDaemon {
+    addr: std::net::SocketAddr,
+    join: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for HangingDaemon {
+    fn drop(&mut self) {
+        self.join.abort();
+    }
+}
+
+async fn start_hanging_daemon() -> HangingDaemon {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind hanging daemon");
+    let addr = listener.local_addr().unwrap();
+    let join = tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((stream, _)) = listener.accept().await {
+            held.push(stream);
+        }
+    });
+    HangingDaemon { addr, join }
+}
+
+/// A daemon whose task lifecycle write for TASK-CLEANUP is unavailable, so a
+/// `dispatch-close` appends its close tx and then loses the lifecycle leg —
+/// the exact tear TASK-EP3H1 was measured on. Every other route is the real
+/// daemon, so the close really closes.
+async fn start_lifecycle_rejecting_proxy(backend: std::net::SocketAddr) -> InterceptingProxy {
+    start_intercepting_proxy(backend, |path| {
+        (path == "/api/projects/orgasmic/tasks/TASK-CLEANUP").then_some((
+            503,
+            "Service Unavailable",
+            "{\"error\":\"lifecycle write unavailable\"}",
+        ))
+    })
+    .await
+}
+
+/// Seed a hand-written open implementer dispatch for TASK-CLEANUP, so a close
+/// can be driven without spawning a worker.
+fn seed_open_dispatch_tx(project_root: &Path, started_tx: &str, worktree: &Path, brief: &Path) {
+    write(
+        &tx_file_path(project_root),
+        format!(
+            "#+title: tx\n#+orgasmic_version: 1\n\n* TX 2026-07-29 Wed 10:00:00 manager.dispatch_started TASK-CLEANUP\n:PROPERTIES:\n:TX_ID:        {started_tx}\n:TIME:         [2026-07-29 Wed 10:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-CLEANUP\n:KIND:         implementer\n:WORKTREE:     {}\n:BRANCH:       task-cleanup-impl\n:CODEX_BRIEF_PATH: {}\n:STARTED_AT:   [2026-07-29 Wed 10:00:00]\n:END:\n",
+            worktree.display(),
+            brief.display()
+        ),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command() {
+    // TASK-EP3H1: `dispatch-close` writes the close tx and the task lifecycle
+    // transition as two daemon requests. When the second one fails — measured
+    // as a client-side timeout at load average ~190 — the close tx is on the
+    // ledger and the task is stranded at its pre-close stage, and the operator
+    // is left to repair it by hand. The close records the transition it
+    // intended, so the NEXT manager command finishes it.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-cleanup");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = tmp.path().join("codex/task-cleanup-brief.md");
+    write(&brief, "cleanup brief");
+    seed_open_dispatch_tx(&project_root, "tx-start-torn", &worktree, &brief);
+
+    let running = boot(home.clone()).await;
+    let proxy = start_lifecycle_rejecting_proxy(running.addr).await;
+    let output = run_orgasmic_output_with_daemon_url(
+        &home,
+        &format!("http://{}", proxy.addr),
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-CLEANUP",
+            "--started-tx",
+            "tx-start-torn",
+            "--status",
+            "done",
+            "--merge-sha",
+            "deadbeef",
+            "--no-worktree-remove",
+        ],
+        &[],
+    );
+    assert!(
+        output.status.success(),
+        "the close tx leg succeeds, so the command still exits 0\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let close_stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        close_stderr.contains("close tx appended but lifecycle update failed"),
+        "the tear must stay loud: {close_stderr}"
+    );
+    assert_task_stage(&project_root, "TASK-CLEANUP", "BACKLOG", "backlog");
+    drop(proxy);
+
+    // The next manager command finishes the transition the close recorded.
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-CLEANUP"],
+    );
+    assert!(
+        status_stdout.contains("reconciled: TASK-CLEANUP backlog -> in_review"),
+        "the next manager command must repair the torn close and say so: {status_stdout}"
+    );
+    assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
+
+    // ...and it is not a standing repair loop: a second run has nothing to do.
+    let repeat_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-CLEANUP"],
+    );
+    assert!(
+        !repeat_stdout.contains("reconciled:"),
+        "a repaired close must not reconcile twice: {repeat_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn resubmitted_close_and_transition_are_labelled_no_ops() {
+    // TASK-EP3H1: a timed-out request can succeed server-side, so the repair
+    // path re-submits work that already landed. The daemon must say which of
+    // the two no-ops it is — "this exact request already applied" (with the
+    // tx it wrote) or "the task was already in that state and this request did
+    // nothing" — instead of an unlabelled `{"changed":{},"tx_id":""}`.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let worktree = tmp.path().join("worktrees/task-cleanup");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = tmp.path().join("codex/task-cleanup-brief.md");
+    write(&brief, "cleanup brief");
+    seed_open_dispatch_tx(&project_root, "tx-start-noop", &worktree, &brief);
+
+    let running = boot(home.clone()).await;
+    let close_args = [
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-CLEANUP",
+        "--started-tx",
+        "tx-start-noop",
+        "--status",
+        "done",
+        "--merge-sha",
+        "deadbeef",
+        "--no-worktree-remove",
+    ];
+    let first = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);
+    assert!(first.contains("closed: TASK-CLEANUP implementer.done tx="));
+    assert_task_stage(&project_root, "TASK-CLEANUP", "IN_REVIEW", "in_review");
+
+    let second = run_orgasmic(&home, &running, &project_root, &path_env, &close_args);
+    assert!(
+        second.contains("already-closed: TASK-CLEANUP started_tx=tx-start-noop (no-op)"),
+        "a re-submitted close must be a labelled no-op: {second}"
+    );
+
+    // The lifecycle leg's own no-op contract, on the wire.
+    let client = reqwest::Client::new();
+    let token = std::fs::read_to_string(home.root.join("user/auth/token")).unwrap();
+    let url = format!(
+        "http://{}/api/projects/orgasmic/tasks/TASK-CLEANUP",
+        running.addr
+    );
+    let post = |body: serde_json::Value| {
+        let client = client.clone();
+        let url = url.clone();
+        let token = token.trim().to_string();
+        async move {
+            client
+                .post(&url)
+                .header(AUTHORIZATION, format!("Bearer {token}"))
+                .json(&body)
+                .send()
+                .await
+                .expect("post task state")
+                .json::<serde_json::Value>()
+                .await
+                .expect("task state json")
+        }
+    };
+
+    let applied = post(serde_json::json!({"state": "done", "request_id": "ep3h1-repair"})).await;
+    assert_eq!(applied["changed"]["STATE"].as_str(), Some("done"));
+    let applied_tx = applied["tx_id"].as_str().unwrap_or_default().to_string();
+    assert!(!applied_tx.is_empty(), "a real transition writes a tx");
+
+    let replayed = post(serde_json::json!({"state": "done", "request_id": "ep3h1-repair"})).await;
+    assert_eq!(
+        replayed["status"].as_str(),
+        Some("already_applied"),
+        "a re-submitted transition must say the request already landed: {replayed}"
+    );
+    assert_eq!(
+        replayed["tx_id"].as_str(),
+        Some(applied_tx.as_str()),
+        "an already-applied replay must carry the tx it wrote: {replayed}"
+    );
+
+    let untouched = post(serde_json::json!({"state": "done", "request_id": "ep3h1-fresh"})).await;
+    assert_eq!(
+        untouched["status"].as_str(),
+        Some("already_in_state"),
+        "a different request that finds the state already set is a distinct no-op: {untouched}"
+    );
+    assert_eq!(
+        untouched["tx_id"].as_str(),
+        Some(""),
+        "nothing-to-do writes no tx: {untouched}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn client_timeout_reports_load_not_daemon_death() {
+    // TASK-EP3H1: three times on 2026-07-29 the CLI told an operator "is the
+    // daemon reachable?" while the daemon was healthy and answering raw HTTP
+    // in 0.4s. A client timeout is a statement about the client's patience,
+    // not about the daemon's health.
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+
+    let running = boot(home.clone()).await;
+    let hanging = start_hanging_daemon().await;
+    let output = run_orgasmic_output_with_daemon_url(
+        &home,
+        &format!("http://{}", hanging.addr),
+        &project_root,
+        &path_env,
+        &["task", "get", "--project", "orgasmic", "TASK-CLEANUP"],
+        &[],
+    );
+    assert!(
+        !output.status.success(),
+        "a request that never gets an answer must still fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        stderr.contains("daemon request timed out after 10s"),
+        "the timeout must name itself and the budget it spent: {stderr}"
+    );
+    assert!(
+        stderr.contains("the daemon may be healthy but the system is under load"),
+        "a timeout must not be reported as daemon death: {stderr}"
+    );
+    assert!(
+        !stderr.contains("is the daemon reachable?"),
+        "the misdiagnosis must be gone from the timeout path: {stderr}"
+    );
+
+    drop(hanging);
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
