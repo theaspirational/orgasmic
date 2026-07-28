@@ -2249,3 +2249,241 @@ Work:
 2. Split each harness's numbers into orgasmic-attributed and unattributed by the item 6 rule. Read attribution from recorded `NativeRuntime` events; never from path shape, file age, or launch-time proximity — those are the discovery heuristics dec_Y5MPK item 3 forbids.
 3. Report honestly where the split is not computable. Today only claude mints its own session id, so codex, cursor-agent and hermes are wholly unattributable until TASK-F9VEZ, TASK-B6D8W and TASK-2B215 land. `doctor` must say "attribution unavailable for this harness" and name the blocking task, not silently report 0 attributed — a zero that means "cannot tell" reads as "orgasmic wrote none of these", which is false and would misdirect a prune.
 4. Report only. `doctor` never deletes, moves, or offers to delete a vendor file (item 5).
+
+* BACKLOG TASK-GT91X codex transcript finder requires an originator nothing sets, so every codex reviewer transcript is unreachable
+:PROPERTIES:
+:ID: TASK-GT91X
+:PRIORITY: P1
+:TAGS: drivers,transcript,codex,regression
+:END:
+** Description
+Every codex reviewer's transcript is unreachable through the product surface.
+`orgasmic run native-transcript <run_id>` returns `not_found` for a rollout that
+exists on disk, whose `cwd` matches the worktree exactly, and which started one
+second after the run.
+
+Hit live on 2026-07-28 while retrieving the TASK-Z8WEJ reviewer's verdict. That
+review returned a substantial BLOCK with two HIGH findings, and the only way the
+manager could read it was to hand-parse `~/.codex/sessions/**` in Python. The
+product said the transcript did not exist.
+
+=== The gate
+
+`crates/orgasmic-drivers/src/transcript_finder.rs:687`, in
+`collect_codex_cwd_matches`:
+
+```rust
+if meta.originator.as_deref() != Some("orgasmic") {
+    continue;
+}
+```
+
+**Nothing in the orgasmic codebase ever sets `originator`.** Repo-wide, the
+string "orgasmic" as an originator value appears only in `transcript_finder.rs`
+itself and in that file's own test fixtures — which is why the unit tests pass:
+they construct the very value production never produces.
+
+=== Measured, 2026-07-28
+
+Every codex reviewer dispatch that day recorded `originator: "codex-tui"`:
+
+| run start (UTC) | originator | source | worktree |
+|---|---|---|---|
+| 04:55:49 | codex-tui | cli | task-rwcrn.1-review |
+| 05:41:56 | codex-tui | cli | task-WGXKD-review |
+| 10:32:41 | codex-tui | cli | task-wgxkd.2-review |
+| 11:42:23 | codex-tui | cli | task-870yx-review |
+| 13:02:29 | codex-tui | cli | task-vb9dq-review |
+| 15:36:59 | codex-tui | cli | task-z8wej-review |
+
+Fifteen such rollouts on 2026-07-28, all `codex-tui`. The single same-day
+rollout carrying `originator: "orgasmic"` has `source: "vscode"` and a cwd
+inside `task-69cw6/worktree/crates/...` — an editor session opened in a
+worktree, not a dispatch.
+
+Historically the value was `"orgasmic"` (306 rollouts store-wide, back to
+2026-06-12), and it appears across every codex version present (0.139.0 through
+0.144.5), as does `codex-tui`. **So this is not a codex version regression, and
+the mechanism that used to produce `"orgasmic"` has not been identified.** That
+is the first thing to establish, not to assume.
+
+Reproduction, still failing at the time of filing:
+
+```
+$ orgasmic run native-transcript run-20260728T153658-0de705fc34fb42e4bd717517768638fe
+"reason": "no codex rollout with session_meta.cwd == .../task-z8wej-review/worktree
+           starting within PT300S after run start under /Users/aspirational/.codex"
+"status": "not_found"
+
+$ head -1 ~/.codex/sessions/2026/07/28/rollout-2026-07-28T18-36-59-019fa95f-....jsonl
+  payload.cwd       == /Users/.../task-z8wej-review/worktree     <- exact match
+  payload.timestamp == 2026-07-28T15:36:59.192Z                  <- run start 15:36:58
+  payload.originator== "codex-tui"                               <- the only mismatch
+```
+
+Note the filename encodes local time (`18-36-59`) while the record encodes UTC
+(`15:36:59Z`). The finder reads the record, not the filename, so this is *not*
+the cause — but it will mislead anyone eyeballing the directory, and it misled
+the manager for one step.
+
+=== Why this is worse than one missing transcript
+
+Codex emits no `NativeRuntime` lifecycle event (TASK-F9VEZ), so
+`lookup.session_id` is `None` and the high-confidence
+`find_codex_rollouts_by_session_id` path is unavailable. The cwd+originator scan
+is the **only** remaining route, and this gate closes it. Codex runs therefore
+have no reachable transcript by any path.
+
+This is dec_WDR5K's sequencing constraint failing in substance: TUI screen
+capture was removed on the premise that harness-native JSONL finders would
+locate transcripts. For codex the finder finds nothing, so those runs have no
+transcript at all — the same shape TASK-VB9DQ established for acp-stdio claude,
+now confirmed for codex through a different mechanism.
+
+=== Ask
+
+1. Establish what actually sets `originator` and why it stopped for
+   rmux-launched codex. Codex reads an originator override from its
+   environment; determine the real name and whether orgasmic ever set it, or
+   whether the historical `"orgasmic"` values came from a different launch path
+   (acp-stdio) that reviewers no longer use. Report what you found — a wrong
+   guess here produces a fix that passes tests and changes nothing in
+   production.
+2. Set it deliberately on every codex launch path, or stop requiring it. If
+   orgasmic can stamp the originator, do that and keep the gate as a strong
+   correlator. If it cannot, the gate must go — an unsettable discriminator is
+   not a safety property, it is an outage. Do not simply widen the match to any
+   originator without saying what now prevents mis-attribution to an operator's
+   own codex session in the same directory.
+3. The unit tests must stop constructing the value production cannot produce.
+   Whatever fixture proves this path must be reachable from a real launch.
+
+=== Acceptance
+
+- A codex reviewer dispatched by the normal path has its transcript resolved by
+  `orgasmic run native-transcript` — demonstrated on a real dispatch, not a
+  fixture.
+- Prove it by injection: break whatever now supplies the correlator, watch the
+  new regression fail naming the run, restore, watch it pass.
+- State explicitly what prevents matching an operator's own codex session
+  started in the same worktree within the window.
+
+=== Non-goals
+
+- Do not implement codex `NativeRuntime` emission here; that is TASK-F9VEZ.
+  This task must leave the cwd path working *without* a session id, because
+  that is the situation it exists for.
+- Do not change the claude or cursor-agent finders.
+
+* BACKLOG TASK-KKBTP pin the credential decision preflight admitted, and stop blocking the runtime in acquire
+:PROPERTIES:
+:ID: TASK-KKBTP
+:PRIORITY: P0
+:TAGS: drivers,claude,credentials,fix
+:END:
+** Description
+Fix round for TASK-S0QRM (merged `e1b94b2`), which TASK-Z8WEJ's reviewer
+returned **BLOCK** on. The reviewer confirmed the precedence reversal, the
+explicit override, apiKeyHelper handling, key neutralisation, `--safe-mode`
+isolation and the RunMeta field are each individually sound. Both blockers are
+at the admission-to-launch boundary.
+
+The manager independently confirmed the credential reversal by injection before
+merging (injecting the pre-fix rule turns
+`a_stale_ambient_key_no_longer_beats_a_detected_native_login` red with
+`left: BareApiKey, right: NativeLogin`). That work stands. Do not undo it.
+
+=== HIGH — preflight does not pin the credential decision it admitted
+
+`crates/orgasmic-drivers/src/trait.rs:455-467`,
+`crates/orgasmic-drivers/src/adapters/claude.rs:365-385,421-426,885-898`,
+`crates/orgasmic-drivers/src/modes/acp_stdio.rs:419-429,518-524`,
+`crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs:60-66`,
+`crates/orgasmic-daemon/src/supervisor.rs:970-987`.
+
+`preflight_via_adapter` clones the adapter, observes `claude auth status`,
+resolves the mode — and discards it. After the supervisor has reserved the
+lease, `AcpStdioDriver::acquire` clones again and `compose_request` observes
+again; for claude's subprocess arm ACP-stdio then delegates to
+`SubprocessStreamJsonDriver`, which clones and composes a second time. A normal
+acp-stdio claude dispatch asks `auth status` **three independent times**: once
+before ownership and twice after it.
+
+Rule 4 makes this correctness-critical. With a valid native login and a stale
+ambient `ANTHROPIC_API_KEY`, a `Present` answer at preflight yields
+`NativeLogin` and `Ready`; a timeout or malformed answer at either later
+composition yields `Unknown`, which `resolve_credentials` treats as `Absent`
+and flips to `BareApiKey`. **The run then launches with the stale key that
+preflight never judged, after the lease is held.** The reverse transition is
+equally possible. `RunMeta` records the last selection; recording is not pinning.
+
+Reviewer's invariant probe:
+
+```
+369:        let probe = ClaudeAuthProbe::observe(&command).await;
+425:            resolve_credentials(&cfg, &ClaudeAuthProbe::observe_blocking(&spawn.command))?;
+FAIL: credential mode is independently observed at 2 production sites
+```
+
+Neither existing test can catch it: `the_probe_and_the_launch_resolve_the_same_credential`
+uses a configured `api_key_env`, whose precedence is deliberately independent of
+status, and `the_resolved_claude_credential_mode_survives_the_mode_layer` uses a
+stub that always returns the same answer.
+
+=== HIGH — acquire blocks the async runtime, and its advertised bound is incomplete
+
+`crates/orgasmic-drivers/src/adapters/claude.rs:577-584,637-642,732-777`, plus
+the two compose paths above.
+
+`claude_available` runs a synchronous `Command::status()` for `claude --version`
+with **no timeout**, called from `simulation_reason` during synchronous
+`compose_request`, directly inside async `WorkerDriver::acquire`, with no
+`spawn_blocking`. The blocking status probe then polls with
+`std::thread::sleep`. Because ACP-stdio composes twice, acquisition pays two
+unbounded `--version` calls and two blocking `auth status` calls *after* the
+async preflight already completed.
+
+Measured by the reviewer on installed claude 2.1.220, no turn submitted: three
+sequential `auth status` calls `real 0.88s`, two `--version` calls `real 0.15s`
+— about **1.03s of probing** on the production call graph, two thirds of it
+after preflight. If `--version` hangs, acquisition has no bound at all and holds
+a Tokio worker thread. The 5s `STATUS_TIMEOUT` on `blocking_native_login_evidence`
+does not bound the preceding availability probe.
+
+This is the TASK-Z3093 lesson recurring: blocking work on a runtime worker
+thread.
+
+=== Ask
+
+1. Resolve a single immutable credential plan **before ownership** and carry
+   that exact plan into acquire and composition. Do not re-probe in
+   `compose_request`. The plan carries mode plus the non-secret launch facts
+   (whether to neutralise the ambient key, whether to inline helper settings);
+   secret values stay non-durable.
+2. Remove the duplicate ACP-stdio composition for subprocess-stream-json, or
+   make the first composition the request actually delegated and spawned.
+3. Keep every harness probe async and wall-clock bounded. No `Command::status`,
+   no `std::thread::sleep`, no pipe-draining wait on a Tokio worker.
+4. Decide the `Unknown` policy explicitly and record it. Treating `Unknown` as
+   `Absent` preserves key-only installs, but it lets a transient timeout change
+   the credential tier between otherwise identical dispatches. Explicit
+   `api_key_env` and `--credential-mode bare_api_key` already give a
+   deterministic key choice; say whether an *unchosen* ambient key should also
+   win on inconclusive detection, and why.
+
+=== Acceptance
+
+- A regression whose status stub returns `Present` at preflight and
+  `timeout/Unknown` at composition, asserting the admitted mode, the spawned
+  argv/env and the RunMeta entry are all identical. Prove it by injection:
+  restore the re-probe, watch it fail, remove it, watch it pass — with output.
+- A regression where `claude --version` hangs, proving acquisition stays bounded
+  and the daemon stays responsive.
+- Count the production `auth status` observations per dispatch and assert the
+  number. One is the target; the test should name the number, not describe it.
+
+=== Non-goals
+
+- Do not revisit the precedence reversal, `--safe-mode`, key neutralisation or
+  the `--credential-mode` override. All four were reviewed and confirmed sound.
+- Do not fix TASK-GT91X (the codex transcript finder) here.

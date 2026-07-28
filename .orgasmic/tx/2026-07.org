@@ -35695,3 +35695,125 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-28 Tue 15:52:10 reviewer.reported TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3321
+:TIME:         [2026-07-28 Tue 15:52:10]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:RUN_ID:       run-20260728T153658-0de705fc34fb42e4bd717517768638fe
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-z8wej-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 15:57:29 task.created TASK-GT91X
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3322
+:TIME:         [2026-07-28 Tue 15:57:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GT91X
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-GT91X
+:END:
+
+* TX 2026-07-28 Tue 15:57:34 task.edited TASK-GT91X
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3323
+:TIME:         [2026-07-28 Tue 15:57:34]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GT91X
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-GT91X
+:NODE_ID:      TASK-GT91X
+:END:
+
+* TX 2026-07-28 Tue 15:58:09 task.created TASK-KKBTP
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3324
+:TIME:         [2026-07-28 Tue 15:58:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKBTP
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-KKBTP
+:END:
+
+* TX 2026-07-28 Tue 15:58:10 task.edited TASK-KKBTP
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3325
+:TIME:         [2026-07-28 Tue 15:58:10]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KKBTP
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-KKBTP
+:NODE_ID:      TASK-KKBTP
+:END:
+
+* TX 2026-07-28 Tue 15:58:18 task.state_transitioned TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3326
+:TIME:         [2026-07-28 Tue 15:58:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-Z8WEJ to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 15:58:19 review orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3327
+:TIME:         [2026-07-28 Tue 15:58:19]
+:TYPE:         review
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-Z8WEJ reviewer returned BLOCK on two HIGH findings: preflight discards the credential decision it admitted (auth status observed 3x per acp-stdio dispatch, so a later Unknown can flip a lease-holding run to the stale key), and acquire runs unbounded synchronous Command::status on a Tokio worker. Fix round filed as TASK-KKBTP; Z8WEJ stays open. Verdict was only retrievable by hand-parsing ~/.codex — see TASK-GT91X.
+:END:
+
+* TX 2026-07-28 Tue 15:59:16 reviewer.done TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3328
+:TIME:         [2026-07-28 Tue 15:59:16]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3305
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 15:59:30 task.edited TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3329
+:TIME:         [2026-07-28 Tue 15:59:30]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-Z8WEJ
+:NODE_ID:      TASK-Z8WEJ
+:END:
