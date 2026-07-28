@@ -431,201 +431,6 @@ labels to `compatibility_worker_id` so the rule cannot drift silently again.
 Related but distinct: TASK-STWVB (four daemon --lib tests that fail only under
 full-suite parallelism). This one fails deterministically, alone or not.
 
-* BACKLOG TASK-SGRTX acp-stdio discards every argv compose_request builds, so VB9DQ and Z8WEJ are inert in production    :drivers:dispatch:bug:P1:
-:PROPERTIES:
-:ID: TASK-SGRTX
-:PRIORITY: P0
-:END:
-
-Found 2026-07-26 by the first live acp-stdio claude dispatch since TASK-VB9DQ
-and TASK-Z8WEJ landed (run `run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2`,
-worker `implementer-claude-acp-stdio`, installed runtime 0.0.15-dev.1).
-
-THE DEFECT
-
-`modes/acp_stdio.rs::compose_stdio_request` takes the adapter's fully composed
-`HarnessRequest::Subprocess` and destructures it as:
-
-    HarnessRequest::Subprocess { stdin_payload, close_stdin, env: request_env, .. }
-
-The `..` silently swallows `args`. It then calls `subprocess_from_stdio_spawn`,
-which rebuilds the request with `args: spawn.args.clone()` — the bare
-`stdio_spawn()` list. Only `env` and `stdin_payload` survive the round trip.
-
-So on acp-stdio, everything `adapters/claude.rs::compose_request` computes is
-recorded and then thrown away before the process is spawned:
-
-- `--session-id <runtime_id>`  (TASK-VB9DQ item 2)
-- `--bare` / `--strict-mcp-config`  (TASK-Z8WEJ credential mode)
-- `--model <model>`
-
-MEASURED, NOT INFERRED
-
-Live worker argv, `ps -p 69729 -ww -o command=`:
-
-    claude -p --input-format stream-json --output-format stream-json \
-           --include-partial-messages --verbose
-
-That is exactly `stdio_spawn()` and nothing else. The installed binary is
-confirmed post-fix: it contains `--strict-mcp-config` and does not contain
-`--no-session-persistence`.
-
-The transcript landed at
-
-    ~/.claude/projects/-Users-...-task-stwvb-worktree/6cceaf62-c34a-49e4-8e71-b1cbd198c0bb.jsonl
-
-Claude minted `6cceaf62-c34a-49e4-8e71-b1cbd198c0bb`. Orgasmic recorded and
-expects `79056fdb262348afb3e0eb6633d3cab2`. The `session_path` in the
-NativeRuntime event therefore names a file that does not exist.
-
-WHAT THIS MEANS FOR THE TWO TASKS IN REVIEW
-
-TASK-VB9DQ: item 1 is genuinely live — persistence works, transcript count went
-501 to 502, so dropping `--no-session-persistence` did land. Items 2 and 3 are
-inert. Its acceptance criterion "an acp-stdio claude run leaves a native
-transcript that the existing transcript finder resolves" FAILS: the finder
-computes the path from the recorded session id, which is not the file's name.
-`resume_native_fork` still cannot be offered for this transport, which was the
-whole point.
-
-TASK-Z8WEJ: credential-mode selection never reaches the process. It appears to
-work only because claude's default without `--bare` reads OAuth — the right
-outcome by accident, not by the mechanism. The moment `BareApiKey` is the
-resolved mode, the process will still not get `--bare`.
-
-WHY THE TESTS DID NOT CATCH IT
-
-`every_mode_persists_a_locatable_native_session` asserts on what
-`compose_request` returns — the adapter's output — not on what the mode spawns.
-The discard happens one layer above, in the mode. Every test in that file can
-pass forever while the production path ignores all of it. Any regression for
-this must assert on the argv of the request the MODE returns, or better, on a
-live process.
-
-FIX
-
-Carry the composed `args` (and `binary`) through `compose_stdio_request` instead
-of rebuilding from `spawn`. `spawn.args` should be the base that
-`compose_request` extends, which it already is — the mode just needs to stop
-discarding the extension. Check whether `binary` should also be honoured.
-
-Then re-verify LIVE, not by test: dispatch an acp-stdio claude run and confirm
-the spawned argv carries `--session-id`, and that the transcript filename equals
-the run's runtime_id.
-LIVE VERIFICATION FAILED [2026-07-26]. The commit b43fc70 fix is correct but
-addresses a branch production never takes. Root cause is one layer further out.
-
-Verified against an isolated daemon (`orgasmic serve`, port 4899, throwaway
-ORGASMIC_HOME) running a binary built WITH the fix. The spawned argv was still
-
-    claude -p --input-format stream-json --output-format stream-json \
-           --include-partial-messages --verbose
-
-with no --session-id, no --strict-mcp-config and no --model — even though this
-dispatch passed --model claude-sonnet-5 explicitly. So the model override is
-silently ignored on this transport too, which was not previously known.
-
-THE ACTUAL MECHANISM
-
-`adapters/claude.rs::simulation_reason` returns `Some(EndpointEmpty)` whenever
-`cfg.endpoint` is empty — which is every ordinary dispatch, since nothing sets
-an endpoint. `compose_request` therefore returns `HarnessRequest::Simulated` at
-its top and NEVER REACHES the argv composition below it. Every flag TASK-VB9DQ
-and TASK-Z8WEJ added lives after that early return.
-
-`compose_stdio_request` then takes its Simulated arm, sees
-`upgrades_simulated_to_subprocess()` and an installed `claude`, and calls
-`subprocess_from_stdio_spawn(spawn, ..)` — the bare base. Separately,
-`AcpStdioDriver::acquire` delegates `Subprocess` with no jsonrpc_init to
-`SubprocessStreamJsonDriver`, so there are two routes to the same bare spawn.
-
-WHAT 61b9b7f ACTUALLY DID
-
-Before it, `stdio_spawn` itself carried `--bare` and `--no-session-persistence`
-(confirmed: `git show 61b9b7f~1`, lines 136 and 144). Those reached the process
-because the bare-args path is the one that spawns. The commit REMOVED both from
-`stdio_spawn` and ADDED their replacements to `compose_request`.
-
-So its net production effect is subtraction only:
-- `--no-session-persistence` gone → persistence genuinely works. This is real,
-  and is why the transcript count moved 501 to 502.
-- `--bare` gone → claude falls back to OAuth. TASK-Z8WEJ's symptom disappeared
-  by removal, not by the credential-mode logic, which never runs.
-- `--session-id`, `--model`, `--strict-mcp-config` → added to dead code.
-
-TASK-VB9DQ's implementation is therefore unreachable in production in its
-entirety apart from the deletion. Its regression test passes because it calls
-`compose_request` with a config that has an endpoint, which no dispatch does.
-
-THE FIX IS A DESIGN DECISION, NOT A PATCH
-
-Two candidate shapes, and the choice should be recorded:
-
-A. Compose the argv before the simulation check, and have the Simulated-upgrade
-   path spawn the composed argv rather than `spawn.args`. Smallest change,
-   keeps `EndpointEmpty` meaning "no ACP endpoint".
-
-B. Stop treating an empty endpoint as a simulation reason for claude. The
-   `-p` stream-json path is a real transport, not a simulation of one; calling
-   it Simulated and then immediately upgrading it is what hid this. Larger
-   blast radius — `upgrades_simulated_to_subprocess` exists for other adapters
-   too.
-
-B is the honest model and A is the safe one. Recommend A now with a decision
-recorded, and B filed separately.
-
-Do not close this task on a green test again. The acceptance is the observed
-argv of a live spawned process, and the vendor transcript filename equalling the
-run's runtime_id.
-SCOPE EXPANDED [2026-07-26] by operator ruling, recorded as dec_S18RH: the
-defect is not claude-specific and must not be patched as if it were.
-
-Every acp-stdio adapter returns Simulated on its normal path and depends on
-`upgrades_simulated_to_subprocess` to make it real. cursor_acp does it
-unconditionally and says so in a comment. Claude is merely the only adapter that
-composes argv beyond `stdio_spawn`, so it is the only one visibly losing
-something today — the design flaw is shared, and the next adapter to compose
-anything inherits the same silent discard.
-
-Required shape (dec_S18RH):
-- Simulated means ONLY explicit override or a genuinely missing binary
-- no configured endpoint means spawn the local binary, and the composed request
-  is what gets spawned, argv included
-- `upgrades_simulated_to_subprocess` is removed, not left as a second meaning
-
-Known obstacles, measured:
-- codex, hermes and cursor_acp have NO module-level availability probe; only
-  `claude` and `cursor` do. The mode currently supplies that via
-  `command_available(&spawn.command)`. Keeping the availability check in the
-  mode therefore needs a new adapter hook to produce genuine-simulation events
-  on the binary-missing fallback, since `simulated_start_events` is per-adapter.
-- `AcpStdioDriver::acquire` has a second discard: `Subprocess` with no
-  jsonrpc_init delegates to `SubprocessStreamJsonDriver`, and that path
-  hardcodes `native_runtime: None` (subprocess_stream_json.rs:171). So even a
-  correctly composed NativeRuntimeMeta is dropped there. Both discards must go.
-- 229 drivers tests exist and many assert the current Simulated shape.
-
-Already landed toward this, insufficient alone: b43fc70 stops
-`compose_stdio_request` rebuilding argv from spawn on the Subprocess arm. That
-arm is correct and needed for endpoint-configured runs, but production does not
-reach it. Keep it; it is step one, not a fix.
-
-Acceptance is unchanged and is live-only: the argv of a live spawned process
-carries the composed flags, and the vendor transcript filename equals the run's
-runtime_id. A green test is not evidence for this task.
-LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, acp-stdio/claude/claude-opus-5/high. THE CLAUDE PATH IS FIXED AND PROVEN LIVE. Observed argv via ps and via the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high, versus the bare stdio_spawn list this task recorded as the defect. runtime_id df92384b-fd23-423c-ab2c-131beb03db82 equals the vendor transcript filename exactly, so both halves of the live-only acceptance are met; compare against runtime_id, not the 32-hex suffix of run_id, which is the attempt token. capabilities.simulated=false with endpoint="" confirms f5c6913 live. THIS TASK DOES NOT CLOSE. The dec_S18RH scope is unmet: upgrades_simulated_to_subprocess still exists at 13 sites across trait.rs, adapters/hermes.rs, adapters/codex.rs, modes/acp_stdio.rs and tests/driver_modes.rs, and the Simulated arm at modes/acp_stdio.rs:342-364 still spawns subprocess_from_stdio_spawn(spawn, ..) rather than the composed request. Claude is fixed because f5c6913 stopped its adapter returning Simulated on an empty endpoint; every other acp-stdio adapter still takes the Simulated-then-upgrade route, so the next adapter to compose argv inherits the same silent discard. What remains is the shared design change, not the claude symptom. Second discard named in the task is closed: subprocess_stream_json.rs now takes native_runtime from adapter.native_runtime() instead of hardcoding None.
-OPEN QUESTION RECORDED BY TASK-H0TYV [2026-07-28], not answered here and deliberately not answered by a claude-specific patch.
-
-When a provider mints the session id server-side, should the cross-harness session contract permit immediate handshake capture followed by a `NativeRuntime` event, or is pre-launch pinning mandatory?
-
-Why it lands on this task: TASK-H0TYV recorded the codex / cursor-agent / hermes matrix that TASK-VB9DQ item 5 owed, and all three fail the shape claude now satisfies for the same reason. Each learns its identity *after* launch, from a protocol response — codex `thread.id` (`adapters/codex.rs:198-206`), cursor-agent `sessionId` (`adapters/cursor_acp.rs:288-292`), hermes `sessionId` (`adapters/hermes.rs:287-292`) — and none of their start calls has a slot for a client-supplied id. For the two ACP adapters this is not an implementation choice: ACP defines `session/new` as the agent minting the id.
-
-So dec_Y5MPK item 3 ("orgasmic pins the native session id before launch ... every transport must") is unsatisfiable as written for three of four harnesses. Either the contract admits a second lawful shape — capture at handshake, emit `NativeRuntime` immediately, still minted-by-someone and recorded rather than discovered — or item 3 needs narrowing to the harnesses that can honour it, and the rest are permanently outside the recovery and retro contract.
-
-This is the shared design change this task already identifies as what remains. The provider-specific work is filed and blocked behind the answer: TASK-F9VEZ (codex), TASK-B6D8W (cursor-agent), TASK-2B215 (hermes).
-
-Consequence of leaving it open, so it is not free: dec_Y5MPK item 6 defines a transcript as orgasmic-attributed exactly when its session id appears in a `NativeRuntime` record. Until this is answered, 1457 codex, 909 cursor and 82 hermes transcripts on the operator machine (measured 2026-07-28) are unattributable by construction, and `doctor` (TASK-E3K1B) can only report that it cannot tell.
-
 * BACKLOG TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run    :testing:drivers:flake:
 :PROPERTIES:
 :ID: TASK-Y9BY6
@@ -1815,82 +1620,6 @@ guard TASK-Z3093 established (`orgasmic_drivers::modes::rmux::test_tooling`).
   daemon on the production release path; this is a test fixture's own process
   tree and involves no rmux at all.
 
-* BACKLOG TASK-5HBST Daemon tests mutate process PATH outside any shared lock, so a probe can resolve a stub    :daemon:testing:hardening:
-:PROPERTIES:
-:ID: TASK-5HBST
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-daemon/**
-:END:
-
-The inverted twin of TASK-R2HDN item 3, in a crate that task could not write to.
-
-R2HDN moved every availability probe in `orgasmic-drivers` behind
-`test_environment_lock`, because
-`gate_simulates_for_empty_endpoint_stdio_when_claude_missing` sets process-global
-`PATH=""` and a probe running outside the lock read that synthetic PATH, skipped
-itself, and left the suite green with its assertions never run. Reproduced
-deterministically and closed (merged 2026-07-28).
-
-`orgasmic-daemon` has the same shape and no such lock.
-
-** Measured sites
-
-- `crates/orgasmic-daemon/src/api.rs:24751`
-- `crates/orgasmic-daemon/tests/dispatch_endpoint.rs:2406`
-- `crates/orgasmic-daemon/tests/run_inventory_wire.rs:220`
-
-Each mutates process-global `PATH` with no shared environment lock held.
-
-** Why the failure mode is worse, not milder
-
-These **prepend** a stub directory rather than clearing PATH. So a concurrent
-probe does not fail to find a binary — it finds the *wrong* one and proceeds. A
-test that means to exercise real `rmux` can silently run against a stub and pass,
-which reads as a green live test. The drivers case at least produced a visible
-`skipping …` line; this class produces no diagnostic at all.
-
-Note these three are per-process in **different test binaries**
-(`api.rs` is the lib, the other two are integration binaries), so the race is
-only within each binary — but `api.rs`'s lib tests and the daemon's own probe
-helpers share one process, which is where to look first.
-
-** Ask
-
-- Establish one shared process-environment lock for `orgasmic-daemon` tests, or
-  reuse `orgasmic_drivers::modes::rmux::test_tooling::test_environment_lock`
-  (already a normal-library export since TASK-Z3093, so the daemon can depend on
-  it — say which you chose and why).
-- Every PATH mutation and every availability probe in the crate acquires it
-  before reading or writing `PATH`, and holds it through the guarded test.
-- Prefer per-command absolute paths over PATH mutation where the stub is only
-  needed by one spawn; a mutation that does not need to be process-global should
-  not be.
-
-** Acceptance
-
-- Reproduce first: inject a delay in one PATH-prepending test's window and show
-  a concurrent probe resolving the stub, then show the fix closing it. A green
-  suite proves nothing here — R2HDN's own proof needed injected sleeps because
-  the natural interleaving did not reproduce on this machine.
-- No `PATH` read or write in `orgasmic-daemon` tests occurs outside the lock.
-- State whether any currently-passing test was found to have been running
-  against a stub.
-
-** Related, deliberately not folded in
-
-TASK-R2HDN residual risk 4: the ordering invariant it established in
-`orgasmic-drivers` is now correct but **unguarded** — a future test could
-reintroduce a probe before the lock and nothing would catch it. If a mechanical
-guard is cheap (a `shipped_conventions`-style source check for a probe call
-without a preceding lock acquisition), add it for both crates and say so. If it
-is not cheap, say that instead of shipping a weak one.
-
-TASK-R2HDN residual risk 2: `tmux.rs`'s `HomeGuard` mutates `HOME` under its own
-`FORK_DISCOVERY_TEST_LOCK` rather than the shared lock. No probe reads `HOME`
-today, so this is latent, not broken. Two independent process-environment locks
-in one binary is the trap; fold it in only if the answer above makes it a
-one-line change.
-
 * BACKLOG TASK-0RCRY Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server and six gated tests never run    :daemon:drivers:tmux:testing:
 :PROPERTIES:
 :ID: TASK-0RCRY
@@ -2250,88 +1979,6 @@ Work:
 3. Report honestly where the split is not computable. Today only claude mints its own session id, so codex, cursor-agent and hermes are wholly unattributable until TASK-F9VEZ, TASK-B6D8W and TASK-2B215 land. `doctor` must say "attribution unavailable for this harness" and name the blocking task, not silently report 0 attributed — a zero that means "cannot tell" reads as "orgasmic wrote none of these", which is false and would misdirect a prune.
 4. Report only. `doctor` never deletes, moves, or offers to delete a vendor file (item 5).
 
-* BACKLOG TASK-QRB8S START_TIMEOUT is a literal 20s but a replacement may now legitimately take 40s to become ready
-:PROPERTIES:
-:ID: TASK-QRB8S
-:PRIORITY: P1
-:TAGS: cli,lifecycle,budgets
-:END:
-** Description
-`START_TIMEOUT` is a literal 20 s that is not derived from the shutdown budgets
-it now has to outlast. Flagged by the TASK-ATAXN worker as out of its write scope
-(`crates/orgasmic-daemon/**`) and out of its non-goals, so it was correctly left
-alone there.
-
-=== The gap
-
-`crates/orgasmic-cli/src/daemon_lifecycle.rs:31`:
-
-```rust
-const START_TIMEOUT: Duration = Duration::from_secs(20);
-```
-
-Used at `:142` (`wait_until_ready_after_start`) and `:169`
-(`wait_until_ready_after_start_async`).
-
-TASK-ATAXN (merged) makes a replacement daemon **wait out a departing
-predecessor** on a budget derived from `ShutdownBudgets::default().total()`,
-which is 40 s in production. So the daemon layer may now legitimately take up to
-~40 s to take the lock and become ready.
-
-The CLI layer still gives it 20 s.
-
-A `daemon start` or `daemon restart` that overlaps a predecessor in a full drain
-therefore **reports failure at 20 s for a daemon that is going to come up
-correctly at ~40 s.** The operator sees a failed start; the daemon then boots
-anyway. That is a worse diagnostic than the bug ATAXN fixed, because the machine
-ends up healthy while the tool says it did not.
-
-This is the same category error as TASK-Q07Y5/TASK-R74E8 and as ATAXN itself:
-an unexplained constant that was correct when written and is now sized against
-the wrong thing. `ExitTimeOut` was already converted to a derivation
-(`service_stop_timeout()`); this is the remaining literal on the same axis.
-
-=== Chain as it stands after ATAXN
-
-- connection drain 10 s + release finalization 20 s + writer shutdown 10 s
-  = `ShutdownBudgets::default().total()` = **40 s**
-- replacement lock wait: capped at that same **40 s**
-- `service_stop_timeout()` -> `ExitTimeOut` = 40 + `SERVICE_STOP_MARGIN` 10 = **50 s**
-- `START_TIMEOUT` = **20 s** — the only one still a literal, and now the smallest
-
-=== Ask
-
-1. Derive `START_TIMEOUT` from the same constants, so a start is allowed to
-   outlast a predecessor's whole shutdown plus the margin a replacement needs to
-   bind and answer. Do not simply write `60`; the reason ATAXN and R74E8 both
-   insisted on derivation is that a literal cannot be shown to still be correct
-   after the thing it was sized against changes.
-2. Say what the new value is composed of, in the code, the way
-   `service_stop_timeout()` does.
-3. Check `MACOS_RMUX_START_TIMEOUT` (`daemon_service.rs:497`, 5 s) against the
-   same question and report whether it is sized for something that can now take
-   longer. Do not change it without a reason.
-4. Confirm whether `stop_timeout()` / `wait_until_down` is already derived or is
-   another literal on this axis.
-
-=== Acceptance
-
-- A regression in which a replacement start overlaps a predecessor holding the
-  lock for longer than the *old* 20 s and the CLI still reports success.
-  Prove it by injection: restore the 20 s literal, watch it fail, restore the
-  derivation, watch it pass — with output.
-- The value is derived from `ShutdownBudgets` and a named margin; changing
-  `ShutdownBudgets` moves it, demonstrated by a test that asserts the
-  relationship rather than the number.
-- A genuinely failing start still reports in a bounded, actionable time; say
-  what that time now is and why it is acceptable.
-
-=== Non-goals
-
-- Do not change `ShutdownBudgets` or the ATAXN marker protocol. This task
-  consumes both.
-- Do not touch `ExitTimeOut`'s derivation; it is correct and reviewed.
-
 * BACKLOG TASK-4PPPE serve announces readiness before it can handle SIGTERM, so the graceful-shutdown test races itself
 :PROPERTIES:
 :ID: TASK-4PPPE
@@ -2398,3 +2045,73 @@ symptom.
 === Non-goals
 
 - Do not change the shutdown budgets or the ATAXN marker protocol.
+
+* BACKLOG TASK-XPYRR a task title cannot be corrected through any CLI surface, so a retracted claim outlives its correction
+:PROPERTIES:
+:ID: TASK-XPYRR
+:PRIORITY: P1
+:TAGS: cli,daemon,org-surface
+:END:
+** Description
+A task heading's title cannot be changed through any CLI surface. `task update`
+takes `--state`, `--priority`, `--reason` and `--property`, and rejects
+`--title` with `unexpected argument`. `node body set` edits prose and named
+sections, never the heading line. `node prop set` edits the drawer. Nothing
+edits the title.
+
+=== Why it matters, concretely
+
+TASK-0RCRY was filed on 2026-07-28 with a diagnosis that was **retracted the
+same day** (tx-20260728-orgasmic-3226): the claim that workers inherit the
+daemon's `$TMUX`. The body was rewritten around the one surviving fact and now
+opens with an explicit correction. **The title could not be rewritten**, so the
+board still reads:
+
+  "Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server
+   and six gated tests never run"
+
+The title is the most-read field on the board — it is what `dispatch-status`,
+the task lists and every survey print. A retracted claim sitting in a heading
+outlives the correction in the body, and the only reader guaranteed to see the
+correction is one who opens the task.
+
+The manager cannot fix this by hand: `.orgasmic` is daemon-owned and hand-edits
+are forbidden. So the wrong title is currently unfixable by any sanctioned path.
+
+=== Same class as TASK-JQARS
+
+JQARS was about a documented command that did not exist. This is the inverse:
+a field the product plainly owns, with no surface to write it. Both leave an
+operator with a state they can observe and cannot change.
+
+=== Ask
+
+1. Add title editing to the task surface, through the daemon with the same OCC +
+   structural guard as the other node writes. `task update --title` is the
+   obvious shape given the flag already suggested by clap's own "a similar
+   argument exists" tip.
+2. Decide and record whether a title edit is allowed to change the org tags on
+   the title line, or whether tags stay a separate concern. Do not let a title
+   write silently drop tags — the heading line carries both.
+3. Check the same question for the other node kinds that have titles (decision,
+   architecture, glossary, goal). Report which already have a write path and
+   which do not; fix only the ones in scope and file the rest.
+4. Fix TASK-0RCRY's title as the acceptance demonstration, to:
+   "No tmux call site passes -L/-S, so every probe and test session shares one
+    server — on a dev box, the operator's own"
+
+=== Acceptance
+
+- `orgasmic task update <id> --title "..."` rewrites the heading, preserves the
+  drawer, the body, all named sections and the org tags, and records a tx.
+- Prove it by injection: a test that rewrites a title and asserts tags and body
+  survive fails if the tag-preserving path is removed. Show it red, then green.
+- A title containing org-significant characters (`*` at line start, `:tag:`
+  shapes, trailing colons) either round-trips or is rejected with a reason — say
+  which you chose and why. A silently corrupted heading is worse than a refusal.
+- TASK-0RCRY reads correctly on the board afterwards.
+
+=== Non-goals
+
+- Do not add a general "edit any org line" escape hatch. The structural guard is
+  the reason these surfaces are narrow.

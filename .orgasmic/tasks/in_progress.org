@@ -745,3 +745,161 @@ passes `-L`/`-S`, so every probe, test session and production call shares a
 single tmux server. If isolating that server does not fix these, the result
 belongs back here.
 
+* IN_PROGRESS TASK-5HBST Daemon tests mutate process PATH outside any shared lock, so a probe can resolve a stub :daemon:testing:hardening:
+:PROPERTIES:
+:ID: TASK-5HBST
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/**
+:END:
+
+The inverted twin of TASK-R2HDN item 3, in a crate that task could not write to.
+
+R2HDN moved every availability probe in `orgasmic-drivers` behind
+`test_environment_lock`, because
+`gate_simulates_for_empty_endpoint_stdio_when_claude_missing` sets process-global
+`PATH=""` and a probe running outside the lock read that synthetic PATH, skipped
+itself, and left the suite green with its assertions never run. Reproduced
+deterministically and closed (merged 2026-07-28).
+
+`orgasmic-daemon` has the same shape and no such lock.
+
+** Measured sites
+
+- `crates/orgasmic-daemon/src/api.rs:24751`
+- `crates/orgasmic-daemon/tests/dispatch_endpoint.rs:2406`
+- `crates/orgasmic-daemon/tests/run_inventory_wire.rs:220`
+
+Each mutates process-global `PATH` with no shared environment lock held.
+
+** Why the failure mode is worse, not milder
+
+These **prepend** a stub directory rather than clearing PATH. So a concurrent
+probe does not fail to find a binary — it finds the *wrong* one and proceeds. A
+test that means to exercise real `rmux` can silently run against a stub and pass,
+which reads as a green live test. The drivers case at least produced a visible
+`skipping …` line; this class produces no diagnostic at all.
+
+Note these three are per-process in **different test binaries**
+(`api.rs` is the lib, the other two are integration binaries), so the race is
+only within each binary — but `api.rs`'s lib tests and the daemon's own probe
+helpers share one process, which is where to look first.
+
+** Ask
+
+- Establish one shared process-environment lock for `orgasmic-daemon` tests, or
+  reuse `orgasmic_drivers::modes::rmux::test_tooling::test_environment_lock`
+  (already a normal-library export since TASK-Z3093, so the daemon can depend on
+  it — say which you chose and why).
+- Every PATH mutation and every availability probe in the crate acquires it
+  before reading or writing `PATH`, and holds it through the guarded test.
+- Prefer per-command absolute paths over PATH mutation where the stub is only
+  needed by one spawn; a mutation that does not need to be process-global should
+  not be.
+
+** Acceptance
+
+- Reproduce first: inject a delay in one PATH-prepending test's window and show
+  a concurrent probe resolving the stub, then show the fix closing it. A green
+  suite proves nothing here — R2HDN's own proof needed injected sleeps because
+  the natural interleaving did not reproduce on this machine.
+- No `PATH` read or write in `orgasmic-daemon` tests occurs outside the lock.
+- State whether any currently-passing test was found to have been running
+  against a stub.
+
+** Related, deliberately not folded in
+
+TASK-R2HDN residual risk 4: the ordering invariant it established in
+`orgasmic-drivers` is now correct but **unguarded** — a future test could
+reintroduce a probe before the lock and nothing would catch it. If a mechanical
+guard is cheap (a `shipped_conventions`-style source check for a probe call
+without a preceding lock acquisition), add it for both crates and say so. If it
+is not cheap, say that instead of shipping a weak one.
+
+TASK-R2HDN residual risk 2: `tmux.rs`'s `HomeGuard` mutates `HOME` under its own
+`FORK_DISCOVERY_TEST_LOCK` rather than the shared lock. No probe reads `HOME`
+today, so this is latent, not broken. Two independent process-environment locks
+in one binary is the trap; fold it in only if the answer above makes it a
+one-line change.
+
+* IN_PROGRESS TASK-QRB8S START_TIMEOUT is a literal 20s but a replacement may now legitimately take 40s to become ready
+:PROPERTIES:
+:ID: TASK-QRB8S
+:PRIORITY: P1
+:TAGS: cli,lifecycle,budgets
+:END:
+** Description
+`START_TIMEOUT` is a literal 20 s that is not derived from the shutdown budgets
+it now has to outlast. Flagged by the TASK-ATAXN worker as out of its write scope
+(`crates/orgasmic-daemon/**`) and out of its non-goals, so it was correctly left
+alone there.
+
+=== The gap
+
+`crates/orgasmic-cli/src/daemon_lifecycle.rs:31`:
+
+```rust
+const START_TIMEOUT: Duration = Duration::from_secs(20);
+```
+
+Used at `:142` (`wait_until_ready_after_start`) and `:169`
+(`wait_until_ready_after_start_async`).
+
+TASK-ATAXN (merged) makes a replacement daemon **wait out a departing
+predecessor** on a budget derived from `ShutdownBudgets::default().total()`,
+which is 40 s in production. So the daemon layer may now legitimately take up to
+~40 s to take the lock and become ready.
+
+The CLI layer still gives it 20 s.
+
+A `daemon start` or `daemon restart` that overlaps a predecessor in a full drain
+therefore **reports failure at 20 s for a daemon that is going to come up
+correctly at ~40 s.** The operator sees a failed start; the daemon then boots
+anyway. That is a worse diagnostic than the bug ATAXN fixed, because the machine
+ends up healthy while the tool says it did not.
+
+This is the same category error as TASK-Q07Y5/TASK-R74E8 and as ATAXN itself:
+an unexplained constant that was correct when written and is now sized against
+the wrong thing. `ExitTimeOut` was already converted to a derivation
+(`service_stop_timeout()`); this is the remaining literal on the same axis.
+
+=== Chain as it stands after ATAXN
+
+- connection drain 10 s + release finalization 20 s + writer shutdown 10 s
+  = `ShutdownBudgets::default().total()` = **40 s**
+- replacement lock wait: capped at that same **40 s**
+- `service_stop_timeout()` -> `ExitTimeOut` = 40 + `SERVICE_STOP_MARGIN` 10 = **50 s**
+- `START_TIMEOUT` = **20 s** — the only one still a literal, and now the smallest
+
+=== Ask
+
+1. Derive `START_TIMEOUT` from the same constants, so a start is allowed to
+   outlast a predecessor's whole shutdown plus the margin a replacement needs to
+   bind and answer. Do not simply write `60`; the reason ATAXN and R74E8 both
+   insisted on derivation is that a literal cannot be shown to still be correct
+   after the thing it was sized against changes.
+2. Say what the new value is composed of, in the code, the way
+   `service_stop_timeout()` does.
+3. Check `MACOS_RMUX_START_TIMEOUT` (`daemon_service.rs:497`, 5 s) against the
+   same question and report whether it is sized for something that can now take
+   longer. Do not change it without a reason.
+4. Confirm whether `stop_timeout()` / `wait_until_down` is already derived or is
+   another literal on this axis.
+
+=== Acceptance
+
+- A regression in which a replacement start overlaps a predecessor holding the
+  lock for longer than the *old* 20 s and the CLI still reports success.
+  Prove it by injection: restore the 20 s literal, watch it fail, restore the
+  derivation, watch it pass — with output.
+- The value is derived from `ShutdownBudgets` and a named margin; changing
+  `ShutdownBudgets` moves it, demonstrated by a test that asserts the
+  relationship rather than the number.
+- A genuinely failing start still reports in a bounded, actionable time; say
+  what that time now is and why it is acceptable.
+
+=== Non-goals
+
+- Do not change `ShutdownBudgets` or the ATAXN marker protocol. This task
+  consumes both.
+- Do not touch `ExitTimeOut`'s derivation; it is correct and reviewed.
+
