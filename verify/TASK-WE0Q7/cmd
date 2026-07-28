@@ -1,0 +1,8 @@
+# One line. Run from the repo root by `orgasmic verify TASK-WE0Q7`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and the soak builds and boots a daemon that must see neither.
+#
+# 60s, not the scheduled default (>= 400s): the replay only has to prove the
+# soak bites, and the Q07Y5-class defect expresses ~10s in. The nightly run
+# takes no argument and gets the derived, gate-strength window.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME bash scripts/soak.sh --duration-seconds 60 --probe-interval-seconds 5

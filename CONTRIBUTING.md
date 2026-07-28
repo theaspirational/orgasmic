@@ -162,6 +162,31 @@ npm --prefix ui run tauri:bundle:mac
 ./target/release/orgasmic doctor
 ```
 
+### The daemon soak (uptime defects)
+
+Every other gate here observes a daemon for a few seconds at most, which means a
+defect that needs *uptime* to express — a timer, a budget applied to the wrong
+interval, a watcher, a leak — passes all of them. TASK-Q07Y5 shipped exactly
+that way and took the operator's daemon out of service 10s after every boot.
+
+```bash
+bash scripts/soak.sh                     # derived window: max(300s, 10x the shutdown budget)
+bash scripts/soak.sh --duration-seconds 60 --probe-interval-seconds 5   # quick bite check
+```
+
+The script boots a real daemon from your tree in a temp-dir `ORGASMIC_HOME` on
+an ephemeral port, holds it under light periodic traffic, and asserts one pid
+and one boot_id across the whole window, zero parse errors, bounded fd/memory
+growth, a clean exit inside the daemon's own derived `ShutdownBudgets`, and a
+retracted lock and marker afterwards. It never runs `daemon start|stop|restart`
+(that rewrites the real LaunchAgent even from a debug build), never touches
+`~/.orgasmic` or the installed runtime — it re-checks that it did not, at the
+end — and spends no provider turns.
+
+It runs daily from `.github/workflows/nightly-soak.yml`. Minutes of wall clock
+do not belong in the merge path; this is the scheduled complement to the PR
+lane, not part of it.
+
 The Tauri bundle check verifies the bootstrap launcher assets. The current
 free/dev package target is an Apple Silicon-only, ad-hoc-signed tester `.dmg`;
 it does not package a private CLI/daemon runtime. This is not a notarized public

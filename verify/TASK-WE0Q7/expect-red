@@ -1,0 +1,19 @@
+# Pinned from the real red run of 2026-07-28, with the injection applied:
+#   two green probes (t+4s, t+9s), then the daemon stopped answering 15s into
+#   its life while its process stayed up — TASK-Q07Y5's production symptom.
+exit: 1
+
+# The window opened, so the soak got a booted, serving, healthy daemon first.
+# Without this line the artifact would also accept a soak that failed at boot,
+# which proves nothing about uptime.
+contains: [soak] holding the daemon
+
+# The finding is about the daemon, not about the harness around it.
+contains: SOAK FAIL: the daemon
+
+# Two legitimate shapes of the same defect, decided by whether `serve` is still
+# parked on its signal wait when the drain budget expires (it usually is, which
+# is why the operator saw a live process serving nobody) or has already
+# unwound. Either is the daemon taking itself out of service unasked.
+contains-any: stopped answering
+contains-any: exited on its own

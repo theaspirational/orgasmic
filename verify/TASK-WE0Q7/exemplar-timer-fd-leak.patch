@@ -1,0 +1,17 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+index d3580e7..56d9318 100644
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -4099,6 +4099,12 @@ fn spawn_run_timeout_monitor(supervisor: Supervisor) {
+         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+         loop {
+             tick.tick().await;
++            // TASK-WE0Q7 second injection (artificial, never shipped): a
++            // short-interval watcher that acquires a handle per tick and never
++            // releases it. 20 ticks a second, so the process is fine at boot
++            // and slowly drowning in file descriptors — invisible to every gate
++            // that only ever looks at a freshly started daemon.
++            std::mem::forget(std::fs::File::open("/dev/null"));
+             supervisor.release_first_timed_out_run().await;
+         }
+     }));
