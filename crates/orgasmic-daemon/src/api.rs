@@ -5971,7 +5971,7 @@ struct StageCompletion {
     session_path: PathBuf,
 }
 
-enum StageOutcome {
+pub(crate) enum StageOutcome {
     Completed,
     Failed { reason: Option<String> },
 }
@@ -6067,7 +6067,7 @@ fn spawn_stage_completion_watcher(state: ApiState, completion: StageCompletion) 
     });
 }
 
-fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
+pub(crate) fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
     let envelopes = match read_session_file(session_path) {
         Ok(envelopes) => envelopes,
         Err(e) => {
@@ -6088,14 +6088,47 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
     // Anything failing with no worker finalize after it — the ordinary case
     // where the driver dies before the worker can finalize, and the supervisor
     // releases the run non-authoritatively — still fails the stage.
+    //
+    // orgasmic:TASK-QSSQH — but dominance is not unconditional, and the
+    // release event is not the boundary. Both a genuine `run_fail` and a
+    // teardown-induced fatal `driver_error` are drained BEFORE the release,
+    // and both freeze the run's terminal outcome to `Failed`, so
+    // `Release { outcome: Failed, finalized_by_worker: true }` is byte-identical
+    // in the two cases and can discriminate neither. What separates them:
+    //
+    // 1. KIND. `run_fail` is a semantic, harness-declared failure — the
+    //    adapters emit it only from a protocol result (`is_error`, a failed
+    //    turn, a stop reason). Teardown cannot synthesize it: reaping the
+    //    process group produces a fatal `DriverError` (see
+    //    `classify_pane_exit` in `orgasmic-drivers`). So a `run_fail` is
+    //    sticky — no later finalize may clear it, wherever it lands relative
+    //    to the finalize, which matters because a `run_fail` still queued when
+    //    the finalize is admitted is drained AFTER the admission marker.
+    // 2. The finalize-admission MARKER for everything else. The supervisor
+    //    appends a durable `worker_finalize_admitted` note at the instant it
+    //    admits a worker finalize and before it tears the driver down
+    //    (`supervisor::release_one`). A fatal driver error after that marker
+    //    is one the finalize caused and stays suppressed; one before it was
+    //    already there and is sticky too.
+    //
+    // Sessions with no marker — written before TASK-QSSQH, or where the marker
+    // append failed — keep the TASK-C0XMR reading for driver errors: dominance
+    // by the following finalize. The kind rule in (1) still applies to them.
+    let admission_marker_present = envelopes.iter().any(is_finalize_admission_marker);
     let mut completed = false;
     let mut pending_failure: Option<Option<String>> = None;
+    // A failure no worker finalize is allowed to clear.
+    let mut sticky_failure: Option<Option<String>> = None;
     let mut driver_error_reason = None;
+    let mut finalize_admitted = false;
     for envelope in envelopes {
         match envelope.kind {
             SessionEventKind::DriverEvent => {
                 match envelope.event.get("type").and_then(Value::as_str) {
-                    Some("run_fail") => pending_failure = Some(None),
+                    Some("run_fail") => {
+                        pending_failure = Some(None);
+                        sticky_failure = Some(None);
+                    }
                     Some("driver_error") => {
                         if driver_error_reason.is_none() {
                             driver_error_reason = envelope
@@ -6111,11 +6144,13 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
                             .and_then(Value::as_bool)
                             .unwrap_or(false)
                         {
-                            pending_failure = Some(Some(
-                                driver_error_reason
-                                    .clone()
-                                    .unwrap_or_else(|| "fatal driver error".to_string()),
-                            ));
+                            let reason = driver_error_reason
+                                .clone()
+                                .unwrap_or_else(|| "fatal driver error".to_string());
+                            pending_failure = Some(Some(reason.clone()));
+                            if admission_marker_present && !finalize_admitted {
+                                sticky_failure = Some(Some(reason));
+                            }
                         }
                     }
                     // Protocol RunComplete alone is not stage success for
@@ -6164,10 +6199,15 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
                     }
                 }
             }
-            SessionEventKind::BabysitterSummary | SessionEventKind::Note => {}
+            SessionEventKind::Note => {
+                if is_finalize_admission_marker(&envelope) {
+                    finalize_admitted = true;
+                }
+            }
+            SessionEventKind::BabysitterSummary => {}
         }
     }
-    if let Some(reason) = pending_failure {
+    if let Some(reason) = sticky_failure.or(pending_failure) {
         return StageOutcome::Failed { reason };
     }
     if completed {
@@ -6175,6 +6215,13 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
     } else {
         StageOutcome::Failed { reason: None }
     }
+}
+
+/// orgasmic:TASK-QSSQH — the durable finalize-admission boundary, written by
+/// [`crate::supervisor`] before it tears a finalizing run's driver down.
+fn is_finalize_admission_marker(envelope: &SessionEnvelope) -> bool {
+    envelope.kind == SessionEventKind::Note
+        && crate::supervisor::is_worker_finalize_admitted_note(&envelope.event)
 }
 
 struct ApiTxRequest {
@@ -19810,6 +19857,202 @@ mod tests {
             stage_outcome_from_session(&session_path),
             StageOutcome::Failed { .. }
         ));
+    }
+
+    /// The finalize-admission marker as the supervisor writes it
+    /// (orgasmic:TASK-QSSQH).
+    fn finalize_admission_marker() -> Value {
+        serde_json::json!({
+            "note": crate::supervisor::WORKER_FINALIZE_ADMITTED_NOTE,
+            "reason": "worker finalize for TASK-STAGE-ARCH",
+        })
+    }
+
+    /// TASK-QSSQH: the case TASK-C0XMR's dominance rule got wrong, and the one
+    /// the reviewer called worse than the bug it fixed. A `run_fail` is the
+    /// supervisor's own classification of failure — it maps to
+    /// `ReleaseOutcome::Failed` and freezes the run's terminal outcome — so a
+    /// worker finalize arriving after it must not turn the stage green.
+    #[test]
+    fn stage_outcome_fails_when_a_run_fail_precedes_the_worker_finalize() {
+        // orgasmic:TASK-QSSQH
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("run-fail-then-finalize.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-fail-finalize");
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunFail {
+                    error_code: "claude_result_error".into(),
+                    error_markdown: "the worker's own turn failed".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(SessionEventKind::Note, finalize_admission_marker())
+            .unwrap();
+        // The authoritative shape from `release_one`: the queued `RunFail` is
+        // drained before the release, so `terminal_outcome` wins over the
+        // caller's `Completed`.
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-STAGE-ARCH".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(
+            matches!(
+                stage_outcome_from_session(&session_path),
+                StageOutcome::Failed { .. }
+            ),
+            "a genuine RunFail must survive a later worker finalize"
+        );
+    }
+
+    /// TASK-QSSQH: and it must survive on the other side of the boundary too.
+    /// A `RunFail` still queued in the driver channel when the finalize is
+    /// admitted is drained AFTER the admission marker, so a rule that trusted
+    /// the marker alone would read it as teardown noise and clear it. The kind
+    /// is what makes it sticky: teardown synthesizes `DriverError`, never
+    /// `RunFail`.
+    #[test]
+    fn stage_outcome_fails_when_a_queued_run_fail_drains_after_finalize_admission() {
+        // orgasmic:TASK-QSSQH
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("admitted-then-run-fail.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-queued-fail");
+        writer
+            .append(SessionEventKind::Note, finalize_admission_marker())
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::RunFail {
+                    error_code: "codex_turn_failed".into(),
+                    error_markdown: "queued before the finalize was admitted".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-STAGE-ARCH".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(
+            matches!(
+                stage_outcome_from_session(&session_path),
+                StageOutcome::Failed { .. }
+            ),
+            "ordering relative to the marker must not rescue a semantic failure"
+        );
+    }
+
+    /// TASK-QSSQH: the C0XMR symptom, now suppressed by the named boundary
+    /// rather than by "everything before the finalize". The fatal driver error
+    /// falls AFTER the admission marker, so this release caused it.
+    #[test]
+    fn stage_outcome_suppresses_a_teardown_error_after_the_finalize_admission_marker() {
+        // orgasmic:TASK-QSSQH
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("admitted-then-teardown.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-admitted-teardown");
+        writer
+            .append(SessionEventKind::Note, finalize_admission_marker())
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::DriverError {
+                    fatal: true,
+                    message: "rmux pane exited by signal 15; equivalent shell exit code 143".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-STAGE-ARCH".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(
+            matches!(
+                stage_outcome_from_session(&session_path),
+                StageOutcome::Completed
+            ),
+            "an error caused by the finalize teardown must stay suppressed"
+        );
+    }
+
+    /// TASK-QSSQH: the precision the marker buys. The same fatal driver error
+    /// and the same worker finalize as the test above, but the error lands
+    /// BEFORE admission — so the finalize cannot have caused it, and clearing
+    /// it would be the C0XMR overreach the reviewer named.
+    #[test]
+    fn stage_outcome_fails_when_a_fatal_error_precedes_the_finalize_admission_marker() {
+        // orgasmic:TASK-QSSQH
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("fatal-then-admitted.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-fatal-admitted");
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::DriverError {
+                    fatal: true,
+                    message: "codex exited with status exit status: 1".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(SessionEventKind::Note, finalize_admission_marker())
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-STAGE-ARCH".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        match stage_outcome_from_session(&session_path) {
+            StageOutcome::Failed { reason } => assert_eq!(
+                reason.as_deref(),
+                Some("driver error: codex exited with status exit status: 1")
+            ),
+            StageOutcome::Completed => {
+                panic!("a failure the finalize did not cause must not be cleared")
+            }
+        }
     }
 
     fn stage_outcome_session_writer(
