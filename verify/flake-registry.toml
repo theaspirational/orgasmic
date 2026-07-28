@@ -1,0 +1,119 @@
+# orgasmic:TASK-DJ1WV
+#
+# The flake registry: every failure this project is willing to see and not act
+# on, written down where a machine can read it.
+#
+# Read by `scripts/run-tests.sh`, which reruns each failure in isolation and
+# prints a REAL-vs-FLAKE verdict. Before this file existed, that classification
+# was folklore — a human recalling which names were 'known', rerunning them by
+# hand, and deciding. It was done from memory four times in one day, and once a
+# failure was filed against the wrong owning task because one test name carried
+# two different failure modes. Red that needs folklore to interpret teaches
+# everyone to discount red.
+#
+# An entry is an excuse with an expiry, not a permanent exemption:
+#
+#   test       the name cargo prints. A bare function name also matches a
+#              module-qualified failure, so an entry survives a test moving.
+#   owner      the OPEN task that is fixing it. `--check` fails if that task is
+#              done or cancelled, or is not a task at all. A registry that only
+#              grows is a graveyard.
+#   signature  a literal substring of the panic. This is the load-bearing
+#              field: a failure of a registered NAME whose panic does not match
+#              the registered SIGNATURE is reported REAL. That is the mislabel
+#              detector — one test may carry two entries with two signatures and
+#              two owners, and the runner will not confuse them.
+#   evidence   how it was measured: what failed, what passed, when.
+#   filed      the date the entry was added.
+#
+# Do not add an entry from memory. Every signature below is either measured in
+# this repo or cited to a dated measurement recorded in `.orgasmic/tasks/`, and
+# every one of them exists as a literal assertion message in the current source
+# — grep it before you trust it.
+
+# --------------------------------------------------------------------------
+# TASK-STWVB — daemon tests that fail under full-suite parallelism, pass alone
+# --------------------------------------------------------------------------
+
+[[flake]]
+test = "supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling"
+owner = "TASK-STWVB"
+signature = "fake cursor-agent did not start children"
+evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, full daemon --lib: 528 passed / 5 failed, this among them. Assertion is crates/orgasmic-daemon/src/supervisor.rs:10321. Green alone here 2026-07-28 (1 passed, 548 filtered out); NOT reproduced in 6 runs in this worktree, including 3 under induced load."
+filed = "2026-07-28"
+
+[[flake]]
+test = "api::tests::recovery_reattaches_tmux_session_when_handle_exists"
+owner = "TASK-STWVB"
+signature = "tmux test session should start"
+evidence = "Manager measurement 2026-07-28 at HEAD 15997c6, and identically inside the TASK-1T3FZ dispatched worker, where the daemon error was 'tmux new-session failed (exit 1): server exited unexpectedly'. Assertion is crates/orgasmic-daemon/src/api.rs:23885. Green alone here 2026-07-28; NOT reproduced in 6 runs in this worktree."
+filed = "2026-07-28"
+
+# Two failure modes, one name. The env-race mode belonged to TASK-5HBST and is
+# FIXED — registering it would re-excuse a defect that no longer exists and
+# would file the next failure against a closed task, which is the exact mistake
+# this registry was built to make impossible. Only mode 2 is registered.
+# The second mode of the same test, and the first thing this registry caught.
+# The full-suite run below failed on the registered NAME with an unregistered
+# panic, so the runner reported it REAL rather than waving it through as the
+# tmux-startup flake — which is what a human classifying from memory would have
+# done. Registered afterwards, with the panic it actually produced.
+[[flake]]
+test = "api::tests::recovery_reattaches_tmux_session_when_handle_exists"
+owner = "TASK-STWVB"
+signature = "left: \"interrupted\""
+evidence = "Measured here 2026-07-28: full cargo test --workspace under 10 cpu hogs, 1 failure in the whole workspace, crates/orgasmic-daemon/src/api.rs:23908 assertion left == right, left 'interrupted' right 'reattached'. Green alone on the same tree. TASK-STWVB's own body records this mode: 'it is tmux session REATTACH, and it lands on interrupted rather than reattached', pointing at cross-test contention over shared tmux state."
+filed = "2026-07-28"
+
+[[flake]]
+test = "api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim"
+owner = "TASK-STWVB"
+signature = "resume_native_fork recover: 500"
+evidence = "Manager measurement 2026-07-28 on the merged TASK-5HBST tree at load ~10: still failed, with mode 2 (recovery 500) and not the env race. Assertion is crates/orgasmic-daemon/src/api.rs:25580. Green alone here 2026-07-28; NOT reproduced in 6 runs in this worktree."
+filed = "2026-07-28"
+
+# --------------------------------------------------------------------------
+# TASK-QCG6J — the reattach-fence regression asserts WHICH refusal fired, so it
+# goes red on a safe outcome under load. Two assertions in one test body, so two
+# entries: whichever one trips, the owner is named and the other is not blamed.
+# --------------------------------------------------------------------------
+
+[[flake]]
+test = "api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds"
+owner = "TASK-QCG6J"
+signature = "the same action is admitted once the guard is released"
+evidence = "Measured here 2026-07-28: full daemon --lib at --test-threads=48 under 8 cpu hogs, 548 passed / 1 failed, panic at crates/orgasmic-daemon/src/api.rs:19247 with 'ApiError { status: 400, message: recovery action reattach_tmux is not valid for run run-fence-b73c0c65 }'. Passed in the same suite at default parallelism."
+filed = "2026-07-28"
+
+[[flake]]
+test = "api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds"
+owner = "TASK-QCG6J"
+signature = "the refusal must name the cleanup reservation"
+evidence = "The mode TASK-QCG6J was filed from: manager gate on TASK-AK6EM, 2026-07-28, panic at crates/orgasmic-daemon/src/api.rs:19225 — the reattach WAS refused, by an earlier validity check rather than by the cleanup fence. Same test, same owner, different assertion than the entry above."
+filed = "2026-07-28"
+
+# --------------------------------------------------------------------------
+# Deliberately NOT registered. Each of these is a failure somebody could excuse
+# from memory today; none of them may be excused by this file, and the runner
+# will report every one of them REAL until that changes.
+#
+#   api::tests::recovery_inventory_waits_for_atomic_claim_commit  (TASK-STWVB)
+#   index::tests::git_resolves_quoted_included_origin_from_linked_worktree
+#                                                                 (TASK-STWVB)
+#     Named as known flakes, and green alone here on 2026-07-28, but no panic
+#     text for either has ever been written down and neither reproduced in 6
+#     runs here. A signature guessed from the assertions in the test body would
+#     excuse whichever one fired — which is the mislabel this registry exists to
+#     prevent. Register them the next time one is caught, with its real panic.
+#
+#   supervisor::tests::live_babysitter_summary_flushes_on_event_threshold
+#     Measured here 2026-07-28, 2 of 3 runs at --test-threads=64 under 12 cpu
+#     hogs: 'live summary threshold should append BabysitterSummary to
+#     <tmp>/run-*.babysitter.jsonl', supervisor.rs:9727.
+#   index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh
+#     Same run: assertion left == right, left "" right
+#     "ssh://git@example.com/org/project.git", index.rs:2095.
+#     Both are load-dependent and neither has an owning task, so neither can be
+#     registered: an excuse with no owner is a permanent exemption. They need
+#     tasks filed before they belong in this file.
+# --------------------------------------------------------------------------

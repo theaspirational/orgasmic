@@ -1,0 +1,5 @@
+# One line. Run from the repo root by `orgasmic verify TASK-DJ1WV`.
+# No cargo: the classifier is a shell script and its self-test drives it against
+# fixture logs and two-line fixture test binaries, so the whole replay is about
+# a second and spends nothing.
+bash scripts/run-tests-selftest.sh

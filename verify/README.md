@@ -1,5 +1,14 @@
 # verify/ — shipped injection proofs
 
+`flake-registry.toml` also lives here, and for the same reason: it is the other
+half of making red mean something. A proof says "this fix is a fix"; the
+registry says "this failure is already owned, by this task, with this panic".
+`scripts/run-tests.sh` reads it and prints a REAL-vs-FLAKE verdict, so the
+question "is this red the known one?" has a machine answer instead of a
+remembered one.
+
+## Injection proofs
+
 One directory per task: `verify/TASK-<id>/`. Each holds the proof that the
 task's fix is a fix, authored **once, pre-fix, while the defect still
 reproduced**, and replayed afterwards by `orgasmic verify TASK-<id>`.
