@@ -1,0 +1,13 @@
+diff --git a/crates/orgasmic-drivers/src/preflight.rs b/crates/orgasmic-drivers/src/preflight.rs
+index 0c45c60..8b2d4a4 100644
+--- a/crates/orgasmic-drivers/src/preflight.rs
++++ b/crates/orgasmic-drivers/src/preflight.rs
+@@ -46,7 +46,7 @@ pub(crate) const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
+ ///
+ /// Only a *timeout* is retried. A spawn error is a definitive "cannot ask" —
+ /// the binary is missing — and asking twice reaches the same answer more slowly.
+-pub(crate) const STATUS_ATTEMPTS: usize = 2;
++pub(crate) const STATUS_ATTEMPTS: usize = 1;
+ 
+ /// What a harness's status command said.
+ ///

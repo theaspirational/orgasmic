@@ -1,0 +1,14 @@
+# Pinned from the red run authored against the defect, 2026-07-29.
+#
+# With one attempt the probe reports "could not ask" about a harness that was
+# about to speak, and every caller reads that as no opinion. The panic is on the
+# `expect` — `read_status_output` returned None for a command that answers.
+exit: 101
+
+contains: the second attempt answered, so the probe has an answer
+contains: a_status_command_that_starts_late_is_asked_again_rather_than_given_up_on
+
+# The companion assertion — that the first attempt really was made — must not be
+# what falls: if it did, the stub never ran and the probe would be proving
+# nothing about retrying.
+contains: test result: FAILED. 0 passed; 1 failed
