@@ -1516,7 +1516,7 @@ Acceptance:
 :PROPERTIES:
 :ID: TASK-Z9C73
 :PRIORITY: P2
-:DEPENDS_ON: TASK-WGXKD
+:DEPENDS_ON: 
 :END:
 
 Split out of TASK-RWCRN, whose acceptance included "a released rmux run does not leave a zombie harness process or an orphaned rmux session behind". The session half is met — `rmux ls` is empty after release. The process half is NOT, and the TASK-RWCRN worker measured it with a proper baseline control rather than asserting it.
@@ -1539,3 +1539,58 @@ ACCEPTANCE:
 :END:
 
 Raised by the TASK-RWCRN reviewer as an open question. tmux.rs:1789-1824 has the same pane-is-not-an-event-source shape that TASK-RWCRN fixed for rmux, and only polls for session exit, so a tmux-mode TUI run emits no driver events after ready and is released by the 600s stall detector exactly as rmux was. The reviewer AGREED with leaving tmux out of the rmux-scoped RWCRN fix — tmux has no existing output subscription to reuse, so adding capture polling there would widen both risk and retention scope, and the standing worker matrix is rmux — but flagged that tmux/claude, tmux/codex, tmux/cursor-agent and tmux/hermes remain in orgasmic_drivers::SUPPORTED and are documented as usable. Either give tmux an equivalent liveness signal, or stop advertising tmux pairs as safe for runs longer than 600s. Depends on the shape TASK-RWCRN.1 settles: if pane observation moves from lines to raw bytes, tmux should adopt the same contract rather than inventing a second one.
+
+* BACKLOG TASK-Y5M0H rmux pane-liveness stream source has no fast regression guard    :rmux:drivers:test-gap:
+:PROPERTIES:
+:ID: TASK-Y5M0H
+:PRIORITY: P2
+:END:
+
+Reviewer residual on TASK-RWCRN.1 (run-20260728T045548-5e2ae042c2844e039a98edc26e05a739, verification note 6, SHIP with no blocking findings).
+
+The throttle unit tests at crates/orgasmic-drivers/src/modes/rmux.rs:2788-2880 call PaneActivityThrottle directly, so they would all still pass if the production wiring regressed from PaneOutputStream back to PaneLineStream. The only test that catches that regression is the #[ignore]d live smoke live_rmux_pane_publishes_pane_activity_for_newline_free_redraws at rmux.rs:3381-3409, which does not run in CI.
+
+So the exact defect TASK-RWCRN.1 fixed could silently return while every non-ignored test stays green.
+
+WANTED: a fast, non-ignored test that pins the stream source itself - either asserting spawn_pane_exit_watch subscribes via output_stream_starting_at rather than line_stream_starting_at, or a seam that lets a fake pane transport feed newline-free bytes through the real wiring without a live rmux server.
+
+Not a ship blocker and not urgent: it is insurance on a fix that is already validated live (the TASK-WGXKD dispatch ran claude-on-rmux 1675s with 55 PaneActivity bytes events).
+
+* BACKLOG TASK-6AYEJ.2 make generation-bound close mandatory when a live dispatch exists; fix recovery-run [unreported]    :dispatch:cli:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ.2
+:PRIORITY: P0
+:END:
+
+Fix round for the TASK-6AYEJ.1 reviewer BLOCK SHIP (run-20260728T045554-7e845a232c4a4ce4a4a576c5ba0ae9be, merge 19264a7). Findings verbatim below.
+
+** Finding 1 - HIGH correctness
+manager.rs:103-111, 1856-1867, 3446-3496. dispatch-close is still task-bound unless the caller volunteers --started-tx, so the acceptance-breaking successor-close hazard remains reachable. The exact-generation branch is sound, but the option is not required: without it, resolve_close_target still chooses the newest open dispatch covering the task. The --merge-sha fence at manager.rs:660-679 catches only a done retry landing on a non-implementer/non-architector; it does not protect an aborted retry or a same-kind successor.
+
+NOT HYPOTHETICAL - the reviewer found it in the real ledger: .orgasmic/tx/2026-07.org:26280-26290,26524-26550,26662-26673 records reviewer A for TASK-KWSTJ being aborted, reviewer B opening for the same task, and B later being aborted. A stale tokenless abort for A during B's lifetime selects B.
+
+The repo also still teaches the unsafe form: the copyable recovery hint at manager.rs:1863-1867 omits --started-tx, and the ordinary finalize->close integration at tests/dispatch.rs:3104-3122 exercises a tokenless close. The new boundary test at manager.rs:4581-4613 explicitly preserves task-bound selection.
+
+FIX DIRECTION: require --started-tx whenever an open matching dispatch exists. Preserve tokenless compatibility only as a no-op when there is no open record and a historical closed record exists - historical records never need to act on a LIVE record by task. Add the token to the manager-generated close hint and to the ordinary finalize->close integration; retain the stale implementer->reviewer and abort->redispatch adversarial tests.
+
+** Finding 2 - LOW correctness
+manager.rs:3701-3720 and daemon/src/api.rs:7543-7909. The fail-closed RUN_ID rule leaves a legitimate fresh recovery run permanently [unreported]. Initial CLI dispatches write a run.created association carrying RUN_ID and DISPATCH_TX (api.rs:5109-5200), and attach_run_created_to_dispatch stores that original run id (manager.rs:3655-3697). But resume_native_fork and start_recovery_run acquire a REPLACEMENT run and return a new id while preserving the task and terminal contract - and never call the sole record_dispatch_created site, so no replacement association is emitted. dispatch finalize then reports the live replacement id (manager.rs:1218-1221), which cannot equal the open generation's original id, and mark_matching_dispatch_reported now returns without task fallback. Reattach-in-place is unaffected because it preserves the id.
+
+So the answer to the brief's adversarial probe is YES: fresh recovery/resume is a valid mismatch shape, and its manager status never becomes [reported]. The wrong-marking bug was traded for a never-marking bug in this one shape.
+
+FIX DIRECTION: persist a replacement-run-to-manager.dispatch_started generation association for fresh recovery/resume, and match *.reported by that generation rather than by task overlap. Add an end-to-end dispatched-run -> interruption -> recovery -> finalize status test.
+
+** Finding 3 - LOW test
+daemon/src/api.rs:21416-21485. The added architect-stage test does not prove a stage run creates no manager.dispatch_started record. It opens a synthetic session, appends a Lifecycle::Release and calls spawn_stage_completion_watcher directly. The tombstone-driven architect.completed assertion is useful, but the negative dispatch assertion is TAUTOLOGICAL because the production stage launch/recording path never ran.
+
+FIX DIRECTION: drive the assertion through the real stage launch endpoint / shared production spawn path, then finalize-tombstone it and inspect both project and home ledgers.
+
+** Finding 4 - LOW test
+tests/shipped_conventions.rs:49-71. The forced-cleanup guard is both syntax-brittle and blind to realistic dangerous variants. It matches only the adjacent substring 'worktree remove --force', while the ORIGINAL dangerous instruction read 'git worktree remove <path> --force' - which would evade the needle entirely, alone or paired with a generalized 'git branch -D <branch>'. Conversely it requires exactly one occurrence and the exact phrase 'destroys exactly that', so innocent rewording fails it. The convention at manager-dispatch.org:205-227 is currently safe; the guard is the problem. A brittle guard gets deleted the first time it fails spuriously, and then protects nothing.
+
+FIX DIRECTION: replace exact prose matching with a semantic guard that rejects 'git worktree remove' combined with '--force' regardless of intervening arguments, and rejects 'git branch -D' regardless of branch spelling. Permit zero warning literals, or anchor any allowed warning to an explicit structured marker rather than a sentence.
+
+** Reviewer notes that are NOT findings (do not re-litigate)
+- The --merge-sha behaviour change is ACCEPTED: no production, convention or daemon path supplies it for a reviewer close, and manager.rs:672-678 names both remedies.
+- Deterministic request ids are belt-and-braces, not the restart fence. Terminal records persist CLOSED_TX (manager.rs:2150-2163) and ledger replay resolves that exact generation as closed (manager.rs:3434-3480,3739-3753), so an exact-token replay after a daemon restart still no-ops.
+- The corrected TASK-WGXKD ordering comment at manager.rs:1230-1245 was verified accurate. NOTE: TASK-WGXKD has since landed (merge 80dc4ec) and moved terminal-tx emission into the daemon release call, so re-read that comment against current code before touching it.

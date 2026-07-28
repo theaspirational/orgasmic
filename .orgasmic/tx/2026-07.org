@@ -31104,3 +31104,205 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-28 Tue 05:10:13 reviewer.reported TASK-RWCRN.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3047
+:TIME:         [2026-07-28 Tue 05:10:13]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN.1
+:RUN_ID:       run-20260728T045548-5e2ae042c2844e039a98edc26e05a739
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rwcrn.1-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 05:11:47 reviewer.reported TASK-6AYEJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3048
+:TIME:         [2026-07-28 Tue 05:11:47]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.1
+:RUN_ID:       run-20260728T045554-7e845a232c4a4ce4a4a576c5ba0ae9be
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.1-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 05:23:54 implementer.reported TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3049
+:TIME:         [2026-07-28 Tue 05:23:54]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:RUN_ID:       run-20260728T045559-036d3609ab864ed9b28434656a68802b
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-WGXKD/worktree
+:SHA:          e752af93b7db8c70c3f838172adec8df7d1ca3ef
+:END:
+
+* TX 2026-07-28 Tue 05:36:15 implementer.done TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3050
+:TIME:         [2026-07-28 Tue 05:36:15]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    80dc4ecfbc5ff416e7485c7279c25ed048707347
+:BRANCH:       task-wgxkd-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3045
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 05:36:15 task.state_transitioned TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3051
+:TIME:         [2026-07-28 Tue 05:36:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-WGXKD to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 05:36:21 reviewer.done TASK-RWCRN.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3052
+:TIME:         [2026-07-28 Tue 05:36:21]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN.1
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3040
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 05:36:21 task.state_transitioned TASK-RWCRN.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3053
+:TIME:         [2026-07-28 Tue 05:36:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RWCRN.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 05:36:25 reviewer.done TASK-6AYEJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3054
+:TIME:         [2026-07-28 Tue 05:36:25]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.1
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3042
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 05:36:26 task.state_transitioned TASK-6AYEJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3055
+:TIME:         [2026-07-28 Tue 05:36:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-6AYEJ.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 05:36:42 task.property_updated TASK-Z9C73
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3056
+:TIME:         [2026-07-28 Tue 05:36:42]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z9C73
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager error, retracted: the keep_alive_on_exit coupling I asserted in tx-20260728-orgasmic-3037 is refuted. TASK-WGXKD measured the real mechanism: acp-stdio teardown calls reap_process_group (subprocess_stream_json.rs:231) and kill(-pgid, SIGTERM) reaps the finalize CLI because it is a descendant of the setsid harness group, whereas rmux teardown is reap_rmux_session (rmux.rs:1498), an out-of-process Session::kill RPC that never signals the CLI process group. keep_alive_on_exit is rmux remain-on-exit for a DEAD pane (rmux-sdk-0.9.0 layout.rs:163) and never protected a live one. Removing it does not touch reap_rmux_session, so Z9C73 was never gated on WGXKD. Dependency removed; Z9C73 is independently schedulable. Caveat carried from the worker: this is call-path evidence, not a live A/B.
+:DEPENDS_ON:
+:END:
+
+* TX 2026-07-28 Tue 05:36:52 task.state_transitioned TASK-RWCRN.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3057
+:TIME:         [2026-07-28 Tue 05:36:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewer SHIP, no findings (run-20260728T045548-5e2ae042c2844e039a98edc26e05a739). Reviewer independently resolved the reattach-replay probe against pinned rmux 0.9.0 sources: an exited pane's subscription is dropped after 2s without cursor progress, so a replay cannot buy a dead pane another stall interval. Validated live in production: the TASK-WGXKD dispatch ran claude-on-rmux for 1675s, nearly 3x the 600s threshold, emitting 55 PaneActivity bytes events and finishing on finalized_by_worker completed with zero driver errors, exactly the redraw-only TUI case that used to be killed.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 05:37:05 task.state_transitioned TASK-RWCRN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3058
+:TIME:         [2026-07-28 Tue 05:37:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RWCRN
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       parent closed: implementation merged 5eb8d63, reviewer BLOCK SHIP finding 1 fixed by TASK-RWCRN.1 (merged a0feecc) which reviewed SHIP with no findings and is validated live. Findings 2 and 3 were manager-applied: finding 2 became TASK-VZMZE body amendment, finding 3 was the manager-dispatch.org prose repair now guarded by a test.
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 05:37:15 task.created TASK-Y5M0H
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3059
+:TIME:         [2026-07-28 Tue 05:37:15]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Y5M0H
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       residual test gap surfaced by the TASK-RWCRN.1 reviewer; filed so the SHIP is not mistaken for full coverage
+:END:
+
+* TX 2026-07-28 Tue 05:37:48 task.created TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3060
+:TIME:         [2026-07-28 Tue 05:37:48]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-6AYEJ.1 reviewer BLOCK SHIP: 1 HIGH + 3 LOW
+:END:

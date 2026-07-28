@@ -790,80 +790,6 @@ was already in place and would have fired. Either the worker's run genuinely
 came up green (making this load- or order-dependent, which fits) or the number
 was not measured. Do not treat any single green run of this suite as evidence.
 
-* IN_PROGRESS TASK-RWCRN the 600s stall detector kills every rmux dispatch at exactly ten minutes :supervisor:rmux:defect:blocker:
-:PROPERTIES:
-:ID: TASK-RWCRN
-:PRIORITY: P0
-:TEST_CMD: cargo test -p orgasmic-daemon --lib
-:END:
-
-An rmux TUI worker emits no driver events while it works, so the supervisor's
-600-second stall detector fires on a healthy, actively-working run and kills it.
-Every rmux dispatch dies at exactly ten minutes. This makes the standing worker
-matrix (operator-set 2026-07-26: every dispatch runs in an rmux pane)
-unusable as written.
-
-MEASURED, first rmux dispatch under the new matrix. TASK-6AYEJ,
-implementer-claude-rmux (rmux / claude / claude-opus-5 / high), run
-run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d. Its whole event stream,
-from .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ-implementer-20260726T193954.jsonl:
-
-    seq 0-2  19:39:54.697-.717  lifecycle
-    seq 3    19:39:54.752       driver_event  ready
-             ...600 seconds of silence...
-    seq 4    19:49:54.786       driver_event  run_complete
-    seq 5    19:49:54.798       lifecycle     released
-
-`manager.dispatch_orphaned` (tx-20260726-orgasmic-2979) landed at 19:49:55 with
-"worker never called `orgasmic dispatch finalize` before the run was released".
-The worker's own transcript shows it editing crates/orgasmic-cli/tests/dispatch.rs
-at 19:49:51 — one second before the kill — and its claude process was left as a
-zombie (pid 37956, STAT Z). It had produced 266 insertions across two files and
-the tree compiles. It was not stalled by any definition except the daemon's.
-
-MECHANISM. supervisor.rs:3410 computes
-`last_activity_at = rec.last_input_at.max(rec.last_driver_event_at)`, and
-DEFAULT_STALL_TIMEOUT (supervisor.rs:65) is 600s. In acp-stdio the driver
-streams events continuously, so this is at worst too lenient — that is
-TASK-VZMZE, where 30-second heartbeats defeat the timeout entirely. In rmux the
-opposite holds: the pane is a terminal, not an event source, so
-`last_driver_event_at` freezes at `ready` and the timeout is guaranteed to fire
-at exactly 600s no matter what the worker is doing. Same line of code, two
-opposite failures, and the pair should probably be fixed together.
-
-THE MECHANISM FOR THE FIX ALREADY EXISTS AND IS DOCUMENTED. `stall_timeout_secs:
-Some(0)` disables the detector, described at supervisor.rs:149-152 as being for
-"interactive, operator-paced runs (the manager) that legitimately idle at a
-prompt". supervisor.rs:1732 already applies exactly that to manager tasks via
-`is_interactive_manager_task`. An rmux worker has the same shape: no driver
-events, attachable, operator-paced.
-
-DO NOT JUST SET IT TO ZERO AND STOP. Disabling the detector for rmux removes the
-only thing that catches a genuinely wedged pane, leaving DEFAULT_MAX_RUN_DURATION
-(14400s = 4 hours) as the sole backstop. A wedged rmux worker would then burn
-four hours before anyone noticed. TASK-RRT4T's first attempt wedged for 60
-minutes with 0 tool calls and 6.77s of CPU, so this is a real shape, not a
-hypothetical. Whatever lands must still be able to distinguish "working" from
-"wedged" for a pane. Candidates worth weighing in the report: pane output
-activity as a liveness signal, the worker's own tool-call cadence in the session
-jsonl, sampled CPU time of the pane's process group, or a periodic driver_event
-emitted by the rmux driver itself. Argue the choice; do not silently pick the
-cheapest.
-
-Interim workaround, already in use: pass
-`--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches. Record it in
-the manager-dispatch convention until this lands, and remove it after.
-
-Acceptance:
-- an rmux dispatch that works continuously for well over 10 minutes is not
-  released, proven by an actual long dispatch rather than a unit test alone
-- a genuinely wedged rmux pane is still detected and released, with the
-  detection signal named and tested
-- the acp-stdio path is unchanged, or changed only in coordination with
-  TASK-VZMZE
-- a released rmux run does not leave a zombie harness process or an orphaned
-  rmux session behind
-
 * IN_PROGRESS TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
 :PROPERTIES:
 :ID: TASK-6AYEJ
@@ -991,26 +917,25 @@ MANAGER FINDINGS:
 
 Reviewer pass still owed on the merged diff.
 
-* IN_PROGRESS TASK-WGXKD a worker finalize can lose its terminal tx because releasing the lease kills the process that writes it :dispatch:cli:defect:race:
+* IN_PROGRESS TASK-6AYEJ.1 6AYEJ fix round: bind dispatch-close to a generation, not a task, and fail closed on unmatched RUN_ID :cli:dispatch:fix:
 :PROPERTIES:
-:ID: TASK-WGXKD
+:ID: TASK-6AYEJ.1
 :PRIORITY: P0
 :END:
 
-MEASURED 2026-07-27 on run run-20260727T131952-9138610466c24c469819ac27e3f6c504 (TASK-RWCRN, implementer-claude-acp-stdio, rebuilt runtime 4d1369a). A worker called `orgasmic dispatch finalize --summary-file ... --commit` and it half-applied: the commit landed (2a69f66 at 13:51:57Z), last.txt was written (16566 bytes), the lease release succeeded and the daemon emitted run_complete with summary "worker finalize for TASK-RWCRN" (session seq 984) — but NO terminal tx was ever written, to either the project or the home ledger. dispatch-status reported [pid-gone] [run-live] [unreported]. The very next session event, seq 985, is a fatal driver_error: "claude exited with status signal: 9 (SIGKILL)".
+FIX ROUND for TASK-6AYEJ reviewer findings (BLOCK SHIP). One-round fix semantics.
 
-THE MECHANISM. cmd_dispatch_finalize (crates/orgasmic-cli/src/manager.rs:1213-1218) deliberately orders the terminal tx LAST, after commit, last.txt and lease release, and the comment states the intent: "If any earlier step fails or the process dies, no completion tx is on record — the run stalls and is flagged orphan (rescuable), never a done claim with no report + a held lease." The ordering is sound in isolation but is self-cancelling in production: step 2 (release_dispatch_run_with_reason, manager.rs:1246) tears down the driver, which SIGKILLs the harness process — and the `orgasmic dispatch finalize` CLI is a descendant of that same harness shell. Release kills the process that still has to perform step 3. The wider the gap between release and the tx POST, the more likely the loss.
+FINDING 2 (HIGH, the ship blocker) — crates/orgasmic-cli/src/manager.rs:593. Repeated close is TASK-bound, not dispatch-generation-bound, so a stale retry can close and clean up a SUCCESSOR dispatch instead of no-oping. cmd_dispatch_close selects any currently open dispatch covering the task before it consults closed records (593-602). The normal workflow closes the implementer, moves the task to IN_REVIEW (manager.rs:2958-2966), then opens a reviewer for the SAME task. Replaying the implementer close at that point selects the reviewer record: the extra --merge-sha is accepted, done_tx_type becomes reviewer.done, lines 677-714 release the live reviewer and enter worktree/branch cleanup, and 735-767 append the wrong close and apply reviewer lifecycle. The existing test at crates/orgasmic-cli/tests/dispatch.rs:3164 only replays IMMEDIATELY, before any successor exists, so it misses the acceptance-breaking edge. FIX: bind close/retry identity to the intended manager.dispatch_started tx (preferred --started-tx, or an equally stable generation token), derive a deterministic request id from it, and make a retry a no-op against that exact closed generation even when another dispatch for the task is open. CLOSED_TX already names the stable generation in terminal records, so exposing the corresponding started tx as a close precondition is the clearest identity. ADD TESTS: implementer-close -> reviewer-open -> stale implementer-retry; and abort -> redispatch -> stale retry.
 
-WHY IT IS NOT MERELY COSMETIC. The stated fallback did not occur either: the run was not flagged orphan, and the daemon log has no "release without worker finalize, flagging orphan" line for this run — because from the daemon side the release WAS a worker finalize. So the run lands in a fourth state the design did not anticipate: work durable, report durable, lease released, no terminal tx, no orphan flag. It is invisible to both the success path and the rescue path. The manager only noticed because dispatch-status printed [unreported], which exists solely because of TASK-6AYEJ.
+MANAGER NOTE: this is a live hazard, not theoretical. I ran a deliberate double-close on TASK-RWCRN this session to verify the no-op; it was safe only because no successor dispatch existed at that moment. Had the reviewer already been dispatched it would have terminated it.
 
-NOT a TASK-6AYEJ regression: 6AYEJ changed WHICH tx type finalize emits (implementer.reported instead of implementer.done), not when it is emitted. The ordering predates it. 6AYEJ is what made the failure visible rather than silent.
+FINDING 3 (LOW) — crates/orgasmic-cli/src/manager.rs:3601. A PRESENT but unmatched RUN_ID falls through to task overlap and can mark the wrong generation [reported]. After run A is aborted and run B dispatched for the same task, a late *.reported for A cannot match A (3603 excludes closed records), then 3609-3621 mark B reported. The flag gates no cleanup so it is not independently ship-blocking, but it tells the manager the wrong worker finished. FIX: if RUN_ID is present, return after the exact-match attempt whether or not it succeeded; use the overlap fallback only for an entry that genuinely lacks RUN_ID, or remove the fallback since the new schema requires it. Add the three adversarial cases from the review.
 
-FREQUENCY. Timing-dependent, not deterministic. The daemon log shows many successful "worker finalized via orgasmic dispatch finalize, skipping scrape" lines on 07-26, so the tx usually wins the race.
+FINDING 1 (HIGH) is ALREADY FIXED by the manager, do not redo the prose: shipped/prompt-studio/conventions/manager-dispatch.org step 4 no longer instructs `git worktree remove --force && git branch -D`; it now states that success-path cleanup belongs to dispatch-close --worktree-remove --branch-delete and only to it, because that path salvages to refs/orgasmic/salvage/<sha> first and removes without --force, and because finalize --commit is optional so a worker may legitimately leave uncommitted output. WHAT REMAINS IN SCOPE: the reviewer asked for a shipped-content assertion so the force-removal instruction cannot silently return. Add it.
 
-CANDIDATE FIXES, to be argued rather than assumed:
-1. Move the terminal tx BEFORE the release, accepting the risk the design comment was avoiding (a done claim with a held lease) and mitigating it with the release immediately after.
-2. Have the daemon emit the terminal tx as part of the release-with-finalization call, so it is server-side and cannot be lost to client death. This looks strongest: the daemon already knows finalized_by_worker=true and the tx content is derivable from the run record.
-3. Keep the client-side tx but make the release non-fatal to the caller (defer harness teardown until the client disconnects or a grace period elapses).
+RESIDUAL TEST GAP the reviewer accepted but named: the stage-architect path has no direct test proving a stage run creates no manager.dispatch_started record and that its finalize tombstone, rather than the architector.reported tx type, drives stage completion. Add it if cheap; say so if not.
 
-ACCEPTANCE. A worker finalize whose harness is killed the instant the lease is released still produces its terminal tx; proven by a test that kills the finalizing client between release and tx, plus one live dispatch. dispatch-status must never again show a released run as [unreported] after a successful finalize.
+NOT IN SCOPE: TASK-WGXKD (the finalize terminal-tx race). The reviewer confirmed it is orthogonal to 6AYEJ — the merge changed the tx type, not the commit -> report -> release -> tx ordering. BUT the reviewer also found that the ordering comment at manager.rs:1213-1218 is now factually WRONG: it claims a death before the tx leaves the run flagged orphan and rescuable, and production evidence shows it leaves durable commit + report + released lease with no tx and NO orphan flag. Correcting that comment IS in scope here since you are editing this file; fixing the race is not.
+
+GATES: env -u ORGASMIC_RUN_ID cargo test -p orgasmic-cli (ORGASMIC_RUN_ID leaks into test subprocesses inside a dispatch, TASK-K5NDR); cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check. Do NOT run legacy_drivers_and_explicit_pairs_emit_equivalent_start_events (TASK-099T6, bills real money); if you run the drivers suite pass -- --skip for it.
 

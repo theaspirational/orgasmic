@@ -13319,3 +13319,100 @@ immediately: its write scope needs crates/orgasmic-daemon/src/api.rs, which the
 in-flight TASK-RRT4T worker holds, and both would add tests to the same api.rs
 test module.
 
+* DONE TASK-RWCRN.1 RWCRN fix round: observe pane bytes, not lines, so a redrawing TUI is not killed at 600s :rmux:drivers:fix:
+:PROPERTIES:
+:ID: TASK-RWCRN.1
+:PRIORITY: P0
+:END:
+
+FIX ROUND for TASK-RWCRN reviewer findings (BLOCK SHIP). One-round fix semantics.
+
+FINDING 1 (HIGH, the ship blocker) — crates/orgasmic-drivers/src/modes/rmux.rs:1319. The liveness source observes newline-terminated LINES, not pane output BYTES. DriverEvent::PaneActivity is documented at orgasmic-core/src/session.rs:264 as proof the pane "wrote bytes", but spawn_pane_exit_watch subscribes to PaneLineStream and only calls the throttle after lines.next() returns (rmux.rs:1818-1824). The pinned rmux-sdk 0.9.0 buffers bytes until LF (or a 1 MiB partial-line safety flush), so ANSI/cursor/carriage-return redraws of an in-place status line produce NO item. A healthy full-screen TUI can write for the entire stall window while last_driver_event_at stays frozen — recreating TASK-RWCRN exactly. The production smoke does not catch this because its fixture is `while :; do echo tick; ...` (rmux.rs:3248-3251), which guarantees an LF per update. FIX: consume PaneOutputStream raw byte chunks, persisting only a bounded count and never content. Add a live smoke whose pane writes CHANGING NON-NEWLINE output for longer than the coalescing interval.
+
+MANAGER NOTE, so the fix is not under-scoped: the live >10-minute proof I ran does NOT cover this. Both rmux codex reviewer panes survived past 600s (12.4 min and 10.2 min, 16 and 12 pane_activity events, terminal run_complete not a stall release), but codex emits newline output. That evidence is real and does not generalise to a redraw-only TUI. Treat the acceptance as unproven for full-screen harnesses.
+
+OPEN DESIGN QUESTION the reviewer raised and which this round must answer explicitly rather than drift on: if the observation becomes raw bytes, does the event stay PaneActivity{seq,lines}, become {seq,bytes}, or take a transport-neutral {seq,units}? This is greenfield; decide it now rather than preserve a field whose name lies. Whatever is chosen, update the session.rs doc comment and the manager-dispatch convention prose together.
+
+FINDING 3 (LOW, already fixed by the manager, do not redo) — the unmeasured "handful versus hundreds" lines heuristic has been removed from shipped/prompt-studio/conventions/manager-dispatch.org and replaced with a statement that the count is diagnostic volume only, plus an explicit note of the finding-1 gap. Verify the prose still matches whatever the event becomes.
+
+FINDING 2 (MEDIUM) is NOT in scope here — it was applied to TASK-VZMZE's task body directly by the manager.
+
+OUT OF SCOPE: tmux.rs (the reviewer agreed with leaving it, but wants a separate tracked liveness task before tmux dispatches are trusted past 600s — that is TASK-TZ4WQ, not this). The pre-existing rmux zombie is TASK-Z9C73.
+
+GATES: cargo test -p orgasmic-daemon --lib; cargo test -p orgasmic-drivers -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events (the skip is MANDATORY, TASK-099T6 bills real money); cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check. Three daemon --lib in-suite flakes are known (TASK-STWVB): post_artifact_regenerate_hot_path_reuses_live_run_id, recovery_reattaches_tmux_session_when_handle_exists, poll_direct_child_pid_prefers_worker_server_over_generic_sibling.
+CORRECTION to the scope note above: the separate tmux liveness task is TASK-XHP43. An earlier draft of this body named TASK-TZ4WQ, which does not exist — disregard that id.
+
+* DONE TASK-RWCRN the 600s stall detector kills every rmux dispatch at exactly ten minutes :supervisor:rmux:defect:blocker:
+:PROPERTIES:
+:ID: TASK-RWCRN
+:PRIORITY: P0
+:TEST_CMD: cargo test -p orgasmic-daemon --lib
+:END:
+
+An rmux TUI worker emits no driver events while it works, so the supervisor's
+600-second stall detector fires on a healthy, actively-working run and kills it.
+Every rmux dispatch dies at exactly ten minutes. This makes the standing worker
+matrix (operator-set 2026-07-26: every dispatch runs in an rmux pane)
+unusable as written.
+
+MEASURED, first rmux dispatch under the new matrix. TASK-6AYEJ,
+implementer-claude-rmux (rmux / claude / claude-opus-5 / high), run
+run-20260726T193954-5ce5327e7b854438843e7f592f66dc4d. Its whole event stream,
+from .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ-implementer-20260726T193954.jsonl:
+
+    seq 0-2  19:39:54.697-.717  lifecycle
+    seq 3    19:39:54.752       driver_event  ready
+             ...600 seconds of silence...
+    seq 4    19:49:54.786       driver_event  run_complete
+    seq 5    19:49:54.798       lifecycle     released
+
+`manager.dispatch_orphaned` (tx-20260726-orgasmic-2979) landed at 19:49:55 with
+"worker never called `orgasmic dispatch finalize` before the run was released".
+The worker's own transcript shows it editing crates/orgasmic-cli/tests/dispatch.rs
+at 19:49:51 — one second before the kill — and its claude process was left as a
+zombie (pid 37956, STAT Z). It had produced 266 insertions across two files and
+the tree compiles. It was not stalled by any definition except the daemon's.
+
+MECHANISM. supervisor.rs:3410 computes
+`last_activity_at = rec.last_input_at.max(rec.last_driver_event_at)`, and
+DEFAULT_STALL_TIMEOUT (supervisor.rs:65) is 600s. In acp-stdio the driver
+streams events continuously, so this is at worst too lenient — that is
+TASK-VZMZE, where 30-second heartbeats defeat the timeout entirely. In rmux the
+opposite holds: the pane is a terminal, not an event source, so
+`last_driver_event_at` freezes at `ready` and the timeout is guaranteed to fire
+at exactly 600s no matter what the worker is doing. Same line of code, two
+opposite failures, and the pair should probably be fixed together.
+
+THE MECHANISM FOR THE FIX ALREADY EXISTS AND IS DOCUMENTED. `stall_timeout_secs:
+Some(0)` disables the detector, described at supervisor.rs:149-152 as being for
+"interactive, operator-paced runs (the manager) that legitimately idle at a
+prompt". supervisor.rs:1732 already applies exactly that to manager tasks via
+`is_interactive_manager_task`. An rmux worker has the same shape: no driver
+events, attachable, operator-paced.
+
+DO NOT JUST SET IT TO ZERO AND STOP. Disabling the detector for rmux removes the
+only thing that catches a genuinely wedged pane, leaving DEFAULT_MAX_RUN_DURATION
+(14400s = 4 hours) as the sole backstop. A wedged rmux worker would then burn
+four hours before anyone noticed. TASK-RRT4T's first attempt wedged for 60
+minutes with 0 tool calls and 6.77s of CPU, so this is a real shape, not a
+hypothetical. Whatever lands must still be able to distinguish "working" from
+"wedged" for a pane. Candidates worth weighing in the report: pane output
+activity as a liveness signal, the worker's own tool-call cadence in the session
+jsonl, sampled CPU time of the pane's process group, or a periodic driver_event
+emitted by the rmux driver itself. Argue the choice; do not silently pick the
+cheapest.
+
+Interim workaround, already in use: pass
+`--governance-json '{"stall_timeout_secs": 0}'` on rmux dispatches. Record it in
+the manager-dispatch convention until this lands, and remove it after.
+
+Acceptance:
+- an rmux dispatch that works continuously for well over 10 minutes is not
+  released, proven by an actual long dispatch rather than a unit test alone
+- a genuinely wedged rmux pane is still detected and released, with the
+  detection signal named and tested
+- the acp-stdio path is unchanged, or changed only in coordination with
+  TASK-VZMZE
+- a released rmux run does not leave a zombie harness process or an orphaned
+  rmux session behind
+
