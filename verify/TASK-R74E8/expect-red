@@ -1,0 +1,14 @@
+# Pinned from the real red run of 2026-07-28, with the injection applied:
+#   exit 101, daemon bound at t+0, dead at t+404ms on a 400ms drain budget.
+exit: 101
+contains: test tests::daemon_serves_far_beyond_its_connection_drain_budget ... FAILED
+
+# The production symptom itself. The budget can only expire while the daemon
+# is healthy and serving if it is bounding the server's whole life instead of
+# the drain, so this line is the defect, not a consequence of it.
+contains: connection drain did not finish within its budget
+
+# Two legitimate failure modes, decided by whether the probe lands before or
+# after the serve task is aborted. Either is the same defect.
+contains-any: daemon stopped answering after
+contains-any: the daemon shut itself down after

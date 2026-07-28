@@ -1,0 +1,17 @@
+diff --git a/crates/orgasmic-daemon/src/lib.rs b/crates/orgasmic-daemon/src/lib.rs
+index 4ed94ff..d56e187 100644
+--- a/crates/orgasmic-daemon/src/lib.rs
++++ b/crates/orgasmic-daemon/src/lib.rs
+@@ -935,7 +935,11 @@ impl Daemon {
+             // (as an `Err`) if the serve task ends on its own — an accept-loop
+             // failure drops the sender — in which case the awaited task below is
+             // already finished and the timeout is satisfied immediately.
+-            let _ = drain_started_rx.await;
++            // TASK-TCTTD injection: TASK-Q07Y5's defect, reintroduced. Not
++            // waiting for the drain to start puts the budget below around the
++            // serve task's whole life instead of around the drain, so the
++            // daemon kills itself `connection_drain` after it binds.
++            let _drain_started_rx = drain_started_rx;
+             // orgasmic:TASK-ATAXN — from here the instance lock is held by a
+             // process whose listener is already closed, for as long as the
+             // budgets below take. Say so on disk, before spending any of them,
