@@ -88,6 +88,21 @@ fn initial_working_sub_state(role: &str) -> Option<RunSubState> {
 
 const RUN_TIMEOUT_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 
+/// `note` value of the durable finalize-admission marker (TASK-QSSQH).
+///
+/// Appended by [`Supervisor::release_one`] the moment a worker finalize is
+/// admitted and *before* the driver is torn down, so the session itself records
+/// where teardown begins. Read back by
+/// `crate::api::stage_outcome_from_session`; see the comment at the append site
+/// for why the trailing `Lifecycle::Release` cannot carry this boundary.
+pub(crate) const WORKER_FINALIZE_ADMITTED_NOTE: &str = "worker_finalize_admitted";
+
+/// Does `event` carry the finalize-admission marker written by
+/// [`Supervisor::release_one`]?
+pub(crate) fn is_worker_finalize_admitted_note(event: &serde_json::Value) -> bool {
+    event.get("note").and_then(serde_json::Value::as_str) == Some(WORKER_FINALIZE_ADMITTED_NOTE)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SupervisorMetrics {
     pub babysitter_spawn_attempts: u64,
@@ -2178,6 +2193,57 @@ impl Supervisor {
                 watcher,
             )
         };
+        // orgasmic:TASK-QSSQH — the durable finalize-admission boundary.
+        //
+        // Admission is granted above (`explicit_release_in_progress = true`)
+        // and the driver is still alive at this line: the `control.release()`
+        // in `stop_and_join_driver_producer` below is what reaps the harness
+        // process group, which is what makes the transport synthesize the
+        // fatal "exited by signal" driver error TASK-C0XMR had to suppress.
+        // Recording the boundary here — awaited, so it is on disk before the
+        // teardown that follows can produce anything — is what lets a reader
+        // tell "this error was caused by the finalize" from "this failure was
+        // already there".
+        //
+        // The trailing `Lifecycle::Release` cannot carry that boundary. It is
+        // appended after the drain, so a genuine pre-finalize failure and a
+        // teardown-induced one are BOTH behind it, and both freeze
+        // `terminal_outcome` to `Failed` (`terminal_outcome_for_event` maps
+        // `RunFail` and fatal `DriverError` alike) — the two cases produce a
+        // byte-identical `Release { outcome: Failed, finalized_by_worker:
+        // true }`. The test pair
+        // `worker_finalize_does_not_clear_a_run_fail_drained_during_teardown`
+        // / `worker_finalize_still_suppresses_the_error_its_own_teardown_caused`
+        // asserts exactly that: identical releases, opposite stage outcomes.
+        //
+        // A failed append is not fatal: a session missing the marker degrades
+        // to the pre-TASK-QSSQH reading (finalize dominates preceding fatal
+        // driver errors), which is also how sessions written before this
+        // marker existed are read.
+        if finalized_by_worker {
+            if let Err(e) = self
+                .writer
+                .append_session(SessionAppend {
+                    run_id: run_id.into(),
+                    session_path: session_path.clone(),
+                    identity: identity.clone(),
+                    authority: None,
+                    kind: SessionEventKind::Note,
+                    event: serde_json::json!({
+                        "note": WORKER_FINALIZE_ADMITTED_NOTE,
+                        "reason": reason,
+                    }),
+                })
+                .await
+            {
+                warn!(
+                    error = %e,
+                    run_id,
+                    "worker finalize admission marker append failed; \
+                     teardown errors in this session are no longer separable"
+                );
+            }
+        }
         // Stop the producer first. The receiver remains live while the
         // control path closes its sender, then drains every queued event to
         // channel closure. Only after both producer and receiver are joined do
@@ -9405,6 +9471,156 @@ mod tests {
             session_has_work_envelope(&session_events(&path)),
             "queued work must land before stream-end classification"
         );
+    }
+
+    /// `finalized_by_worker` flag of every `Lifecycle::Release` in the session.
+    fn release_finalize_flags(path: &Path) -> Vec<bool> {
+        session_events(path)
+            .into_iter()
+            .filter_map(|envelope| {
+                if envelope.kind != SessionEventKind::Lifecycle {
+                    return None;
+                }
+                match serde_json::from_value::<Lifecycle>(envelope.event) {
+                    Ok(Lifecycle::Release {
+                        finalized_by_worker,
+                        ..
+                    }) => Some(finalized_by_worker),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
+    fn admission_marker_count(path: &Path) -> usize {
+        session_events(path)
+            .iter()
+            .filter(|envelope| {
+                envelope.kind == SessionEventKind::Note
+                    && is_worker_finalize_admitted_note(&envelope.event)
+            })
+            .count()
+    }
+
+    /// Drive one worker finalize whose teardown drains `terminal_event`, and
+    /// return the session path (orgasmic:TASK-QSSQH).
+    ///
+    /// `QueuedBeforeTimeoutDriver::with_release_event` emits from inside
+    /// `control.release()`, which is the production teardown window: it is
+    /// where the reaped harness's own terminal event lands, and equally where
+    /// an event the harness had already queued when the finalize was admitted
+    /// is drained. Deterministic, unlike injecting and hoping the drain has
+    /// not run yet.
+    async fn finalize_with_teardown_event(
+        task: &str,
+        terminal_event: DriverEvent,
+    ) -> (tempfile::TempDir, PathBuf) {
+        let (sup, dir, _w) = make_supervisor();
+        let driver = QueuedBeforeTimeoutDriver::with_release_event(terminal_event);
+        let req = dispatch_impl_req(task, dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        sup.release_with_finalization(
+            &resp.run_id,
+            &format!("worker finalize for {task}"),
+            ReleaseOutcome::Completed,
+            true,
+            None,
+        )
+        .await
+        .unwrap();
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(2)).await;
+        (dir, session_path)
+    }
+
+    /// TASK-QSSQH, production path. A `RunFail` drained inside the finalize's
+    /// own teardown window is still a genuine failure, and the stage it backs
+    /// must be recorded failed — the defect TASK-C0XMR's dominance rule
+    /// introduced, which the reviewer called worse than the bug it fixed.
+    #[tokio::test]
+    async fn worker_finalize_does_not_clear_a_run_fail_drained_during_teardown() {
+        let (_dir, session_path) = finalize_with_teardown_event(
+            "TASK-QSSQH-RUNFAIL",
+            DriverEvent::RunFail {
+                error_code: "claude_result_error".into(),
+                error_markdown: "the worker's own turn failed".into(),
+            },
+        )
+        .await;
+
+        assert_eq!(
+            release_outcomes(&session_path),
+            vec![ReleaseOutcome::Failed]
+        );
+        assert_eq!(release_finalize_flags(&session_path), vec![true]);
+        assert!(matches!(
+            crate::api::stage_outcome_from_session(&session_path),
+            crate::api::StageOutcome::Failed { .. }
+        ));
+    }
+
+    /// TASK-QSSQH, production path, the twin. The original TASK-C0XMR symptom:
+    /// the fatal driver error is synthesized BY this release's teardown (in
+    /// production, by reaping the harness process group), so the stage still
+    /// completes.
+    ///
+    /// Read against its twin above, this test is the answer to the reviewer's
+    /// open question. The two runs write byte-identical releases —
+    /// `outcome: failed, finalized_by_worker: true` — because
+    /// `terminal_outcome_for_event` maps `RunFail` and fatal `DriverError`
+    /// alike, and both drain before the release is appended. So the release
+    /// event cannot be the finalize-admission boundary. What separates them is
+    /// the event KIND (teardown never synthesizes `RunFail`) plus the durable
+    /// `worker_finalize_admitted` marker the supervisor writes before teardown
+    /// starts, asserted here to be exactly one and to precede the error.
+    #[tokio::test]
+    async fn worker_finalize_still_suppresses_the_error_its_own_teardown_caused() {
+        let (_dir, session_path) = finalize_with_teardown_event(
+            "TASK-QSSQH-TEARDOWN",
+            DriverEvent::DriverError {
+                fatal: true,
+                message: "rmux pane exited by signal 15; equivalent shell exit code 143".into(),
+            },
+        )
+        .await;
+
+        // The same release shape as the RunFail twin: not a discriminator.
+        assert_eq!(
+            release_outcomes(&session_path),
+            vec![ReleaseOutcome::Failed]
+        );
+        assert_eq!(release_finalize_flags(&session_path), vec![true]);
+
+        assert_eq!(
+            admission_marker_count(&session_path),
+            1,
+            "the finalize-admission boundary must be durable, and written once"
+        );
+        let events = session_events(&session_path);
+        let marker_at = events
+            .iter()
+            .position(|envelope| {
+                envelope.kind == SessionEventKind::Note
+                    && is_worker_finalize_admitted_note(&envelope.event)
+            })
+            .expect("admission marker");
+        let error_at = events
+            .iter()
+            .position(|envelope| {
+                envelope.kind == SessionEventKind::DriverEvent
+                    && envelope.event.get("type").and_then(|v| v.as_str()) == Some("driver_error")
+            })
+            .expect("teardown driver error");
+        assert!(
+            marker_at < error_at,
+            "the marker must be on disk before teardown can produce anything"
+        );
+
+        assert!(matches!(
+            crate::api::stage_outcome_from_session(&session_path),
+            crate::api::StageOutcome::Completed
+        ));
     }
 
     #[tokio::test]
