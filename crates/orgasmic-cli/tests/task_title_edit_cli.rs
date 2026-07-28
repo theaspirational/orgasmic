@@ -169,6 +169,32 @@ fn heading_line(project_root: &Path, stage_file: &str, task_id: &str) -> String 
         .to_string()
 }
 
+/// The heading and everything under it, up to the next top-level heading.
+/// Printed either side of the edit under `--nocapture`, so the round-trip
+/// evidence a reviewer wants is the artifact itself rather than a summary of
+/// assertions that passed.
+fn heading_subtree(project_root: &Path, stage_file: &str, task_id: &str) -> String {
+    let path = project_root.join(".orgasmic").join("tasks").join(stage_file);
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let mut out = String::new();
+    let mut inside = false;
+    for line in text.lines() {
+        let top_level = line.starts_with("* ");
+        if top_level && inside {
+            break;
+        }
+        if top_level && line.contains(task_id) {
+            inside = true;
+        }
+        if inside {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it() {
     let tmp = tempfile::tempdir().unwrap();
@@ -258,6 +284,10 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
         before_line.contains(":daemon:drivers:tmux:testing:"),
         "fixture must carry tags: {before_line}"
     );
+    eprintln!(
+        "----- BEFORE -----\n{}",
+        heading_subtree(&project_root, "in_progress.org", &task_id)
+    );
 
     // --- THE FIX: the title is correctable through the task surface. ---
     let updated = run_cli_json(
@@ -277,6 +307,11 @@ async fn task_update_title_rewrites_the_heading_and_keeps_everything_else_on_it(
     assert!(
         updated["tx_id"].as_str().is_some_and(|id| !id.is_empty()),
         "a title edit must record a tx: {updated}"
+    );
+
+    eprintln!(
+        "----- AFTER  -----\n{}",
+        heading_subtree(&project_root, "in_progress.org", &task_id)
     );
 
     // The heading line, byte-exact. Every component it encodes is named here,
