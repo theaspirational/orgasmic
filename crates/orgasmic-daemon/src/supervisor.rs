@@ -6192,11 +6192,23 @@ mod tests {
     }
 
     fn make_supervisor() -> (Supervisor, tempfile::TempDir, WriterHandle) {
+        let (sup, dir, writer, _events) = make_supervisor_with_events();
+        (sup, dir, writer)
+    }
+
+    /// The same supervisor, plus the bus its writer publishes on.
+    ///
+    /// A test that has to observe work the writer performs in the background
+    /// wants `EventPayload::RunEvent`, which is published *after* the append
+    /// lands on disk. That is a completion signal; a polling budget is a guess
+    /// about how long the machine will take, and under load it guesses wrong.
+    fn make_supervisor_with_events() -> (Supervisor, tempfile::TempDir, WriterHandle, EventBus) {
         let dir = tempfile::tempdir().unwrap();
-        let writer = spawn_writer(EventBus::new());
+        let events = EventBus::new();
+        let writer = spawn_writer(events.clone());
         let boot = Arc::new(BootIdentity::new());
         let sup = Supervisor::new(writer.clone(), boot, CloseGuardStore::ephemeral());
-        (sup, dir, writer)
+        (sup, dir, writer, events)
     }
 
     /// A supervisor whose only releaser is the test itself.
@@ -9692,14 +9704,29 @@ mod tests {
 
     #[tokio::test]
     async fn live_babysitter_summary_flushes_on_event_threshold() {
-        let (sup, dir, _w) = make_supervisor();
+        let (sup, dir, _w, events) = make_supervisor_with_events();
         let driver = TmuxTuiDriver;
         let mut req = impl_req("TASK-BS-LIVE", dir.path());
         req.babysitter = Some(test_babysitter_auto_spawn());
+        // Subscribed before anything is driven: the writer publishes its
+        // append signal from another task, so a subscription taken after the
+        // flush would be waiting for an event that has already been sent.
+        let mut appends = events.subscribe();
         let impl_run = sup.acquire(&driver, req).await.unwrap();
         let bs_path = dir
             .path()
             .join(format!("{}.babysitter.jsonl", impl_run.run_id));
+        // Nothing can flush to a babysitter that never spawned. Fail on that
+        // here rather than letting it become a second, silent meaning for the
+        // wait below (TASK-5FEN5).
+        assert!(
+            sup.snapshot().await.runs.iter().any(|run| {
+                run.run_kind == RunKind::Babysitter
+                    && run.babysitter_target.as_deref() == Some(impl_run.run_id.as_str())
+            }),
+            "acquire must auto-spawn a babysitter for {} before a threshold flush can land",
+            impl_run.run_id
+        );
 
         for _ in 0..BABYSITTER_SUMMARY_EVENT_THRESHOLD {
             sup.transition_state(
@@ -9715,22 +9742,41 @@ mod tests {
             .unwrap();
         }
 
-        let deadline = Instant::now() + Duration::from_secs(2);
-        loop {
-            let env = orgasmic_core::read_session_file(&bs_path).unwrap();
-            if env
-                .iter()
-                .any(|e| e.kind == SessionEventKind::BabysitterSummary)
-            {
-                break;
+        // The transitions reach the babysitter's JSONL through the run's event
+        // drain and then the writer task, neither of which has run when
+        // `transition_state` returns. Wait on the writer's own completion
+        // signal — the `RunEvent` it publishes *after* an append lands — not
+        // on a budget handed to that background work: under full-suite load
+        // the budget is what expires, never the flush (TASK-5FEN5). The outer
+        // timeout is a hang guard, not a work budget; it is only reached when
+        // the summary never lands at all.
+        let flushed = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let env = orgasmic_core::read_session_file(&bs_path).unwrap();
+                if env
+                    .iter()
+                    .any(|e| e.kind == SessionEventKind::BabysitterSummary)
+                {
+                    return;
+                }
+                match appends.recv().await {
+                    Ok(_) => {}
+                    // A slow subscriber loses the oldest events; the file
+                    // re-read above, not the event payload, is the state that
+                    // decides this test.
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        panic!("writer event bus closed before the babysitter summary landed")
+                    }
+                }
             }
-            assert!(
-                Instant::now() < deadline,
-                "live summary threshold should append BabysitterSummary to {}",
-                bs_path.display()
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        })
+        .await;
+        assert!(
+            flushed.is_ok(),
+            "live summary threshold should append BabysitterSummary to {}",
+            bs_path.display()
+        );
     }
 
     #[tokio::test]

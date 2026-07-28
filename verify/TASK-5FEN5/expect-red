@@ -1,0 +1,29 @@
+# Pinned from the injected red run of 2026-07-29 (see verify/TASK-5FEN5/NOTES.md
+# for what this proof does and does not replay).
+#
+# Both tests observed background work by handing it a fixed budget — 2s of
+# polling for a babysitter summary that arrives through the event drain and the
+# writer task, and one Git probe for a repo_url that production is free to give
+# up on. Neither budget is a completion signal, so both tests were really
+# asserting that a loaded machine stayed fast. Measured pre-fix under the load
+# recipe (12 cpu hogs, --test-threads=64, full daemon --lib): the babysitter
+# test failed 3 of 11 runs, the index test 1 of 11, and both were green alone.
+#
+# The injection restores those two budgets and makes each one lose on purpose:
+# the summary append is delayed 3s (longer than the restored 2s budget), and the
+# first live Git probe returns without writing a URL (which is exactly what the
+# production timeout does when it is spent). Load is what made that happen 3
+# times in 11; the injection makes it happen every time.
+exit: 101
+
+# The babysitter budget expires while the flush is still in flight. This is the
+# panic measured under load, verbatim, at supervisor.rs:9727.
+contains: live summary threshold should append BabysitterSummary
+
+# The index test spends its one probe and asserts the result. This is the panic
+# measured under load, verbatim, at index.rs:2134.
+contains: right: "ssh://git@example.com/org/project.git"
+
+# Both, not one: a single red would leave the other test's fix unproven, and the
+# two defects are independent.
+contains: 2 failed

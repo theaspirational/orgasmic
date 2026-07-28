@@ -1,0 +1,5 @@
+# One line. Run from the repo root by `orgasmic verify TASK-5FEN5`.
+# Only the two tests this task owns, serially: the injection is deterministic,
+# so the proof does not need — and must not depend on — the 549-test suite or
+# the induced load that originally exposed these two.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh supervisor::tests::live_babysitter_summary_flushes_on_event_threshold --test-threads=1
