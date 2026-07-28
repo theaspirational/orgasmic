@@ -327,6 +327,53 @@ struct DispatchCleanupReservation {
     dispatch_attempt_token: Option<String>,
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
+    /// The out-of-process holder, for a reservation the daemon installs on
+    /// someone else's behalf (`dispatch-close`, TASK-1T3FZ). Daemon-owned
+    /// reservations leave this `None` and are never swept.
+    owner_pid: Option<u32>,
+    /// Opaque handle the holder presents to release this reservation. Looked
+    /// up by value rather than by recomputed worktree key: cleanup deletes the
+    /// directory, so `normalize_cleanup_worktree` can no longer canonicalize
+    /// the path by the time the holder is done with it.
+    close_guard_id: Option<String>,
+}
+
+/// Identity bundle for a destructive `dispatch-close` worktree guard
+/// (TASK-1T3FZ).
+#[derive(Debug, Clone)]
+pub struct DispatchCloseGuardParams {
+    pub project_id: String,
+    pub task_id: String,
+    pub kind: RunKind,
+    pub branch: String,
+    pub worktree_path: PathBuf,
+    pub dispatch_attempt_token: Option<String>,
+    pub last_path: Option<PathBuf>,
+    pub stdout_path: Option<PathBuf>,
+    /// The process that will perform the cleanup and release this guard.
+    pub owner_pid: Option<u32>,
+    /// The run this close is about to release. Excluded from the blocking
+    /// scan: the close's own generation is what it is entitled to tear down.
+    pub releasing_run_id: Option<String>,
+    /// Every run id this dispatch generation has owned.
+    pub owned_run_ids: Vec<String>,
+}
+
+/// Verdict of [`Supervisor::reserve_dispatch_close`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DispatchCloseGuardOutcome {
+    /// The worktree is reserved and no live worker occupies it. The guard is
+    /// held until `finish_dispatch_close(guard_id)`.
+    Reserved { guard_id: String },
+    /// Another cleanup already holds this worktree.
+    ReservationHeld,
+    /// A live worker occupies the worktree (or an acquire owns the lease
+    /// without a run record yet, so liveness is undetermined). Nothing is
+    /// reserved; the caller must not clean up.
+    BlockedByLiveRun {
+        run_id: String,
+        worktree: Option<PathBuf>,
+    },
 }
 
 /// Identity bundle for dispatch cleanup authorization (TASK-NW4WV).
@@ -907,6 +954,7 @@ impl Supervisor {
             }
             if let Some(worktree) = req.worktree.as_ref() {
                 let worktree_key = normalize_cleanup_worktree(worktree);
+                drop_abandoned_cleanup_reservations(&mut guard);
                 if guard
                     .cleanup_reservations
                     .keys()
@@ -2849,6 +2897,8 @@ impl Supervisor {
             dispatch_attempt_token: params.dispatch_attempt_token.clone(),
             last_path: params.last_path.clone(),
             stdout_path: params.stdout_path.clone(),
+            owner_pid: None,
+            close_guard_id: None,
         };
 
         if params.worktree_path.is_dir() {
@@ -2863,6 +2913,7 @@ impl Supervisor {
         // window can admit a new acquire (TASK-NW4WV).
         {
             let mut g = self.inner.lock().await;
+            drop_abandoned_cleanup_reservations(&mut g);
             if g.cleanup_reservations
                 .keys()
                 .any(|held| held.worktree_key == worktree_key)
@@ -3002,6 +3053,79 @@ impl Supervisor {
             return;
         }
         g.cleanup_reservations.remove(&reservation_key);
+    }
+
+    /// Reserve a worktree for a destructive `dispatch-close`, and decide, under
+    /// the same lock, whether a live worker occupies it (TASK-1T3FZ).
+    ///
+    /// The reviewer finding this exists for: `dispatch-close` used to decide
+    /// liveness in the CLI process and only then remove the worktree, with
+    /// nothing reserving that worktree in daemon state across the gap. A
+    /// concurrent `POST /runs/:origin/recover` acquires in *another process*,
+    /// so no audit of `await` points in the CLI can close that window — the
+    /// authority has to sit where the supervisor lock already is.
+    ///
+    /// The order inside the lock is the whole point, and it is the order
+    /// [`Supervisor::prepare_dispatch_cleanup`] established: **install the
+    /// fence first, decide liveness second**. Installing first is what makes
+    /// the verdict monotone — from that instant `acquire_impl` refuses every
+    /// new run for this worktree, so the set of occupants can only shrink, and
+    /// a `Reserved` verdict stays true until the guard is released. Deciding
+    /// first and reserving afterwards would leave exactly the window this task
+    /// was filed to close.
+    ///
+    /// A blocked verdict reserves nothing: the caller is not cleaning up, so
+    /// it must not fence anyone out either.
+    pub async fn reserve_dispatch_close(
+        &self,
+        params: &DispatchCloseGuardParams,
+    ) -> DispatchCloseGuardOutcome {
+        let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
+        let guard_id = format!("close-guard-{}", Uuid::new_v4());
+        let reservation_key = CleanupReservationKey {
+            project_id: params.project_id.clone(),
+            task_id: params.task_id.clone(),
+            kind: params.kind,
+            worktree_key: worktree_key.clone(),
+        };
+        let reservation = DispatchCleanupReservation {
+            branch: params.branch.clone(),
+            worktree_path: params.worktree_path.clone(),
+            dispatch_attempt_token: params.dispatch_attempt_token.clone(),
+            last_path: params.last_path.clone(),
+            stdout_path: params.stdout_path.clone(),
+            owner_pid: params.owner_pid,
+            close_guard_id: Some(guard_id.clone()),
+        };
+
+        // One lock section, no awaits, from the fence to the verdict.
+        let mut g = self.inner.lock().await;
+        drop_abandoned_cleanup_reservations(&mut g);
+        if g.cleanup_reservations
+            .keys()
+            .any(|held| held.worktree_key == worktree_key)
+        {
+            return DispatchCloseGuardOutcome::ReservationHeld;
+        }
+        g.cleanup_reservations
+            .insert(reservation_key.clone(), reservation);
+
+        let blocking = blocking_run_for_close(&g, params, &worktree_key);
+        if let Some((run_id, worktree)) = blocking {
+            g.cleanup_reservations.remove(&reservation_key);
+            return DispatchCloseGuardOutcome::BlockedByLiveRun { run_id, worktree };
+        }
+        DispatchCloseGuardOutcome::Reserved { guard_id }
+    }
+
+    /// Release a `dispatch-close` guard once worktree and branch cleanup has
+    /// finished (or failed). Unknown ids are a no-op — the sweep in
+    /// [`drop_abandoned_cleanup_reservations`] is the backstop for a holder
+    /// that never gets here.
+    pub async fn finish_dispatch_close(&self, guard_id: &str) {
+        let mut g = self.inner.lock().await;
+        g.cleanup_reservations
+            .retain(|_, reservation| reservation.close_guard_id.as_deref() != Some(guard_id));
     }
 
     /// Clear an *orphaned* lease: one held for `(project_id, task_id, kind)`
@@ -3796,6 +3920,69 @@ fn scan_durable_dispatch_owner(
 
 fn normalize_cleanup_worktree(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The live worker a destructive `dispatch-close` must not clean up beneath
+/// (TASK-1T3FZ), decided from supervisor state under the supervisor lock.
+///
+/// Two ways a run blocks the close:
+/// - it occupies the worktree the close is about to remove, whatever id it
+///   carries — this is the one that matters, because the hazard is a recovery
+///   replacement whose origin→replacement association never reached the
+///   ledger, so the close's record does not name it; or
+/// - it is one of the run ids this generation has owned.
+///
+/// Plus the undetermined case: an acquire owns this task's lease but has not
+/// installed its `RunRecord` yet. Liveness cannot be proven, so it refuses —
+/// daemon reachability is not evidence that an unidentified worker is absent.
+///
+/// The run the close is about to release is excluded: tearing down its own
+/// generation is exactly what the close is entitled to do. Babysitters are
+/// excluded too — one may legitimately still be attached, and it is not the
+/// worker whose output cleanup would destroy.
+fn blocking_run_for_close(
+    inner: &Inner,
+    params: &DispatchCloseGuardParams,
+    worktree_key: &Path,
+) -> Option<(String, Option<PathBuf>)> {
+    let active_lease = lease_key(Some(&params.project_id), &params.task_id, params.kind);
+    if let Some(run_id) = inner.leases.get(&active_lease) {
+        if !inner.runs.contains_key(run_id) {
+            return Some((run_id.clone(), None));
+        }
+    }
+    inner.runs.iter().find_map(|(run_id, rec)| {
+        if rec.kind != RunKind::Worker {
+            return None;
+        }
+        if Some(run_id.as_str()) == params.releasing_run_id.as_deref() {
+            return None;
+        }
+        let occupies = rec
+            .worktree
+            .as_deref()
+            .map(normalize_cleanup_worktree)
+            .as_deref()
+            == Some(worktree_key);
+        let owned = params.owned_run_ids.iter().any(|owned| owned == run_id);
+        (occupies || owned).then(|| (run_id.clone(), rec.worktree.clone()))
+    })
+}
+
+/// Drop cleanup reservations whose out-of-process holder is gone (TASK-1T3FZ).
+///
+/// A `dispatch-close` guard is held by the CLI across its own filesystem
+/// cleanup, so a CLI that dies mid-cleanup would otherwise reserve that
+/// worktree until the daemon restarts — and the worktree path for a task is
+/// deterministic, so the task would become undispatchable. Daemon-owned
+/// reservations carry no pid and are never swept.
+fn drop_abandoned_cleanup_reservations(inner: &mut Inner) {
+    inner
+        .cleanup_reservations
+        .retain(|_, reservation| match reservation.owner_pid {
+            Some(pid) => !subprocess_exited(pid),
+            None => true,
+        });
 }
 
 fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {

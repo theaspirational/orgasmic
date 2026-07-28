@@ -79,13 +79,94 @@ use crate::recovery_claim::{
 use crate::runtime::BootIdentity;
 use crate::supervisor::{
     resolve_dispatch_watch_pid, supervisor_metrics, AcquireRequest, AcquireResponse,
-    BabysitterAutoSpawn, DispatchCleanupOutcome, DispatchCleanupParams, RecoveryReattachPlan,
-    Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
+    BabysitterAutoSpawn, DispatchCleanupOutcome, DispatchCleanupParams, DispatchCloseGuardOutcome,
+    DispatchCloseGuardParams, RecoveryReattachPlan, Supervisor, DEFAULT_IDLE_TIMEOUT_SECS,
 };
 use crate::writer::{FileRewrite, MutationIdentity, TxAppend, TxIdPolicy, WriterHandle};
 use crate::ws;
 
 static UI_DIST: Dir<'_> = include_dir!("$ORGASMIC_UI_DIST_DIR");
+
+/// Test-only rendezvous points inside API handlers.
+///
+/// TASK-1T3FZ needs a test that starts a recovery *between* a destructive
+/// close's liveness decision and its worktree removal — the only interleaving
+/// that reproduced the defect. A sleep cannot express that ordering (a race
+/// test that passes because the machine was slow is how the defect survived a
+/// round), and the two sides live in different processes, so the rendezvous has
+/// to be in the daemon. Gates are keyed by task id, so tests sharing a process
+/// never gate each other, and an unregistered task id costs one map lookup.
+#[doc(hidden)]
+pub mod test_hooks {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+
+    use tokio::sync::oneshot;
+
+    struct Registered {
+        reached: oneshot::Sender<()>,
+        proceed: oneshot::Receiver<()>,
+    }
+
+    static CLOSE_GUARD_GATES: OnceLock<Mutex<HashMap<String, Registered>>> = OnceLock::new();
+
+    fn gates() -> &'static Mutex<HashMap<String, Registered>> {
+        CLOSE_GUARD_GATES.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Test handle for the dispatch-close guard rendezvous. Fires once.
+    pub struct CloseGuardGate {
+        reached: Option<oneshot::Receiver<()>>,
+        proceed: Option<oneshot::Sender<()>>,
+    }
+
+    impl CloseGuardGate {
+        /// Resolves once the daemon has reserved the worktree and decided
+        /// liveness, with the close held there until [`Self::proceed`].
+        pub async fn reached(&mut self) {
+            self.reached
+                .take()
+                .expect("close guard gate already awaited")
+                .await
+                .expect("close guard gate dropped before it was reached");
+        }
+
+        /// Let the close continue into worktree removal.
+        pub fn proceed(&mut self) {
+            let _ = self
+                .proceed
+                .take()
+                .expect("close guard gate already released")
+                .send(());
+        }
+    }
+
+    /// Arm the rendezvous for `task_id`'s next destructive dispatch-close.
+    pub fn gate_dispatch_close_guard(task_id: &str) -> CloseGuardGate {
+        let (reached_tx, reached_rx) = oneshot::channel();
+        let (proceed_tx, proceed_rx) = oneshot::channel();
+        gates().lock().expect("close guard gates").insert(
+            task_id.to_string(),
+            Registered {
+                reached: reached_tx,
+                proceed: proceed_rx,
+            },
+        );
+        CloseGuardGate {
+            reached: Some(reached_rx),
+            proceed: Some(proceed_tx),
+        }
+    }
+
+    pub(crate) async fn dispatch_close_guard_reserved(task_id: &str) {
+        let registered = gates().lock().expect("close guard gates").remove(task_id);
+        let Some(registered) = registered else {
+            return;
+        };
+        let _ = registered.reached.send(());
+        let _ = registered.proceed.await;
+    }
+}
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -504,6 +585,14 @@ pub fn router(state: ApiState) -> Router {
         .route(
             "/projects/:id/tasks/:task_id/dispatch/cleanup",
             post(post_task_dispatch_cleanup),
+        )
+        .route(
+            "/projects/:id/tasks/:task_id/dispatch/close-guard",
+            post(post_task_dispatch_close_guard),
+        )
+        .route(
+            "/projects/:id/tasks/:task_id/dispatch/close-guard/finish",
+            post(post_task_dispatch_close_guard_finish),
         )
         .route("/tasks/:id/subtasks", post(post_task_subtask))
         .route("/tasks/:id/comments", post(post_task_comment))
@@ -1571,6 +1660,22 @@ fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiErr
             tracing::warn!(run_id = %run_id, reason = %reason, "reattach not possible");
             ApiError::conflict(format!("run {run_id} is no longer reattachable: {reason}"))
         }
+        // orgasmic:TASK-1T3FZ — a destructive `dispatch-close` holds this
+        // worktree. Recovering into it would put a live worker in a directory
+        // that is about to be removed, so the acquire is refused; this is the
+        // caller-facing half of that refusal, and it says which close to wait
+        // for rather than reporting an opaque internal error.
+        SupervisorError::CleanupInProgress {
+            task_id,
+            kind,
+            worktree,
+        } => ApiError::conflict_json(json!({
+            "error": "recovery blocked by dispatch cleanup in progress",
+            "task_id": task_id,
+            "kind": format!("{kind:?}").to_lowercase(),
+            "worktree": worktree,
+            "detail": "a dispatch-close holds this worktree; retry once it finishes",
+        })),
         other => {
             tracing::error!(error = %other, "run recovery failed");
             ApiError::internal("failed to recover run")
@@ -4603,6 +4708,146 @@ pub struct DispatchCleanupResponse {
     pub salvage_file_count: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DispatchCloseGuardRequest {
+    pub worktree_path: PathBuf,
+    /// Recorded for diagnostics only. Unlike the rollback cleanup endpoint this
+    /// one neither deletes the branch nor matches on it, and `dispatch-close`
+    /// legitimately reaches here for a record that has none.
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub dispatch_attempt_token: Option<String>,
+    #[serde(default)]
+    pub last_path: Option<PathBuf>,
+    #[serde(default)]
+    pub stdout_path: Option<PathBuf>,
+    #[serde(default)]
+    pub owner_pid: Option<u32>,
+    #[serde(default)]
+    pub releasing_run_id: Option<String>,
+    #[serde(default)]
+    pub owned_run_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DispatchCloseGuardResponse {
+    /// `reserved` | `reservation_held` | `blocked`
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guard_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub blocking_worktree: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DispatchCloseGuardFinishRequest {
+    pub guard_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DispatchCloseGuardFinishResponse {
+    pub status: String,
+}
+
+/// Reserve the dispatch worktree for a destructive `dispatch-close`, and
+/// answer whether a live worker occupies it (TASK-1T3FZ).
+///
+/// This is the authority boundary the close was missing. The CLI cannot decide
+/// this for itself: a competing `POST /runs/:origin/recover` acquires in
+/// another process, so only the daemon — holding the supervisor lock the
+/// acquire path also takes — can install a fence and read liveness as one
+/// indivisible step. The reservation stays installed after this handler
+/// returns and is released by `.../close-guard/finish`, so it spans the
+/// caller's worktree and branch cleanup.
+async fn post_task_dispatch_close_guard(
+    State(state): State<ApiState>,
+    Path((project_id, task_id)): Path<(String, String)>,
+    Json(req): Json<DispatchCloseGuardRequest>,
+) -> Result<Json<DispatchCloseGuardResponse>, ApiError> {
+    // Absolute, and never a symlink — but unlike the rollback cleanup endpoint
+    // this one does NOT require the directory to exist. A close whose worktree
+    // is already gone still has to reach its ledger write and record the
+    // cleanup outcome; refusing it here would turn "nothing to remove" into a
+    // hard failure. Reserving a path that does not exist costs nothing and
+    // still fences an acquire that would recreate it.
+    if !req.worktree_path.is_absolute() {
+        return Err(ApiError::bad_request("worktree_path must be absolute"));
+    }
+    if std::fs::symlink_metadata(&req.worktree_path).is_ok_and(|meta| meta.file_type().is_symlink())
+    {
+        return Err(ApiError::bad_request("worktree path must not be a symlink"));
+    }
+
+    let snap = state.index.snapshot().await;
+    let known_project = snap.projects.contains_key(&project_id);
+    drop(snap);
+    if !known_project {
+        return Err(ApiError::not_found(format!("project {project_id}")));
+    }
+
+    let params = DispatchCloseGuardParams {
+        project_id: project_id.clone(),
+        task_id: task_id.clone(),
+        // Every dispatch shape — implementer, reviewer, architector, and the
+        // stage kinds — is a `RunKind::Worker` run in the supervisor, so this
+        // is the lease and reservation identity for all of them.
+        kind: RunKind::Worker,
+        branch: req.branch.clone().unwrap_or_default(),
+        worktree_path: req.worktree_path.clone(),
+        dispatch_attempt_token: req.dispatch_attempt_token.clone(),
+        last_path: req.last_path.clone(),
+        stdout_path: req.stdout_path.clone(),
+        owner_pid: req.owner_pid,
+        releasing_run_id: req.releasing_run_id.clone(),
+        owned_run_ids: req.owned_run_ids.clone(),
+    };
+
+    let response = match state.supervisor.reserve_dispatch_close(&params).await {
+        DispatchCloseGuardOutcome::Reserved { guard_id } => DispatchCloseGuardResponse {
+            status: "reserved".into(),
+            guard_id: Some(guard_id),
+            blocking_run_id: None,
+            blocking_worktree: None,
+        },
+        DispatchCloseGuardOutcome::ReservationHeld => DispatchCloseGuardResponse {
+            status: "reservation_held".into(),
+            guard_id: None,
+            blocking_run_id: None,
+            blocking_worktree: None,
+        },
+        DispatchCloseGuardOutcome::BlockedByLiveRun { run_id, worktree } => {
+            DispatchCloseGuardResponse {
+                status: "blocked".into(),
+                guard_id: None,
+                blocking_run_id: Some(run_id),
+                blocking_worktree: worktree,
+            }
+        }
+    };
+
+    // Test-only rendezvous occupying the window between the liveness verdict
+    // and the caller's removal — the interleaving no in-process reasoning can
+    // rule out. No-op unless a test registered a gate for this task.
+    if response.status == "reserved" {
+        test_hooks::dispatch_close_guard_reserved(&task_id).await;
+    }
+    Ok(Json(response))
+}
+
+async fn post_task_dispatch_close_guard_finish(
+    State(state): State<ApiState>,
+    Path((_project_id, _task_id)): Path<(String, String)>,
+    Json(req): Json<DispatchCloseGuardFinishRequest>,
+) -> Result<Json<DispatchCloseGuardFinishResponse>, ApiError> {
+    state.supervisor.finish_dispatch_close(&req.guard_id).await;
+    Ok(Json(DispatchCloseGuardFinishResponse {
+        status: "released".into(),
+    }))
 }
 
 /// Daemon-executed rollback for a failed or timed-out CLI dispatch. Per the

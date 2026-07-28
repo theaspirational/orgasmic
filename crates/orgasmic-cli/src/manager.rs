@@ -358,13 +358,6 @@ struct RunsResponse {
 #[derive(Debug, Deserialize)]
 struct RunSummary {
     run_id: String,
-    /// `"worker"` / `"babysitter"` (`RunKind`). A babysitter may legitimately
-    /// still be attached to a dispatch's worktree, so only a live *worker*
-    /// blocks destructive cleanup (TASK-6AYEJ.3).
-    #[serde(default)]
-    run_kind: Option<String>,
-    #[serde(default)]
-    worktree: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -715,65 +708,65 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
     let remove_worktree = args.worktree_remove && !args.no_worktree_remove;
-    if let Some(run_id) = open.run_id.as_deref() {
+    // TASK-1T3FZ: a destructive close takes a DAEMON-OWNED reservation on the
+    // worktree before it releases — or fails to find — any run, and holds it
+    // until cleanup is done. The competing recovery runs in another process
+    // (`POST /runs/:origin/recover`), so a liveness decision made here and
+    // acted on here has a window no amount of in-process care can close: only
+    // the supervisor lock, which the acquire path also takes, can install a
+    // fence and read liveness as one step. The verdict comes back with it.
+    let close_guard = if remove_worktree {
+        runtime
+            .block_on(reserve_close_guard(&client, &project_id, &open))
+            .context("liveness check before dispatch-close cleanup")?
+    } else {
+        None
+    };
+
+    let release = if let Some(run_id) = open.run_id.as_deref() {
         // Modern dispatch records carry the exact run id. Release it directly
         // so unrelated stale recovery records cannot block close. Transport and
         // other failures still fail before cleanup, preserving the live-worker
         // fencing invariant.
-        if let Err(error) = runtime.block_on(release_dispatch_run(
-            &client,
-            run_id,
-            &task_list_property(&tasks),
-        )) {
-            if !is_release_run_not_found_error(&error) {
-                return Err(error).context("release recorded run before dispatch-close cleanup");
-            }
-            // TASK-6AYEJ.3: a 404 used to be read as authoritative "already
-            // absent" and accepted straight through to cleanup. It is not that.
-            // It says only "the id I am holding is not live" — and the id a
-            // record holds can be stale, e.g. a crash-reconciled recovery whose
-            // origin→replacement association never reached the ledger. The
-            // replacement is then live in this very worktree while the close
-            // targets the origin, so the close removes the worktree and deletes
-            // the branch out from under a running worker: the exact
-            // successor-teardown hazard the generation-bound close exists to
-            // prevent.
-            //
-            // Now that generation identity is the contract, corroborate the 404
-            // before doing anything destructive. Non-destructive closes keep
-            // accepting it — they mutate the ledger only, and paying an extra
-            // enumeration there would undo the direct-release fast path.
-            if remove_worktree {
-                let live = runtime
-                    .block_on(fetch_live_runs(&client))
-                    .context("liveness check before dispatch-close cleanup")?;
-                if let Some(blocking) = live_run_blocking_cleanup(&live, &open) {
-                    bail!(
-                        "refusing to clean up dispatch {}: recorded run {} is not live, but run {} \
-                         still is{}. A 404 on the recorded id does not prove this generation is \
-                         gone — its origin→replacement association may never have reached the \
-                         ledger. Inspect the live run (`orgasmic run show {}`) and let it \
-                         finalize, or re-run this close without --worktree-remove.",
-                        open.tx_id,
-                        run_id,
-                        blocking.run_id,
-                        blocking
-                            .worktree
-                            .as_deref()
-                            .map(|path| format!(" in worktree {}", path.display()))
-                            .unwrap_or_default(),
-                        blocking.run_id,
-                    );
-                }
-            }
-        }
-    } else {
-        // Legacy records have no exact run identity. Retain the reachability
-        // fence before destructive cleanup even though they cannot directly
-        // release a supervisor run.
+        //
+        // A 404 no longer needs corroborating here: it says only "the id I am
+        // holding is not live", and the thing it fails to rule out — a recovery
+        // replacement whose origin→replacement association never reached the
+        // ledger, live in this very worktree — is precisely what the guard
+        // above already refused on, by worktree occupancy rather than by id.
+        runtime
+            .block_on(release_dispatch_run(
+                &client,
+                run_id,
+                &task_list_property(&tasks),
+            ))
+            .err()
+            .filter(|error| !is_release_run_not_found_error(error))
+            .map(|error| error.context("release recorded run before dispatch-close cleanup"))
+    } else if close_guard.is_none() {
+        // No run identity to release and no guard: either this close touches no
+        // files, or the record names no worktree, so there is nothing to fence
+        // and nothing to destroy. Keep the daemon-reachability check it has
+        // always had here — but note that reachability is all it is. The
+        // destructive case no longer relies on it: it goes through the guard,
+        // which is the only one of the two that is evidence of anything
+        // (TASK-1T3FZ finding 2).
         runtime
             .block_on(fetch_live_runs(&client))
-            .context("liveness check before dispatch-close cleanup")?;
+            .context("liveness check before dispatch-close cleanup")
+            .err()
+    } else {
+        None
+    };
+    if let Some(error) = release {
+        finish_close_guard(
+            &runtime,
+            &client,
+            &project_id,
+            &open,
+            close_guard.as_deref(),
+        );
+        return Err(error);
     }
 
     let missing_close_tasks = tasks
@@ -790,6 +783,13 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     } else {
         cleanup_dispatch(&project_root, &open, remove_worktree, args.branch_delete)
     };
+    finish_close_guard(
+        &runtime,
+        &client,
+        &project_id,
+        &open,
+        close_guard.as_deref(),
+    );
     if cleanup_status_reports_warning(cleanup.status) {
         eprintln!(
             "warning: dispatch cleanup status={} error={}",
@@ -2092,6 +2092,148 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
 
 async fn fetch_live_runs(client: &DaemonClient) -> Result<Vec<RunSummary>> {
     Ok(client.get::<RunsResponse>("/runs").await?.live)
+}
+
+#[derive(Debug, Serialize)]
+struct CloseGuardRequest<'a> {
+    worktree_path: &'a Path,
+    branch: Option<&'a str>,
+    dispatch_attempt_token: Option<&'a str>,
+    last_path: Option<&'a Path>,
+    stdout_path: Option<&'a Path>,
+    owner_pid: u32,
+    releasing_run_id: Option<&'a str>,
+    owned_run_ids: Vec<&'a str>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloseGuardResponse {
+    status: String,
+    #[serde(default)]
+    guard_id: Option<String>,
+    #[serde(default)]
+    blocking_run_id: Option<String>,
+    #[serde(default)]
+    blocking_worktree: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct CloseGuardFinishRequest<'a> {
+    guard_id: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloseGuardFinishResponse {
+    #[allow(dead_code)]
+    status: String,
+}
+
+fn close_guard_path(project_id: &str, open: &DispatchRecord, suffix: &str) -> String {
+    format!(
+        "/projects/{}/tasks/{}/dispatch/close-guard{suffix}",
+        path_segment(project_id),
+        path_segment(&task_list_property(&open.tasks)),
+    )
+}
+
+/// Take the daemon-owned worktree reservation a destructive `dispatch-close`
+/// must hold across its liveness decision and its removal (TASK-1T3FZ), and
+/// turn a refusal into the operator-facing error.
+///
+/// `Ok(None)` means there is no worktree to reserve — the record has no
+/// `WORKTREE` property, so cleanup will report `worktree_missing` and destroy
+/// nothing.
+async fn reserve_close_guard(
+    client: &DaemonClient,
+    project_id: &str,
+    open: &DispatchRecord,
+) -> Result<Option<String>> {
+    let Some(worktree) = open.worktree.as_deref() else {
+        return Ok(None);
+    };
+    let request = CloseGuardRequest {
+        worktree_path: worktree,
+        branch: open.branch.as_deref(),
+        dispatch_attempt_token: open.dispatch_attempt_token.as_deref(),
+        last_path: open.last_path.as_deref(),
+        stdout_path: open.stdout_path.as_deref(),
+        owner_pid: std::process::id(),
+        releasing_run_id: open.run_id.as_deref(),
+        owned_run_ids: open.run_ids.iter().map(String::as_str).collect(),
+    };
+    let response: CloseGuardResponse = client
+        .post_json(&close_guard_path(project_id, open, ""), &request)
+        .await
+        .map_err(|error| {
+            // A daemon older than TASK-1T3FZ has no such route. Say so rather
+            // than leave a bare 404: the close is refused, which is the right
+            // direction — that daemon cannot fence this worktree at all, so it
+            // cannot be shown that removing it is safe.
+            if error.to_string().contains("daemon returned 404") {
+                return error.context(
+                    "this daemon cannot reserve the worktree for a destructive close (no \
+                     close-guard route); restart it onto the current runtime (`orgasmic daemon \
+                     restart`) and re-run, or close without --worktree-remove",
+                );
+            }
+            error
+        })?;
+    match response.status.as_str() {
+        "reserved" => Ok(Some(response.guard_id.ok_or_else(|| {
+            anyhow::anyhow!("daemon reserved the worktree but returned no guard id")
+        })?)),
+        "blocked" => {
+            let blocking = response.blocking_run_id.unwrap_or_else(|| "?".to_string());
+            bail!(
+                "refusing to clean up dispatch {}: run {} is still live{}. Liveness is decided \
+                 in the daemon under the same lock that admits a recovery, so this is not a \
+                 stale snapshot — a replacement whose origin→replacement association never \
+                 reached the ledger occupies this worktree under an id the record does not \
+                 name. Inspect the live run (`orgasmic run show {}`) and let it finalize, or \
+                 re-run this close without --worktree-remove.",
+                open.tx_id,
+                blocking,
+                response
+                    .blocking_worktree
+                    .as_deref()
+                    .map(|path| format!(" in worktree {}", path.display()))
+                    .unwrap_or_default(),
+                blocking,
+            )
+        }
+        "reservation_held" => bail!(
+            "refusing to clean up dispatch {}: another cleanup already holds worktree {}. \
+             Let it finish, then re-run this close.",
+            open.tx_id,
+            worktree.display()
+        ),
+        other => bail!("unexpected dispatch-close guard status from daemon: {other}"),
+    }
+}
+
+/// Hand the worktree reservation back. Best effort on purpose: the close's own
+/// outcome must not turn on it, and a holder that never gets here is swept by
+/// the daemon when its pid is gone.
+fn finish_close_guard(
+    runtime: &tokio::runtime::Runtime,
+    client: &DaemonClient,
+    project_id: &str,
+    open: &DispatchRecord,
+    guard_id: Option<&str>,
+) {
+    let Some(guard_id) = guard_id else {
+        return;
+    };
+    let result = runtime.block_on(client.post_json::<_, CloseGuardFinishResponse>(
+        &close_guard_path(project_id, open, "/finish"),
+        &CloseGuardFinishRequest { guard_id },
+    ));
+    if let Err(err) = result {
+        eprintln!(
+            "warning: dispatch-close could not release its worktree reservation ({err}); the \
+             daemon releases it when this process exits"
+        );
+    }
 }
 
 async fn release_dispatch_run(
@@ -4063,36 +4205,14 @@ fn extra_compat<'a>(entry: &'a TxEntry, key: &str, legacy_key: &str) -> Option<&
     extra(entry, key).or_else(|| extra(entry, legacy_key))
 }
 
-/// The live worker run that destructive `dispatch-close` cleanup must not run
-/// beneath (TASK-6AYEJ.3), if there is one.
-///
-/// Two ways a live run belongs to the generation about to be torn down:
-/// - it is one of the run ids the generation has owned (origin or a recovery
-///   replacement the ledger did record), or
-/// - it occupies the worktree this close is about to remove, whatever id it
-///   carries. That second rule is the one that matters here, because the defect
-///   this guards is precisely a replacement the ledger never learned about.
-///
-/// Babysitters are excluded: one may legitimately still be attached, and it is
-/// not the worker whose output cleanup would destroy.
-fn live_run_blocking_cleanup<'a>(
-    live: &'a [RunSummary],
-    open: &DispatchRecord,
-) -> Option<&'a RunSummary> {
-    let worktree = open.worktree.as_deref().map(normalize_path);
-    live.iter().find(|run| {
-        if run.run_kind.as_deref().is_some_and(|kind| kind != "worker") {
-            return false;
-        }
-        if open.run_ids.iter().any(|owned| owned == &run.run_id) {
-            return true;
-        }
-        match (worktree.as_deref(), run.worktree.as_deref()) {
-            (Some(want), Some(got)) => normalize_path(got) == want,
-            _ => false,
-        }
-    })
-}
+// The CLI-side `live_run_blocking_cleanup` that used to live here was
+// TASK-6AYEJ.3's answer to "is a live worker occupying this worktree". It read
+// a `/runs` snapshot in this process and acted on it in this process, so a
+// recovery landing in between was invisible to it. TASK-1T3FZ moved that
+// decision to `Supervisor::reserve_dispatch_close`, which makes it under the
+// same lock that admits an acquire and installs the fence before answering.
+// Do not reintroduce a CLI-side copy: a second opinion that cannot see the
+// reservation is exactly the thing that read as safe and was not.
 
 fn dispatch_health(record: &DispatchRecord, live_runs: &[RunSummary]) -> DispatchHealth {
     let worktree_exists = record

@@ -143,6 +143,20 @@ fn git_subcommand_index(words: &[&str]) -> usize {
     index
 }
 
+/// `git`, however it is invoked: bare, absolute (`/usr/bin/git`), or relative
+/// (`./git`). TASK-1T3FZ: a path-qualified invocation used to be invisible.
+fn is_git_invocation(word: &str) -> bool {
+    word.rsplit('/').next() == Some("git")
+}
+
+/// A line-continuation backslash. It is punctuation holding one command
+/// together across lines, never an argument, so the scan steps over it —
+/// TASK-1T3FZ: `git \` + newline + `worktree remove … --force` used to read as
+/// the subcommand being `\`, and scored zero.
+fn is_continuation(word: &str) -> bool {
+    !word.is_empty() && word.chars().all(|ch| ch == '\\')
+}
+
 /// A short flag bundle carrying `letter` (`-f`, `-fq`, `-Dq`), never a long one.
 fn short_flag_carries(word: &str, letter: char) -> bool {
     word.starts_with('-') && !word.starts_with("--") && word[1..].contains(letter)
@@ -165,38 +179,49 @@ fn is_force_flag(word: &str) -> bool {
 ///   command;
 /// - a forced branch delete under any spelling (`-D`, `-d --force`,
 ///   `--delete --force`), whatever the branch is called.
+///
+/// TASK-1T3FZ: it then classified only the FIRST `git` per segment, so any
+/// ordinary safe mention in front of the dangerous one made the guard vacuous
+/// (`run git status, then git worktree remove $WT --force` scored zero). Every
+/// `git` in a command is now a candidate.
 fn dangerous_command_offsets(text: &str) -> Vec<(usize, &'static str)> {
     let mut hits = Vec::new();
     for segment in command_segments(text) {
         let tokens = command_tokens(text, segment);
-        let Some(git_at) = tokens.iter().position(|(_, token)| *token == "git") else {
-            continue;
-        };
-        let offset = tokens[git_at].0;
-        let words: Vec<&str> = tokens[git_at + 1..].iter().map(|(_, word)| *word).collect();
-        let rest = &words[git_subcommand_index(&words).min(words.len())..];
-        match rest.first().copied() {
-            Some("worktree") => {
-                // Only a force flag AFTER `remove` counts: prose such as "never
-                // pass --force to git worktree remove" is advice, not a command.
-                if rest.get(1) == Some(&"remove")
-                    && rest[2..].iter().any(|word| is_force_flag(word))
-                {
-                    hits.push((offset, "forced worktree removal"));
-                }
+        for (index, (offset, token)) in tokens.iter().enumerate() {
+            if !is_git_invocation(token) {
+                continue;
             }
-            Some("branch") => {
-                let flags = &rest[1..];
-                let capital_d = flags.iter().any(|word| short_flag_carries(word, 'D'));
-                let forced_lowercase = flags
-                    .iter()
-                    .any(|word| *word == "--delete" || short_flag_carries(word, 'd'))
-                    && flags.iter().any(|word| is_force_flag(word));
-                if capital_d || forced_lowercase {
-                    hits.push((offset, "forced branch deletion"));
+            let words: Vec<&str> = tokens[index + 1..]
+                .iter()
+                .map(|(_, word)| *word)
+                .filter(|word| !is_continuation(word))
+                .collect();
+            let rest = &words[git_subcommand_index(&words).min(words.len())..];
+            match rest.first().copied() {
+                Some("worktree") => {
+                    // Only a force flag AFTER `remove` counts: prose such as
+                    // "never pass --force to git worktree remove" is advice,
+                    // not a command.
+                    if rest.get(1) == Some(&"remove")
+                        && rest[2..].iter().any(|word| is_force_flag(word))
+                    {
+                        hits.push((*offset, "forced worktree removal"));
+                    }
                 }
+                Some("branch") => {
+                    let flags = &rest[1..];
+                    let capital_d = flags.iter().any(|word| short_flag_carries(word, 'D'));
+                    let forced_lowercase = flags
+                        .iter()
+                        .any(|word| *word == "--delete" || short_flag_carries(word, 'd'))
+                        && flags.iter().any(|word| is_force_flag(word));
+                    if capital_d || forced_lowercase {
+                        hits.push((*offset, "forced branch deletion"));
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
     hits
@@ -272,6 +297,13 @@ fn dangerous_command_detector_catches_reworded_variants() {
         "=git worktree remove \"$WT\" -f=",
         "git -C /repo worktree remove \"$WT\" --force",
         "git worktree remove \"$WT\" \\\n  --force\n",
+        // TASK-1T3FZ, reviewer probe: all three returned ZERO hits against the
+        // detector that read only the first `git` token per segment. The first
+        // is the one that mattered — one safe `git` in front of a forced
+        // removal made the whole guard vacuous.
+        "run git status, then git worktree remove $WT --force",
+        "git \\\n  worktree remove $WT --force\n",
+        "/usr/bin/git worktree remove $WT --force",
         // And the wrappings this convention is written in, plus argument
         // orders and flag bundles no fixed window would have survived.
         "~git worktree remove $WT --force~",
@@ -310,6 +342,12 @@ fn dangerous_command_detector_catches_reworded_variants() {
         "git worktree list --porcelain",
         // A force flag in the NEXT command must not be blamed on this one.
         "git worktree remove \"$WT\"\ngit push --force-with-lease",
+        // TASK-1T3FZ: scanning every `git` must not invent hits either — a
+        // safe mention before a safe command stays safe, and a name that
+        // merely ends in `git` is not git.
+        "run git status, then git worktree list --porcelain",
+        "/usr/bin/git worktree remove \"$WT\"",
+        "legit worktree remove $WT --force",
     ] {
         assert!(
             dangerous_command_offsets(safe).is_empty(),
