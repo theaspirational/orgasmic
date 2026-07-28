@@ -2049,3 +2049,102 @@ standing instruction every agent reads.
 - The append-only/history property that goal set's supersede flow protects is
   explicitly preserved or explicitly amended, with the dec_ node recorded.
 - Verify artifact per TCTTD standard.
+
+* BACKLOG TASK-Z7VQK dispatch_endpoint.rs installs a fresh fake agent per test; first-exec Gatekeeper queue eats wait budgets under load — pre-warm one shared executable
+:PROPERTIES:
+:ID: TASK-Z7VQK
+:PRIORITY: P2
+:END:
+
+From TASK-5FEN5's report (2026-07-29): every test in
+crates/orgasmic-daemon/tests/dispatch_endpoint.rs installs a FRESH fake agent
+executable, and on macOS its first exec queues behind a system-wide serialized
+Gatekeeper evaluation (recorded in .orgasmic/gotchas.org). Under
+suite-concurrent load that queue eats fixed wait budgets and the file's tests
+time out in a family:
+
+- `dispatch_system_only_session_without_finalize_orphans_not_scrapes` —
+  "timed out waiting for session ready" (dispatch_endpoint.rs:1395). 5FEN5
+  reproduced it suite-concurrently (RED 1 of 3 loaded) and raised its 5s bound
+  to the file's 30s convention as a MITIGATION, explicitly labelled a bound
+  change, not a fix.
+- Five siblings seen red with the same fixed-budget shape, "timed out waiting
+  for synthetic run_complete in <session>" (dispatch_endpoint.rs:2449):
+  `dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail`,
+  `dispatch_clean_worktree_protocol_end_without_finalize_orphans`,
+  `dispatch_delayed_protocol_end_without_finalize_orphans`,
+  `dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes`,
+  `dispatch_early_exit_auto_releases_stuck_lease`.
+
+TASK-STWVB already removed this exact cost from the daemon UNIT tests with one
+pre-warmed shared fixture; this file never got the treatment.
+
+=== Ask
+
+Rework dispatch_endpoint.rs fixture installation to use ONE pre-warmed shared
+fake-agent executable (exec'd once at fixture setup so Gatekeeper evaluation is
+paid before any test budget starts), instead of a fresh executable per test.
+This is the durable fix 5FEN5 declined to smuggle into its scope.
+
+=== Acceptance
+
+- One shared, pre-warmed executable serves the file; no per-test first-exec
+  remains on any timed path.
+- The named family runs green suite-concurrently (dispatch_endpoint beside a
+  looping `orgasmic-daemon --lib --test-threads=64` plus cpu hogs — 5FEN5's
+  recipe; hogs alone do NOT reproduce this class).
+- The 30s bound on wait_for_session_ready may stay as a hang guard; the point
+  is that Gatekeeper no longer spends it.
+- Injection per TCTTD standard if patch-expressible; if the trigger is load
+  itself, pin A/B counts in the report per the 5FEN5 precedent and say so in
+  the artifact README.
+
+* BACKLOG TASK-J1XCB Three unowned load flakes from 5FEN5's runs: dead-pid release wait, port-0 instance lock, shutdown-budget replacement wait
+:PROPERTIES:
+:ID: TASK-J1XCB
+:PRIORITY: P1
+:END:
+
+Successor to TASK-5FEN5 (which fixed its three owned flakes and closed).
+These load flakes were seen red during 5FEN5's 2026-07-29 load runs, panics
+captured VERBATIM per the DJ1WV rule, and are currently unowned — so the flake
+registry rightly classifies any recurrence as REAL and a loaded full-suite run
+exits nonzero. This task exists to own them.
+
+1. `supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases`
+   — 3 sightings (both pre- and post-fix binaries):
+   `run <id> did not release within 12s` at supervisor.rs:8077 (8065 in older
+   trees). First flagged by the TASK-XPYRR worker's gate, confirmed by 5FEN5.
+2. `api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post` —
+   api.rs:24818: `called Result::unwrap() on an Err value: daemon instance
+   lock … the configured port is 0, so the incumbent address cannot be probed`.
+3. `tests::replacement_start_waits_out_a_shutting_down_predecessor` —
+   lib.rs:1796, one sighting: `waited 1.50062225s, its own whole shutdown
+   budget`.
+
+NOT in scope: `index::tests::git_resolves_quoted_included_origin_from_linked_worktree`
+(registry names it a TASK-STWVB flake; its first captured panic is now recorded
+on STWVB). NOT in scope: the dispatch_endpoint.rs Gatekeeper family (owned by
+its own fixture-rework task).
+
+=== Ask
+
+Per the 5FEN5 standard: reproduce each under the DJ1WV load recipe (10-12 cpu
+hogs + --test-threads=64; add suite-concurrent binaries if hogs alone don't
+bite), then FIX at the synchronization rather than the budget size
+(R74E8/ATAXN). Registering with this task as owner is the fallback, fixing is
+the goal; on fix, no registry entry may remain owned by this task.
+
+Note from 5FEN5's diagnosis style: (1) looks like a fixed-budget wait on
+background release work; (2) looks like environment/config bleed (port 0)
+rather than timing — diagnose before assuming it's the same class.
+
+=== Acceptance
+
+- Either each test survives >=5 consecutive loaded runs post-fix (with pre-fix
+  red counts pinned for A/B), or it is registered with its measured signature
+  and the diagnosis documented here.
+- Injection per TCTTD standard where patch-expressible; deterministic trigger
+  preferred over load replay, per the 5FEN5 artifact's precedent.
+- No production behaviour change without naming it; test-side-only fixes state
+  so explicitly.
