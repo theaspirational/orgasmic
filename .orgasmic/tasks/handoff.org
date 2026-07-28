@@ -11,131 +11,153 @@
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-07-28 (manager-direct + sixteen dispatches). Seven rounds merged,
-every one verified by injection run by the manager, not taken on the worker's word.
+Session 2026-07-28 (manager-direct + twenty-one dispatches). Eleven rounds
+merged, every one verified by an injection the manager ran personally, not by
+reading the worker's account of having run it.
 
 THE ONE THING TO KNOW
-On this project a green suite is not evidence. TASK-Q07Y5 shipped with every
+A green suite is not evidence on this project. TASK-Q07Y5 shipped with every
 gate green — CLI, daemon, and the manager's own — and killed the operator's
-daemon 10.00s after every boot, because no test anywhere ran a daemon for
-longer than ten seconds. The standard that came out of it and now holds: for
-every fix, reinject the defect, show the test going red with its output, restore,
-show it green. Ask a worker what its test would do if the fix were reverted and
-expect an answer with an exit code in it.
+daemon 10.00s after every boot, because no test anywhere ran a daemon longer
+than ten seconds. The standard that came out of it and now holds for every
+round: reinject the defect, show the test red with its output, restore, show it
+green. Ask a worker what its test would do if the fix were reverted and expect
+an answer with an exit code in it. **Re-run the injection yourself before
+merging.** Four times today a worker's fix was correct and my own re-injection
+was what confirmed it; once (JQARS) my injection was malformed and I nearly
+filed a defect against a working gate — check your probe before blaming the code.
 
-R74E8: THE OUTAGE IS CLOSED, AND VERIFIED WHERE IT HAPPENED
-TASK-Q07Y5 wrapped `axum::serve(..).with_graceful_shutdown(..)` in the 10s drain
-budget. That future is the server's whole life, not the drain. Reverted `0ac88d7`,
-redone correctly as TASK-R74E8 (merged `e1b94b2`): a oneshot fires from inside
-`with_graceful_shutdown` the moment shutdown is signalled, the outer task awaits
-that unbounded — it is the wait *for* the signal — and only then applies
-`timeout(connection_drain, serve_task)`.
-
-Verified three ways, each stronger than the last:
-- Manager injection: delete the `drain_started_rx.await` and the new test
-  `daemon_serves_far_beyond_its_connection_drain_budget` fails at 402ms of uptime.
-- Real release binary, production 10s budget, throwaway home: one pid, one
-  boot_id across 81s, zero drain errors. Q07Y5 errored at exactly t+10.00s.
-- **The real LaunchAgent**, after reinstall: one pid, one boot_id across 181s =
-  18x the budget. This is the check Q07Y5 never got.
-
-STATE OF THE INSTALL — REINSTALLED AND CURRENT
-`~/.orgasmic/bin/orgasmic` is 0.0.15-dev.1 built from `b85c3ae`, signed with
-`ORGASMIC_CODESIGN_IDENTITY='orgasmic dev codesign'`, designated requirement
+STATE OF THE INSTALL — CURRENT AND VERIFIED
+`~/.orgasmic/bin/orgasmic` is 0.0.15-dev.1 built from `dc6db85`, containing
+R74E8, S0QRM, H0TYV, ATAXN, JQARS, GT91X and KKBTP. Signed with
+`ORGASMIC_CODESIGN_IDENTITY='orgasmic dev codesign'`; designated requirement
 byte-identical to the incumbent's (certificate root a70531007c…), so TCC grants
-carried. Installed by fresh-inode rename; `shipped/` rsynced. **ExitTimeOut is
-the derived 50 again.** Recipe that works, in order: set the codesign identity or
-`package-runtime.sh` silently ships unsigned; verify the DR matches the incumbent;
-copy to `orgasmic.new`, `codesign -v`, `mv -f`; restart from the INSTALLED binary.
-Reinstall only when zero workers are running — a restart cycles the rmux
-LaunchAgent and destroys every live session.
+carried. **ExitTimeOut is the derived 50.** Daemon holds one pid and one boot
+across the whole post-reinstall window, 0 parse errors.
 
-WHAT ELSE LANDED TODAY
-- R2HDN (5d4651a) — a live test now fails when acquisition degrades to inert;
-  the missing per-binary sentinel added.
+Reinstall recipe, in order: set the codesign identity or `package-runtime.sh`
+silently ships unsigned; verify the DR matches the incumbent; copy to
+`orgasmic.new`, `codesign -v`, `mv -f`; `rsync` the `shipped/` payload; restart
+from the INSTALLED binary. **Only ever with zero workers running** — a restart
+cycles the rmux LaunchAgent and destroys every live session. That is exactly how
+the morning's outage killed three dispatches.
+
+WHAT LANDED TODAY
+- R2HDN (5d4651a) — a live test now fails when acquisition degrades to inert.
 - 1T3FZ (68f3ed6) — destructive close holds a daemon-owned worktree reservation
-  installed under the supervisor lock BEFORE the verdict, so the verdict is monotone.
-- 69CW6 (03f4d05) — self-satisfying reap surrogate deleted, replaced by
-  StallableRmuxEndpoint driving the real RmuxControl through Supervisor::release.
-- R74E8 (e1b94b2) — above.
-- S0QRM (e1b94b2) — claude credential tier is now *detected*, not guessed. A
-  detected native login beats an ambient ANTHROPIC_API_KEY; explicit
-  `credential_mode` wins outright; `--credential-mode` is live on the CLI and
-  persisted in RunMeta. Native mode adds `--safe-mode` and blanks an inherited key.
-  Manager-verified: injecting the pre-fix precedence turns the regression red
-  (`left: BareApiKey, right: NativeLogin`).
-- H0TYV (merged) — dec_Y5MPK item 6 rules that orgasmic-attribution of a vendor
-  transcript is *minted* (a NativeRuntime record naming the session id), never
-  inferred from path shape or file age. The session-id regression now compares
-  against `ctx.identity.runtime_id` at both adapter and mode layers — manager
-  injection with a valid-but-different UUID turns both red, which the old
-  assertions could not see.
+  installed under the supervisor lock BEFORE the verdict, so the verdict is
+  monotone. Under review now.
+- 69CW6 (03f4d05) — the self-satisfying reap surrogate replaced by
+  StallableRmuxEndpoint driving the real RmuxControl.
+- R74E8 (e1b94b2) — the Q07Y5 redo. The drain budget starts at a oneshot fired
+  from inside `with_graceful_shutdown` instead of wrapping the server's whole
+  life. Verified three ways: injection (dies at 402ms), real release binary at
+  the production 10s budget (81s, one pid), and the real LaunchAgent after
+  reinstall (181s, one pid). The suite now has
+  `daemon_serves_far_beyond_its_connection_drain_budget` — the only thing
+  watching that class of defect.
+- S0QRM (e1b94b2) — claude credential tier detected, not guessed. A detected
+  native login beats an ambient ANTHROPIC_API_KEY.
+- H0TYV — dec_Y5MPK item 6: orgasmic-attribution of a vendor transcript is
+  *minted* (a NativeRuntime record naming the session id), never inferred from
+  path shape or file age.
+- ATAXN (688fd7b) — a departing daemon publishes `$ORGASMIC_HOME/daemon.shutdown`
+  with its own `budget_ms`; a replacement waits on that budget instead of the
+  125ms transient budget. `LockHolder` now says by what the lock is held and
+  whether that thing is leaving.
+- JQARS — `orgasmic manager drivers` exists, and `cli_parity` now resolves every
+  `orgasmic ...` invocation quoted in shipped entry prose against clap.
+- GT91X — tmux/rmux stamp `CODEX_INTERNAL_ORIGINATOR_OVERRIDE=orgasmic`, so
+  codex reviewer transcripts are findable. **Verified live after the reinstall.**
+- KKBTP — the credential decision is resolved once before ownership and pinned
+  through acquire, composition and RunMeta. `auth status` is observed once per
+  dispatch instead of three times; no subprocess is reachable from
+  `compose_request` at all. dec_7P79C records the `Unknown` policy.
 
-THE DIAGNOSIS I GOT WRONG, AND HOW
-I reported that workers inherit the daemon's $TMUX. False. The pid I measured was
-a claude worker — `pgrep -f "orgasmic.*daemon"` matched its *prompt text*. The
-real daemon carries no TMUX. Get the daemon pid from `orgasmic status`, never
-from a pgrep pattern that can match a prompt. TASK-0RCRY survives on the one real
-fact: no tmux call site passes -L/-S, so every probe and session shares one server.
+THE FINDER WAS BLIND TO ITS OWN REVIEWS
+The Z8WEJ reviewer produced a substantial BLOCK and `orgasmic run
+native-transcript` said the transcript did not exist. I read it by hand-parsing
+`~/.codex/sessions/**` in Python. Cause: the finder required
+`session_meta.originator == "orgasmic"`, a value **nothing in the codebase set** —
+it appeared only in the finder and its own test fixtures, which is why its unit
+tests passed against a production match of nothing. Fixed by GT91X, whose
+fixtures now read the value back out of `harness_launch_env("codex")`, so
+fixture and launch path cannot diverge again. If a worker's report is missing,
+check `orgasmic run native-transcript` first, then the worker's scratchpad
+`summary.md`/`report.md`, then the harness store directly.
+
+TWO CLAIMS OF MINE THAT WORKERS DISPROVED — BOTH WORTH THE PATTERN
+1. I filed GT91X saying the historical `originator: orgasmic` rollouts were
+   editor sessions and that the mechanism had "stopped". Both false. Codex labels
+   JSON-RPC app-server clients `source: vscode`; those were orgasmic's own acp-ws
+   driver, via `clientInfo.name`, which never stopped and never covered the TUI.
+   The gate was never satisfiable on the mux path rather than having regressed.
+2. Earlier I reported that workers inherit the daemon's `$TMUX`. False — the pid
+   I measured was a claude worker, because `pgrep -f "orgasmic.*daemon"` matches
+   its *prompt text*. Get the daemon pid from `orgasmic status`.
+Both corrections are recorded on the tasks. A wrong history sends the next
+reader hunting a regression that never happened.
 
 KNOWN LOAD FLAKES — CONFIRM, DO NOT ASSUME
-A full `cargo test -p orgasmic-daemon --lib` under concurrent load shows up to
-five failures. All five pass in isolation:
+Under concurrent load a full `cargo test -p orgasmic-daemon --lib` shows up to
+five failures; all pass in isolation:
 `poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
 `recovery_reattaches_tmux_session_when_handle_exists`,
 `recovery_inventory_waits_for_atomic_claim_commit`,
 `production_resume_native_fork_uses_pinned_claude_not_path_shim`,
 `git_resolves_quoted_included_origin_from_linked_worktree`.
-Four of the five are on the recovery path — that concentration is TASK-STWVB's
-strongest structural clue and is not a "slow machine" story. The PATH-shim one is
-TASK-5HBST.
-
-A KILLED DISPATCH LEAVES ITS BRANCH BEHIND
-Re-dispatch then fails with "a branch named task-<id>-<kind> already exists".
-`git branch -D` plus `git worktree prune` clears it. Hit again today on
-`task-z8wej-review`. Worth its own task.
-
-TWO PROCESS MISTAKES WORTH INHERITING
-1. At 16:01 during the incident I saw the restarts, read `runs = 1` / `never
-   exited` as "a managed reload, not a crash", and filed it as a benign
-   observation. That was the outage already running.
-2. I closed TASK-S0QRM as done before deciding whether it needed a review round,
-   and the state machine correctly refused a reviewer dispatch from `done`.
-   Decide the review question *before* closing. The review went to the parent
-   TASK-Z8WEJ instead, which is the right target anyway — the parent is what
-   closes on SHIP.
+Four of the five are on the recovery path — TASK-STWVB's strongest structural
+clue, and not a "slow machine" story. TASK-5HBST (in flight) is fixing the
+PATH-mutation one. **A suite with standing known flakes trains everyone to
+discount red**, which is how a real regression gets waved through.
 
 IN FLIGHT
-- TASK-Z8WEJ (reviewer, codex) — reviewing S0QRM's credential change as merged.
-  The brief flags rule 4 (`Unknown` treated as `Absent`, so detection that times
-  out under load makes the mode nondeterministic), the deliberately deleted
-  assertion, key neutralisation, and whether `--safe-mode` breaks any worker that
-  relies on a skill or plugin.
-- TASK-ATAXN (P0, implementer) — lock retry budget is 125ms, sized for a
-  transient CLI probe, while a shutting-down daemon can hold the same lock for
-  up to the derived 40s. Reproduce first; the analysis was never observed end to
-  end. Distinguish the two holders rather than raising one number.
-- TASK-JQARS (implementer) — `manager drivers` is documented and does not exist.
+- TASK-1T3FZ (reviewer, codex) — the destructive close path, merged without an
+  independent review. Brief asks about reservation leaks on early return,
+  `close_guard_id` reuse across daemon restarts, the `owner_pid` sweep under pid
+  reuse, and whether a reservation can outlive the daemon that owns it now that
+  ATAXN's marker exists.
+- TASK-5HBST (implementer) — `PrependPathGuard` mutates process-global PATH with
+  no shared lock.
+- TASK-QRB8S (implementer) — `START_TIMEOUT` is a literal 20s while ATAXN made a
+  40s start legitimate, so the CLI can report a failed start for a daemon that
+  comes up fine.
 
 NOT YET DISPATCHED
-TASK-SGRTX (P0, dec_S18RH), TASK-0RCRY (P1), TASK-5HBST, TASK-95SGV, TASK-BCYMM,
-TASK-37TAF, TASK-KPMFK, TASK-4DTBZ (P0), TASK-QSX56 (P0), and five filed by H0TYV:
-TASK-F9VEZ, TASK-B6D8W, TASK-2B215 (codex/cursor/hermes record no NativeRuntime),
-TASK-ZY259 (codex sends persistExtendedHistory:false, uncommented and untested),
-TASK-E3K1B (doctor has no vendor-transcript inventory, which dec_Y5MPK items 5
-and 6 name and nothing implements).
+TASK-4DTBZ and TASK-QSX56 (both high), TASK-0RCRY (P1), TASK-95SGV (P1),
+TASK-XPYRR (P1), TASK-BCYMM, TASK-37TAF, TASK-KPMFK, TASK-4PPPE, and five filed
+by H0TYV: TASK-F9VEZ, TASK-B6D8W, TASK-2B215 (codex/cursor/hermes record no
+NativeRuntime), TASK-ZY259, TASK-E3K1B.
 
-STILL OPEN
-TASK-TJKFC, TASK-STWVB, TASK-WGXKD and TASK-WGXKD.1 (BLOCKED_BY was R74E8, now
-landed — recheck whether they close), TASK-WGXKD.2 (todo).
+A TASK TITLE CANNOT BE CORRECTED (TASK-XPYRR)
+`task update` rejects `--title`; `node body set` only touches prose and named
+sections. So TASK-0RCRY's heading still asserts the `$TMUX` diagnosis I retracted
+this morning, and hand-editing `.orgasmic` is forbidden. Its body opens with the
+correction, so anyone who opens it is set straight — but the board is wrong until
+XPYRR lands.
+
+WRITING TASK BODIES: `**` HEADINGS
+`node body set` replaces free prose *between the drawer and the first nested
+heading*. A body containing `** Section` headings is rejected or truncated —
+ATAXN was filed with 300 of its 3959 characters for this reason. Use `===` for
+sub-headings in a body you set through the CLI. Existing `**` sections created by
+other paths are fine and are NOT returned in the JSON `description` field; read
+the raw org node if you think content is missing.
+
+RUN MANAGER COMMANDS FROM THE REPO ROOT
+Bash cwd persists. From inside a dispatch worktree, `orgasmic manager ...`
+resolves that worktree's frozen `.orgasmic` snapshot and reports stale state
+confidently — `dispatch-status` returned **empty** once today and I briefly read
+it as all three workers dying. `task update --property` from there returns a tx
+id and silently does not apply. Daemon-routed writes with `--project orgasmic`
+are safe; anything reading local files or the tx log is not.
 
 CAPACITY, MEASURED
-Three concurrent rmux workers is comfortable, four is the ceiling (load 28 on 10
-cores, ~4 GB of worktree target dir each). The LiveSessionGuard flock is shared
-across every test binary, so concurrent suites serialize their live sections — a
-daemon suite that normally takes ~180s took 517s under three workers plus two
-parallel gates. It is not hung; check the output file's mtime before concluding
-it is.
+Three concurrent rmux workers is comfortable, four is the ceiling. The
+LiveSessionGuard flock is shared across every test binary, so concurrent suites
+serialize their live sections — a daemon suite that normally takes ~180s took
+517s under three workers plus two parallel gates. It is not hung; check the
+output file's mtime before concluding it is.
 
 THE INSTALL, unchanged and still true
 Locally built 0.0.15-dev.1. install.json names the stable channel and the
@@ -191,39 +213,36 @@ that works. `task create` has no --priority flag at all, which is how all seven
 tasks filed today came out priority None. Tracked on TASK-HXSW0.
 
 ** Next likely actions
-1. Read each in-flight worker's summary.md via `orgasmic run native-transcript <run_id>`
-   (there is no dispatch-report command; the report is a Write to the worker's
-   scratchpad summary.md). Verify by injection before merging — reinject the
-   defect yourself, do not accept the worker's transcript of having done it.
-2. On Z8WEJ SHIP: close Z8WEJ. On BLOCK: file the fix round, do not close.
-3. Recheck TASK-WGXKD and TASK-WGXKD.1 — both were BLOCKED_BY=TASK-R74E8, which
-   has now landed and is verified live. They may close; confirm against git
-   rather than assuming, since an earlier claim that this family was fully
-   closed was wrong.
-4. Keep three workers saturated. Remaining P0s: SGRTX (dec_S18RH), 4DTBZ, QSX56.
-   Then 0RCRY (P1), 5HBST, 95SGV, BCYMM, 37TAF, KPMFK, and H0TYV's five.
-5. Do not reinstall the runtime while workers are live — a restart cycles the
-   rmux LaunchAgent and destroys every session. The install is current as of
-   b85c3ae; there is no pending reason to reinstall.
+1. Read each worker's report. There is no dispatch-report command: try
+   `orgasmic run native-transcript <run_id>` first, then the worker's
+   scratchpad summary.md/report.md, then the harness store directly.
+2. **Re-run each injection yourself before merging.** Check your probe is
+   well-formed before concluding a gate is broken — one of mine was not today.
+3. On the 1T3FZ review: SHIP closes it; BLOCK means file the fix round and leave
+   it open with BLOCKED_BY set. Do not close a task before deciding whether it
+   needs a review round — the state machine refuses a reviewer dispatch from
+   done, which cost a retarget today.
+4. Keep three workers saturated. Remaining: 4DTBZ and QSX56 (high), then 0RCRY,
+   95SGV, XPYRR, 4PPPE, and H0TYV's five NativeRuntime tasks.
+5. Reinstall the runtime only in a zero-worker window. It is current as of
+   dc6db85; there is no pending reason to reinstall until something merges.
 
 ** In flight
-Three workers, dispatched 2026-07-28 15:36-15:38Z, all [run-live].
+Three workers, dispatched 2026-07-28 17:18-17:20Z.
 
-- TASK-Z8WEJ — reviewer, codex/gpt-5.6-sol/high, tx-20260728-orgasmic-3305.
-  Reviewing S0QRM's credential change as merged on main. The brief asks it to
-  attack four things specifically: rule 4 treats `Unknown` (detection
-  impossible) the same as `Absent`, so a detection that times out under load
-  makes the credential mode nondeterministic across dispatches of the same task;
-  the deliberately deleted `api_key_mode_keeps_the_light_bare_path` assertion;
-  whether a blank ANTHROPIC_API_KEY really reads as 'no key'; and whether
-  `--safe-mode` silently breaks any worker that relies on a skill or plugin.
-  Z8WEJ closes only on SHIP.
-- TASK-ATAXN — implementer, claude/opus-5/high, tx-20260728-orgasmic-3311. P0.
-  Reproduce first: the analysis came from a residual-risk section and was never
-  observed end to end. If it does not reproduce, that is the result.
-- TASK-JQARS — implementer, claude/opus-5/high, tx-20260728-orgasmic-3314.
-  `manager drivers` is documented and does not exist. Brief carries ten
-  first-hand instances of the same class collected today.
+- TASK-1T3FZ — reviewer, codex/gpt-5.6-sol/high, tx-20260728-orgasmic-3371.
+  The destructive close path (dispatch-close can remove a worktree and a branch)
+  was merged and manager-verified but never independently reviewed. The brief
+  asks it to attack reservation leaks on early return, close_guard_id reuse
+  across daemon restarts, the owner_pid sweep under pid reuse, whether
+  'undetermined refuses' can wedge an operator with no way out that is not
+  hand-editing state, and whether a reservation can outlive its daemon now that
+  ATAXN publishes a shutdown marker.
+- TASK-5HBST — implementer, claude/opus-5/high, tx-20260728-orgasmic-3379.
+  PrependPathGuard mutates process-global PATH with no shared lock. Acceptance
+  is 10 consecutive clean full runs, reported as a count.
+- TASK-QRB8S — implementer, claude/opus-5/high, tx-20260728-orgasmic-3382.
+  START_TIMEOUT is the last literal on the shutdown-budget axis.
 
 ** Divergence / Risks
 - WORKER TEST CLAIMS ON THE DAEMON CRATE ARE NOT EVIDENCE until TASK-RRT4T lands.

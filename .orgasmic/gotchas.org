@@ -393,3 +393,38 @@ board registration - =projects= is =snap.projects.len()=, the same map the
 lookup missed. So =status= should have reported the smaller count during the
 window; it was simply never checked at that moment. Whether the two projects
 were dropped after boot, never loaded, or keyed differently is open.
+
+** Manager commands run from a dispatch worktree report stale state as fact
+A shell's cwd persists across commands, and a dispatch worktree carries its own
+frozen =.orgasmic/= snapshot from the commit it was created at. Run
+=orgasmic manager ...=, =task update=, or =tx record= from inside one and they
+resolve *that* snapshot, failing plausibly rather than loudly. Measured
+2026-07-28: =manager dispatch-status= returned **empty** with three healthy
+workers running and was briefly read as "all three died";
+=dispatch-close --started-tx tx-...-3305= failed with "no manager.dispatch_started
+tx in the tx log" because the snapshot predated that tx; and
+=task update --property BLOCKED_BY=...= returned a tx id and silently did not
+apply. Meanwhile =git worktree list= (which works from anywhere in a repo) and
+=rmux ls= both showed everything healthy.
+
+Writes routed through the daemon with =--project orgasmic= - =task create=,
+=node body set= - are safe and did land correctly. Anything that reads local
+files or the tx log is not. =cd= back to the repo root first, and when state
+looks catastrophically wrong all at once, check =pwd= before believing it.
+
+** =node body set= replaces prose only, so =**= headings in a body are lost
+The surface replaces the free prose *between the drawer and the first nested
+heading*. A body written with =** Section= headings is rejected with
+=400 org file update failed=, or lands truncated at the first one - TASK-ATAXN
+was filed with 300 of its 3959 characters this way, and the loss is silent from
+the caller's side. Use === for sub-headings in any body written through the CLI.
+
+The inverse also misleads: =**= sections that already exist on a node (created by
+other paths) are **not** returned in the JSON =description= field, so a task can
+look truncated through =task get= while its findings are intact in the org file.
+Read the raw node before concluding content was lost - TASK-WGXKD.2's three
+reviewer findings were there the whole time.
+
+Note also that =manager dispatch --brief= takes a *path* while =node body set
+--body= takes *content*, with no =--file= alternative. Two adjacent surfaces with
+opposite conventions for the same kind of argument (TASK-JQARS).
