@@ -12,6 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
 
 /// Serialize heavy real-subprocess tests across ALL test binaries via an
 /// exclusive advisory flock on a shared temp path (the same path the live
@@ -2739,6 +2741,117 @@ async fn dispatch_finalize_writes_last_txt_verbatim_no_scrollback_contamination(
         last_bytes,
         summary_content.as_bytes(),
         "last.txt must be byte-verbatim from --summary-file, no scrollback contamination"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-WGXKD acceptance: a worker finalize whose process is killed the instant
+/// the lease is released still produces its terminal tx.
+///
+/// This is the production death, not a synthetic one. Releasing the lease tears
+/// down the driver, and the driver reaps the harness's whole setsid process
+/// group (`reap_process_group`) — the `orgasmic dispatch finalize` process is a
+/// member of that group, so the release signals the very process that used to
+/// owe the tx afterwards. On acp-stdio it lost the tx 3 times out of 3.
+/// `ORGASMIC_TEST_FINALIZE_KILL_SELF_AFTER_RELEASE` SIGKILLs the CLI at exactly
+/// that point: whatever the daemon has not already recorded is gone for good.
+///
+/// The tx must be there anyway, matched to this run by RUN_ID, and
+/// `dispatch-status` must read `[reported]` — never the `[unreported]` that was
+/// the only visible trace of the lost state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_terminal_tx_survives_client_death_at_release() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    let started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+
+    write(&worktree.join("worker-change.txt"), "worker output\n");
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "implementer report");
+    let finalize = run_orgasmic_output_with_env(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--commit",
+        ],
+        &[("ORGASMIC_TEST_FINALIZE_KILL_SELF_AFTER_RELEASE", "1")],
+    );
+    assert_eq!(
+        finalize.status.signal(),
+        Some(9),
+        "the finalize process must have been SIGKILLed at the release, \
+         reproducing the production death\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&finalize.stdout),
+        String::from_utf8_lossy(&finalize.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&finalize.stdout).contains("finalized:"),
+        "the client died before it could report success; anything it printed \
+         would mean it got another turn the real one never gets"
+    );
+
+    let raw = tx_log(&project_root);
+    assert_eq!(
+        tx_property_for(&raw, "implementer.reported", "TASK-DISPATCH", "RUN_ID"),
+        run_id,
+        "the terminal tx must be on record for THIS run, written by the daemon \
+         as part of the release the client did not survive"
+    );
+
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains(&format!("TX_ID={started_tx}")),
+        "dispatch-status must still list this dispatch: {status_stdout}"
+    );
+    assert!(
+        status_stdout.contains("[reported]"),
+        "a released run must never show as [unreported] after a successful \
+         finalize: {status_stdout}"
     );
 
     let _ = running.shutdown.send(());
