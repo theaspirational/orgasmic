@@ -34,6 +34,11 @@ set -uo pipefail
 # name, and asserts afterwards that the test did not run.
 BILLED_TEST="legacy_drivers_and_explicit_pairs_emit_equivalent_start_events"
 
+# orgasmic:TASK-S2KM0
+# The escape hatch that turns a missing-tooling sentinel FAILURE into a warning.
+# Mirrors `ALLOW_MISSING_TOOLS_ENV` in crates/orgasmic-drivers/src/modes/rmux.rs.
+ALLOW_MISSING_ENV="ORGASMIC_ALLOW_MISSING_TOOLS"
+
 # Run id and home leak out of a dispatch into every child and break the suites
 # we are trying to reproduce.
 SCRUB=(env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME)
@@ -516,6 +521,67 @@ while IFS=$'\t' read -r name bin detail; do
 done < "$FAILURES_TSV"
 
 # ---------------------------------------------------------------------------
+# what the environment withheld
+# ---------------------------------------------------------------------------
+
+# orgasmic:TASK-S2KM0
+#
+# A test that did not run is not a test that passed.
+#
+# `assert_required_test_tooling` already refuses to let an UNacknowledged gap
+# through: a missing tool fails one sentinel test per binary, which arrives
+# above as an unregistered failure and is reported REAL. Nothing here weakens
+# that. What it cannot catch is an ACKNOWLEDGED gap — somebody set
+# ORGASMIC_ALLOW_MISSING_TOOLS, the sentinel downgraded to a warning, and the
+# gated tests quietly did not run.
+#
+# That acknowledgement is written into the cargo log and nowhere else. The
+# verdict block is the part a human reads and the only part a CI job surfaces,
+# and until now it printed GREEN without ever saying what it had declined to
+# run. A CI lane that skips half a suite and reports success is the exact
+# failure this project's `--skip`-from-memory habit already produced once.
+#
+# So: lift it out and name it. Acknowledged skips do not fail the run — they
+# are a deliberate operator choice, and failing them would make the lane red on
+# every host without a proprietary harness CLI. They simply may not be quiet.
+SKIPPED_TSV="$WORK/skipped.tsv"
+: > "$SKIPPED_TSV"
+
+# `claude (gates 8 tests), codex (gates 1 test)` out of the sentinel's warning.
+# One warning per test binary, and the same tool gates a different count in
+# each, so occurrences are summed rather than deduped: two binaries each gating
+# one `claude` test really is two tests that did not run.
+awk -v out="$SKIPPED_TSV" '
+    /ORGASMIC_ALLOW_MISSING_TOOLS explicitly allows missing test tooling: / {
+        body = $0
+        sub(/^.*explicitly allows missing test tooling: /, "", body)
+        sub(/; those gated tests did not run.*$/, "", body)
+        n = split(body, parts, /\), /)
+        for (i = 1; i <= n; i++) {
+            item = parts[i]
+            sub(/\)[ \t]*$/, "", item)
+            if (match(item, / \(gates /)) {
+                tool = substr(item, 1, RSTART - 1)
+                count = substr(item, RSTART + RLENGTH)
+                sub(/ tests?$/, "", count)
+                if (count ~ /^[0-9]+$/) printf("%s\t%s\n", tool, count) >> out
+            }
+        }
+    }
+' "$SUITE_LOG"
+
+SKIPPED_TOOLS=$(awk -F'\t' '{ total[$1] += $2 } END { for (t in total) printf("%s\t%s\n", t, total[t]) }' \
+    "$SKIPPED_TSV" | sort)
+SKIPPED_TESTS=$(awk -F'\t' '{ n += $2 } END { print n + 0 }' "$SKIPPED_TSV")
+
+# `#[ignore]`d tests are the other silent non-run. The billed test is one of
+# them, and it is already named above; the count catches the rest.
+IGNORED_COUNT=$(awk '
+    /^test result:/ { for (i = 2; i <= NF; i++) if ($i == "ignored;") n += $(i - 1) }
+    END { print n + 0 }
+' "$SUITE_LOG")
+
+# ---------------------------------------------------------------------------
 # verdict
 # ---------------------------------------------------------------------------
 
@@ -532,6 +598,24 @@ else
     printf '  billed   : %s — RAN. THIS COSTS REAL MONEY.\n' "$BILLED_TEST"
 fi
 printf '  failures : %s\n' "$FAIL_COUNT"
+printf '  ignored  : %s test(s) carrying #[ignore]\n' "$IGNORED_COUNT"
+if [ -z "$SKIPPED_TOOLS" ]; then
+    printf '  environ  : complete — no tool requirement was waived\n'
+else
+    printf '  environ  : INCOMPLETE — %s test(s) gated out by absent tooling\n' "$SKIPPED_TESTS"
+fi
+
+if [ -n "$SKIPPED_TOOLS" ]; then
+    printf '\nNOT RUN (%s) — tooling absent, and %s said that was acceptable.\n' \
+        "$SKIPPED_TESTS" "$ALLOW_MISSING_ENV"
+    printf 'These tests did not pass. They did not execute:\n'
+    printf '%s\n' "$SKIPPED_TOOLS" | while IFS=$'\t' read -r tool count; do
+        [ -n "$tool" ] || continue
+        printf '  %-16s gates %s test(s)\n' "$tool" "$count"
+    done
+    printf '  next     : install the tooling and drop its name from %s.\n' "$ALLOW_MISSING_ENV"
+    printf '             A green verdict above covers the rest of the suite, not these.\n'
+fi
 
 if [ "$BUILD_BROKE" -eq 1 ]; then
     printf '\nREAL — the workspace did not build. No classification is possible:\n'

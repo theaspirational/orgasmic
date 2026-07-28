@@ -1,0 +1,12 @@
+# One line. Run from the repo root by
+#   orgasmic verify TASK-S2KM0 --artifact verify/TASK-S2KM0-red
+#
+# This is the wrapper invocation the CI lane uses, scoped to one package so the
+# replay costs ~15s instead of the ~10min the whole workspace takes. Scoping
+# changes the surface, not the mechanism: same script, same classifier, same
+# registry, same exit contract. The lane itself passes no `-p` at all.
+#
+# No `--skip` argument is needed or wanted — run-tests.sh applies the billed
+# skip to every invocation itself, which is the point of running the suite
+# through it rather than through bare cargo.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME bash scripts/run-tests.sh -p orgasmic-core --lib

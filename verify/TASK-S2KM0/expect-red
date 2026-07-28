@@ -1,0 +1,35 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection reverts the verdict block to the state this task found it in:
+# it still classifies REAL vs FLAKE correctly, still reruns failures in
+# isolation, still exits 0 or 1 for the right reasons. The single thing it stops
+# doing is SAYING WHAT IT DID NOT RUN.
+#
+# That is the whole defect, and it is invisible from the outside. A CI lane on a
+# host with no `claude` sets ORGASMIC_ALLOW_MISSING_TOOLS so the tooling sentinel
+# stops failing, the gated tests silently do not run, and the lane prints
+# `verdict: GREEN — no failures`. Nothing in that output is false. It is simply
+# not the whole answer, and the missing part is exactly the part a reviewer would
+# have wanted. This repository already produced that failure once with `--skip`
+# passed from memory, which is why the manifest is mechanical rather than a note
+# in a brief.
+exit: 1
+
+# The acknowledged-skip manifest itself: tools named, counts summed, both the
+# header line and the NOT RUN block.
+contains: FAIL acknowledged missing tooling is named in the verdict, with counts
+
+# The undercount that deduping would cause. One tool gated in two binaries is
+# two sets of tests that did not run, not one.
+contains: FAIL the same tool gated in two binaries sums rather than dedupes
+
+# The other direction, and the one that keeps the manifest honest when it is
+# empty: a complete environment must SAY it was complete, so that "no NOT RUN
+# block" cannot be confused with "this build of the script never had one".
+contains: FAIL nothing waived -> the verdict says the environment was complete
+
+# Exactly three cases fall and fifteen still pass. The fifteen are TASK-DJ1WV's
+# classifier cases, which the injection must leave untouched: if they collapse
+# too, the patch has broken the script rather than reproduced this defect, and
+# this proof has not shown what it claims.
+contains: 15 passed, 3 failed
