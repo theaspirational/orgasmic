@@ -3638,6 +3638,215 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
     let _ = running.join.await;
 }
 
+/// TASK-WGXKD.1 finding 2: a controlled restart that lands INSIDE the
+/// release-to-tx gap must not exit before that tx is durable.
+///
+/// The detached release task outlives its request by design (the caller is
+/// normally dead), so nothing in the request path owns it. Before this fix its
+/// only `JoinHandle` lived on the request future: the writer drain barrier —
+/// which proves only that work ALREADY ENQUEUED in the writer has landed —
+/// could pass while the release was still in teardown, the writer would stop,
+/// and the tx would be lost. That is a graceful-restart loss, not the accepted
+/// daemon-crash gap; it is every `launchctl kickstart` during a runtime
+/// rebuild.
+///
+/// The existing disconnect test cannot catch it: it waits for the tx and only
+/// then shuts down. Here the restart is initiated BEFORE the append, inside the
+/// `release_terminal_tx_delay` window, and the tx is asserted the instant the
+/// restart call returns — with no polling, because the restart is what must
+/// have waited.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_endpoint_controlled_restart_waits_for_pending_terminal_tx() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-RESTART-TX";
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-acp-ws",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(&codex, "#!/bin/sh\nsleep 120\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-restart-tx");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = stem_dir.join("brief.md");
+    write(&brief, "restart tx brief");
+    let last = stem_dir.join("last.txt");
+    let stdout = stem_dir.join("stdout.log");
+    write(&last, "worker report");
+    write(&stdout, "");
+
+    let running = Daemon::run(
+        home.clone(),
+        DaemonOptions {
+            release_terminal_tx_delay: Some(Duration::from_secs(3)),
+            ..test_options()
+        },
+    )
+    .await
+    .expect("boot daemon");
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-acp-ws"),
+    );
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    let run_id = body["run_id"]
+        .as_str()
+        .expect("dispatch response run_id")
+        .to_string();
+
+    let payload = serde_json::json!({
+        "reason": format!("worker finalize for {task_id}"),
+        "request_id": format!("dispatch-release-restart-tx-{run_id}"),
+        "finalized_by_worker": true,
+        "terminal_tx": {
+            "request_id": format!("dispatch-finalize-{task_id}-{run_id}"),
+            "type": "implementer.reported",
+            "actor": "agent.implementer",
+            "project": project_id,
+            "task": task_id,
+            "extra": [["RUN_ID", run_id]],
+        },
+    })
+    .to_string();
+    {
+        use std::io::Write as _;
+        let mut socket = std::net::TcpStream::connect(running.addr).unwrap();
+        write!(
+            socket,
+            "POST /api/runs/{run_id}/release HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Authorization: Bearer {token}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\r\n{payload}",
+            running.addr,
+            payload.len()
+        )
+        .unwrap();
+        socket.flush().unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            !read_project_tx(&project_root).contains(":TYPE:         implementer.reported"),
+            "the tx landed before the restart was even requested — this test \
+             would prove nothing"
+        );
+    }
+
+    // The restart the operator (or `launchctl kickstart`) triggers, landing
+    // squarely inside the gap.
+    let restart = reqwest::Client::new()
+        .post(format!("http://{}/api/daemon/restart", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": "runtime rebuild",
+            "request_id": "wgxkd1-restart"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        restart.status().is_success(),
+        "controlled restart failed: {}",
+        restart.status()
+    );
+    let restart_body: serde_json::Value = restart.json().await.unwrap();
+    let warnings = restart_body["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning["kind"] == "release_finalization_timeout"),
+        "the release should have drained well inside the timeout: {restart_body}"
+    );
+
+    // No polling: the restart response is the claim under test. If the drain
+    // barrier had been placed before the release finalization was awaited, the
+    // restart would have returned with the tx still unwritten.
+    let reported = read_project_tx(&project_root);
+    assert!(
+        reported.contains(":TYPE:         implementer.reported"),
+        "controlled restart returned before the pending terminal tx was \
+         durable — a graceful restart would lose it:\n{reported}"
+    );
+    let reported_block = reported
+        .split("\n* TX ")
+        .find(|block| block.contains(":TYPE:         implementer.reported"))
+        .expect("implementer.reported block");
+    assert!(
+        reported_block
+            .lines()
+            .any(|line| line.starts_with(":RUN_ID:") && line.contains(&run_id)),
+        "the terminal tx must still carry this run's RUN_ID (TASK-6AYEJ.1):\n{reported_block}"
+    );
+
+    // A release arriving after the restart was requested is refused rather than
+    // half-performed: the lease stays held and is retryable against the next
+    // daemon.
+    let late = reqwest::Client::new()
+        .post(format!("http://{}/api/runs/{run_id}/release", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": "late finalize",
+            "finalized_by_worker": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        late.status(),
+        503,
+        "a release arriving after restart was requested must be refused, not \
+         performed without its tx"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+
+    assert!(
+        read_project_tx(&project_root).contains(":TYPE:         implementer.reported"),
+        "the terminal tx must survive the old daemon actually exiting"
+    );
+}
+
 /// TASK-NW4WV: mismatched cleanup while a live tokened worker holds the lease
 /// must conflict and leave process/worktree/branch/artifacts intact.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

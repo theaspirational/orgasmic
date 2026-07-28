@@ -576,6 +576,7 @@ impl Daemon {
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
             trusted_claude_binary: api::pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
+            release_tasks: api::ReleaseTaskTracker::new(),
         };
 
         // Boot auto-reattach runs *after* the listener is bound (see below). It
@@ -588,6 +589,9 @@ impl Daemon {
         // `block_on`, which also starved the boot-progress heartbeat, so even
         // the phase readout froze. TASK-KKGKM.
         let reattach_state = api_state.clone();
+        // orgasmic:TASK-WGXKD.1 — shutdown's handle on the detached release
+        // finalizations. Taken before the state moves into the router.
+        let release_tasks = api_state.release_tasks.clone();
 
         let app: Router = router(api_state);
         let addr = SocketAddr::new(cfg.bind, cfg.port);
@@ -646,6 +650,23 @@ impl Daemon {
             });
             if let Err(err) = serve.await {
                 tracing::error!(error = %err, "orgasmic daemon exited with error");
+            }
+            // orgasmic:TASK-WGXKD.1 — a release finalization outlives its
+            // request by design, so axum's connection drain says nothing about
+            // it. Stop accepting new ones, let the outstanding ones reach the
+            // writer, and only then stop the writer. Doing this after the
+            // writer shutdown (or not at all) loses the terminal tx of any
+            // finalize that was mid-teardown when the restart landed.
+            release_tasks.close();
+            if let Err(outstanding) = release_tasks
+                .wait_idle(api::RELEASE_FINALIZATION_DRAIN_TIMEOUT)
+                .await
+            {
+                tracing::error!(
+                    outstanding,
+                    "shutting down with release finalizations still in flight; \
+                     their terminal tx may be lost"
+                );
             }
             writer_for_shutdown.shutdown().await;
         });

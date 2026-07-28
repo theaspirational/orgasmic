@@ -137,6 +137,126 @@ pub struct ApiState {
     pub trusted_claude_binary: Option<PinnedClaudeExecutable>,
     /// Optional trusted host override for the retained-inode exec boundary.
     pub trusted_exec_wrapper: Option<PathBuf>,
+    /// Daemon-lifetime ownership of the detached release+terminal-tx tasks.
+    /// See [`ReleaseTaskTracker`].
+    pub release_tasks: ReleaseTaskTracker,
+}
+
+/// How long a graceful restart/shutdown waits for in-flight release
+/// finalizations before giving up on them and reporting it.
+pub(crate) const RELEASE_FINALIZATION_DRAIN_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(15);
+
+/// Daemon-lifetime ownership of the tasks spawned by `POST /runs/:id/release`
+/// (TASK-WGXKD.1, finding 2).
+///
+/// The release runs detached precisely BECAUSE the caller is normally already
+/// dead by the time the terminal tx is written — so the `JoinHandle` living on
+/// the request future is not ownership at all: it is dropped with the request
+/// and the task runs untracked. Graceful shutdown then has nothing to wait for,
+/// and a restart landing inside the release-to-tx gap can pass the writer drain
+/// barrier, stop the writer, and lose the tx. That is not the accepted
+/// daemon-crash gap; it is every `launchctl kickstart` during a runtime rebuild.
+///
+/// So the handle lives here, on `ApiState`, which outlives any request. Shutdown
+/// closes the tracker (no new releases accepted), awaits what is outstanding,
+/// and only THEN places the writer drain barrier. Reversing those last two steps
+/// reproduces the bug exactly.
+#[derive(Clone)]
+pub struct ReleaseTaskTracker {
+    inner: Arc<ReleaseTaskTrackerInner>,
+}
+
+struct ReleaseTaskTrackerInner {
+    /// Count of release tasks that have been spawned and not yet finished.
+    /// A watch channel (rather than a counter plus `Notify`) so a waiter can
+    /// re-read the current value after registering interest — no lost wakeup.
+    active: tokio::sync::watch::Sender<usize>,
+    closed: std::sync::atomic::AtomicBool,
+}
+
+/// Decrements the tracker's active count on drop, so a release task that
+/// panics or is aborted still leaves the tracker drainable.
+struct ReleaseTaskGuard {
+    inner: Arc<ReleaseTaskTrackerInner>,
+}
+
+impl ReleaseTaskGuard {
+    fn acquire(inner: Arc<ReleaseTaskTrackerInner>) -> Self {
+        inner.active.send_modify(|active| *active += 1);
+        Self { inner }
+    }
+}
+
+impl Drop for ReleaseTaskGuard {
+    fn drop(&mut self) {
+        self.inner
+            .active
+            .send_modify(|active| *active = active.saturating_sub(1));
+    }
+}
+
+impl Default for ReleaseTaskTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ReleaseTaskTracker {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(ReleaseTaskTrackerInner {
+                active: tokio::sync::watch::channel(0_usize).0,
+                closed: std::sync::atomic::AtomicBool::new(false),
+            }),
+        }
+    }
+
+    /// Whether new releases are still accepted. One-way, like the supervisor's
+    /// acquisition pause: a daemon that has begun restarting does not un-begin.
+    pub fn is_closed(&self) -> bool {
+        self.inner.closed.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn close(&self) {
+        self.inner
+            .closed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Spawn `fut` counted against this tracker. The count is incremented
+    /// synchronously, before the spawn, so a `wait_idle` racing the spawn
+    /// cannot observe an empty tracker that is about to be non-empty.
+    pub fn spawn<F>(&self, fut: F) -> tokio::task::JoinHandle<F::Output>
+    where
+        F: std::future::Future + Send + 'static,
+        F::Output: Send + 'static,
+    {
+        let guard = ReleaseTaskGuard::acquire(self.inner.clone());
+        tokio::spawn(async move {
+            let _guard = guard;
+            fut.await
+        })
+    }
+
+    /// Wait until no tracked task is outstanding. `Err(outstanding)` on timeout,
+    /// so the caller can report a proven lower bound rather than pretend the
+    /// drain succeeded.
+    pub async fn wait_idle(&self, timeout: std::time::Duration) -> Result<(), usize> {
+        let mut rx = self.inner.active.subscribe();
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            if *rx.borrow_and_update() == 0 {
+                return Ok(());
+            }
+            match tokio::time::timeout_at(deadline, rx.changed()).await {
+                Ok(Ok(())) => {}
+                // Sender gone: nothing can still be spawned or outstanding.
+                Ok(Err(_)) => return Ok(()),
+                Err(_) => return Err(*rx.borrow()),
+            }
+        }
+    }
 }
 
 impl ApiState {
@@ -210,6 +330,7 @@ pub fn router(state: ApiState) -> Router {
         .route("/tx", get(get_tx).post(post_tx))
         .route("/daemon/status", get(get_status))
         .route("/daemon/restart", post(post_daemon_restart))
+        .route("/daemon/capabilities", get(get_capabilities))
         .route("/recovery/status", get(get_recovery))
         .route("/auth/whoami", get(get_whoami))
         .route("/filesystem/roots", get(get_filesystem_roots))
@@ -6541,6 +6662,19 @@ async fn post_run_release(
     Path(id): Path<String>,
     Json(req): Json<RunReleaseRequest>,
 ) -> Result<Json<RunReleaseResponse>, ApiError> {
+    // orgasmic:TASK-WGXKD.1 — a daemon that has begun shutting down cannot
+    // promise the terminal tx will reach the writer, so it refuses the release
+    // instead of half-performing it. That leaves the lease HELD, which is
+    // visible in `dispatch-status` and retryable against the next daemon;
+    // releasing without the tx is the invisible state this task exists to
+    // eliminate. Checked before the run lookup: whether this daemon is still
+    // accepting releases is a property of the daemon, not of the run.
+    if state.release_tasks.is_closed() {
+        return Err(ApiError::unavailable(
+            "daemon is shutting down; release refused so the lease stays held \
+             — retry this finalize against the restarted daemon",
+        ));
+    }
     let live = state.supervisor.snapshot().await;
     let run = live
         .runs
@@ -6558,7 +6692,14 @@ async fn post_run_release(
     // group and the finalize CLI is in it. Anything left on the request future
     // is therefore lost exactly when it matters most; anything on the spawned
     // task completes regardless of who is still listening.
-    let handle = tokio::spawn(async move { release_run_and_record_tx(state, id, req).await });
+    //
+    // orgasmic:TASK-WGXKD.1 — and it is spawned through the daemon-owned
+    // `release_tasks` tracker, not bare `tokio::spawn`: the JoinHandle below
+    // dies with the request future, so it is graceful shutdown's only handle on
+    // this work. See [`ReleaseTaskTracker`].
+    let release_tasks = state.release_tasks.clone();
+    let handle =
+        release_tasks.spawn(async move { release_run_and_record_tx(state, id, req).await });
     let (id, terminal_tx_id) = handle.await.map_err(|error| {
         tracing::error!(error = %error, "run release task failed to join");
         ApiError::internal("failed to release run")
@@ -9641,6 +9782,29 @@ pub struct RestartWarning {
 
 const RESTART_WRITER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Capability token for "this daemon writes a worker's terminal tx as part of
+/// the release itself" (TASK-WGXKD).
+///
+/// It exists because `dispatch finalize` cannot discover this after the fact:
+/// on acp-stdio the release reaps the finalize process's own group, so there is
+/// no client left to observe the response, let alone run a fallback. The probe
+/// therefore has to complete BEFORE the release call.
+pub const CAPABILITY_RELEASE_TERMINAL_TX: &str = "release.terminal_tx";
+
+#[derive(Debug, Serialize)]
+pub struct CapabilitiesResponse {
+    pub capabilities: Vec<&'static str>,
+}
+
+/// Pre-flight handshake surface. A daemon older than TASK-WGXKD has no such
+/// route at all and answers 404, which is exactly the signal a client needs:
+/// absence of the route means absence of the guarantee.
+async fn get_capabilities() -> Json<CapabilitiesResponse> {
+    Json(CapabilitiesResponse {
+        capabilities: vec![CAPABILITY_RELEASE_TERMINAL_TX],
+    })
+}
+
 async fn post_daemon_restart(
     State(state): State<ApiState>,
     Json(_req): Json<RestartRequest>,
@@ -9666,6 +9830,15 @@ async fn post_daemon_restart(
             ),
         });
     }
+    // orgasmic:TASK-WGXKD.1 — ORDER IS THE FIX. Outstanding release
+    // finalizations must be awaited BEFORE the writer drain barrier is placed,
+    // because the barrier only proves that work already enqueued in the writer
+    // has landed. A release still in driver teardown has not reached
+    // `append_tx_request` yet, so a barrier placed first passes, the writer
+    // stops, and the terminal tx is lost — a graceful-restart loss, distinct
+    // from the accepted daemon-crash gap. Swapping these two lines reproduces
+    // the bug.
+    warnings.extend(drain_release_finalizations(&state).await);
     warnings.extend(drain_writer_before_restart(&state).await?);
     Ok(Json(RestartResponse {
         status: "restart_requested".to_string(),
@@ -9673,6 +9846,37 @@ async fn post_daemon_restart(
         acquisition_paused: state.supervisor.snapshot().await.acquisition_paused,
         warnings,
     }))
+}
+
+/// Stop accepting new releases and wait for the ones in flight (TASK-WGXKD.1).
+///
+/// Closing is one-way, like `pause_acquisition` above it: a restart request is
+/// a statement that this daemon is going away. A release arriving afterwards is
+/// refused with 503 and its lease stays held, which is visible and retryable.
+async fn drain_release_finalizations(state: &ApiState) -> Vec<RestartWarning> {
+    state.release_tasks.close();
+    match state
+        .release_tasks
+        .wait_idle(RELEASE_FINALIZATION_DRAIN_TIMEOUT)
+        .await
+    {
+        Ok(()) => Vec::new(),
+        Err(outstanding) => {
+            tracing::error!(
+                outstanding,
+                "release finalizations still in flight at restart; their terminal tx may be lost"
+            );
+            vec![RestartWarning {
+                kind: "release_finalization_timeout".to_string(),
+                pending_writes: outstanding,
+                message: format!(
+                    "{outstanding} run release(s) had not finished writing their terminal tx \
+                     after {}s; restarting now may leave them unreported",
+                    RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
+                ),
+            }]
+        }
+    }
 }
 
 async fn drain_writer_before_restart(state: &ApiState) -> Result<Vec<RestartWarning>, ApiError> {
@@ -14919,6 +15123,15 @@ impl ApiError {
             body: None,
         }
     }
+    /// The daemon is alive but deliberately not serving this request right now
+    /// (TASK-WGXKD.1: releases refused once shutdown has begun).
+    fn unavailable(message: impl Into<String>) -> Self {
+        Self {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: message.into(),
+            body: None,
+        }
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -15973,6 +16186,7 @@ mod tests {
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
             trusted_claude_binary: pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: None,
+            release_tasks: ReleaseTaskTracker::new(),
         }
     }
 
