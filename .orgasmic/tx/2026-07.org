@@ -37287,3 +37287,166 @@
 :REASON:       edited task node TASK-STWVB
 :NODE_ID:      TASK-STWVB
 :END:
+
+* TX 2026-07-28 Tue 19:44:54 task.created TASK-TCTTD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3423
+:TIME:         [2026-07-28 Tue 19:44:54]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TCTTD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       2026-07-28: four malformed manager probes in one day, all failing toward false green; probe authorship must happen once, pre-fix, and be replayed thereafter
+:END:
+
+* TX 2026-07-28 Tue 19:44:54 task.created TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3424
+:TIME:         [2026-07-28 Tue 19:44:54]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       2026-07-28: three measured false readings from a worktree cwd, including a task update that returned a tx id and did not apply
+:END:
+
+* TX 2026-07-28 Tue 19:44:55 task.created TASK-ZYWZD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3425
+:TIME:         [2026-07-28 Tue 19:44:55]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZYWZD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-ATAXN was filed with 300 of 3959 chars and no error; round-trip guarantee per HQ970 principle applied to the node body surface
+:END:
+
+* TX 2026-07-28 Tue 19:45:02 task.created TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3426
+:TIME:         [2026-07-28 Tue 19:45:02]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       five standing load flakes cost a manual classification per run and already produced one misattribution; red must mean something mechanically
+:END:
+
+* TX 2026-07-28 Tue 19:45:02 task.created TASK-WE0Q7
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3427
+:TIME:         [2026-07-28 Tue 19:45:02]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WE0Q7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       the uptime blindspot class survived Q07Y5 with only one instance-level test added; the class needs a scheduled minutes-scale gate
+:END:
+
+* TX 2026-07-28 Tue 19:45:07 task.property_updated TASK-TCTTD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3428
+:TIME:         [2026-07-28 Tue 19:45:07]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TCTTD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       prioritize: kills the false-green probe class
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 19:45:08 task.property_updated TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3429
+:TIME:         [2026-07-28 Tue 19:45:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       prioritize: silent-wrong state reads and writes
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 19:45:08 task.property_updated TASK-ZYWZD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3430
+:TIME:         [2026-07-28 Tue 19:45:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZYWZD
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       prioritize: silent data loss on a write verb
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 19:45:08 task.property_updated TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3431
+:TIME:         [2026-07-28 Tue 19:45:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       prioritize: guards every merge decision while STWVB is open
+:PRIORITY:     P2
+:END:
+
+* TX 2026-07-28 Tue 19:45:09 task.property_updated TASK-WE0Q7
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3432
+:TIME:         [2026-07-28 Tue 19:45:09]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WE0Q7
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       prioritize: scheduled complement to S2KM0
+:PRIORITY:     P2
+:END:
+
+* TX 2026-07-28 Tue 19:45:32 task.edited TASK-HQ970
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3433
+:TIME:         [2026-07-28 Tue 19:45:32]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQ970
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-HQ970
+:NODE_ID:      TASK-HQ970
+:END:
+
+* TX 2026-07-28 Tue 19:45:33 task.edited TASK-S2KM0
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3434
+:TIME:         [2026-07-28 Tue 19:45:33]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S2KM0
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-S2KM0
+:NODE_ID:      TASK-S2KM0
+:END:
