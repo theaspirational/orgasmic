@@ -1,0 +1,74 @@
+diff --git a/crates/orgasmic-cli/src/main.rs b/crates/orgasmic-cli/src/main.rs
+index a828c44..832a410 100644
+--- a/crates/orgasmic-cli/src/main.rs
++++ b/crates/orgasmic-cli/src/main.rs
+@@ -460,16 +460,6 @@ enum TaskCmd {
+         project: Option<String>,
+         #[arg(long)]
+         state: Option<String>,
+-        /// Rewrite the heading's title prose (TASK-XPYRR). The lifecycle
+-        /// keyword and the org tags on the same line are preserved; tags are
+-        /// a separate concern and this flag never writes them. Runs as its
+-        /// own edit, so it cannot be combined with the fields below.
+-        #[arg(long)]
+-        title: Option<String>,
+-        /// Optimistic-concurrency token for `--title`, as reported by
+-        /// `orgasmic node`/the org-node editor; fetched when omitted.
+-        #[arg(long = "base-version")]
+-        base_version: Option<String>,
+         #[arg(long)]
+         priority: Option<String>,
+         #[arg(long)]
+@@ -2267,52 +2257,6 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
+                 id,
+                 project,
+                 state,
+-                title: Some(title),
+-                base_version,
+-                priority,
+-                reason,
+-                request_id,
+-                properties,
+-                json,
+-            } => {
+-                // orgasmic:task_XPYRR
+-                // A heading-line write, not a drawer write: it goes through the
+-                // org-node editor for OCC + the structural guard. Combining it
+-                // with the drawer/lifecycle fields would mean two writes and two
+-                // txs behind one command, so it is refused rather than half-done
+-                // — and `--reason` is refused with them rather than dropped.
+-                if state.is_some()
+-                    || priority.is_some()
+-                    || reason.is_some()
+-                    || !properties.is_empty()
+-                {
+-                    anyhow::bail!(
+-                        "--title rewrites the heading line through the org-node editor and cannot \
+-                         share a call with --state/--priority/--property/--reason; run it as its \
+-                         own `orgasmic task update <id> --title \"...\"`"
+-                    );
+-                }
+-                let project = manager::resolve_project(project)?;
+-                node::set_node_title(
+-                    &client,
+-                    node::NodeTitleWrite {
+-                        id: &id,
+-                        project: Some(project),
+-                        kind: Some(orgasmic_core::NodeKind::Task.as_str()),
+-                        title: &title,
+-                        base_version,
+-                        request_id,
+-                        json,
+-                    },
+-                )
+-                .await?
+-            }
+-            TaskCmd::Update {
+-                id,
+-                project,
+-                state,
+-                title: None,
+-                base_version: _,
+                 priority,
+                 reason,
+                 request_id,

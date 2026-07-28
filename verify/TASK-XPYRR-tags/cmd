@@ -1,0 +1,6 @@
+# One line. Run from the repo root by
+#   orgasmic verify TASK-XPYRR --artifact verify/TASK-XPYRR-tags
+#
+# Same production-path test as verify/TASK-XPYRR, aimed at a different
+# injection: not "is there a surface" but "does the surface lose anything".
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test task_title_edit_cli

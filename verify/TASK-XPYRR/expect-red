@@ -1,0 +1,27 @@
+# Pinned from the real red run of 2026-07-28, authored before the fix existed.
+#
+# The injection removes the CLI surface — the `--title` / `--base-version` args
+# on `task update` and the arm that routes them to the org-node editor. The
+# daemon keeps its `set_title` op (the UI has always used it), which is exactly
+# the state TASK-XPYRR was filed about: a field the product plainly owns, with
+# no way for an operator or a manager agent to write it. TASK-0RCRY's retracted
+# `$TMUX` diagnosis sat in its heading for that reason alone.
+#
+# The injection compiles. That matters: this defect never looked like breakage,
+# it looked like a command that simply did not have the flag.
+exit: 101
+
+# clap's own refusal, verbatim — including the tip that named the flag it was
+# about to reject. This is what a manager saw at the terminal.
+contains: unexpected argument '--title' found
+
+# ...and what `task update` could reach instead. If a future edit adds --title
+# back under a different spelling, the usage line changes and this stops
+# matching, which is the point.
+contains: Usage: orgasmic task update --project <PROJECT> --state <STATE> <ID>
+
+# Exactly one test falls, at the first title write. Everything the test asserts
+# afterwards — tags, TODO keyword, drawer, body, the refusals — is unreachable
+# under this injection; the tag-preserving path has its own proof, replayed with
+#   orgasmic verify TASK-XPYRR --artifact verify/TASK-XPYRR-tags
+contains: test result: FAILED. 0 passed; 1 failed
