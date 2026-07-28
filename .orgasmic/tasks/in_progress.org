@@ -776,68 +776,6 @@ fixture-process one, a different class.
 The 'recover returns 500 under load' signature is now observed on three separate
 tests. Whatever this task finds should explain all three, not one.
 
-* IN_PROGRESS TASK-ZYWZD node body set silently drops nested headings: a write verb that lost 92 percent of a body and reported success :cli:daemon:hardening:
-:PROPERTIES:
-:ID: TASK-ZYWZD
-:PRIORITY: P1
-:END:
-
-Filed 2026-07-28. `orgasmic node body set` replaces only the free prose between
-the property drawer and the first nested heading. A body containing `**`
-sub-headings is silently truncated at the first one — TASK-ATAXN was filed with
-300 of its 3959 characters and nobody was told. The read side compounds it:
-nested `**` sections are NOT returned in the JSON `description` field, so the
-loss is invisible through the same surface that caused it. A write verb that
-can drop 92% of its payload and report success is the single worst surface in
-the CLI.
-
-=== The principle (shared with TASK-HQ970, defect 2)
-
-A writer must not commit what it cannot read back. TASK-HQ970 states it for
-`tx record` (re-parse before reporting success); this task applies the same
-round-trip guarantee to the node body surface. If the fix grows shared
-machinery (compose -> re-parse -> diff-against-intent -> refuse on loss), use
-it for both.
-
-=== Work
-
-1. WRITE: `node body set` must either persist the full submitted body
-   (including nested `**` headings, correctly re-depthed under the task
-   heading) or REFUSE, naming exactly what would be lost ("body contains 3
-   nested headings starting at '** The gap'; this verb replaces prose only —
-   use ... or restructure with ==="). Never a silent partial write. Same audit
-   for `node body append` and any sibling that composes org content.
-2. READ: `task get` / `node` reads must expose the full body, or explicitly
-   mark elision ("+ 3 nested sections not shown") — never present a truncated
-   body as complete. Pick and record one; full exposure preferred.
-3. Post-write verification: after composing the new file content, re-parse and
-   assert the submitted body round-trips before the write is committed
-   (mirrors HQ970's acceptance "a write that would not round-trip is rejected
-   rather than committed").
-
-=== Acceptance
-
-- Setting a body containing `** Section` either persists it fully (verified by
-  reading the raw org node) or errors naming the offending heading — proven
-  both ways in tests.
-- The ATAXN shape is the regression fixture: a ~4000-char body with three `**`
-  sections survives set + get with zero loss, or is refused up front.
-- No silent partial write remains on any `node body` verb (enumerate them in
-  the report).
-- Injection proof per project standard: restore the truncating behavior, show
-  the round-trip test red with output, restore the fix, green.
-
-=== Non-goals
-
-- Do not implement TASK-HQ970 (tx record validation) here; share machinery if
-  natural, cross-reference regardless.
-- Do not redesign the org body/section model; make the existing surface honest
-  about it.
-
-Related: TASK-HQ970 (same round-trip principle on tx record), TASK-XPYRR
-(title, the other unwritable field), the recorded gotcha "`node body set`
-replaces prose only, so `**` headings in a body are lost".
-
 * IN_PROGRESS TASK-DJ1WV Red classification is manual folklore; a runner wrapper must retry failures in isolation against a signed flake registry :testing:mechanism:
 :PROPERTIES:
 :ID: TASK-DJ1WV
@@ -905,4 +843,67 @@ race signature was fixed by TASK-5HBST and must NOT be registered).
 - Not the CI lane itself (TASK-S2KM0 consumes this — its work item 2, "decide
   what to do about known-red tests before the lane goes required", is answered
   by this registry).
+
+* IN_PROGRESS TASK-WE0Q7 No gate runs a daemon longer than ten seconds; add a scheduled soak that would have caught Q07Y5 :daemon:testing:mechanism:
+:PROPERTIES:
+:ID: TASK-WE0Q7
+:PRIORITY: P2
+:END:
+
+Filed 2026-07-28. No test in this repository runs a daemon longer than about
+ten seconds, so any defect that needs uptime to express passes every gate.
+That is not hypothetical: TASK-Q07Y5 shipped fully green and killed the
+operator's daemon 10.00s after every boot. TASK-R74E8 fixed it and added
+`daemon_serves_far_beyond_its_connection_drain_budget` — one test, watching one
+instance of the class (drain-budget misapplication, 8x budget ~ seconds). The
+CLASS — anything that expresses only with minutes of uptime: timers, budgets,
+watchers, leaks, heartbeat/stall interactions (see TASK-VZMZE), fd/session
+accumulation — still has nothing watching it.
+
+=== Mechanism
+
+A scheduled soak gate, not a per-merge one (minutes of wall clock do not belong
+in the merge path):
+
+1. A self-contained script (suggested `scripts/soak.sh` or a subcommand) that:
+   boots a REAL daemon from the tree under test with an isolated
+   `ORGASMIC_HOME` and random port (the isolated smoke-daemon recipe in
+   gotchas/memory — never `daemon start`, never the LaunchAgent, never the
+   installed runtime), runs it for a configurable duration (default >= 5
+   minutes; >= 10x any derived budget), under light periodic traffic (status
+   probes, a task read, a tx list — hit real surfaces), then SIGTERMs it.
+2. Asserts across the whole window: one pid and one boot_id throughout; zero
+   parse errors; memory/fd growth bounded (record; alert on gross growth, do
+   not tune thresholds finely); clean exit within
+   `ShutdownBudgets::default().total()` + margin (derived, not a literal —
+   the R74E8/ATAXN/QRB8S standard); marker/lock files retracted after exit.
+3. Wire it into a schedule: the repo already has `nightly-macos` /
+   `nightly-runtime` workflows — add it there, and/or a local launchd schedule
+   for the operator machine. Decide and record which; a soak that exists but
+   never runs is the same blindspot with extra steps.
+
+=== Acceptance
+
+- The soak runs green on current HEAD for the full default duration, output
+  showing the single pid/boot_id assertion sampled across the window.
+- Injection proof: reintroduce the Q07Y5-class defect (apply the drain budget
+  to the server's whole life instead of the drain phase) and show the soak
+  catches it — daemon dies mid-window, soak exits nonzero with a message
+  naming when it died. Restore, green. This proves the gate watches the class,
+  not the code path R74E8 already guards.
+- A second, different uptime defect class is demonstrated caught (suggested: a
+  short-interval timer/watcher misbehavior injected artificially) — one
+  exemplar beyond Q07Y5's, to show the gate is not overfit.
+- The soak NEVER touches the installed runtime, the real LaunchAgent, or
+  `$ORGASMIC_HOME` proper — asserted in the script itself, not just documented.
+
+=== Non-goals
+
+- Not the PR test lane (TASK-S2KM0); this is the scheduled long-run complement.
+- No multi-hour endurance matrix; one honest daily soak at minutes-scale first.
+- Do not run harness/provider turns in the soak — zero billed cost by
+  construction.
+
+Related: TASK-S2KM0 (CI), TASK-VZMZE (a defect exactly this gate would
+express), memory "orgasmic daemon uptime blindspot".
 

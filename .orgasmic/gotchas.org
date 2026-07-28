@@ -464,17 +464,21 @@ files or the tx log is not. =cd= back to the repo root first, and when state
 looks catastrophically wrong all at once, check =pwd= before believing it.
 
 ** =node body set= replaces prose only, so =**= headings in a body are lost
-The surface replaces the free prose *between the drawer and the first nested
-heading*. A body written with =** Section= headings is rejected with
-=400 org file update failed=, or lands truncated at the first one - TASK-ATAXN
-was filed with 300 of its 3959 characters this way, and the loss is silent from
-the caller's side. Use === for sub-headings in any body written through the CLI.
+[FIXED by TASK-ZYWZD, 2026-07-28 - both halves of this entry are obsolete on
+current builds; kept for history.] The surface replaces the free prose *between
+the drawer and the first nested heading*. A body written with =** Section=
+headings WAS rejected with the mute =400 org file update failed= - never
+actually truncated on disk; the "300 of 3959 characters" that TASK-ATAXN showed
+was the READ side: =task get='s =description= dropped every =**= section other
+than Description, silently. Since TASK-ZYWZD: the refusal names the offending
+headings and the ==== alternative, =node body append --section= refuses
+sections with sub-sections instead of inserting above them, and =task get= /
+=/org/node= return nested sections whole. ==== sub-headings remain the
+supported authoring form for bodies written through the CLI.
 
-The inverse also misleads: =**= sections that already exist on a node (created by
-other paths) are **not** returned in the JSON =description= field, so a task can
-look truncated through =task get= while its findings are intact in the org file.
-Read the raw node before concluding content was lost - TASK-WGXKD.2's three
-reviewer findings were there the whole time.
+Historical instance: TASK-WGXKD.2's three reviewer findings looked lost through
+=task get= while intact in the org file - on pre-ZYWZD builds, read the raw
+node before concluding content was lost.
 
 Note also that =manager dispatch --brief= takes a *path* while =node body set
 --body= takes *content*, with no =--file= alternative. Two adjacent surfaces with
