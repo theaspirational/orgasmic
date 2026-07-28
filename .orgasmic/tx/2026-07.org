@@ -32261,3 +32261,16 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-07-28 Tue 08:36:22 task.created TASK-XYYBT
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3116
+:TIME:         [2026-07-28 Tue 08:36:22]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XYYBT
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       operator decision 2026-07-28: decisions.org is enough; architecture adds weight and redundant bureaucracy - scope the removal cost before committing
+:END:
