@@ -34162,3 +34162,110 @@
 :REASON:       edited task node TASK-STWVB
 :NODE_ID:      TASK-STWVB
 :END:
+
+* TX 2026-07-28 Tue 12:32:09 implementer.reported TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3230
+:TIME:         [2026-07-28 Tue 12:32:09]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:RUN_ID:       run-20260728T115658-26acdb99a3f54d849a447f20e81ba0c9
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-69cw6/worktree
+:SHA:          69167aabce9f6af60b9a66efbf24ac735a1708b3
+:END:
+
+* TX 2026-07-28 Tue 12:33:26 implementer.done TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3231
+:TIME:         [2026-07-28 Tue 12:33:26]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 69167aabce9f6af60b9a66efbf24ac735a1708b3
+:MERGE_SHA:    08a9c86b24c1271841cb5258201af2efdabc6e6b
+:BRANCH:       task-69cw6-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3198
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 12:33:26 task.state_transitioned TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3232
+:TIME:         [2026-07-28 Tue 12:33:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-69CW6 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 12:33:34 task.state_transitioned TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3233
+:TIME:         [2026-07-28 Tue 12:33:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged 69167aa: the self-satisfying surrogate is deleted and replaced by StallableRmuxEndpoint driving the real RmuxControl through Supervisor::release; all three original defects injection-verified red
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 12:33:34 task.state_transitioned TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3234
+:TIME:         [2026-07-28 Tue 12:33:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-69CW6 merged
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 12:33:35 task.state_transitioned TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3235
+:TIME:         [2026-07-28 Tue 12:33:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewed (BLOCK SHIP), fix round TASK-69CW6 merged 69167aa: the reap is now proven through the real Supervisor path, not a surrogate that set session_live itself
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 12:33:35 task.state_transitioned TASK-8W30B
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3236
+:TIME:         [2026-07-28 Tue 12:33:35]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-8W30B
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewed (BLOCK SHIP), fix round TASK-69CW6 merged 69167aa: the reap is now proven through the real Supervisor path, not a surrogate that set session_live itself
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

@@ -151,7 +151,23 @@ Manager rule: every test claim for these crates must include either the
 =orgasmic-rmux-run-*= session counts for that: since TASK-Z3093 made release
 unconditional, zero net growth no longer distinguishes "the test skipped" from
 "the test ran and released its session". Durable invariant as of TASK-RRT4T,
-amended by TASK-R2HDN.
+amended by TASK-R2HDN and TASK-69CW6.
+
+There is exactly one fail-closed lane, and it is the sentinel.
+=ORGASMIC_REQUIRE_LIVE_RMUX= was **deleted** by TASK-69CW6 rather than wired up:
+it was set nowhere in the tree, so an "opt-in gate lane" that never ran looked
+like coverage while providing none. Do not reintroduce a third environment
+variable to express "this test must really run" — declare the tests in the
+binary's sentinel instead (=RMUX_GATED_TESTS= and its siblings), where the count
+is visible in default output and adding a gated test is a one-number change.
+
+The two remaining variables mean different things and neither is a substitute
+for the other: =ORGASMIC_ALLOW_MISSING_TOOLS= waives a *missing binary*, and it
+is the only waiver. A *degraded* acquisition — a compatible binary present but
+the SDK or daemon failing to start, which =run_live_session= converts into an
+inert =Ready= — is never waivable and fails unconditionally via
+=assert_not_degraded= (TASK-R2HDN). A degraded daemon is a defect, not a missing
+tool; waiving it is how the false green came back the first time.
 
 ** Test daemon port isolation from checkout-resident production daemon
 Tests that spawn isolated test daemons must ensure the daemons don't default to
