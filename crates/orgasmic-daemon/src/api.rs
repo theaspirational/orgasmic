@@ -15744,37 +15744,16 @@ mod tests {
     use std::time::Duration;
 
     use futures::{SinkExt as _, StreamExt as _};
-    use orgasmic_drivers::{modes::rmux::test_tooling::skip_test_if_missing, HarnessEventAdapter};
+    use orgasmic_drivers::{
+        modes::rmux::test_tooling::{live_session_guard, rmux_session_names, skip_test_if_missing},
+        HarnessEventAdapter,
+    };
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     use tokio_tungstenite::tungstenite::Message;
 
     type TestWs = tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >;
-
-    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
-    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
-    /// advisory flock on a shared temp path lets at most one run at a time,
-    /// cross-process. Held for the whole test via the returned guard.
-    fn live_session_guard() -> LiveSessionGuard {
-        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .expect("open live-session lock file");
-        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
-        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-        LiveSessionGuard(file)
-    }
-
-    struct LiveSessionGuard(std::fs::File);
-    impl Drop for LiveSessionGuard {
-        fn drop(&mut self) {
-            let _ = fs2::FileExt::unlock(&self.0);
-        }
-    }
 
     fn write(path: PathBuf, contents: &str) {
         if let Some(parent) = path.parent() {
@@ -26489,6 +26468,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
+        let live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -26512,6 +26492,11 @@ mod tests {
         )
         .await
         .expect("generate should succeed");
+
+        // TASK-Z3093: hand the live run to the guard before the first
+        // assertion that can panic. The trailing `release` below stays — it is
+        // the production path under test — but it is no longer the only reap.
+        live_guard.owns(&resp.0.run_id);
 
         let art_id = resp.0.artifact_id.clone();
         assert!(art_id.starts_with("ART-"), "{art_id}");
@@ -26547,6 +26532,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_generate_with_empty_nodes_succeeds_end_to_end() {
+        let live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -26570,6 +26556,7 @@ mod tests {
         )
         .await
         .expect("generate with empty nodes should succeed");
+        live_guard.owns(&resp.0.run_id);
 
         let art_id = resp.0.artifact_id.clone();
         assert!(art_id.starts_with("ART-"), "{art_id}");
@@ -26610,6 +26597,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_generate_empty_nodes_excluded_from_node_rollups() {
+        let live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -26677,6 +26665,7 @@ mod tests {
         )
         .await
         .expect("generate with empty nodes should succeed");
+        live_guard.owns(&resp.0.run_id);
 
         let _ = state.index.refresh_project("test-proj").await;
         let artifacts = get_artifacts(
@@ -26712,6 +26701,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_on_nodeless_artifact_succeeds() {
+        let live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -26753,6 +26743,7 @@ mod tests {
         )
         .await
         .expect("regenerate on node-less artifact should succeed");
+        live_guard.owns(&resp.0.run_id);
         assert!(!resp.0.run_id.is_empty());
 
         let art_dir = artifact_dir(&project_root, art_id);
@@ -26768,7 +26759,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "post_artifact_regenerate_hot_path_reuses_live_run_id",
             &[("rmux", rmux_available_for_test())],
@@ -26835,6 +26826,7 @@ mod tests {
         )
         .await
         .expect("first regenerate should succeed (cold spawn)");
+        live_guard.owns(&first.0.run_id);
 
         let art_dir = artifact_dir(&project_root, art_id);
         assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
@@ -26976,7 +26968,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation",
             &[("rmux", rmux_available_for_test())],
@@ -27037,6 +27029,7 @@ mod tests {
         )
         .await
         .expect("first regenerate should succeed");
+        live_guard.owns(&first.0.run_id);
 
         // Real prior submit on the live artifactor run (TASK-ARZGD).
         let _ = post_artifact_submit(
@@ -27135,7 +27128,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "post_artifact_regenerate_cold_spawns_after_forgotten_run",
             &[("rmux", rmux_available_for_test())],
@@ -27197,6 +27190,7 @@ mod tests {
         .await
         .expect("first regenerate should cold-spawn");
         let first_run_id = first.0.run_id.clone();
+        live_guard.owns(&first_run_id);
 
         // Simulate daemon restart: drop the first supervisor and boot fresh state.
         state
@@ -27251,6 +27245,7 @@ mod tests {
         )
         .await
         .expect("regenerate should cold-spawn when no live holder");
+        live_guard.owns(&resp.0.run_id);
         assert!(!resp.0.run_id.is_empty());
         assert_ne!(
             resp.0.run_id, first_run_id,
@@ -27271,7 +27266,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address",
             &[("rmux", rmux_available_for_test())],
@@ -27341,6 +27336,7 @@ mod tests {
         )
         .await
         .expect("first regenerate should persist launch address");
+        live_guard.owns(&first.0.run_id);
         let art_dir = artifact_dir(&project_root, art_id);
         assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
 
@@ -27367,6 +27363,7 @@ mod tests {
         )
         .await
         .expect("cold regenerate with empty address must reuse saved launch address");
+        live_guard.owns(&resp.0.run_id);
         assert!(!resp.0.run_id.is_empty());
         assert_eq!(launch_address_from_artifact_org(&art_dir), saved);
 
@@ -27378,7 +27375,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record",
             &[("rmux", rmux_available_for_test())],
@@ -27441,6 +27438,7 @@ mod tests {
         )
         .await
         .expect("first regenerate should succeed");
+        live_guard.owns(&first.0.run_id);
         let art_dir = artifact_dir(&project_root, art_id);
 
         state
@@ -27506,6 +27504,7 @@ mod tests {
         )
         .await
         .expect("cold regenerate with override must replace launch address");
+        live_guard.owns(&resp.0.run_id);
         assert!(!resp.0.run_id.is_empty());
         assert_ne!(
             resp.0.run_id, first.0.run_id,
@@ -27528,7 +27527,7 @@ mod tests {
 
     #[tokio::test]
     async fn launch_artifact_generation_persistence_failure_releases_run() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "launch_artifact_generation_persistence_failure_releases_run",
             &[("rmux", rmux_available_for_test())],
@@ -27581,6 +27580,13 @@ mod tests {
         std::fs::remove_file(&tx_path).ok();
         std::fs::create_dir(&tx_path).unwrap();
 
+        // TASK-Z3093: this is the one artifactor test whose run id never
+        // reaches the test body — the launch fails before `post_artifact_...`
+        // returns one — so it cannot register a run with the guard up front.
+        // Diff the live session list instead: under the live-session flock no
+        // other test binary can spawn one, so anything new here is this call's.
+        let sessions_before = rmux_session_names();
+
         let result = post_artifact_regenerate(
             State(state.clone()),
             Extension(Identity::Admin),
@@ -27605,11 +27611,26 @@ mod tests {
                 .any(|run| run.task_id == format!("artifact.generate:{art_id}")),
             "persistence failure must release the acquired run: {snapshot:?}"
         );
+
+        let survivors = rmux_session_names()
+            .into_iter()
+            .filter(|name| !sessions_before.contains(name))
+            .collect::<Vec<_>>();
+        // Hand any survivor to the guard before asserting, so a regression here
+        // fails loudly without also leaking the session it just caught.
+        for name in &survivors {
+            live_guard.owns_session(name);
+        }
+        assert!(
+            survivors.is_empty(),
+            "releasing the run on persistence failure must also reap its rmux \
+             session; these survived: {survivors:?}"
+        );
     }
 
     #[tokio::test]
     async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
-        let _live_guard = live_session_guard();
+        let live_guard = live_session_guard();
         if skip_test_if_missing(
             "artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round",
             &[("rmux", rmux_available_for_test())],
@@ -27670,6 +27691,7 @@ mod tests {
         )
         .await
         .expect("regenerate should succeed");
+        live_guard.owns(&regen.0.run_id);
 
         let art_dir = artifact_dir(&project_root, art_id);
         assert_eq!(load_artifact(&art_dir).unwrap().state, "regenerating");
@@ -27782,6 +27804,7 @@ mod tests {
 
     #[tokio::test]
     async fn artifact_release_watcher_reverts_regenerating_state_when_run_ends_without_submit() {
+        let live_guard = live_session_guard();
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -27805,6 +27828,7 @@ mod tests {
         )
         .await
         .expect("generate should succeed");
+        live_guard.owns(&resp.0.run_id);
         let art_id = resp.0.artifact_id.clone();
         let art_dir = artifact_dir(&project_root, &art_id);
 

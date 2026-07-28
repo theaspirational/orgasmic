@@ -18,24 +18,7 @@ mod common;
 
 use common::{init_git_repo, orgasmic_exe, run_git, test_options};
 
-fn live_session_guard() -> LiveSessionGuard {
-    let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .expect("open live-session lock file");
-    fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-    LiveSessionGuard(file)
-}
-
-struct LiveSessionGuard(std::fs::File);
-impl Drop for LiveSessionGuard {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.0);
-    }
-}
+use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
 
 async fn boot(home: Home) -> RunningDaemon {
     home.ensure().unwrap();
