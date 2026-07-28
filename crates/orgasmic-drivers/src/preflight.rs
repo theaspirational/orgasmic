@@ -24,6 +24,30 @@ use crate::r#trait::Preflight;
 /// inconclusive, never fatal — a slow answer is not a wrong one.
 pub(crate) const STATUS_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How many times the probe puts the question before it accepts silence.
+///
+/// A timeout has two causes that are indistinguishable from here, and they
+/// deserve opposite answers. A *wedged harness* will never reply; a *busy
+/// machine* has not replied yet. Measured 2026-07-29 under a loaded workspace
+/// test run: a `claude` stub that answers in 0.28 s idle failed to reach the
+/// first line of its own script inside the bound — the child was still waiting
+/// to exec when the 5 s elapsed — and the identical file exec'd normally 30 s
+/// later in the same process. Nothing was wrong with the harness; the machine
+/// was busy.
+///
+/// Giving up after one attempt turned that into an admitted dispatch for a
+/// logged-out harness: inconclusive is not fatal (see
+/// [`crate::WorkerDriver::preflight`]), so the safeguard silently switched
+/// itself off under exactly the condition it is needed most — an operator
+/// running several dispatches at once (TASK-GEZHQ). One retry separates the two
+/// causes: a wedged harness misses both attempts and still costs a bounded
+/// `STATUS_ATTEMPTS * STATUS_TIMEOUT`, which is still nothing against a
+/// dispatch, while a busy machine usually answers the second time.
+///
+/// Only a *timeout* is retried. A spawn error is a definitive "cannot ask" —
+/// the binary is missing — and asking twice reaches the same answer more slowly.
+pub(crate) const STATUS_ATTEMPTS: usize = 2;
+
 /// What a harness's status command said.
 ///
 /// Both streams are kept because the harnesses disagree about which one a
@@ -50,26 +74,57 @@ pub(crate) struct StatusOutput {
 /// Run a harness's own status command.
 ///
 /// `None` means the question could not be put at all — the binary is missing,
-/// the spawn failed, or it did not answer in time — which every caller must
-/// treat as inconclusive rather than as a "no".
+/// the spawn failed, or it did not answer within [`STATUS_ATTEMPTS`] tries —
+/// which every caller must treat as inconclusive rather than as a "no".
+///
+/// Every path to `None` is logged. A silent one is what made TASK-GEZHQ's
+/// admitted dispatch unreadable from its own artifacts: the run record said the
+/// preflight had no opinion, and nothing said why.
 pub(crate) async fn read_status_output(command: &str, args: &[&str]) -> Option<StatusOutput> {
-    let mut cmd = tokio::process::Command::new(command);
-    cmd.args(args)
-        // A preflight must never prompt. A null stdin makes an interactive
-        // fallback impossible rather than merely unlikely: the harness cannot
-        // read an answer that nobody is there to give.
-        .stdin(Stdio::null())
-        .kill_on_drop(true);
-    let output = tokio::time::timeout(STATUS_TIMEOUT, cmd.output())
-        .await
-        .ok()?
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    Some(StatusOutput {
-        combined: format!("{stdout}{stderr}"),
-        stdout,
-    })
+    for attempt in 1..=STATUS_ATTEMPTS {
+        let mut cmd = tokio::process::Command::new(command);
+        cmd.args(args)
+            // A preflight must never prompt. A null stdin makes an interactive
+            // fallback impossible rather than merely unlikely: the harness cannot
+            // read an answer that nobody is there to give.
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
+        match tokio::time::timeout(STATUS_TIMEOUT, cmd.output()).await {
+            Ok(Ok(output)) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+                let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+                return Some(StatusOutput {
+                    combined: format!("{stdout}{stderr}"),
+                    stdout,
+                });
+            }
+            // Not retried: see [`STATUS_ATTEMPTS`].
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    command,
+                    %error,
+                    "harness status command could not be spawned; this dispatch's \
+                     credentials go unchecked"
+                );
+                return None;
+            }
+            Err(_) => tracing::warn!(
+                command,
+                attempt,
+                attempts = STATUS_ATTEMPTS,
+                timeout_secs = STATUS_TIMEOUT.as_secs(),
+                "harness status command did not answer in time"
+            ),
+        }
+    }
+    tracing::warn!(
+        command,
+        attempts = STATUS_ATTEMPTS,
+        "harness status command never answered; this dispatch's credentials go \
+         unchecked and a worker that cannot authenticate will fail after it owns \
+         a lease, a session and a worktree"
+    );
+    None
 }
 
 /// The exact phrases a prose-answering harness uses for each login state.
@@ -170,6 +225,87 @@ mod tests {
             let verdict = classify_prose_login(output, &cursor_phrases(), "run login");
             assert_eq!(verdict, Preflight::Unsupported, "{output:?}");
         }
+    }
+
+    /// A status command on `PATH` is not needed: [`read_status_output`] takes
+    /// the command it runs, so a stub can be addressed by its own path and no
+    /// test here has to mutate process-global `PATH` (`.orgasmic/gotchas.org`).
+    fn write_stub(dir: &std::path::Path, body: &str) -> std::path::PathBuf {
+        let stub = dir.join("harness-stub");
+        std::fs::write(&stub, body).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&stub, perms).unwrap();
+        stub
+    }
+
+    /// The property TASK-GEZHQ turns on: one slow start must not be taken for
+    /// an answer.
+    ///
+    /// This is what the load did, done to the code — the stub hangs past
+    /// [`STATUS_TIMEOUT`] the first time it is asked and answers instantly the
+    /// second, which is the shape measured under a loaded workspace run (a
+    /// child still waiting to exec at 5 s, the same file exec'ing normally
+    /// moments later). With a single attempt the probe reports "could not ask"
+    /// for a harness that was about to speak, and every caller reads that as
+    /// "no opinion" and lets the dispatch through.
+    ///
+    /// Deliberately not a mocked clock: the thing under test is a real child
+    /// that is late, and the one attempt this costs is the price of proving it.
+    #[tokio::test]
+    async fn a_status_command_that_starts_late_is_asked_again_rather_than_given_up_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("asked-once");
+        let stub = write_stub(
+            dir.path(),
+            &format!(
+                r#"#!/bin/sh
+if [ ! -f "{marker}" ]; then
+  : > "{marker}"
+  # Outlast the bound without ever answering, exactly as a child that has not
+  # reached its first instruction looks from the parent's side.
+  sleep 120
+fi
+printf '%s\n' 'Not logged in'
+exit 1
+"#,
+                marker = marker.display()
+            ),
+        );
+
+        let status = read_status_output(stub.to_str().unwrap(), &["status"]).await;
+
+        let status = status.expect("the second attempt answered, so the probe has an answer");
+        assert!(
+            status.combined.contains("Not logged in"),
+            "the retry must carry the harness's real answer, not an empty one: {:?}",
+            status.combined
+        );
+        assert!(
+            marker.exists(),
+            "the first attempt must actually have been made"
+        );
+    }
+
+    /// The other half of the retry rule: a missing binary is a definitive
+    /// "cannot ask", so it costs one attempt and no timeout. Without this the
+    /// retry would double the price of the commonest inconclusive case — a
+    /// harness that is simply not installed.
+    #[tokio::test]
+    async fn a_binary_that_cannot_be_spawned_is_not_asked_twice() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-harness");
+
+        let started = std::time::Instant::now();
+        let status = read_status_output(missing.to_str().unwrap(), &["status"]).await;
+
+        assert!(status.is_none(), "a missing binary cannot answer");
+        assert!(
+            started.elapsed() < STATUS_TIMEOUT,
+            "a spawn failure must not be retried through the timeout: {:?}",
+            started.elapsed()
+        );
     }
 
     #[test]

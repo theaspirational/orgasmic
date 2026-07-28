@@ -1,0 +1,10 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-GEZHQ --artifact verify/TASK-GEZHQ-retry`.
+#
+# The product half, isolated from the dispatch it protects: a status command
+# that is merely late must be asked again rather than written off as
+# unanswerable. The injection restores the single attempt, and the stub is slow
+# exactly once — the shape measured under load, where the first exec of a
+# freshly written file never reached its own first line and the same file ran
+# normally moments later.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib preflight::tests::a_status_command_that_starts_late_is_asked_again_rather_than_given_up_on -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events

@@ -144,6 +144,10 @@ async fn runs_json(running: &RunningDaemon, token: &str) -> serde_json::Value {
 /// key, a `claude` stub that reports itself logged out, and an empty
 /// `CLAUDE_CONFIG_DIR` so the operator's real `apiKeyHelper` cannot decide it.
 ///
+/// Pinning the three *sources* turned out not to be enough, because the machine
+/// had a fourth way in: it can make the stub too slow to be heard. See
+/// [`warm_up_stub`] — TASK-GEZHQ.
+///
 /// The assertion on the error text is load-bearing, not decoration. Without it
 /// the absence checks below would pass just as well if the dispatch had been
 /// refused for some unrelated reason — a bad worktree, an unsupported pair —
@@ -156,6 +160,7 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
     std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
     let harness_dir = tempfile::tempdir().unwrap();
     write_logged_out_claude_stub(harness_dir.path());
+    warm_up_stub(harness_dir.path());
     let saved_path = std::env::var("PATH").unwrap_or_default();
     std::env::set_var(
         "PATH",
@@ -287,6 +292,37 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
     std::env::remove_var("CLAUDE_CONFIG_DIR");
     let _ = running.shutdown.send(());
     let _ = running.join.await;
+}
+
+/// Pay the first-exec cost of a file written a millisecond ago, here, where
+/// there is no deadline to blow.
+///
+/// The preflight gives a harness a bounded few seconds to answer and treats
+/// silence as "could not ask", which is not a rejection — so any
+/// second this stub spends being started is a second of the test's own premise
+/// draining away. Measured 2026-07-29 under a loaded workspace test run
+/// (TASK-GEZHQ): the stub's first `auth status` never reached the first line of
+/// its own script inside the bound — a child still waiting to exec — while the
+/// identical file exec'd normally moments later in the same process. The
+/// dispatch was admitted, a run was created, and the test read 200 where it
+/// requires 400.
+///
+/// So the first invocation is made here, synchronously and unbounded, and its
+/// answer is asserted. That does two things: it moves macOS's one-time
+/// evaluation of a brand-new executable off the probe's budget, and it turns a
+/// stub that cannot answer at all into a failure that says so, instead of one
+/// that surfaces as a mystified 200 much further down.
+fn warm_up_stub(dir: &Path) {
+    let output = std::process::Command::new(dir.join("claude"))
+        .args(["auth", "status"])
+        .output()
+        .expect("the stub must be executable");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"loggedIn\":false"),
+        "the stub must answer logged-out before the preflight is asked to \
+         believe it: {stdout:?}"
+    );
 }
 
 /// A `claude` that answers `auth status` with the logged-out payload the real

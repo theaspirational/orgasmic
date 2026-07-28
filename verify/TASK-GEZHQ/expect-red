@@ -1,0 +1,19 @@
+# Pinned from the red run authored against the defect, 2026-07-29, and
+# byte-for-byte the failure TASK-EP3H1's gate run reported on 2026-07-28.
+#
+# `left: 200` is the whole defect: the daemon ACCEPTED a dispatch it is required
+# to refuse. The body carries the run_id of a run that should never have
+# existed, which is what makes this a product surface and not a test-timing
+# complaint — the CLI needs the 400 to roll back the worktree it created, so a
+# 200 leaves that worktree behind.
+exit: 101
+
+contains: preflight rejection must be a 400 so the CLI treats it as an
+contains: left: 200
+contains: right: 400
+
+# Named so a future rewrite that keeps the assertion but loses the run-creation
+# evidence cannot quietly pass this signature.
+contains: "driver":"acp-stdio"
+
+contains: test result: FAILED. 0 passed; 1 failed

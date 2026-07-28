@@ -1,0 +1,10 @@
+# One line. Run from the repo root by `orgasmic verify TASK-GEZHQ`.
+#
+# The end-to-end shape TASK-EP3H1's gate run caught: a real dispatch through the
+# daemon whose harness cannot authenticate. What the injection restores is not a
+# credential — the credential is still pinned three ways — it is the machine's
+# ability to make the stub too slow to be heard, which is what the loaded
+# workspace run did to it. The probe then has no answer, an inconclusive probe
+# does not reject, and the dispatch is admitted with a lease, a session file, a
+# run record and a live worker process.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --test dispatch_preflight an_unusable_credential_leaves_no_lease_no_session_and_no_run
