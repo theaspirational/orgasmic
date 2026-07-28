@@ -300,8 +300,11 @@ fn binary_on_path(binary: &str) -> bool {
 #[doc(hidden)]
 pub mod test_tooling {
     use std::collections::BTreeSet;
+    use std::ffi::OsString;
     use std::io::Write as _;
     use std::process::{Command, Stdio};
+    use std::sync::Mutex;
+    use std::time::Duration;
 
     pub const ALLOW_MISSING_TOOLS_ENV: &str = "ORGASMIC_ALLOW_MISSING_TOOLS";
 
@@ -446,6 +449,325 @@ pub mod test_tooling {
             })
             .collect::<Vec<_>>()
             .join(", ")
+    }
+
+    // orgasmic:task_Z3093
+    /// Shared temp path of the advisory flock that serializes live mux tests
+    /// across every test binary in the workspace.
+    const LIVE_SESSION_LOCK_FILE: &str = "orgasmic-live-session-tests.lock";
+
+    /// Upper bound on the whole `Drop`-time reap. `rmux kill-session` is a
+    /// local RPC that answers in milliseconds; the bound exists only so a
+    /// wedged rmux daemon degrades to a warning instead of hanging the test
+    /// binary forever.
+    const REAP_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// An rmux session a [`LiveSessionGuard`] must reap when it drops.
+    enum OwnedSession {
+        /// Every session named `orgasmic-rmux-<run_id>-*`. Tests know the run
+        /// id but usually not the runtime id, which the supervisor mints.
+        Run {
+            endpoint: rmux_sdk::RmuxEndpoint,
+            run_id: String,
+        },
+        /// One exact session name.
+        Named {
+            endpoint: rmux_sdk::RmuxEndpoint,
+            name: String,
+        },
+    }
+
+    /// Serialize real-tmux/rmux tests across ALL test binaries, and reap the
+    /// rmux sessions the holding test created.
+    ///
+    /// The flock half (TASK-X0ZVE) is unchanged: live tests spawn real mux
+    /// daemons and contend under `cargo test --workspace`, so an advisory lock
+    /// on a shared temp path lets at most one run at a time, cross-process.
+    /// Held for the whole test via the returned guard.
+    ///
+    /// The reap half (TASK-Z3093) exists because session cleanup used to be a
+    /// *trailing statement* in the test body. Any panic above it — including
+    /// the load-induced failures TASK-STWVB records — skipped the reap, and the
+    /// session, its pty and its harness process outlived the test binary (the
+    /// `artifact-ready` fixture never exits on its own). `Drop` runs on the
+    /// panic path, so registering a session with the guard makes cleanup
+    /// unconditional.
+    ///
+    /// Registration is opt-in per test: a guard with nothing registered behaves
+    /// exactly as it did before, which is what the many heavy-but-sessionless
+    /// callers (git, daemon-boot, tmux) want.
+    ///
+    /// ```ignore
+    /// let live = live_session_guard();
+    /// let resp = post_artifact_generate(..).await.unwrap();
+    /// live.owns(&resp.run_id); // reaped even if the next assert panics
+    /// ```
+    #[must_use]
+    pub fn live_session_guard() -> LiveSessionGuard {
+        let path = std::env::temp_dir().join(LIVE_SESSION_LOCK_FILE);
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .expect("open live-session lock file");
+        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
+        fs2::FileExt::lock_exclusive(&lock).expect("flock live-session lock");
+        LiveSessionGuard {
+            lock,
+            owned: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// RAII drop-guard that reaps the rmux sessions registered on it and then
+    /// releases the [`live_session_guard`] advisory flock.
+    ///
+    /// One definition, in the normal library rather than behind `#[cfg(test)]`,
+    /// because an integration-test binary cannot import a `#[cfg(test)]` item
+    /// from a lib — and half the live tests live in `tests/`.
+    pub struct LiveSessionGuard {
+        lock: std::fs::File,
+        /// Interior mutability so `let live = live_session_guard();` needs no
+        /// `mut`: registration is a fact about the test, not a mutation the
+        /// ~85 existing call sites should have to declare.
+        owned: Mutex<Vec<OwnedSession>>,
+    }
+
+    impl LiveSessionGuard {
+        /// [`Self::owns`] as a consuming builder, for the common case where the
+        /// run id is a literal the test already knows at acquisition:
+        /// `let _live = live_session_guard().owning("run-attach");`
+        #[must_use]
+        pub fn owning(self, run_id: impl Into<String>) -> Self {
+            self.owns(run_id);
+            self
+        }
+
+        /// Reap every `orgasmic-rmux-<run_id>-*` session on the default rmux
+        /// endpoint when this guard drops. Register as soon as the run id is
+        /// known — before the first assertion that can panic.
+        pub fn owns(&self, run_id: impl Into<String>) -> &Self {
+            self.push(OwnedSession::Run {
+                endpoint: rmux_sdk::RmuxEndpoint::Default,
+                run_id: run_id.into(),
+            })
+        }
+
+        /// Reap this exact session name on the default rmux endpoint.
+        pub fn owns_session(&self, name: impl Into<String>) -> &Self {
+            self.push(OwnedSession::Named {
+                endpoint: rmux_sdk::RmuxEndpoint::Default,
+                name: name.into(),
+            })
+        }
+
+        /// Reap this exact session name at a specific endpoint — for a test
+        /// that drove the SDK itself and can hand over `session.endpoint()`.
+        pub fn owns_session_at(
+            &self,
+            endpoint: rmux_sdk::RmuxEndpoint,
+            name: impl Into<String>,
+        ) -> &Self {
+            self.push(OwnedSession::Named {
+                endpoint,
+                name: name.into(),
+            })
+        }
+
+        fn push(&self, entry: OwnedSession) -> &Self {
+            self.owned
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(entry);
+            self
+        }
+    }
+
+    impl Drop for LiveSessionGuard {
+        fn drop(&mut self) {
+            // Reap before unlocking: the next test binary blocked on the flock
+            // must not inherit this test's session.
+            let owned = std::mem::take(
+                &mut *self
+                    .owned
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            reap_owned_sessions(owned);
+            let _ = fs2::FileExt::unlock(&self.lock);
+        }
+    }
+
+    /// `Drop` cannot `.await`, and both async escapes are wrong here:
+    ///
+    /// * `tokio::spawn` is a *silent* no-op on the path that matters. A
+    ///   `#[tokio::test]` drops its runtime the moment the test body unwinds,
+    ///   which is the same moment the guard drops, so a freshly spawned task is
+    ///   cancelled before its first poll — a reap that looks fixed and leaks
+    ///   anyway.
+    /// * `Handle::block_on` panics when called from a runtime worker thread,
+    ///   which is exactly where a `#[tokio::test]` body drops the guard.
+    ///
+    /// So the reap is plain blocking `std::process::Command` work. It runs on a
+    /// dedicated std thread purely so the join can be bounded; no runtime is
+    /// involved, which is also why the same guard works in the sync `#[test]`
+    /// and `tests/` integration binaries.
+    fn reap_owned_sessions(owned: Vec<OwnedSession>) {
+        if owned.is_empty() {
+            return;
+        }
+        let count = owned.len();
+        let probe = super::probe_rmux_binary();
+        let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
+            emit_visible_notice(&format!(
+                "live-session guard: no rmux binary available; cannot reap {count} owned session(s)"
+            ));
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("live-session-reap".into())
+            .spawn(move || {
+                let _ = tx.send(reap_owned_sessions_blocking(&rmux_bin, &owned));
+            });
+        match spawned {
+            // The handle is intentionally dropped rather than joined: the
+            // bounded `recv_timeout` below is the join, so a wedged rmux
+            // daemon cannot stall the test binary's teardown.
+            Ok(_detached) => match rx.recv_timeout(REAP_TIMEOUT) {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => emit_visible_notice(&format!(
+                    "live-session guard: reap failed, session may have leaked: {error}"
+                )),
+                Err(_) => emit_visible_notice(&format!(
+                    "live-session guard: reap of {count} owned session(s) did not finish within \
+                     {REAP_TIMEOUT:?}; a session may have leaked"
+                )),
+            },
+            Err(error) => emit_visible_notice(&format!(
+                "live-session guard: could not spawn reap thread: {error}"
+            )),
+        }
+    }
+
+    /// Names of every session live on the default rmux endpoint, or an empty
+    /// list if rmux is absent or has no daemon. For tests that must prove the
+    /// production path reaped a session whose run id they never observed.
+    #[must_use]
+    pub fn rmux_session_names() -> Vec<String> {
+        let probe = super::probe_rmux_binary();
+        let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
+            return Vec::new();
+        };
+        list_sessions_blocking(&rmux_bin, &rmux_sdk::RmuxEndpoint::Default).unwrap_or_default()
+    }
+
+    fn reap_owned_sessions_blocking(rmux_bin: &str, owned: &[OwnedSession]) -> Result<(), String> {
+        let mut errors = Vec::new();
+        for entry in owned {
+            let (endpoint, targets) = match entry {
+                OwnedSession::Named { endpoint, name } => (endpoint, vec![name.clone()]),
+                OwnedSession::Run { endpoint, run_id } => {
+                    let prefix = format!("orgasmic-rmux-{run_id}-");
+                    match list_sessions_blocking(rmux_bin, endpoint) {
+                        Ok(names) => (
+                            endpoint,
+                            names
+                                .into_iter()
+                                .filter(|name| name.starts_with(&prefix))
+                                .collect::<Vec<_>>(),
+                        ),
+                        // No daemon, or no sessions at all: by construction
+                        // nothing this guard owns is still alive. Never widen
+                        // this to "kill anything that looks like ours" — a real
+                        // dispatch's session can be live on the same endpoint.
+                        Err(_) => continue,
+                    }
+                }
+            };
+            for target in targets {
+                if let Err(error) = kill_session_blocking(rmux_bin, endpoint, &target) {
+                    errors.push(error);
+                }
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
+
+    fn list_sessions_blocking(
+        rmux_bin: &str,
+        endpoint: &rmux_sdk::RmuxEndpoint,
+    ) -> Result<Vec<String>, String> {
+        let mut args = super::rmux_endpoint_args(endpoint).map_err(|error| error.to_string())?;
+        args.extend([
+            OsString::from("list-sessions"),
+            OsString::from("-F"),
+            OsString::from("#{session_name}"),
+        ]);
+        let output = Command::new(rmux_bin)
+            .args(&args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|error| format!("rmux list-sessions: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "rmux list-sessions failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect())
+    }
+
+    /// Kill one session, addressed at the endpoint the caller owned. Reuses the
+    /// production CLI-fallback arg shape (TASK-6FNAY) rather than a bare
+    /// `rmux kill-session` against whatever daemon the CLI would resolve.
+    ///
+    /// A failing `kill-session` is not by itself an error: the session may
+    /// already be gone because the test's own trailing `release` succeeded. The
+    /// authority is `has-session` afterwards.
+    fn kill_session_blocking(
+        rmux_bin: &str,
+        endpoint: &rmux_sdk::RmuxEndpoint,
+        name: &str,
+    ) -> Result<(), String> {
+        let session_name = rmux_sdk::SessionName::new(name.to_string())
+            .map_err(|error| format!("rmux session name {name}: {error}"))?;
+        let kill_args =
+            super::rmux_session_reap_args(endpoint, &session_name).map_err(|e| e.to_string())?;
+        let _ = Command::new(rmux_bin)
+            .args(&kill_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        let mut probe_args = super::rmux_endpoint_args(endpoint).map_err(|e| e.to_string())?;
+        probe_args.extend([
+            OsString::from("has-session"),
+            OsString::from("-t"),
+            OsString::from(name),
+        ]);
+        let still_alive = Command::new(rmux_bin)
+            .args(&probe_args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success());
+        if still_alive {
+            return Err(format!("rmux session {name} survived kill-session"));
+        }
+        Ok(())
     }
 
     /// libtest captures `eprintln!` from passing tests. Write to the process
@@ -1432,11 +1754,10 @@ async fn enable_rmux_mouse(bin: &str, session: &str) -> Result<(), DriverError> 
     run_rmux_cli(bin, &rmux_mouse_args(session)).await
 }
 
-fn rmux_session_reap_args(
-    endpoint: &rmux_sdk::RmuxEndpoint,
-    name: &rmux_sdk::SessionName,
-) -> Result<Vec<OsString>, DriverError> {
-    let mut args = Vec::with_capacity(5);
+/// The leading `rmux` CLI flags that address one specific SDK endpoint, so a
+/// CLI fallback cannot drift to whatever daemon a bare `rmux` would resolve.
+fn rmux_endpoint_args(endpoint: &rmux_sdk::RmuxEndpoint) -> Result<Vec<OsString>, DriverError> {
+    let mut args = Vec::with_capacity(2);
     match endpoint {
         rmux_sdk::RmuxEndpoint::Default => {}
         rmux_sdk::RmuxEndpoint::UnixSocket(path) => {
@@ -1453,6 +1774,15 @@ fn rmux_session_reap_args(
             )));
         }
     }
+    Ok(args)
+}
+
+fn rmux_session_reap_args(
+    endpoint: &rmux_sdk::RmuxEndpoint,
+    name: &rmux_sdk::SessionName,
+) -> Result<Vec<OsString>, DriverError> {
+    let mut args = rmux_endpoint_args(endpoint)?;
+    args.reserve(3);
     args.extend([
         OsString::from("kill-session"),
         OsString::from("-t"),
@@ -2302,36 +2632,14 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::test_tooling::{assert_not_degraded, skip_test_if_missing, test_environment_lock};
+    use super::test_tooling::{
+        assert_not_degraded, live_session_guard, skip_test_if_missing, test_environment_lock,
+    };
     use super::*;
     use crate::modes::tmux::{
         classify_cursor_startup_frame, cursor_trust_dialog_frame, CursorStartupFrame,
     };
     use std::collections::VecDeque;
-
-    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
-    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
-    /// advisory flock on a shared temp path lets at most one run at a time,
-    /// cross-process. Held for the whole test via the returned guard.
-    fn live_session_guard() -> LiveSessionGuard {
-        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .expect("open live-session lock file");
-        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
-        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-        LiveSessionGuard(file)
-    }
-
-    struct LiveSessionGuard(std::fs::File);
-    impl Drop for LiveSessionGuard {
-        fn drop(&mut self) {
-            let _ = fs2::FileExt::unlock(&self.0);
-        }
-    }
 
     async fn live_rmux_probe() -> RmuxBinaryProbe {
         let _environment = test_environment_lock().lock().await;
@@ -3257,7 +3565,7 @@ mod tests {
     /// that streams from the same rmux session. Skipped without an rmux binary.
     #[tokio::test]
     async fn live_rmux_attach_reattaches_when_available() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-attach");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_attach_reattaches_when_available",
@@ -3363,7 +3671,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "live rmux smoke: real rmux session, waits one PANE_ACTIVITY_INTERVAL"]
     async fn live_rmux_pane_publishes_pane_activity_while_it_writes() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-pane-activity");
         let observed = live_pane_activity_for(
             "live_rmux_pane_publishes_pane_activity_while_it_writes",
             "while :; do echo tick; sleep 0.05; done",
@@ -3388,7 +3696,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "live rmux smoke: real rmux session, waits one PANE_ACTIVITY_INTERVAL"]
     async fn live_rmux_pane_publishes_pane_activity_for_newline_free_redraws() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-pane-activity");
         // `printf` with no trailing \n; the pane sees CR, ANSI, and text only.
         let observed = live_pane_activity_for(
             "live_rmux_pane_publishes_pane_activity_for_newline_free_redraws",
@@ -3467,7 +3775,7 @@ mod tests {
     /// early so CI stays green; the honest inert path is covered above.
     #[tokio::test]
     async fn live_rmux_session_lifecycle_when_available() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-live");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_session_lifecycle_when_available",
@@ -3541,7 +3849,7 @@ mod tests {
     /// real rmux binary so CI stays green.
     #[tokio::test]
     async fn live_rmux_streams_output_and_completes_on_exit() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-stream");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_streams_output_and_completes_on_exit",
@@ -3610,7 +3918,7 @@ mod tests {
     /// immediately; supervisors must never poll a vanished subprocess.
     #[tokio::test]
     async fn live_rmux_exit_139_emits_a_fatal_terminal_event() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-exit-139");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_exit_139_emits_a_fatal_terminal_event",
@@ -3653,7 +3961,7 @@ mod tests {
     /// spawn plan carries a run id. Skipped without a real rmux binary.
     #[tokio::test]
     async fn live_rmux_session_exports_orgasmic_run_id() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-env-export-test");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_session_exports_orgasmic_run_id",
@@ -3701,7 +4009,7 @@ mod tests {
     /// Process exit (stream end) emits RunComplete — no TextChunk capture.
     #[tokio::test]
     async fn live_rmux_process_exit_emits_run_complete_without_text_chunks() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-exit-only");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_process_exit_emits_run_complete_without_text_chunks",
@@ -3755,7 +4063,7 @@ mod tests {
     /// Persistent hot sessions complete on process exit only (no marker path).
     #[tokio::test]
     async fn live_rmux_persistent_run_completes_on_process_exit() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-persistent-exit");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_persistent_run_completes_on_process_exit",
@@ -3871,7 +4179,7 @@ mod tests {
     /// Skipped without a real rmux binary.
     #[tokio::test]
     async fn live_rmux_send_input_delivers_followup_turn() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-send-input");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_send_input_delivers_followup_turn",
@@ -3954,7 +4262,7 @@ mod tests {
     /// Skipped without a real rmux binary.
     #[tokio::test]
     async fn live_rmux_send_input_rejects_while_harness_busy() {
-        let _live_guard = live_session_guard();
+        let _live_guard = live_session_guard().owning("run-busy");
         let probe = live_rmux_probe().await;
         if skip_test_if_missing(
             "live_rmux_send_input_rejects_while_harness_busy",

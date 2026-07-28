@@ -20,27 +20,12 @@ use std::sync::{Mutex, MutexGuard, OnceLock};
 /// and shares their lock PATH, so at most one heavy test runs at a time across
 /// every binary. Held for the whole test via the returned guard (TASK-SJQ9V
 /// residual: doctor staleness, content-hub install, dispatch-close pruning).
-pub(crate) fn live_session_guard() -> LiveSessionGuard {
-    let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .expect("open live-session lock file");
-    // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
-    fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-    LiveSessionGuard(file)
-}
-
-/// RAII drop-guard releasing the [`live_session_guard`] advisory flock.
-pub(crate) struct LiveSessionGuard(std::fs::File);
-
-impl Drop for LiveSessionGuard {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.0);
-    }
-}
+///
+/// TASK-Z3093 collapsed the nine copies of this guard into one definition in
+/// `orgasmic_drivers::modes::rmux::test_tooling`, which also reaps the rmux
+/// sessions a test registers on it. Re-exported here so CLI callers keep their
+/// existing import.
+pub(crate) use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
 
 /// Acquire the process-wide environment lock. Hold the returned guard for the
 /// duration of any test that sets/clears env or exercises production code that

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use orgasmic_core::Home;
 use orgasmic_daemon::{Daemon, DaemonOptions, RunningDaemon};
 use orgasmic_drivers::modes::rmux::test_tooling::{
-    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+    assert_required_test_tooling, live_session_guard, skip_test_if_missing, ToolRequirement,
 };
 use reqwest::header::AUTHORIZATION;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -14,33 +14,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::ExitStatusExt;
-
-/// Serialize heavy real-subprocess tests across ALL test binaries via an
-/// exclusive advisory flock on a shared temp path (the same path the live
-/// tmux/rmux tests use, TASK-X0ZVE). Dispatch tests boot a real daemon and run
-/// real `git` worktree add/remove; under `cargo test --workspace` peak load the
-/// worktree teardown races the post-close pruning assertions. Held for the whole
-/// test via the returned guard (TASK-SJQ9V residual). Defined locally because an
-/// integration binary cannot reach the lib's `#[cfg(test)]` test_support module.
-fn live_session_guard() -> LiveSessionGuard {
-    let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .expect("open live-session lock file");
-    // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
-    fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-    LiveSessionGuard(file)
-}
-
-struct LiveSessionGuard(std::fs::File);
-impl Drop for LiveSessionGuard {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.0);
-    }
-}
 
 fn tmux_available_for_test() -> bool {
     Command::new("tmux")

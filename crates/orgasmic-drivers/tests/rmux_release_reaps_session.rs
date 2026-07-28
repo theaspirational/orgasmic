@@ -1,32 +1,12 @@
-use std::fs::OpenOptions;
 use std::process::Stdio;
 use std::time::Duration;
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
+use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
 use orgasmic_drivers::{
     probe_rmux_binary, DriverConfig, DriverContext, RmuxDriver, RunKind, ShellAdapter, WorkerDriver,
 };
 use serde_json::json;
-
-fn live_session_guard() -> LiveSessionGuard {
-    let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .expect("open live-session lock file");
-    fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-    LiveSessionGuard(file)
-}
-
-struct LiveSessionGuard(std::fs::File);
-
-impl Drop for LiveSessionGuard {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.0);
-    }
-}
 
 struct SessionGuard {
     rmux_bin: String,
@@ -59,7 +39,8 @@ async fn rmux_session_exists(rmux_bin: &str, session: &str) -> Result<bool, Stri
 
 #[tokio::test]
 async fn release_reaps_live_rmux_session() {
-    let _live_guard = live_session_guard();
+    let _live_guard =
+        live_session_guard().owning(format!("run-release-reap-test-{}", std::process::id()));
     // Opt-in gate lane: unlike the ordinary developer smoke, this must fail
     // closed when its declared rmux prerequisite is absent.
     let rmux_required = std::env::var("ORGASMIC_REQUIRE_LIVE_RMUX").as_deref() == Ok("1");
@@ -145,5 +126,81 @@ async fn release_reaps_live_rmux_session() {
             .await
             .expect("probe rmux session after release"),
         "rmux session survived explicit release: {session}"
+    );
+}
+
+fn rmux_session_exists_blocking(rmux_bin: &str, session: &str) -> bool {
+    std::process::Command::new(rmux_bin)
+        .args(["has-session", "-t", session])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+// orgasmic:task_Z3093
+/// The acceptance criterion for TASK-Z3093, and the only one that reproduces
+/// the bug: a live-session test that panics *above* its trailing cleanup must
+/// still leave no rmux session behind.
+///
+/// Before the fix this was the production leak path. `LiveSessionGuard::drop`
+/// unlocked a flock and returned, and every reap was a trailing statement in
+/// the test body, so any panic — including the load-induced TASK-STWVB
+/// failures — skipped it and orphaned a session, its pty and its harness
+/// process (observed twice on 2026-07-28 at ages 3h18m and 2h46m).
+///
+/// Deliberately synchronous: the guard's reap must not depend on a tokio
+/// runtime, and this proves it on the plainest possible path.
+#[test]
+fn live_session_guard_reaps_registered_session_when_the_body_panics() {
+    let probe = probe_rmux_binary();
+    if !probe.found || !probe.compatible {
+        eprintln!(
+            "SKIPPED live_session_guard_reaps_registered_session_when_the_body_panics: \
+             compatible rmux unavailable ({:?})",
+            probe.version_error
+        );
+        return;
+    }
+    let rmux_bin = probe.path.expect("found rmux probe reports its path");
+    // Match the production naming scheme so the guard's run-scoped reap
+    // (`orgasmic-rmux-<run_id>-*`) is what gets exercised, not an exact-name
+    // shortcut. Process-scoped so concurrent binaries cannot collide.
+    let run_id = format!("run-guard-panic-{}", std::process::id());
+    let session = format!("orgasmic-rmux-{run_id}-runtime-panic");
+
+    let unwound = std::panic::catch_unwind(|| {
+        let _live_guard = live_session_guard().owning(&run_id);
+        let created = std::process::Command::new(&rmux_bin)
+            .args(["new-session", "-d", "-s", &session, "sh", "-c", "sleep 600"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn rmux new-session");
+        assert!(created.success(), "rmux new-session failed for {session}");
+        assert!(
+            rmux_session_exists_blocking(&rmux_bin, &session),
+            "fixture session should be live before the panic"
+        );
+        // Stands in for any assertion that fails mid-body. Everything below it
+        // in a real test — including the trailing release — never runs.
+        panic!("deliberate mid-body panic inside the live-session guard's scope");
+    });
+
+    assert!(unwound.is_err(), "the fixture panic must have propagated");
+    let leaked = rmux_session_exists_blocking(&rmux_bin, &session);
+    if leaked {
+        // Best effort so a failing assertion does not itself leak the fixture.
+        let _ = std::process::Command::new(&rmux_bin)
+            .args(["kill-session", "-t", &session])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    assert!(
+        !leaked,
+        "session {session} survived a panic inside the guard's scope: the guard did not reap"
     );
 }

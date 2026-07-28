@@ -2461,29 +2461,7 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::Mutex;
 
-    /// Serialize real-tmux/rmux tests across ALL test binaries: they spawn real
-    /// mux daemons and contend under `cargo test --workspace` (TASK-X0ZVE). An
-    /// advisory flock on a shared temp path lets at most one run at a time,
-    /// cross-process. Held for the whole test via the returned guard.
-    fn live_session_guard() -> LiveSessionGuard {
-        let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .expect("open live-session lock file");
-        // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
-        fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-        LiveSessionGuard(file)
-    }
-
-    struct LiveSessionGuard(std::fs::File);
-    impl Drop for LiveSessionGuard {
-        fn drop(&mut self) {
-            let _ = fs2::FileExt::unlock(&self.0);
-        }
-    }
+    use crate::modes::rmux::test_tooling::live_session_guard;
 
     /// Drop-guard that kills a real tmux session on every exit path — success,
     /// assert-failure unwinding, or panic. Real-tmux tests assert pane/session

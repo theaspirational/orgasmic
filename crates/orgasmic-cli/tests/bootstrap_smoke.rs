@@ -28,27 +28,8 @@ use common::{init_git_repo, orgasmic_exe, run_git, test_options, write};
 
 /// Serialize with the other daemon-booting cli tests (dispatch.rs) via the
 /// same shared flock path, so this suite doesn't contend under `cargo test
-/// --workspace`. Defined locally: an integration test binary cannot import
-/// another integration test binary's private helpers.
-fn live_session_guard() -> LiveSessionGuard {
-    let path = std::env::temp_dir().join("orgasmic-live-session-tests.lock");
-    let file = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)
-        .expect("open live-session lock file");
-    // MSRV 1.87: call fs2 explicitly — std's File::lock_exclusive (1.89) shadows it.
-    fs2::FileExt::lock_exclusive(&file).expect("flock live-session lock");
-    LiveSessionGuard(file)
-}
-
-struct LiveSessionGuard(std::fs::File);
-impl Drop for LiveSessionGuard {
-    fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.0);
-    }
-}
+/// --workspace`.
+use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
 
 async fn boot(home: Home) -> RunningDaemon {
     // Home config port is a decoy (65533): every CLI call below sets
