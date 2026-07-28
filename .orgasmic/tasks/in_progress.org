@@ -886,3 +886,59 @@ reframes the worker-vs-manager failure comparisons recorded on TASK-STWVB.
 - The honesty manifest names whatever is gated out in a worker environment.
 - Injection per TCTTD standard, self-tested before reporting.
 
+* IN_PROGRESS TASK-HAREX A worker that exits without finalize stays live for tens of minutes instead of being released :daemon:supervisor:dispatch:recovery:
+:PROPERTIES:
+:ID: TASK-HAREX
+:PRIORITY: P1
+:END:
+
+Observed 2026-07-26 on run `run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2`
+(TASK-STWVB, acp-stdio/claude, installed runtime 0.0.15-dev.1).
+
+The worker wrote a complete report to `last.txt` and exited WITHOUT calling
+`orgasmic dispatch finalize`. Roughly forty minutes later the run was still
+`sub_state: implementer.working`, `live`, with its process long gone. It was
+only released when a manager ran `manager dispatch-close`, which releases
+explicitly (`release_dispatch_run`, crates/orgasmic-cli/src/manager.rs:627).
+
+WHY THIS IS A DEFECT AND NOT A MISSING FEATURE
+
+The rescue-policy convention is explicit that this is the daemon's job:
+
+  "A failed agent run (protocol-end without terminal declaration, fatal driver
+  error, stall / max-duration / idle timeout) ends after the daemon writes the
+  authoritative release tombstone and, for dispatches, a
+  manager.dispatch_orphaned tx."
+
+So the intended sequence for a vanished worker is: daemon detects protocol-end
+or stall, writes the Release tombstone with
+`reason = protocol_end_without_finalize`, emits `manager.dispatch_orphaned`, and
+only then does the manager choose a rescue action via `orgasmic run recover`.
+None of that happened here. There was no orphan tx, and the manager had to
+close the record for the run to go away.
+
+Deliberately NOT the fix: adding an `orgasmic run release` verb. Release is not
+a manager-authorized action in this model — `run recover` is — and a manual
+release verb would paper over the daemon failing to write its own tombstone.
+
+LIKELY ALREADY FIXED, NEEDS CONFIRMING
+
+The running daemon is 0.0.15-dev.1 and predates f80b577,
+"a declared failure ends the run instead of waiting for the harness" (TASK-TJKFC),
+whose message says `terminal_event_releases_transport` allowlisted
+`tmux | tmux-tui | rmux`, so on every OTHER transport a terminal event set the
+outcome and released nothing, leaving release to stream end. acp-stdio is
+exactly such an 'other transport'. That is a strong candidate for the whole
+explanation.
+
+So the first step is confirmation, not code: re-run this scenario on a daemon
+built from current main — dispatch acp-stdio/claude, let the worker exit without
+finalize, and check whether a Release tombstone and `manager.dispatch_orphaned`
+appear on their own within the stall window. If they do, close this against
+f80b577 with the evidence. If they do not, the stall detector is not reaching
+this state at all and that is the bug.
+
+Either way the observable acceptance is the same: a worker that exits without
+finalize produces a daemon-written release tombstone and an orphan tx without
+any manager action.
+
