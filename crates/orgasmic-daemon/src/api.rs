@@ -123,6 +123,16 @@ pub struct ApiState {
     pub dispatch_response_delay: Option<std::time::Duration>,
     /// Artificial delay between a release and its terminal tx (tests only).
     pub release_terminal_tx_delay: Option<std::time::Duration>,
+    /// Artificial delay between the release handler's tracker admission and the
+    /// spawn that registers the detached task (tests only).
+    ///
+    /// orgasmic:TASK-WGXKD.2 — this hook sits exactly where the pre-fix code had
+    /// a real gap: `is_closed()` was read, an `await` followed, and only then did
+    /// `spawn()` increment the count. Widening that window is the only way to
+    /// prove the admission is atomic with closure rather than merely usually
+    /// fast. A test that starts a release and then restarts proves the
+    /// already-registered case and passes against the broken code too.
+    pub release_admission_delay: Option<std::time::Duration>,
     /// Per-artifact locks serializing reviews.org read-modify-write across the
     /// two feedback handlers. See [`ApiState::artifact_write_lock`].
     pub artifact_write_locks:
@@ -144,8 +154,23 @@ pub struct ApiState {
 
 /// How long a graceful restart/shutdown waits for in-flight release
 /// finalizations before giving up on them and reporting it.
-pub(crate) const RELEASE_FINALIZATION_DRAIN_TIMEOUT: std::time::Duration =
-    std::time::Duration::from_secs(15);
+///
+/// orgasmic:TASK-WGXKD.2 — derived from the teardown a single release actually
+/// performs, not chosen round:
+/// - driver release: `DRIVER_RELEASE_TIMEOUT` = 5s (supervisor.rs). rmux's 2s
+///   SDK reap plus 2s CLI fallback (drivers rmux.rs) nest *inside* that budget
+///   by construction, so they do not add to it.
+/// - producer join: the same 5s budget again (supervisor.rs
+///   `release_driver_and_producer`), applied after the driver release returns.
+/// - terminal tx append: the writer is a serialized queue, so the append can
+///   queue behind unrelated work; 10s is the slack this constant adds on top of
+///   the 10s of teardown above.
+///
+/// 20s total. The previous 15s left only 5s for the append after a worst-case
+/// teardown, which is why the drain could give up on work that was still
+/// progressing normally.
+pub const RELEASE_FINALIZATION_DRAIN_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(20);
 
 /// Daemon-lifetime ownership of the tasks spawned by `POST /runs/:id/release`
 /// (TASK-WGXKD.1, finding 2).
@@ -168,31 +193,122 @@ pub struct ReleaseTaskTracker {
 }
 
 struct ReleaseTaskTrackerInner {
-    /// Count of release tasks that have been spawned and not yet finished.
-    /// A watch channel (rather than a counter plus `Notify`) so a waiter can
+    /// The tracker's whole mutable state, behind ONE synchronization boundary.
+    ///
+    /// orgasmic:TASK-WGXKD.2 finding 1 — `closed` used to be an independent
+    /// `AtomicBool` next to an independent count, so the handler's
+    /// `is_closed()` read and its later increment could straddle a `close()`
+    /// plus an `active == 0` observation: the release then registered and ran
+    /// AFTER the drain and possibly after the writer barrier, which is exactly
+    /// the graceful-shutdown loss TASK-WGXKD.1 exists to eliminate. Keeping both
+    /// fields inside one `watch` value makes "refuse if closed, otherwise
+    /// count me" a single atomic operation (see [`ReleaseTaskTracker::try_admit`]).
+    ///
+    /// A watch channel (rather than a mutex plus `Notify`) so a waiter can
     /// re-read the current value after registering interest — no lost wakeup.
-    active: tokio::sync::watch::Sender<usize>,
-    closed: std::sync::atomic::AtomicBool,
+    state: tokio::sync::watch::Sender<ReleaseTrackerState>,
+    /// Monotonic admission ids, so two releases of the same run are distinct
+    /// entries in `in_flight`.
+    next_admission: std::sync::atomic::AtomicU64,
+    /// Release finalizations whose terminal tx is known NOT to have been
+    /// written: the task panicked, was aborted, or failed at the append.
+    /// See [`LostReleaseFinalization`].
+    lost: std::sync::Mutex<Vec<LostReleaseFinalization>>,
 }
 
-/// Decrements the tracker's active count on drop, so a release task that
-/// panics or is aborted still leaves the tracker drainable.
-struct ReleaseTaskGuard {
+#[derive(Default)]
+struct ReleaseTrackerState {
+    /// Admission id -> run id for every admitted, not-yet-finished release.
+    /// Carrying identity rather than a bare count is what lets a drain timeout
+    /// name the runs at risk instead of printing a number (TASK-WGXKD.2).
+    in_flight: std::collections::BTreeMap<u64, String>,
+    closed: bool,
+}
+
+/// A release finalization that ended without its terminal tx (TASK-WGXKD.2
+/// finding 3).
+///
+/// The tracker used to hold only a COUNT, so a task that panicked after the
+/// release and before the append still decremented cleanly: the restart
+/// reported a clean drain and nothing durable said which run lost its tx. The
+/// only join-error log lived on the HTTP request future, which is dropped in
+/// the normal worker-finalize case. So the outcome, not just the count, is
+/// owned here — a live-task failure, distinct from the accepted whole-daemon
+/// crash gap.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LostReleaseFinalization {
+    pub run_id: String,
+    /// The tx type the caller asked to have written, when it sent one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_tx_type: Option<String>,
+    pub reason: String,
+}
+
+/// Cap on retained loss records so a pathological daemon cannot grow this
+/// unbounded; the oldest are dropped first and the drop is logged.
+const MAX_RETAINED_LOST_FINALIZATIONS: usize = 64;
+
+/// An accepted release, counted against the tracker from the instant it is
+/// accepted rather than from the later spawn.
+///
+/// Dropping an admission that was spawned but never settled records a loss:
+/// that is precisely the panic/abort case, and it needs no `catch_unwind`.
+pub struct ReleaseAdmission {
     inner: Arc<ReleaseTaskTrackerInner>,
+    id: u64,
+    run_id: String,
+    terminal_tx_type: Option<String>,
+    /// Set once the release is handed to a detached task. An admission dropped
+    /// before this (handler early-return, e.g. unknown run) lost nothing.
+    spawned: bool,
+    /// Set once the task reported an outcome, success or failure.
+    settled: bool,
 }
 
-impl ReleaseTaskGuard {
-    fn acquire(inner: Arc<ReleaseTaskTrackerInner>) -> Self {
-        inner.active.send_modify(|active| *active += 1);
-        Self { inner }
+impl ReleaseAdmission {
+    /// Mark the release as having reported an outcome, so `Drop` does not treat
+    /// it as a panic/abort.
+    fn settle(&mut self) {
+        self.settled = true;
+    }
+
+    fn record_lost(&self, reason: String) {
+        let record = LostReleaseFinalization {
+            run_id: self.run_id.clone(),
+            terminal_tx_type: self.terminal_tx_type.clone(),
+            reason,
+        };
+        tracing::error!(
+            run_id = %record.run_id,
+            terminal_tx_type = record.terminal_tx_type.as_deref().unwrap_or("-"),
+            reason = %record.reason,
+            "release finalization lost its terminal tx"
+        );
+        let mut lost = self.inner.lost.lock().unwrap();
+        if lost.len() >= MAX_RETAINED_LOST_FINALIZATIONS {
+            let dropped = lost.remove(0);
+            tracing::warn!(
+                run_id = %dropped.run_id,
+                "dropping oldest retained lost release finalization; \
+                 more than {MAX_RETAINED_LOST_FINALIZATIONS} recorded"
+            );
+        }
+        lost.push(record);
     }
 }
 
-impl Drop for ReleaseTaskGuard {
+impl Drop for ReleaseAdmission {
     fn drop(&mut self) {
-        self.inner
-            .active
-            .send_modify(|active| *active = active.saturating_sub(1));
+        if self.spawned && !self.settled {
+            self.record_lost(
+                "release finalization task panicked or was aborted before it reported an outcome"
+                    .to_string(),
+            );
+        }
+        let id = self.id;
+        self.inner.state.send_modify(|state| {
+            state.in_flight.remove(&id);
+        });
     }
 }
 
@@ -206,56 +322,121 @@ impl ReleaseTaskTracker {
     pub fn new() -> Self {
         Self {
             inner: Arc::new(ReleaseTaskTrackerInner {
-                active: tokio::sync::watch::channel(0_usize).0,
-                closed: std::sync::atomic::AtomicBool::new(false),
+                state: tokio::sync::watch::channel(ReleaseTrackerState::default()).0,
+                next_admission: std::sync::atomic::AtomicU64::new(0),
+                lost: std::sync::Mutex::new(Vec::new()),
             }),
         }
     }
 
     /// Whether new releases are still accepted. One-way, like the supervisor's
     /// acquisition pause: a daemon that has begun restarting does not un-begin.
+    ///
+    /// Diagnostics only — never gate an admission on this and then increment
+    /// separately; that is the finding-1 race. Use [`Self::try_admit`].
     pub fn is_closed(&self) -> bool {
-        self.inner.closed.load(std::sync::atomic::Ordering::SeqCst)
+        self.inner.state.borrow().closed
     }
 
     pub fn close(&self) {
-        self.inner
-            .closed
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.inner.state.send_modify(|state| state.closed = true);
     }
 
-    /// Spawn `fut` counted against this tracker. The count is incremented
-    /// synchronously, before the spawn, so a `wait_idle` racing the spawn
-    /// cannot observe an empty tracker that is about to be non-empty.
-    pub fn spawn<F>(&self, fut: F) -> tokio::task::JoinHandle<F::Output>
-    where
-        F: std::future::Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        let guard = ReleaseTaskGuard::acquire(self.inner.clone());
-        tokio::spawn(async move {
-            let _guard = guard;
-            fut.await
+    /// Atomically refuse-if-closed or admit-and-count.
+    ///
+    /// `send_if_modified` runs its closure while holding the watch's write
+    /// lock, which `close()` also takes, so the closed test and the count
+    /// increment cannot be split by a concurrent closure. Callers must take the
+    /// admission BEFORE any `await` a restart could overtake, and must keep it
+    /// alive for the whole release: the count is the drain's only evidence that
+    /// work is outstanding.
+    pub fn try_admit(
+        &self,
+        run_id: impl Into<String>,
+        terminal_tx_type: Option<String>,
+    ) -> Option<ReleaseAdmission> {
+        let run_id = run_id.into();
+        let id = self
+            .inner
+            .next_admission
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut admitted = false;
+        self.inner.state.send_if_modified(|state| {
+            if state.closed {
+                return false;
+            }
+            state.in_flight.insert(id, run_id.clone());
+            admitted = true;
+            true
+        });
+        admitted.then(|| ReleaseAdmission {
+            inner: self.inner.clone(),
+            id,
+            run_id,
+            terminal_tx_type,
+            spawned: false,
+            settled: false,
         })
     }
 
-    /// Wait until no tracked task is outstanding. `Err(outstanding)` on timeout,
-    /// so the caller can report a proven lower bound rather than pretend the
-    /// drain succeeded.
-    pub async fn wait_idle(&self, timeout: std::time::Duration) -> Result<(), usize> {
-        let mut rx = self.inner.active.subscribe();
+    /// Run an admitted release on a detached task.
+    ///
+    /// The admission moves into the task, so the count spans admission through
+    /// completion with no window in between. The task settles it: `Ok` means
+    /// the terminal tx (if any) was written, `Err` and panic/abort both leave a
+    /// durable [`LostReleaseFinalization`].
+    pub fn spawn_release<F>(
+        &self,
+        admission: ReleaseAdmission,
+        fut: F,
+    ) -> tokio::task::JoinHandle<Result<(String, Option<String>), ApiError>>
+    where
+        F: std::future::Future<Output = Result<(String, Option<String>), ApiError>>
+            + Send
+            + 'static,
+    {
+        let mut admission = admission;
+        admission.spawned = true;
+        tokio::spawn(async move {
+            let outcome = fut.await;
+            match &outcome {
+                Ok(_) => {}
+                Err(error) => admission.record_lost(format!(
+                    "release finalization failed before its terminal tx landed: {}",
+                    error.message
+                )),
+            }
+            admission.settle();
+            outcome
+        })
+    }
+
+    /// Wait until no tracked task is outstanding. `Err(run_ids)` on timeout, so
+    /// the caller can name the runs at risk rather than pretend the drain
+    /// succeeded.
+    pub async fn wait_idle(&self, timeout: std::time::Duration) -> Result<(), Vec<String>> {
+        let mut rx = self.inner.state.subscribe();
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            if *rx.borrow_and_update() == 0 {
+            if rx.borrow_and_update().in_flight.is_empty() {
                 return Ok(());
             }
             match tokio::time::timeout_at(deadline, rx.changed()).await {
                 Ok(Ok(())) => {}
                 // Sender gone: nothing can still be spawned or outstanding.
                 Ok(Err(_)) => return Ok(()),
-                Err(_) => return Err(*rx.borrow()),
+                Err(_) => {
+                    return Err(rx.borrow().in_flight.values().cloned().collect());
+                }
             }
         }
+    }
+
+    /// Every release finalization known to have lost its terminal tx on this
+    /// daemon. Non-destructive: restart warnings and `daemon status` both read
+    /// it, and an operator who missed the restart output can still find it.
+    pub fn lost_finalizations(&self) -> Vec<LostReleaseFinalization> {
+        self.inner.lost.lock().unwrap().clone()
     }
 }
 
@@ -6273,6 +6454,12 @@ pub struct RecoveryResponse {
     /// function of record count, not transcript bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inventory: Option<InventoryStageMetrics>,
+    /// orgasmic:TASK-WGXKD.2 finding 3 — releases this daemon accepted whose
+    /// terminal tx never landed (task panicked/aborted, or the append failed).
+    /// The lease is already gone, so no worker will retry: recovery status is
+    /// where an operator can still see that the run is unreported.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lost_release_finalizations: Vec<LostReleaseFinalization>,
     pub note: &'static str,
 }
 
@@ -6689,11 +6876,33 @@ async fn post_run_release(
     // releasing without the tx is the invisible state this task exists to
     // eliminate. Checked before the run lookup: whether this daemon is still
     // accepting releases is a property of the daemon, not of the run.
-    if state.release_tasks.is_closed() {
-        return Err(ApiError::unavailable(
-            "daemon is shutting down; release refused so the lease stays held \
-             — retry this finalize against the restarted daemon",
-        ));
+    //
+    // orgasmic:TASK-WGXKD.2 — and the refusal and the accounting are ONE atomic
+    // step. Reading `is_closed()` here and incrementing later (at the spawn,
+    // after the snapshot await) let a release slip between a restart's `close()`
+    // and its `in_flight`-empty observation, so it registered and ran after the
+    // drain and possibly after the writer barrier. The admission below both
+    // decides and counts, under a single synchronization boundary, before any
+    // await a restart could overtake.
+    let admission = match state
+        .release_tasks
+        .try_admit(&id, req.terminal_tx.as_ref().map(|tx| tx.r#type.clone()))
+    {
+        Some(admission) => admission,
+        None => {
+            return Err(ApiError::unavailable(
+                "daemon is shutting down; release refused so the lease stays held \
+                 — this finalize can be retried against the restarted daemon \
+                 (if it reports the run as gone, use `orgasmic recovery status` \
+                 and `orgasmic run recover <run_id>` first)",
+            ));
+        }
+    };
+    // Test-only hook occupying the window the pre-fix code really had between
+    // the closed check and the tracker registration. See
+    // `ApiState::release_admission_delay`.
+    if let Some(delay) = state.release_admission_delay {
+        tokio::time::sleep(delay).await;
     }
     let live = state.supervisor.snapshot().await;
     let run = live
@@ -6718,8 +6927,9 @@ async fn post_run_release(
     // dies with the request future, so it is graceful shutdown's only handle on
     // this work. See [`ReleaseTaskTracker`].
     let release_tasks = state.release_tasks.clone();
-    let handle =
-        release_tasks.spawn(async move { release_run_and_record_tx(state, id, req).await });
+    let handle = release_tasks.spawn_release(admission, async move {
+        release_run_and_record_tx(state, id, req).await
+    });
     let (id, terminal_tx_id) = handle.await.map_err(|error| {
         tracing::error!(error = %error, "run release task failed to join");
         ApiError::internal("failed to release run")
@@ -8289,6 +8499,7 @@ async fn recovery_status_inner(state: &ApiState) -> RecoveryResponse {
         terminal_noop_runs,
         ambiguous_runs,
         inventory: Some(metrics),
+        lost_release_finalizations: state.release_tasks.lost_finalizations(),
         note: "boot reconciliation classifies durable session JSONL without restoring snapshots or mutating graph state",
     }
 }
@@ -9785,22 +9996,32 @@ pub struct RestartRequest {
     pub force: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// orgasmic:TASK-WGXKD.2 — `Deserialize` too, because the CLI's lifecycle stop
+/// now PARSES this instead of dropping the response on the floor. An untyped
+/// warning nobody reads is not a report.
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RestartResponse {
     pub status: String,
     pub boot_id: String,
     pub acquisition_paused: bool,
+    #[serde(default)]
     pub warnings: Vec<RestartWarning>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RestartWarning {
     pub kind: String,
     pub pending_writes: usize,
     pub message: String,
+    /// Runs this warning is about, when it has that identity (TASK-WGXKD.2).
+    /// An operator cannot rescue "1 pending write"; they can rescue a run id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub run_ids: Vec<String>,
 }
 
-const RESTART_WRITER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// Ceiling on the writer drain barrier placed after the release drain. The two
+/// together are the budget every shutdown client must outlast (TASK-WGXKD.2).
+pub const RESTART_WRITER_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Capability token for "this daemon writes a worker's terminal tx as part of
 /// the release itself" (TASK-WGXKD).
@@ -9848,6 +10069,7 @@ async fn post_daemon_restart(
                 "live manager run(s) {} will be reattached on next boot when the driver can prove the runtime is still live; otherwise they remain visible through run recovery",
                 live_managers.join(", ")
             ),
+            run_ids: live_managers,
         });
     }
     // orgasmic:TASK-WGXKD.1 — ORDER IS THE FIX. Outstanding release
@@ -9875,28 +10097,62 @@ async fn post_daemon_restart(
 /// refused with 503 and its lease stays held, which is visible and retryable.
 async fn drain_release_finalizations(state: &ApiState) -> Vec<RestartWarning> {
     state.release_tasks.close();
-    match state
+    let mut warnings = Vec::new();
+    if let Err(outstanding) = state
         .release_tasks
         .wait_idle(RELEASE_FINALIZATION_DRAIN_TIMEOUT)
         .await
     {
-        Ok(()) => Vec::new(),
-        Err(outstanding) => {
-            tracing::error!(
-                outstanding,
-                "release finalizations still in flight at restart; their terminal tx may be lost"
-            );
-            vec![RestartWarning {
-                kind: "release_finalization_timeout".to_string(),
-                pending_writes: outstanding,
-                message: format!(
-                    "{outstanding} run release(s) had not finished writing their terminal tx \
-                     after {}s; restarting now may leave them unreported",
-                    RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
-                ),
-            }]
-        }
+        tracing::error!(
+            outstanding = outstanding.len(),
+            run_ids = %outstanding.join(", "),
+            "release finalizations still in flight at restart; their terminal tx may be lost"
+        );
+        warnings.push(RestartWarning {
+            kind: "release_finalization_timeout".to_string(),
+            pending_writes: outstanding.len(),
+            message: format!(
+                "{} run release(s) had not finished writing their terminal tx after {}s; \
+                 restarting now may leave them unreported. Rescue: \
+                 `orgasmic recovery status`, then `orgasmic run recover <run_id>` \
+                 for each run below.",
+                outstanding.len(),
+                RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
+            ),
+            run_ids: outstanding,
+        });
     }
+    // orgasmic:TASK-WGXKD.2 finding 3 — a release whose task panicked, was
+    // aborted, or failed at the append drains to zero like a healthy one. The
+    // count says "clean"; only the retained outcome says which run is missing
+    // its terminal tx.
+    let lost = state.release_tasks.lost_finalizations();
+    if !lost.is_empty() {
+        warnings.push(RestartWarning {
+            kind: "release_finalization_lost".to_string(),
+            pending_writes: lost.len(),
+            message: format!(
+                "{} run release(s) ended WITHOUT their terminal tx on this daemon: {}. \
+                 The lease is already gone, so nothing will retry them. Rescue: \
+                 `orgasmic recovery status`, then `orgasmic run recover <run_id>`.",
+                lost.len(),
+                lost.iter()
+                    .map(|entry| format!(
+                        "{} ({}: {})",
+                        entry.run_id,
+                        entry
+                            .terminal_tx_type
+                            .as_deref()
+                            .unwrap_or("no terminal tx"),
+                        entry.reason
+                    ))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            run_ids: lost.iter().map(|entry| entry.run_id.clone()).collect(),
+        });
+    }
+    warnings
 }
 
 async fn drain_writer_before_restart(state: &ApiState) -> Result<Vec<RestartWarning>, ApiError> {
@@ -9937,6 +10193,7 @@ async fn drain_writer_before_restart(state: &ApiState) -> Result<Vec<RestartWarn
                 pending_writes: 1,
                 message: "writer drain timed out; pending_writes is a proven lower bound"
                     .to_string(),
+                run_ids: Vec::new(),
             }])
         }
     }
@@ -15174,6 +15431,201 @@ impl From<authz::Forbidden> for ApiError {
     }
 }
 
+/// orgasmic:TASK-WGXKD.2 finding 1 + 3 — the tracker's own contract, tested
+/// without an HTTP stack so the assertions are about synchronization rather
+/// than about timing luck in a daemon boot.
+#[cfg(test)]
+mod release_task_tracker_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The property the whole fix rests on: an admitted release is outstanding
+    /// from the instant it is ADMITTED, not from the later spawn.
+    ///
+    /// This is the deterministic hook the reviewer asked for. The admission is
+    /// held across the point where the handler still has awaits to run and has
+    /// not yet registered a task; a drain racing it must refuse to report idle.
+    /// Under the pre-fix code the count did not exist yet here, so `wait_idle`
+    /// returned `Ok` and the restart proceeded.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn admission_is_outstanding_before_the_task_is_spawned() {
+        let tracker = ReleaseTaskTracker::new();
+        let admission = tracker
+            .try_admit("run-straddle", Some("implementer.reported".to_string()))
+            .expect("open tracker admits");
+
+        // Exactly the restart's two steps, while the admission has not been
+        // spawned — the window the old `is_closed()` + later `spawn()` left open.
+        tracker.close();
+        let outstanding = tracker
+            .wait_idle(Duration::from_millis(200))
+            .await
+            .expect_err("a drain must not report idle while an admission is live");
+        assert_eq!(outstanding, vec!["run-straddle".to_string()]);
+
+        drop(admission);
+        tracker
+            .wait_idle(Duration::from_secs(5))
+            .await
+            .expect("idle once the admission is released");
+    }
+
+    #[tokio::test]
+    async fn admission_is_refused_once_closed() {
+        let tracker = ReleaseTaskTracker::new();
+        tracker.close();
+        assert!(tracker.is_closed());
+        assert!(tracker.try_admit("run-late", None).is_none());
+        tracker
+            .wait_idle(Duration::from_secs(5))
+            .await
+            .expect("a refused admission leaves nothing outstanding");
+    }
+
+    /// Close and admit raced on a multi-thread runtime, many times: every
+    /// iteration must land on one side of the boundary. Admitted implies the
+    /// drain saw it; refused implies nothing was started.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn close_and_admission_never_straddle_each_other() {
+        for round in 0..200 {
+            let tracker = ReleaseTaskTracker::new();
+            let run_id = format!("run-{round}");
+            // The admitter HOLDS its admission until the drain has sampled,
+            // standing in for the handler's post-admission awaits. Releasing it
+            // immediately would make an idle drain correct and prove nothing.
+            let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+            let admitter = {
+                let tracker = tracker.clone();
+                let run_id = run_id.clone();
+                tokio::spawn(async move {
+                    let admission = tracker.try_admit(run_id, None);
+                    let admitted = admission.is_some();
+                    let _ = release_rx.await;
+                    drop(admission);
+                    admitted
+                })
+            };
+            let closer = {
+                let tracker = tracker.clone();
+                tokio::spawn(async move {
+                    tracker.close();
+                    // Zero grace: the drain gets exactly the instantaneous truth.
+                    let drained = tracker.wait_idle(Duration::ZERO).await;
+                    let _ = release_tx.send(());
+                    drained
+                })
+            };
+            let admitted = admitter.await.unwrap();
+            let drained = closer.await.unwrap();
+            if admitted {
+                assert_eq!(
+                    drained,
+                    Err(vec![run_id.clone()]),
+                    "round {round}: the release was admitted, so the drain must \
+                     have seen it outstanding — admission and closure straddled"
+                );
+            } else {
+                assert_eq!(
+                    drained,
+                    Ok(()),
+                    "round {round}: the release was refused, so nothing can be \
+                     outstanding"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_panicking_release_task_records_a_lost_finalization() {
+        let tracker = ReleaseTaskTracker::new();
+        let admission = tracker
+            .try_admit("run-panic", Some("implementer.reported".to_string()))
+            .unwrap();
+        let handle = tracker.spawn_release(admission, async {
+            panic!("release finalization blew up after the release");
+        });
+        assert!(handle.await.is_err(), "the task panicked");
+
+        // The count still drains clean — that is the whole point of finding 3:
+        // the drain says "clean" and only the retained outcome says otherwise.
+        tracker
+            .wait_idle(Duration::from_secs(5))
+            .await
+            .expect("the guard released the count");
+        let lost = tracker.lost_finalizations();
+        assert_eq!(lost.len(), 1, "panic must leave a durable record: {lost:?}");
+        assert_eq!(lost[0].run_id, "run-panic");
+        assert_eq!(
+            lost[0].terminal_tx_type.as_deref(),
+            Some("implementer.reported")
+        );
+        assert!(
+            lost[0].reason.contains("panicked or was aborted"),
+            "reason should name the failure mode: {}",
+            lost[0].reason
+        );
+    }
+
+    #[tokio::test]
+    async fn an_aborted_release_task_records_a_lost_finalization() {
+        let tracker = ReleaseTaskTracker::new();
+        let admission = tracker.try_admit("run-abort", None).unwrap();
+        let handle = tracker.spawn_release(admission, async {
+            futures::future::pending::<()>().await;
+            unreachable!()
+        });
+        handle.abort();
+        let _ = handle.await;
+        tracker
+            .wait_idle(Duration::from_secs(5))
+            .await
+            .expect("the guard released the count");
+        let lost = tracker.lost_finalizations();
+        assert_eq!(lost.len(), 1, "abort must leave a durable record: {lost:?}");
+        assert_eq!(lost[0].run_id, "run-abort");
+    }
+
+    #[tokio::test]
+    async fn a_failed_release_records_a_lost_finalization() {
+        let tracker = ReleaseTaskTracker::new();
+        let admission = tracker
+            .try_admit("run-failed", Some("implementer.reported".to_string()))
+            .unwrap();
+        let handle = tracker.spawn_release(admission, async {
+            Err(ApiError::internal("writer refused the terminal tx"))
+        });
+        assert!(handle.await.unwrap().is_err());
+        let lost = tracker.lost_finalizations();
+        assert_eq!(lost.len(), 1, "{lost:?}");
+        assert_eq!(lost[0].run_id, "run-failed");
+        assert!(
+            lost[0].reason.contains("writer refused the terminal tx"),
+            "the underlying error must survive: {}",
+            lost[0].reason
+        );
+    }
+
+    /// A release that succeeds is not a loss, and an admission dropped before
+    /// any task was spawned (handler early-return, e.g. unknown run) lost
+    /// nothing either. Without this the loss list would cry wolf on every 404.
+    #[tokio::test]
+    async fn success_and_unspawned_admissions_record_no_loss() {
+        let tracker = ReleaseTaskTracker::new();
+        let admission = tracker.try_admit("run-ok", None).unwrap();
+        let handle = tracker.spawn_release(admission, async { Ok(("run-ok".to_string(), None)) });
+        handle.await.unwrap().unwrap();
+
+        drop(tracker.try_admit("run-not-found", None).unwrap());
+
+        assert!(
+            tracker.lost_finalizations().is_empty(),
+            "{:?}",
+            tracker.lost_finalizations()
+        );
+        tracker.wait_idle(Duration::from_secs(5)).await.unwrap();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -16201,6 +16653,7 @@ mod tests {
             tmux_input_ready_timeout_secs: Some(1),
             dispatch_response_delay: None,
             release_terminal_tx_delay: None,
+            release_admission_delay: None,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),

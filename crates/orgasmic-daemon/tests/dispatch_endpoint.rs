@@ -3847,6 +3847,196 @@ async fn dispatch_endpoint_controlled_restart_waits_for_pending_terminal_tx() {
     );
 }
 
+/// TASK-WGXKD.2 finding 1: a release that is admitted but NOT YET registered
+/// when the restart lands must still be waited for.
+///
+/// This is the case the existing restart test cannot reach. There, the release
+/// is already a registered task by the time the restart is requested, so it
+/// passes against the pre-fix code too. Here `release_admission_delay` holds the
+/// handler in exactly the window the pre-fix code really had — after the
+/// `is_closed()` read, before the `spawn()` that incremented the count — and the
+/// restart is requested inside it. Pre-fix, the drain saw an empty tracker,
+/// returned immediately, placed the writer barrier, and the terminal tx landed
+/// after it. Post-fix, admission IS the registration, so the drain waits.
+///
+/// The restart response is the claim: the tx is asserted the instant it returns,
+/// with no polling.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dispatch_endpoint_restart_waits_for_a_release_admitted_but_not_yet_registered() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-ADMIT-RACE";
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-acp-ws",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(&codex, "#!/bin/sh\nsleep 120\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-admit-race");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = stem_dir.join("brief.md");
+    write(&brief, "admission race brief");
+    let last = stem_dir.join("last.txt");
+    let stdout = stem_dir.join("stdout.log");
+    write(&last, "worker report");
+    write(&stdout, "");
+
+    let running = Daemon::run(
+        home.clone(),
+        DaemonOptions {
+            // The whole window under test: the handler is admitted and then
+            // parked here, with no task registered yet.
+            release_admission_delay: Some(Duration::from_secs(3)),
+            ..test_options()
+        },
+    )
+    .await
+    .expect("boot daemon");
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-acp-ws"),
+    );
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    let run_id = body["run_id"]
+        .as_str()
+        .expect("dispatch response run_id")
+        .to_string();
+
+    let payload = serde_json::json!({
+        "reason": format!("worker finalize for {task_id}"),
+        "request_id": format!("dispatch-release-admit-race-{run_id}"),
+        "finalized_by_worker": true,
+        "terminal_tx": {
+            "request_id": format!("dispatch-finalize-{task_id}-{run_id}"),
+            "type": "implementer.reported",
+            "actor": "agent.implementer",
+            "project": project_id,
+            "task": task_id,
+            "extra": [["RUN_ID", run_id]],
+        },
+    })
+    .to_string();
+    // Raw socket with `Connection: close`, as the real worker finalize does:
+    // the caller is killed by this very call, so nothing is left listening.
+    let socket = {
+        use std::io::Write as _;
+        let mut socket = std::net::TcpStream::connect(running.addr).unwrap();
+        write!(
+            socket,
+            "POST /api/runs/{run_id}/release HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Authorization: Bearer {token}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\r\n{payload}",
+            running.addr,
+            payload.len()
+        )
+        .unwrap();
+        socket.flush().unwrap();
+        socket
+    };
+    // Long enough that the handler has certainly been admitted, far short of
+    // the 3s admission delay, so the restart lands strictly inside the window.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        !read_project_tx(&project_root).contains(":TYPE:         implementer.reported"),
+        "the tx landed before the restart was requested — this test would prove nothing"
+    );
+
+    let restart = reqwest::Client::new()
+        .post(format!("http://{}/api/daemon/restart", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": "runtime rebuild",
+            "request_id": "wgxkd2-admission-race"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        restart.status().is_success(),
+        "controlled restart failed: {}",
+        restart.status()
+    );
+    let restart_body: serde_json::Value = restart.json().await.unwrap();
+    let warnings = restart_body["warnings"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning["kind"] == "release_finalization_timeout"),
+        "the release should have drained well inside the timeout: {restart_body}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|warning| warning["kind"] == "release_finalization_lost"),
+        "nothing was lost on this path: {restart_body}"
+    );
+
+    let reported = read_project_tx(&project_root);
+    assert!(
+        reported.contains(":TYPE:         implementer.reported"),
+        "the restart returned while a release admitted-but-unregistered was \
+         still running: its terminal tx is the one a graceful restart loses:\n{reported}"
+    );
+    let reported_block = reported
+        .split("\n* TX ")
+        .find(|block| block.contains(":TYPE:         implementer.reported"))
+        .expect("implementer.reported block");
+    assert!(
+        reported_block
+            .lines()
+            .any(|line| line.starts_with(":RUN_ID:") && line.contains(&run_id)),
+        "the terminal tx must still carry the client's verbatim RUN_ID \
+         (TASK-6AYEJ.1), or the dispatch sticks at [unreported]:\n{reported_block}"
+    );
+
+    drop(socket);
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-NW4WV: mismatched cleanup while a live tokened worker holds the lease
 /// must conflict and leave process/worktree/branch/artifacts intact.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

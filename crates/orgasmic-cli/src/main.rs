@@ -1828,11 +1828,48 @@ fn cmd_serve(home: &Home, bind: Option<IpAddr>, port: Option<u16>) -> Result<()>
             home.auth_token().display()
         );
         let _ = writeln!(io::stdout(), "  press Ctrl+C to stop");
-        tokio::signal::ctrl_c().await.ok();
+        wait_for_shutdown_signal().await;
         let _ = running.shutdown.send(());
         let _ = running.join.await;
         Ok::<(), anyhow::Error>(())
     })
+}
+
+/// Wait for either interactive interrupt or a service manager's stop.
+///
+/// orgasmic:TASK-WGXKD.2 finding 2 — this used to await `ctrl_c()` and nothing
+/// else. `launchctl kickstart -k` (the runtime-rebuild step) and every
+/// `launchctl bootout` / systemd stop send SIGTERM, so the daemon died on the
+/// default disposition: `RunningDaemon.shutdown` never fired, and with it
+/// neither the release-finalization drain nor the writer shutdown. The graceful
+/// shutdown TASK-WGXKD.1 built was unreachable on the only shutdown path this
+/// machine actually uses. Both signals now route through the same handle.
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut terminate) => {
+                tokio::select! {
+                    _ = tokio::signal::ctrl_c() => {}
+                    _ = terminate.recv() => {}
+                }
+            }
+            Err(error) => {
+                // Registration can only fail on a broken runtime; losing the
+                // graceful drain silently is worse than saying so.
+                eprintln!(
+                    "[warn] SIGTERM handler unavailable ({error}); \
+                           a service stop will not run the shutdown drain"
+                );
+                tokio::signal::ctrl_c().await.ok();
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        tokio::signal::ctrl_c().await.ok();
+    }
 }
 
 fn cmd_status(home: &Home) -> Result<()> {

@@ -704,6 +704,12 @@ fn windows_service_dir(home: &Home) -> PathBuf {
     home.state().join("service")
 }
 
+/// orgasmic:TASK-WGXKD.2 — `ExitTimeOut` is load-bearing, not cosmetic.
+/// launchd's default is 20 seconds between SIGTERM and SIGKILL, and the
+/// daemon's own graceful shutdown budget is `RELEASE_FINALIZATION_DRAIN_TIMEOUT`
+/// (20s) followed by the writer shutdown. At the default the SIGKILL can land
+/// mid-drain, which is the loss the drain exists to prevent; 60s leaves the
+/// whole budget room to finish.
 fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -718,6 +724,7 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
   <key>StandardErrorPath</key>\n  <string>{stderr}</string>\n\
   <key>RunAtLoad</key>\n  <true/>\n\
   <key>KeepAlive</key>\n  <true/>\n\
+  <key>ExitTimeOut</key>\n  <integer>60</integer>\n\
 </dict>\n\
 </plist>\n",
         label = MACOS_LABEL,
@@ -1033,6 +1040,11 @@ mod tests {
         assert!(plist.contains("daemon.out.log"));
         assert!(plist.contains("<key>RunAtLoad</key>"));
         assert!(plist.contains("<key>KeepAlive</key>"));
+        // orgasmic:TASK-WGXKD.2 — without ExitTimeOut launchd SIGKILLs 20s
+        // after SIGTERM, inside the daemon's own 20s release-finalization
+        // drain, so the graceful shutdown could be cut off mid-drain.
+        assert!(plist.contains("<key>ExitTimeOut</key>"));
+        assert!(plist.contains("<integer>60</integer>"));
         assert!(plist.contains("Orgasmic &amp; Tools"));
     }
 
