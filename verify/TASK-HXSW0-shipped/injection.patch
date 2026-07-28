@@ -1,0 +1,15 @@
+diff --git a/shipped/prompt-studio/conventions/manager-dispatch.org b/shipped/prompt-studio/conventions/manager-dispatch.org
+index 984b622..967bab0 100644
+--- a/shipped/prompt-studio/conventions/manager-dispatch.org
++++ b/shipped/prompt-studio/conventions/manager-dispatch.org
+@@ -156,7 +156,9 @@ explicitly on every dispatch (they pass through verbatim) — see the rule above
+ they are optional to the CLI, not to you. The stage defaults are in the standing
+ worker matrix; the example below shows the shape, not the choice.
+ 
+-For `--mode` and `--harness`, run `orgasmic manager drivers`. It prints every
++Read the task first with `orgasmic task show TASK-NNN`, then pick a transport.
++
++For `--mode` and `--harness`, run `orgasmic manager list-drivers`. It prints every
+ supported pair, which of them run unattended, and what each one requires on this
+ host, sourced from `orgasmic_drivers::SUPPORTED` so it cannot drift from what
+ the daemon will accept.

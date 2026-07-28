@@ -1,0 +1,8 @@
+# One line. Run from the repo root by `orgasmic verify TASK-HXSW0`.
+#
+# The production path, not the HTTP contract: every instance in the task body
+# was measured at a terminal against the real binary, and every one of them
+# returned a NORMAL SUCCESS OBJECT. A daemon unit test would have been green
+# throughout — the defect never looked like breakage, it looked like a command
+# that had worked.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test task_property_silent_drop_cli

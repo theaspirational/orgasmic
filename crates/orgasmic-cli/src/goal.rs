@@ -24,8 +24,11 @@ pub enum GoalCmd {
         /// Optional `** Reached When` section body.
         #[arg(long = "reached-when")]
         reached_when: Option<String>,
+        /// Why this write is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
     },
@@ -34,8 +37,11 @@ pub enum GoalCmd {
         /// Project id; defaults to the project containing the cwd.
         #[arg(long)]
         project: Option<String>,
+        /// Why this write is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
     },
@@ -44,8 +50,11 @@ pub enum GoalCmd {
         /// Project id; defaults to the project containing the cwd.
         #[arg(long)]
         project: Option<String>,
+        /// Why this write is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
     },

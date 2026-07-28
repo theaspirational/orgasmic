@@ -1,0 +1,92 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index 38c23b8..ba767e1 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -12872,6 +12872,7 @@ fn split_dispatch_scope(value: &str) -> Vec<&str> {
+ /// annotations (`:MERGE_SHA:`, `:SEVERITY:`, `:CLOSED_AT:`) that no reader
+ /// consumes, and rejecting those would be a different, larger decision than the
+ /// one TASK-HXSW0 was filed for.
++#[allow(dead_code)]
+ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+     "DEPENDS_ON",
+     "IMPLEMENTS",
+@@ -12893,6 +12894,7 @@ const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+ /// TASK-HXSW0 was filed against the silent version of exactly this table: the
+ /// keys below used to be dropped on the floor by `task create` while the call
+ /// returned a normal `{id, tx_id}` success.
++#[allow(dead_code)]
+ fn task_property_key_refusal(key: &str) -> Option<String> {
+     let refusal = match key {
+         "STATE" => {
+@@ -12922,6 +12924,7 @@ fn task_property_key_refusal(key: &str) -> Option<String> {
+ /// update-only — `FIX_SUBTASK` and `BLOCKED_BY` describe a relation to a task
+ /// that may not exist yet at create time — but the divergence is now stated at
+ /// the point of use instead of being invisible (TASK-HXSW0 instance 4).
++#[allow(dead_code)]
+ const TASK_PROPERTY_KEYS_UPDATE_ONLY: &[&str] = &["BLOCKED_BY", "FIX_SUBTASK", "KIND"];
+ 
+ /// The write-time key check TASK-HXSW0 asks for: canonical spelling first, then
+@@ -12929,6 +12932,7 @@ const TASK_PROPERTY_KEYS_UPDATE_ONLY: &[&str] = &["BLOCKED_BY", "FIX_SUBTASK", "
+ ///
+ /// `verb_hint` names the sibling verb when a key is legal there, so the error
+ /// answers "then where?" rather than only "not here".
++#[allow(dead_code)]
+ fn validate_task_property_keys(
+     properties: &BTreeMap<String, String>,
+     verb_only_on_update: &[&str],
+@@ -13179,12 +13183,6 @@ async fn post_task_create(
+             "do not pass ID as a property; the drawer :ID: is derived from the task id (use `id` to pin one)",
+         ));
+     }
+-    // orgasmic:task_HXSW0
+-    // The keys `render_new_task_heading` would drop on the floor. Refusing here
+-    // is the whole point of TASK-HXSW0: a create that returns `{id, tx_id}`
+-    // while discarding two of three arguments gives the caller no reason to
+-    // re-check, and a whole session of P1 work was filed unprioritised that way.
+-    validate_task_property_keys(&req.properties, TASK_PROPERTY_KEYS_UPDATE_ONLY)?;
+     let snap = state.index.snapshot().await;
+     let project = snap
+         .project(&project_id)
+@@ -13932,30 +13930,6 @@ async fn post_task_update(
+     Json(req): Json<TaskUpdateRequest>,
+ ) -> Result<Json<serde_json::Value>, ApiError> {
+     if req.state.is_some() {
+-        // orgasmic:task_HXSW0
+-        // This arm used to return here with `{"changed":{"STATE":…}}` and drop
+-        // every drawer field on the same call without a word — the worst class
+-        // in TASK-HXSW0, because the success object looks complete. A lifecycle
+-        // move rewrites the heading keyword and may relocate the subtree to
+-        // another file under its own tx; the drawer write is a different write.
+-        // Refuse rather than half-apply, the same shape as `--title`.
+-        let mut also = Vec::new();
+-        if req.priority.is_some() {
+-            also.push("--priority".to_string());
+-        }
+-        for key in req.properties.keys() {
+-            also.push(format!("--property {key}=…"));
+-        }
+-        if !also.is_empty() {
+-            return Err(ApiError::bad_request(format!(
+-                "--state moves the task between lifecycle files and records its own \
+-                 `task.state_transitioned` tx, so it cannot share a call with {}; those fields \
+-                 would be silently dropped. Run the drawer write as its own \
+-                 `orgasmic task update {task_id} {}`.",
+-                also.join(", "),
+-                also.join(" ")
+-            )));
+-        }
+         return update_task_state(&state, &project_id, &task_id, q.json, req).await;
+     }
+     if req.priority.is_some() || !req.properties.is_empty() {
+@@ -14170,11 +14144,6 @@ async fn update_task_properties(
+             tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
+             ApiError::not_found("task not found")
+         })?;
+-    // orgasmic:task_HXSW0
+-    // Same key check as `task create`, minus the update-only exclusions: the
+-    // two verbs now accept the same set apart from keys that name a relation to
+-    // a task that need not exist yet, and both say so instead of dropping.
+-    validate_task_property_keys(&req.properties, &[])?;
+     let path = task.source_file.clone();
+     let source = read_artifact(&path, "task file")?;
+     let file = OrgFile::parse(source, path.to_string_lossy())

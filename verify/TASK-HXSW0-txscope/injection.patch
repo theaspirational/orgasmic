@@ -1,0 +1,25 @@
+diff --git a/crates/orgasmic-cli/src/main.rs b/crates/orgasmic-cli/src/main.rs
+index 636af76..ca3d47f 100644
+--- a/crates/orgasmic-cli/src/main.rs
++++ b/crates/orgasmic-cli/src/main.rs
+@@ -3613,20 +3613,6 @@ fn cmd_tx(home: &Home, cmd: TxCmd) -> Result<()> {
+                 tx_path,
+             } => {
+                 let extra_pairs = parse_key_values(extra)?;
+-                // orgasmic:task_HXSW0
+-                // `tx record` was the only mutation verb that was not
+-                // project-scoped by default: without --project it appended to
+-                // $ORGASMIC_HOME/state/tx/YYYY-MM.org and reported success with
+-                // a home-shaped tx id, so a manager following the obvious
+-                // invocation lost the entry off the project ledger and could
+-                // not tell from the exit code. Resolve the cwd project like
+-                // every sibling; --tx-path stays the explicit opt-out, and a
+-                // cwd outside any project still falls back to the home ledger.
+-                let project = match (project, tx_path.is_some()) {
+-                    (Some(project), _) => Some(project),
+-                    (None, true) => None,
+-                    (None, false) => manager::resolve_project(None).ok(),
+-                };
+                 let body = serde_json::json!({
+                     "request_id": request_id,
+                     "type": ty,

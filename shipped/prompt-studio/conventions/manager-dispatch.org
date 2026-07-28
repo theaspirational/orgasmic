@@ -156,19 +156,16 @@ explicitly on every dispatch (they pass through verbatim) — see the rule above
 they are optional to the CLI, not to you. The stage defaults are in the standing
 worker matrix; the example below shows the shape, not the choice.
 
-For `--mode` and `--harness`, there is no listing command. Earlier revisions of
-this convention told you to run `orgasmic manager drivers`; that verb has never
-existed in any command group, and the valid pairs live only in
-`orgasmic_drivers::SUPPORTED`. Until a real listing verb ships, discover them
-from the rejection: any unsupported pair fails fast and names the whole set —
+For `--mode` and `--harness`, run `orgasmic manager drivers`. It prints every
+supported pair, which of them run unattended, and what each one requires on this
+host, sourced from `orgasmic_drivers::SUPPORTED` so it cannot drift from what
+the daemon will accept.
 
-: Error: unsupported mode/harness pair bogus/bogus; supported: acp-stdio/claude,
-: acp-stdio/codex, acp-stdio/cursor-agent, acp-stdio/hermes, acp-ws/codex,
-: acp-ws/hermes, subprocess-stream-json/cursor-agent, tmux/claude, tmux/codex,
-: tmux/cursor-agent, tmux/hermes, rmux/claude, rmux/codex, rmux/cursor-agent,
-: rmux/hermes, rmux/custom
-
-Pair that with `--dry-run` and the check costs nothing.
+An earlier revision of this paragraph said that verb did not exist and told you
+to discover the pairs by submitting a bogus one and reading the rejection. It
+does exist (TASK-JQARS); the rejection still names the whole set, but it is the
+fallback, not the method. Pair a real dispatch with `--dry-run` when you want to
+check the rest of the invocation too.
 
 1. *Minimal self-contained brief.* Write the prompt to =<project_root>/.orgasmic/tmp/dispatch/task-NNN-brief.md=. The worker has no access to this chat, but the compiled bundle already injects the task heading (description, acceptance criteria, read/write scope, activity) and the worker persona — do not restate them. The brief carries only the delta: read-first anchors, target behaviour, non-negotiable invariants, verification gates, and the exact commit message. Shorter is better; never paste project conventions or file contents the worker can read from disk.
 2. *Dispatch.* From the project root:

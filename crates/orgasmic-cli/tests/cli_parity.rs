@@ -5,12 +5,20 @@ use std::process::Command;
 const ALLOWED_DEFERRED_LEAVES: &[&str] = &[];
 const MAIN_RS: &str = include_str!("../src/main.rs");
 
-/// Shipped entry text an agent follows literally. A command named here that the
+/// ALL shipped prose an agent follows literally — entry text, prompt specs,
+/// manager conventions, skill references. A command named in any of it that the
 /// binary does not have is a runtime dead end with nothing else to catch it:
 /// TASK-JQARS was filed because `orgasmic manager drivers` had been documented
-/// here for months while the CLI answered `unrecognized subcommand 'drivers'`,
-/// and the manager who hit it fell back to reading Rust source.
-const SHIPPED_ENTRY_DIR: &str = "shipped/entry";
+/// for months while the CLI answered `unrecognized subcommand 'drivers'`, and
+/// the manager who hit it fell back to reading Rust source.
+///
+/// TASK-HXSW0 widened this from `shipped/entry` alone, which is where that one
+/// instance happened to be found; nothing had ever checked the rest.
+const SHIPPED_DIR: &str = "shipped";
+
+/// Below this, the extractor is not finding the corpus it thinks it is —
+/// a silently-empty guard is the failure mode this whole test exists against.
+const MINIMUM_SHIPPED_INVOCATIONS: usize = 100;
 
 #[test]
 fn clap_leaf_commands_do_not_dispatch_to_not_implemented() {
@@ -158,9 +166,10 @@ fn assert_sorted(values: &[&str]) {
 fn shipped_entry_commands_resolve_against_the_cli() {
     let invocations = shipped_entry_invocations();
     assert!(
-        !invocations.is_empty(),
-        "no `orgasmic ...` invocations found in {SHIPPED_ENTRY_DIR}; the extractor is broken, \
-         not the prose"
+        invocations.len() >= MINIMUM_SHIPPED_INVOCATIONS,
+        "only {} `orgasmic ...` invocations found under {SHIPPED_DIR}/ (expected at least \
+         {MINIMUM_SHIPPED_INVOCATIONS}); the extractor is broken, not the prose",
+        invocations.len()
     );
 
     let mut failures = Vec::new();
@@ -196,6 +205,129 @@ fn shipped_entry_commands_resolve_against_the_cli() {
     );
 }
 
+/// Every flag and positional on every leaf command must say what it does.
+///
+/// TASK-HXSW0's item 1: `manager dispatch --help` rendered `--task`, `--brief`,
+/// `--from`, `--model`, `--effort`, `--worktree`, `--branch` and `--reason`
+/// with BLANK descriptions, so the acceptance criterion — an agent discovers
+/// any flag it needs from `--help` alone, without reading Rust source — was
+/// unreachable on the primary agent verb. A blank `#[arg]` doc is a bug here,
+/// not a style nit, and this is what makes it one.
+#[test]
+fn every_flag_and_argument_has_a_description() {
+    let leaves = clap_leaf_paths();
+    assert!(
+        !leaves.is_empty(),
+        "no leaf commands found; the help walker is broken"
+    );
+    let mut blank = Vec::new();
+    for leaf in &leaves {
+        let path = leaf
+            .strip_prefix("orgasmic ")
+            .unwrap_or("")
+            .split(' ')
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        for name in undocumented_help_entries(&help_for(&path)) {
+            blank.push(format!("{leaf}: {name}"));
+        }
+    }
+    assert!(
+        blank.is_empty(),
+        "{} flag(s)/argument(s) render with no description in --help:\n  {}",
+        blank.len(),
+        blank.join("\n  ")
+    );
+}
+
+/// Flags and positionals in one rendered `--help` whose description is empty.
+///
+/// Reads the rendered help rather than the clap source on purpose: what an
+/// agent can learn is what the binary prints, and clap renders short and long
+/// help differently (description inline vs on its own indented line).
+fn undocumented_help_entries(help: &str) -> Vec<String> {
+    let lines = help.lines().collect::<Vec<_>>();
+    let mut out = Vec::new();
+    let mut in_section = false;
+    for (index, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed == "Options:" || trimmed == "Arguments:" {
+            in_section = true;
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        if !trimmed.is_empty() && !line.starts_with(' ') {
+            in_section = false;
+            continue;
+        }
+        let Some((indent, name, rest)) = split_help_entry(line) else {
+            continue;
+        };
+        if name == "--help" || name == "--version" {
+            continue;
+        }
+        let mut description = rest.trim().to_string();
+        if description.is_empty() {
+            // Long-help style: the description sits on the following lines,
+            // indented past the flag.
+            for next in &lines[index + 1..] {
+                let next_indent = next.len() - next.trim_start().len();
+                if next.trim().is_empty() || next_indent <= indent {
+                    break;
+                }
+                description.push_str(next.trim());
+                description.push(' ');
+            }
+        }
+        let description = description.trim();
+        // `[possible values: …]` is clap's own value enumeration, not a
+        // description of what the flag is for.
+        if description.is_empty() || description.starts_with("[possible values") {
+            out.push(name.to_string());
+        }
+    }
+    out
+}
+
+/// `(indent, name, rest-of-line)` for a help line that introduces a flag or a
+/// positional, else `None`.
+fn split_help_entry(line: &str) -> Option<(usize, &str, &str)> {
+    let indent = line.len() - line.trim_start().len();
+    if indent == 0 || indent > 8 {
+        return None;
+    }
+    let body = line.trim_start();
+    // `-x, --long …` → drop the short alias.
+    let body = match body.split_once(", --") {
+        Some((short, tail)) if short.len() == 2 && short.starts_with('-') => {
+            &line[line.len() - tail.len() - "--".len()..]
+        }
+        _ => body,
+    };
+    let (name, rest) = match body.split_once(char::is_whitespace) {
+        Some(split) => split,
+        None => (body, ""),
+    };
+    let is_flag = name.starts_with("--");
+    let is_positional = name.starts_with('<') || name.starts_with('[');
+    if !is_flag && !is_positional {
+        return None;
+    }
+    // Skip the flag's own value placeholder (`--project <PROJECT>`) and any
+    // further positionals on the same line (`<ID> <KEY> <VALUE>`).
+    let mut rest = rest.trim_start();
+    while rest.starts_with('<') || rest.starts_with('[') {
+        let close = if rest.starts_with('<') { '>' } else { ']' };
+        match rest.find(close) {
+            Some(end) => rest = rest[end + 1..].trim_start(),
+            None => break,
+        }
+    }
+    Some((indent, name, rest))
+}
+
 /// One `orgasmic ...` invocation quoted in shipped prose.
 struct EntryInvocation {
     /// `file:span` for the failure message.
@@ -229,32 +361,160 @@ impl EntryInvocation {
 }
 
 fn shipped_entry_invocations() -> Vec<EntryInvocation> {
-    let dir = repo_root().join(SHIPPED_ENTRY_DIR);
-    let mut entries = std::fs::read_dir(&dir)
-        .unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-        .map(|entry| entry.expect("dir entry").path())
-        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("org"))
-        .collect::<Vec<_>>();
-    entries.sort();
-
+    let root = repo_root().join(SHIPPED_DIR);
     let mut out = Vec::new();
-    for path in entries {
+    for path in shipped_prose_files(&root) {
         let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("<entry>")
+            .strip_prefix(repo_root())
+            .unwrap_or(&path)
+            .to_string_lossy()
             .to_string();
         let text = std::fs::read_to_string(&path)
             .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        // Inline code spans may wrap across lines in org prose.
-        let flat = text.replace('\n', " ");
-        assert_eq!(
-            flat.matches('`').count() % 2,
-            0,
-            "{name} has an unbalanced inline-code backtick; the extractor cannot trust it"
-        );
-        for span in flat.split('`').skip(1).step_by(2) {
-            out.extend(invocations_in_span(&name, span));
+        let org = path.extension().and_then(|e| e.to_str()) == Some("org");
+        for span in code_spans(&name, &text, org) {
+            out.extend(invocations_in_span(&name, &span));
+        }
+    }
+    out
+}
+
+/// Every prose file under `shipped/`, sorted, in the two markups it ships in.
+fn shipped_prose_files(root: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let entries =
+            std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
+        for entry in entries {
+            let path = entry.expect("dir entry").path();
+            if path.is_dir() {
+                pending.push(path);
+            } else if matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some("org") | Some("md")
+            ) {
+                out.push(path);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Code spans in one shipped prose file, in the forms an agent reads a command
+/// out of: fenced/`#+begin_src` blocks (one span per line, because each line is
+/// its own command) and inline code (one span each, newline-flattened because
+/// org prose wraps mid-span).
+///
+/// `=verbatim=` and `~code~` are included for org, which is how the manager
+/// conventions spell every command they instruct.
+/// `text` with fenced / `#+begin_src` regions blanked out, fences included.
+/// Pass (2) of [`code_spans`] reads those regions line by line instead.
+fn strip_code_blocks(text: &str, org: bool) -> String {
+    let mut out = String::new();
+    let mut in_block = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start().to_ascii_lowercase();
+        let fence = if org {
+            trimmed.starts_with("#+begin_src")
+                || trimmed.starts_with("#+begin_example")
+                || trimmed.starts_with("#+end_src")
+                || trimmed.starts_with("#+end_example")
+        } else {
+            trimmed.starts_with("```")
+        };
+        if fence {
+            in_block = if org {
+                trimmed.starts_with("#+begin_")
+            } else {
+                !in_block
+            };
+            out.push('\n');
+            continue;
+        }
+        if !in_block {
+            out.push_str(line);
+        }
+        out.push('\n');
+    }
+    out
+}
+
+fn code_spans(name: &str, text: &str, org: bool) -> Vec<String> {
+    let mut out = Vec::new();
+
+    // (1) Inline code, over the file flattened — org prose wraps mid-span, so
+    // splitting on newlines first would cut commands in half. Block regions are
+    // removed first: a Markdown fence is itself three backticks, so leaving
+    // them in swallows the whole document into one span.
+    let flat = strip_code_blocks(text, org).replace('\n', " ");
+    assert_eq!(
+        flat.matches('`').count() % 2,
+        0,
+        "{name} has an unbalanced inline-code backtick; the extractor cannot trust it"
+    );
+    out.extend(flat.split('`').skip(1).step_by(2).map(str::to_string));
+
+    // (2) Block bodies, ONE SPAN PER LINE: each line of a fenced or `#+begin_src`
+    // block is its own command, and flattening them would splice consecutive
+    // commands into one nonexistent verb path.
+    let mut in_block = false;
+    let mut continued = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start().to_ascii_lowercase();
+        if org {
+            if trimmed.starts_with("#+begin_src") || trimmed.starts_with("#+begin_example") {
+                in_block = true;
+                continued = false;
+                continue;
+            }
+            if trimmed.starts_with("#+end_src") || trimmed.starts_with("#+end_example") {
+                in_block = false;
+                continued = false;
+                continue;
+            }
+        } else if trimmed.starts_with("```") {
+            in_block = !in_block;
+            continued = false;
+            continue;
+        }
+        if !in_block {
+            continue;
+        }
+        // A trailing `\` continues one command onto the next line.
+        if continued {
+            if let Some(head) = out.last_mut() {
+                head.push(' ');
+                head.push_str(line.trim());
+            }
+        } else {
+            out.push(line.trim().to_string());
+        }
+        continued = false;
+        if let Some(head) = out.last_mut() {
+            if head.ends_with('\\') {
+                head.pop();
+                continued = true;
+            }
+        }
+    }
+
+    // (3) Org `=verbatim=` / `~code~`, matched pairwise per LINE. Unbalanced
+    // `=` is ordinary in org prose (`KEY=VALUE`), so a span is taken only when
+    // the delimiter actually CLOSES on the same line — otherwise a wrapped
+    // command would be read as a truncated one and blamed for a flag it never
+    // finished spelling.
+    if org {
+        for line in text.lines() {
+            for delimiter in ['=', '~'] {
+                let parts = line.split(delimiter).collect::<Vec<_>>();
+                for (index, part) in parts.iter().enumerate() {
+                    if index % 2 == 1 && index + 1 < parts.len() {
+                        out.push((*part).to_string());
+                    }
+                }
+            }
         }
     }
     out

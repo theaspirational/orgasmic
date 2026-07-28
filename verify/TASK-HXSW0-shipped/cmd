@@ -1,0 +1,7 @@
+# One line. Run from the repo root by
+#   orgasmic verify TASK-HXSW0 --artifact verify/TASK-HXSW0-shipped
+#
+# This artifact proves the GUARD, not a code path: shipped prose is an
+# instruction sheet an agent follows literally, and until TASK-HXSW0 only
+# `shipped/entry/` was checked against the real clap surface.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test cli_parity

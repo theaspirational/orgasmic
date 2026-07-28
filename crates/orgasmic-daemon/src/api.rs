@@ -12861,6 +12861,117 @@ fn split_dispatch_scope(value: &str) -> Vec<&str> {
     value.split_whitespace().collect()
 }
 
+// orgasmic:task_HXSW0
+/// Task drawer keys the schema actually reads, in the exact spelling
+/// [`orgasmic_core::Heading::property`] looks up — that lookup is a byte
+/// comparison, so `:priority:` and `:PRIORITY:` are two different keys and only
+/// one of them is ever read.
+///
+/// This list exists to make a miscased key *nameable* in an error, not to close
+/// the drawer to anything else: task headings legitimately carry free-form
+/// annotations (`:MERGE_SHA:`, `:SEVERITY:`, `:CLOSED_AT:`) that no reader
+/// consumes, and rejecting those would be a different, larger decision than the
+/// one TASK-HXSW0 was filed for.
+const TASK_SCHEMA_PROPERTY_KEYS: &[&str] = &[
+    "DEPENDS_ON",
+    "IMPLEMENTS",
+    "MODEL",
+    "PRIORITY",
+    "PRODUCES",
+    "PROVIDER",
+    "READ_SCOPE",
+    "REASONING_EFFORT",
+    "SANDBOX_PERMISSIONS",
+    "TEST_CMD",
+    "WRITE_SCOPE",
+];
+
+/// Keys that a task write must refuse because the value would be stored and
+/// then never read, or is owned by a mechanism the caller has to reach through
+/// a different door. Each carries the sentence that names that door.
+///
+/// TASK-HXSW0 was filed against the silent version of exactly this table: the
+/// keys below used to be dropped on the floor by `task create` while the call
+/// returned a normal `{id, tx_id}` success.
+fn task_property_key_refusal(key: &str) -> Option<String> {
+    let refusal = match key {
+        "STATE" => {
+            "STATE is owned by the lifecycle state machine — the heading keyword, the file the \
+             task lives in and a `task.state_transitioned` tx all move together. Use \
+             `orgasmic task update <id> --state <stage>`."
+        }
+        "PARENT_TASK" => {
+            "PARENT_TASK is never read: `parent_task` is derived from the id grammar \
+             (`TASK-<parent>.<n>` → `TASK-<parent>`). Mint the parentage into the id instead — \
+             `orgasmic task create --id TASK-<parent>.1 …` — or the edge will not exist."
+        }
+        "ID" => {
+            "task identity is immutable and the drawer `:ID:` is derived from it; pass \
+             `--id` on `orgasmic task create` to pin one."
+        }
+        "LAST_UPDATED" => {
+            "LAST_UPDATED is not a task field; the tx ledger is the timestamped record \
+             (`orgasmic tx list --project <id>`)."
+        }
+        _ => return None,
+    };
+    Some(format!("`--property {key}=…` is refused: {refusal}"))
+}
+
+/// Keys `task update` writes and `task create` used to swallow. They stay
+/// update-only — `FIX_SUBTASK` and `BLOCKED_BY` describe a relation to a task
+/// that may not exist yet at create time — but the divergence is now stated at
+/// the point of use instead of being invisible (TASK-HXSW0 instance 4).
+const TASK_PROPERTY_KEYS_UPDATE_ONLY: &[&str] = &["BLOCKED_BY", "FIX_SUBTASK", "KIND"];
+
+/// The write-time key check TASK-HXSW0 asks for: canonical spelling first, then
+/// the refusal table.
+///
+/// `verb_hint` names the sibling verb when a key is legal there, so the error
+/// answers "then where?" rather than only "not here".
+fn validate_task_property_keys(
+    properties: &BTreeMap<String, String>,
+    verb_only_on_update: &[&str],
+) -> Result<(), ApiError> {
+    for key in properties.keys() {
+        let trimmed = key.trim();
+        if trimmed.is_empty() {
+            return Err(ApiError::bad_request(
+                "empty `--property` key; pass `KEY=VALUE` with an uppercase drawer key",
+            ));
+        }
+        let canonical = trimmed.to_ascii_uppercase();
+        if canonical != *key {
+            let known = TASK_SCHEMA_PROPERTY_KEYS.contains(&canonical.as_str());
+            let tail = if known {
+                format!(
+                    " — pass `{canonical}={}`",
+                    properties.get(key).map(String::as_str).unwrap_or("…")
+                )
+            } else {
+                String::new()
+            };
+            return Err(ApiError::bad_request(format!(
+                "property key `{key}` is not the canonical drawer spelling; org drawer keys are \
+                 uppercase and the reader compares them byte for byte, so `:{key}:` would be \
+                 written and never read. Use `{canonical}`{tail}. Task keys the schema reads: {}",
+                TASK_SCHEMA_PROPERTY_KEYS.join(", ")
+            )));
+        }
+        if let Some(refusal) = task_property_key_refusal(&canonical) {
+            return Err(ApiError::bad_request(refusal));
+        }
+        if verb_only_on_update.contains(&canonical.as_str()) {
+            return Err(ApiError::bad_request(format!(
+                "`--property {canonical}=…` is not written by `task create` (it was silently \
+                 dropped before TASK-HXSW0). Create the task, then set it with \
+                 `orgasmic task update <id> --property {canonical}=…`."
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn filter_default_dispatch_properties(
     properties: &BTreeMap<String, String>,
     default_test_cmd: &str,
@@ -13068,6 +13179,12 @@ async fn post_task_create(
             "do not pass ID as a property; the drawer :ID: is derived from the task id (use `id` to pin one)",
         ));
     }
+    // orgasmic:task_HXSW0
+    // The keys `render_new_task_heading` would drop on the floor. Refusing here
+    // is the whole point of TASK-HXSW0: a create that returns `{id, tx_id}`
+    // while discarding two of three arguments gives the caller no reason to
+    // re-check, and a whole session of P1 work was filed unprioritised that way.
+    validate_task_property_keys(&req.properties, TASK_PROPERTY_KEYS_UPDATE_ONLY)?;
     let snap = state.index.snapshot().await;
     let project = snap
         .project(&project_id)
@@ -13815,6 +13932,30 @@ async fn post_task_update(
     Json(req): Json<TaskUpdateRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if req.state.is_some() {
+        // orgasmic:task_HXSW0
+        // This arm used to return here with `{"changed":{"STATE":…}}` and drop
+        // every drawer field on the same call without a word — the worst class
+        // in TASK-HXSW0, because the success object looks complete. A lifecycle
+        // move rewrites the heading keyword and may relocate the subtree to
+        // another file under its own tx; the drawer write is a different write.
+        // Refuse rather than half-apply, the same shape as `--title`.
+        let mut also = Vec::new();
+        if req.priority.is_some() {
+            also.push("--priority".to_string());
+        }
+        for key in req.properties.keys() {
+            also.push(format!("--property {key}=…"));
+        }
+        if !also.is_empty() {
+            return Err(ApiError::bad_request(format!(
+                "--state moves the task between lifecycle files and records its own \
+                 `task.state_transitioned` tx, so it cannot share a call with {}; those fields \
+                 would be silently dropped. Run the drawer write as its own \
+                 `orgasmic task update {task_id} {}`.",
+                also.join(", "),
+                also.join(" ")
+            )));
+        }
         return update_task_state(&state, &project_id, &task_id, q.json, req).await;
     }
     if req.priority.is_some() || !req.properties.is_empty() {
@@ -14029,6 +14170,11 @@ async fn update_task_properties(
             tracing::warn!(project_id = %project_id, task_id = %task_id, "task not found");
             ApiError::not_found("task not found")
         })?;
+    // orgasmic:task_HXSW0
+    // Same key check as `task create`, minus the update-only exclusions: the
+    // two verbs now accept the same set apart from keys that name a relation to
+    // a task that need not exist yet, and both say so instead of dropping.
+    validate_task_property_keys(&req.properties, &[])?;
     let path = task.source_file.clone();
     let source = read_artifact(&path, "task file")?;
     let file = OrgFile::parse(source, path.to_string_lossy())
