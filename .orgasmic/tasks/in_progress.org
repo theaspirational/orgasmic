@@ -788,58 +788,11 @@ ATTRIBUTION CONTRADICTED [2026-07-29, TASK-K4G1D differential]: the `left: "inte
 
 CANDIDATE PANIC [2026-07-29, TASK-GEZHQ gate run 3 of 5]: `api::tests::recovery_inventory_waits_for_atomic_claim_commit` (crates/orgasmic-daemon/src/api.rs:25017) — `recover POST completes: Elapsed(())` under load, green in isolation. Another recover-route timeout shape for this task's diagnosis; first time written down.
 
-* IN_PROGRESS TASK-JGHNC Seven tmux-gated daemon tests accept the rmux shim and have been measuring rmux while reporting tmux
-:PROPERTIES:
-:ID: TASK-JGHNC
-:PRIORITY: P1
-:END:
-
-From TASK-K4G1D (2026-07-29), measured, not inferred: inside an orgasmic
-worker, `tmux` on PATH is the rmux shim, and a `-L`-pinned call through the
-shim creates an RMUX server (the socket lands in /private/tmp/rmux-501/, and
-the real tmux cannot connect to it). The 0RCRY owned-server mechanism does not
-protect against this — the isolation holds, but the multiplexer is the wrong
-one.
-
-Consequence: seven tmux-gated daemon tests gate on `tmux_on_path()`, which
-accepts the shim, so IN EVERY WORKER-RUN SUITE they have been measuring rmux
-while reporting tmux:
-
-  boot_rehydration_reattaches_tmux_session,
-  explicit_reattach_tmux_session_endpoint,
-  pending_plan_reattach_existing_session,
-  boot_reattach_respawns_when_session_gone,
-  failed_terminal_with_live_tmux_session_is_not_resurrected,
-  production_resume_native_fork_uses_pinned_claude_not_path_shim,
-  two_recovery_chain_second_resume_uses_first_fork_session_id
-
-(names as listed in K4G1D's report §6.2; verify against HEAD before acting).
-
-K4G1D added the strict availability rule (`tmux_mode_availability_for` — a
-shimmed tmux counts as ABSENT, loudly) but deliberately did NOT widen
-`tmux_on_path()`: regating seven tests is a decision, not a fix — it would
-newly fail the tmux sentinel in every worker environment, and it partly
-reframes the worker-vs-manager failure comparisons recorded on TASK-STWVB.
-
-=== Ask
-
-1. Decide: should these seven tests demand REAL tmux (strict rule), or is
-   testing-through-the-shim acceptable for some of them (in which case they
-   should SAY they ran rmux)? Record the decision and its reason.
-2. Apply it: either regate on the strict rule (accepting that worker-run
-   suites will report tmux NOT RUN via the honesty manifest — that is the
-   truth), or split tests into genuinely-mode-agnostic (rename/parameterize per
-   K4G1D's pattern) vs really-tmux-specific (strict gate).
-3. Re-examine any STWVB comparison that relied on "the worker ran these under
-   tmux" — it ran them under rmux.
-
-=== Acceptance
-
-- No daemon test can report mode=tmux while executing rmux: proven by test
-  (K4G1D's strict rule is the template; its verify artifact pins the
-  silent-GREEN failure mode).
-- The honesty manifest names whatever is gated out in a worker environment.
-- Injection per TCTTD standard, self-tested before reporting.
+RE-READING FLAGS [2026-07-29, TASK-JGHNC, merged 724dd6b] — four recorded comparisons need correction:
+1. The 2026-07-28 five-failure section: the TASK-1T3FZ worker's two extra failures (boot_reattach_respawns…, failed_terminal_with_live_tmux…) plus its tmux sentinel were RMUX failures wearing tmux names, on the shared rmux default server; they say nothing about tmux. Post-JGHNC that comparison cannot be reproduced in a worker at all (strict-gated, NOT RUN).
+2. recovery_reattaches_tmux_session_when_handle_exists: the manager symptom ('tmux test session should start') and the worker symptom ('server exited unexpectedly') were read as one signature; the worker half was an rmux-server symptom. Superseded by K4G1D's tmux-arm and JGHNC's rmux-arm measurements.
+3. The D0GA3 worker's '508 passed, 0 failed' anomaly has a third explanation: in a worker, seven tests ran a different multiplexer than the manager's run of the same names — never a like-for-like comparison.
+4. THE DIFFERENTIAL NOW READS BOTH WAYS: JGHNC's worker run caught recovery_reattaches_RMUX_session_when_handle_exists red with the IDENTICAL sentence K4G1D measured on the tmux arm ('driver rmux/claude attach proof exceeded inventory deadline', api.rs:24464). Red under BOTH multiplexers = the defect is ours (the inventory deadline / attach-proof path), NOT rmux. Any future worker-vs-manager comparison on this family needs the real-tmux PATH recipe (K4G1D report §2); the five new rmux arms are the worker's honest column.
 
 * IN_PROGRESS TASK-HAREX A worker that exits without finalize stays live for tens of minutes instead of being released :daemon:supervisor:dispatch:recovery:
 :PROPERTIES:
