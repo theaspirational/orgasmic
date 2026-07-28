@@ -511,48 +511,6 @@ FINDINGS FOR THE REVIEWER PASS
    variance — 140 s was observed earlier today — but it should be measured
    deliberately rather than assumed.
 
-* IN_REVIEW TASK-6AYEJ.3 crash-reconciled recovery loses its dispatch association and can be cleaned up beneath a live run :dispatch:cli:daemon:defect:
-:PROPERTIES:
-:ID: TASK-6AYEJ.3
-:PRIORITY: P0
-:END:
-
-Fix round for the TASK-6AYEJ.2 reviewer BLOCK SHIP (run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1, merge 705121b). Findings verbatim.
-
-NOTE ON SCOPE: that review returned four findings. Its finding 3 (the release-admission race) is a duplicate of the TASK-WGXKD.1 reviewer's finding 1 and is being fixed in TASK-WGXKD.2 - do NOT fix it here. Its finding 2 (false architect stage failure) turned out to be a defect in stage outcome computation rather than in the close-generation work, and is filed separately. This task carries findings 1 and 4.
-
-** Finding 1 - HIGH: crash-reconciled recovery suppresses the association, and exact close can clean up beneath the live replacement
-api.rs:8012-8067 deliberately reattaches the immutable replacement identity from a pending recovery plan, but api.rs:8141-8165 emits the new run.created ORIGIN=recovery association ONLY when !reattach_existing.
-
-After a crash at or after acquire_append, recovery_claim.rs:2203-2211 sets reattach_existing because the replacement session already contains Acquire. So the retried request returns a replacement run id DIFFERENT from the origin while suppressing the only manager-ledger link. The TASK-6AYEJ.2 gating condition assumed reattach implies an unchanged id; on this path that assumption is false.
-
-Two consequences:
-1. manager.rs:3826-3838 cannot add the replacement to run_ids, so replacement finalize fails closed at manager.rs:3906-3914 and the dispatch stays [unreported] permanently - the exact acceptance path TASK-6AYEJ.2 finding 2 was meant to close, still open on the crash variant.
-2. WORSE: an exact dispatch-close --started-tx still targets the ORIGIN run id, and its 404 is ACCEPTED before cleanup at manager.rs:708-747. So the close proceeds to worktree removal and branch deletion WHILE THE REATTACHED REPLACEMENT IS LIVE. That is the successor-teardown hazard the whole TASK-6AYEJ line exists to eliminate, reachable again through the crash path.
-
-The assigned crash matrix at daemon/tests/recovery_fault_restart.rs:583-601 exercises these post-Acquire boundaries but asserts runtime identity and pane preservation, not the manager ledger. The happy-path integration at cli/tests/dispatch.rs:2740-2845 performs one uninterrupted recovery and cannot catch this.
-
-FIX DIRECTION: emit the origin-to-replacement association whenever a worker-finalized recovery returns a replacement id different from its origin, INCLUDING reattach_existing. Use the existing replacement-derived request id for idempotence, or first prove the event is already durable. Add an integration covering dispatch -> crash after replacement Acquire -> retry/reattach -> replacement finalize -> [reported], plus an exact close proving it releases the replacement and never cleans beneath a live run.
-
-Consider also whether a 404 on the exact run id should still be accepted before cleanup at manager.rs:708-747, or whether that acceptance is itself too permissive now that generation identity is the contract.
-
-** Finding 4 - LOW: the semantic dangerous-command detector still misses realistic variants
-cli/tests/shipped_conventions.rs:60-76 requires the exact lowercase phrase 'git worktree remove', stops at the newline, and recognizes short force only as ' -f ' with surrounding spaces. An independent exact-logic probe by the reviewer returned ZERO hits for all three of:
-- =git worktree remove "$WT" -f=            (Org markup punctuation adjacent to -f)
-- git -C /repo worktree remove "$WT" --force  (git global option splits the phrase)
-- a shell-continuation form with --force on the next line
-
-The regression set at shipped_conventions.rs:122-134 covers none of these. The marker itself IS discoverable - the failing assertion names [DANGEROUS-EXAMPLE] at shipped_conventions.rs:103-113 - so the issue is detection, not marker documentation.
-
-FIX DIRECTION: normalize/tokenize git command examples instead of using fixed byte windows and exact substrings. Cover Org and code punctuation around -f, git global options such as git -C, and shell continuation lines.
-
-** Reviewer conclusions that are settled - do not re-litigate
-- The intended F1 behaviour is correct outside finding 1: tokenless live close bails in target resolution BEFORE daemon release, cleanup or lifecycle mutation (manager.rs:628-656, 3630-3647); it prints every open candidate as --started-tx <TX_ID> (<kind>); tokenless historical closed-record close remains a no-op.
-- Removing the --merge-sha fence does NOT leave another tokenless live-selection path. Verified.
-- Normal uninterrupted and nested recovery associations accumulate correctly through run_ids; non-worker runs correctly skip the association.
-- run_ids is unbounded but its ordered-set iteration is not a material hot-path regression at realistic recovery counts, and globally generated run ids do not create cross-generation overlap absent a forged ledger or an identity collision.
-- The TASK-WGXKD.1 capability-refusal operator path is recoverable: preflight happens before commit/output mutation, the lease stays live, tokenless close prints the generation token, and exact-token close can release it.
-
 * IN_REVIEW TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
 :PROPERTIES:
 :ID: TASK-6FNAY

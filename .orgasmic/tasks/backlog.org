@@ -1597,179 +1597,6 @@ Break the removal into stages that can each land and gate independently, e.g.: (
 ** Non-goals
 Do not remove anything. Do not edit architecture.org. Do not rewrite tx or done.org. No source changes beyond a throwaway experiment for question 6 (which must be reverted). The output is a report and a decision draft.
 
-* BACKLOG TASK-Q07Y5 WGXKD.2 fix round: bound writer shutdown and derive ExitTimeOut from the real budget    :dispatch:daemon:cli:fix:
-:PROPERTIES:
-:ID: TASK-Q07Y5
-:PRIORITY: P0
-:test_cmd: cargo test -p orgasmic-cli
-:write_scope: crates/orgasmic-cli/src/daemon_service.rs crates/orgasmic-cli/src/daemon_lifecycle.rs crates/orgasmic-cli/tests/daemon_lifecycle.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/writer.rs
-:END:
-
-Fix round for the reviewer BLOCK SHIP on TASK-WGXKD.2 (merged `6a518f3`).
-Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
-run-20260728T103240, reported tx-20260728-orgasmic-3136, closed
-tx-20260728-orgasmic-3137.
-
-The merged change is NOT reverted. Its central claim held under review: `try_admit`
-checks `closed` and inserts the admission under the same `watch::Sender` write
-lock, `post_run_release` acquires it before its first await, the admission moves
-into the detached task so cancellation retains ownership through `Drop`, and no
-sole handle is taken before a cancellable await. `daemon restart` does parse the
-real `/daemon/restart` response with a 40s client ceiling, SIGTERM and Ctrl+C both
-route through `RunningDaemon.shutdown`, and the macOS plist is rewritten on every
-service start (`start_macos_launch_agent` writes it before bootstrap), not only on
-install. All independent gates exited 0 at `ca3f9df`.
-
-What follows is what the round claimed and did not establish.
-
-** 1. HIGH — `ExitTimeOut 60` is not larger than the worst-case shutdown, because
-   half of that shutdown has no budget at all
-
-`crates/orgasmic-cli/src/daemon_service.rs:707-727`,
-`crates/orgasmic-daemon/src/lib.rs:665-688`,
-`crates/orgasmic-daemon/src/writer.rs:513-522`.
-
-After SIGTERM, `RunningDaemon` waits up to 20s for release finalizations and then
-calls `WriterHandle::shutdown().await`. That call queues behind prior writer
-commands and awaits its reply **with no timeout**. `RESTART_WRITER_DRAIN_TIMEOUT`
-bounds only the pre-stop marker, not `WriterHandle::shutdown`.
-
-Concrete failure: a terminal-tx append is still blocked in writer I/O or fsync
-when the 20s release drain expires; shutdown then waits behind that append, and
-launchd sends SIGKILL at 60s while the append is still non-durable. That
-recreates the released-but-unreported loss the whole WGXKD family exists to
-prevent.
-
-The comment at daemon_service.rs:707 reasons "drain (20s) + writer shutdown < 60",
-but the second term is unbounded, so the inequality is unprovable rather than
-generous. The budget test added in this round checks 40 > 20 + 5 and 35 > 20 — it
-never proves the plist timeout covers writer shutdown.
-
-**This is live on the operator's machine right now.** The plist was rewritten with
-`ExitTimeOut 60` on 2026-07-28 (tx-20260728-orgasmic-3118); the window is wider
-than it was, and still not closed.
-
-Required: give writer shutdown an explicit finite budget and a durable timeout
-outcome, then **derive** the service-manager timeout from release drain + writer
-shutdown + margin rather than hard-coding 60. If the derived number differs from
-60, the plist must carry the derived one, and a test must assert the plist value
-is the derived value — not a literal.
-
-** 2. LOW — the production lifecycle composition still has no end-to-end regression
-
-`crates/orgasmic-cli/src/daemon_lifecycle.rs:1498-1563`,
-`crates/orgasmic-cli/tests/daemon_lifecycle.rs:99-181`.
-
-The >5s test uses a stand-in HTTP server and stops after parsing its response; the
-SIGTERM test has no in-flight release. Both pass even if the real `daemon restart`
-sequence parses the drain response and then has launchd cut off the old daemon
-during writer shutdown — which is exactly finding 1.
-
-Required: drive the actual lifecycle restart path with a release lasting beyond
-five seconds, including service stop and replacement bind. Testing the HTTP wait
-and the SIGTERM routing in isolation is what let finding 1 through.
-
-** Acceptance
-
-- `WriterHandle::shutdown` has a finite budget and a defined outcome on timeout;
-  the outcome is durable or recoverable, not silent.
-- The macOS `ExitTimeOut` is derived from the drain and writer budgets, and a test
-  asserts the rendered plist carries the derived value.
-- A SIGTERM test holds a terminal-tx append in flight through the release timeout
-  and proves either durability before exit, or a durable run-specific recovery
-  record written before the watchdog can kill the daemon.
-- An end-to-end restart regression covers service stop and replacement bind with a
-  release that outlasts five seconds.
-
-** Non-goals
-
-- Do not revert `6a518f3`. Its atomic-admission fix is sound and reviewed.
-- Reviewer finding 2 (old CLI → new daemon terminal-tx race) is **out of scope**
-  and filed separately. It is pre-existing from TASK-WGXKD.1 and the reviewer
-  states it does not block this round.
-
-* BACKLOG TASK-QSSQH C0XMR fix round: a genuine RunFail must survive a later worker finalize    :daemon:stage:fix:
-:PROPERTIES:
-:ID: TASK-QSSQH
-:PRIORITY: P0
-:test_cmd: cargo test -p orgasmic-daemon
-:write_scope: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs
-:END:
-
-Fix round for the reviewer BLOCK SHIP on TASK-C0XMR (merged `0533735`).
-Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
-run-20260728T103249, closed tx-20260728-orgasmic-3139.
-
-The merged change is NOT reverted. What it got right, confirmed by review:
-session ordering on the normal path is persisted JSONL order and the
-implementation does **not** compare wall-clock timestamps; the same outcome
-function serves grill, architect and plan, so the fix is not architect-specific
-and does not depend on `architector.done`; duplicate CLI finalize is already
-convergent at the release/tx boundary (release removes the live run, retries
-verify the durable worker-finalize tombstone, the terminal tx has a deterministic
-request id) — no idempotence defect exists. All gates passed, including the real
-production-path test `stage_architect_finalize_from_orgasmic_run_id_on_main`.
-
-The defect is the one the brief named as worse than the original bug, and it is
-in this diff.
-
-** HIGH — a genuine terminal failure followed by a worker finalize is turned green
-
-`crates/orgasmic-daemon/src/api.rs:6098,6141-6149`.
-
-`DriverEvent::RunFail` is a real failure: the production drain maps it to
-`ReleaseOutcome::Failed` and stores it on the run
-(`supervisor.rs:3429-3463`). Explicit release deliberately waits for that drain
-and persists the stored terminal outcome, so a finalize racing a queued `RunFail`
-produces the authoritative shape
-`Release { outcome: Failed, finalized_by_worker: true }`
-(`supervisor.rs:2181-2228`).
-
-The new scan sets `pending_failure` and then clears it **unconditionally** on
-`finalized_by_worker`, inspecting neither the failure kind nor the release
-outcome, and returns `StageOutcome::Completed`. The stage watcher then writes
-`<stage>.completed` for a run the supervisor classified as failed.
-
-The added negative test does not cover the claimed case:
-`stage_outcome_fails_when_a_fatal_driver_error_has_no_worker_finalize_after_it`
-uses `finalized_by_worker: false`, while the adversarial case is failure **plus**
-finalize.
-
-Required (reviewer's direction 1): make semantic failure sticky across worker
-finalize. At minimum `RunFail` must survive a later finalize. For fatal driver
-errors, persist enough release-boundary or classification data to suppress only
-the errors *caused by* the finalize teardown, rather than clearing every earlier
-failure. Add a regression for
-`RunFail -> Release { outcome: Failed, finalized_by_worker: true }`, plus a
-production-path race test.
-
-** Open question the reviewer raised, and it is the crux
-
-What durable session event should identify the finalize-admission boundary? The
-trailing release cannot distinguish a queued genuine `RunFail` from a fatal error
-caused by teardown, because **both are drained before that release**. Answer this
-explicitly before writing the fix; a suppression rule that cannot name its
-boundary will get one of the two cases wrong. Record the answer in the task or a
-decision, not only in a code comment.
-
-** Acceptance
-
-- A run with a queued `RunFail` that is then finalized by its worker is recorded
-  as failed, not completed.
-- A teardown-induced error after a clean finalize is still suppressed — the
-  original C0XMR symptom must not regress.
-- Both cases have regressions, and the failure case exercises
-  `finalized_by_worker: true`.
-- The finalize-admission boundary is named and durable, not inferred from
-  ordering alone.
-
-** Non-goals
-
-- Do not revert `0533735`.
-- Reviewer finding 2 (a live stage loses its completion watcher across daemon
-  restart) is **out of scope** and filed separately. It is pre-existing and
-  outside this diff.
-
 * BACKLOG TASK-37TAF An old CLI releasing with no terminal_tx still loses it on acp-stdio; only one skew direction is fail-closed    :dispatch:daemon:defect:skew:
 :PROPERTIES:
 :ID: TASK-37TAF
@@ -1885,3 +1712,127 @@ never has one, not to weaken the branch for everybody.
 - Do not fold this into the C0XMR fix round (TASK-QSSQH). That round owns the
   failure-stickiness rule; this one owns watcher recovery. They touch the same
   file and must not be dispatched concurrently.
+
+* BACKLOG TASK-1T3FZ 6AYEJ.3 fix round: destructive close must hold a daemon-owned worktree reservation across the liveness decision    :dispatch:cli:daemon:fix:race:
+:PROPERTIES:
+:ID: TASK-1T3FZ
+:PRIORITY: P0
+:test_cmd: cargo test -p orgasmic-cli
+:write_scope: crates/orgasmic-cli/src/manager.rs crates/orgasmic-cli/tests/dispatch.rs crates/orgasmic-cli/tests/shipped_conventions.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/src/api.rs
+:END:
+
+Fix round for the reviewer BLOCK SHIP on TASK-6AYEJ.3 (merged `edc68b4`).
+Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
+run-20260728T103245, closed tx-20260728-orgasmic-3146.
+
+The merged change is NOT reverted, and its enumeration work held under review.
+Confirmed: every reachable replacement constructor associates —
+`reattach_tmux` preserves the origin id (`api.rs:8085-8135`), and fresh
+`resume_native_fork` / `start_recovery_run`, pending-plan reattach,
+committed-claim replay and pending-to-committed replay all call the replacement
+association helper (`api.rs:7664-7711,8377-8508`). No missing path was found.
+Generation binding from `.1` and mandatory close from `.2` both still hold: an
+exact `--started-tx` selects one generation, a tokenless close refuses every open
+candidate (`manager.rs:3650-3705`), and a present-but-unmatched report `RUN_ID`
+still returns without task fallback (`manager.rs:3951-3960`). The real-daemon
+crash matrix passed 3/3 including the exactly-one-durable-association assertion.
+
+The refusal-to-clean-up-beneath-a-live-run half is what did not hold.
+
+** 1. HIGH — destructive close has a recovery/acquire TOCTOU across a process
+   boundary, and can still remove a live worker's worktree (in this diff)
+
+`crates/orgasmic-cli/src/manager.rs:723-791`,
+`crates/orgasmic-daemon/src/supervisor.rs:893-905,2763-2885`.
+
+`dispatch-close` releases the recorded run (or takes its 404), optionally
+snapshots `/runs` at lines 747-750, and only then runs
+`cleanup_dispatch` / `git worktree remove` at line 791 — **in the CLI process**.
+Nothing reserves the normalized worktree in daemon state across that gap.
+
+A concurrent `POST /runs/:origin/recover` can acquire a replacement after the
+release/snapshot and before local removal. `Supervisor::acquire_impl` blocks only
+daemon-owned `cleanup_reservations`, and this close path installs none. The close
+then removes the directory beneath a live replacement — precisely the TASK-8W30B
+symptom this round was filed to prevent, and precisely the shape observed on
+2026-07-28 when a leaked session still named
+`.orgasmic/tmp/dispatch/task-C0XMR/worktree` after `dispatch-close` had removed
+it (tx-20260728-orgasmic-3117).
+
+Critically: **this is not cured by removing `await` points.** The competing
+recovery runs in another request, in another process. An in-process check-then-act
+audit will conclude the code is safe and be wrong.
+
+The daemon already demonstrates the required authority boundary:
+`prepare_dispatch_cleanup` installs a worktree reservation **under the supervisor
+lock, before any await**, and retains it through filesystem mutation. Follow that.
+
+The new integration tests (`crates/orgasmic-cli/tests/dispatch.rs:2887-3098`)
+cover a replacement already live before close, and a static unassociated run
+before the snapshot. Neither interleaves a recovery **between the liveness
+decision and the removal**, which is the only ordering that reproduces this.
+
+Required (reviewer direction 1): move destructive generation-close into a
+daemon-owned operation, or extend the existing dispatch cleanup endpoint, that
+installs a normalized-worktree cleanup reservation under the supervisor lock
+before releasing or declaring absent any run, and holds it until worktree and
+branch cleanup completes. Recovery and acquire must observe that reservation. Add
+a deterministic hook test that starts recovery **after** the liveness decision and
+**before** removal.
+
+** 2. HIGH — a dispatch with no recorded RUN_ID fetches authoritative live state,
+   discards it, and cleans up anyway (pre-existing)
+
+`crates/orgasmic-cli/src/manager.rs:770-791`.
+
+Real shape: `manager.dispatch_started` is durable, the daemon acquire succeeded,
+and the CLI died before appending `run.created`. The open record then has
+`run_id=None` while a worker is live in its worktree. The legacy branch calls
+`fetch_live_runs` **only to prove the daemon is reachable**, ignores the returned
+runs, and proceeds to `cleanup_dispatch`. The worker stays live while its worktree
+is removed.
+
+This violates the rule the brief stated explicitly: undetermined liveness must
+refuse, not permit. It predates `edc68b4` so it would not independently block the
+round — but finding 1 already does, and the fix is the same reservation path.
+
+Required (reviewer direction 2): route no-`RUN_ID` records through the same
+reservation and ownership check. Never treat daemon reachability as proof that an
+unidentified live worker is absent.
+
+** 3. LOW — the semantic dangerous-command guard reads only the first `git` token
+   per segment (in this diff)
+
+`crates/orgasmic-cli/tests/shipped_conventions.rs:168-200`.
+
+`tokens.iter().position(...)` selects one `git`, classifies only what follows it,
+and never continues to a later invocation. Compiled probes of the production
+helper returned:
+
+- `git worktree remove $WT --force` => 1 hit
+- `run git status, then git worktree remove $WT --force` => 0 hits
+- `git \` + continued `worktree remove $WT --force` => 0 hits
+- `/usr/bin/git worktree remove $WT --force` => 0 hits
+
+So any ordinary safe `git` mention before a forced removal makes the guard
+vacuous. In the current convention the marked forced removal is **not** what keeps
+the guard green — the later `git branch -D` after `&&` is what creates the hit.
+The guard is passing by accident.
+
+Required (reviewer direction 3): iterate every candidate `git` invocation in each
+segment, or use a quote/continuation-aware tokenizer; normalize path-qualified
+`git`; ignore structural continuation tokens. Add the three zero-hit probes above
+as regressions.
+
+** Acceptance
+
+- A recovery interleaved between the close's liveness decision and its removal
+  cannot remove the worktree — proven by a deterministic hook test, not by
+  reasoning about `await` points.
+- A no-`RUN_ID` open record with a live worker refuses cleanup.
+- The three zero-hit probes above become hits.
+
+** Non-goals
+
+- Do not revert `edc68b4`; its replacement-association work is sound and reviewed.
+- Do not weaken generation binding or the mandatory-close rule from `.1` and `.2`.
