@@ -3797,46 +3797,46 @@ mod tests {
         let DriverEvent::Ready { capabilities, .. } = ev else {
             panic!("expected Ready, got {ev:?}");
         };
-        // Either a real session is live, or the SDK degraded honestly with a
-        // recorded reason — never a silent fake.
+        // A compatible rmux on PATH is not proof that a session was acquired:
+        // `run_live_session` turns every SDK/daemon startup error into an inert
+        // `Ready`. Degrading here means this test never exercised its named
+        // behaviour, so it is a failure, not a second honest outcome
+        // (TASK-R2HDN). Release first so the assert cannot leak a session.
         if capabilities["inert"] == true {
+            s.control.release("cleanup").await.unwrap();
+            assert_not_degraded("live_rmux_session_lifecycle_when_available", true);
+        }
+        let session = capabilities["session"]
+            .as_str()
+            .expect("live rmux run reports its session");
+        let rmux_bin = probe.path.as_deref().unwrap_or(RMUX_BINARY);
+        let mouse = tokio::process::Command::new(rmux_bin)
+            .args(["show-options", "-v", "-t", session, "mouse"])
+            .output()
+            .await
+            .expect("query rmux mouse option");
+        assert!(
+            mouse.status.success(),
+            "show-options mouse failed: {}",
+            String::from_utf8_lossy(&mouse.stderr).trim()
+        );
+        assert_eq!(String::from_utf8_lossy(&mouse.stdout).trim(), "on");
+        // Web Share proof: a spectator URL and/or operator URL, or an exact
+        // recorded limitation. Never expose a raw operator token.
+        let ws = &capabilities["web_share"];
+        assert_eq!(ws["attempted"], true);
+        let produced_url =
+            ws["spectator_url"].is_string() || ws["operator_url_redacted"].is_string();
+        assert!(
+            produced_url || ws["limitation"].is_string(),
+            "web-share must produce a URL or record a limitation: {ws}"
+        );
+        // Operator material is only ever surfaced redacted.
+        if let Some(redacted) = ws["operator_url_redacted"].as_str() {
             assert!(
-                capabilities["inert_reason"].is_string(),
-                "inert live run must carry a reason"
+                redacted.contains("operator-token-redacted"),
+                "operator url must be redacted: {redacted}"
             );
-        } else {
-            let session = capabilities["session"]
-                .as_str()
-                .expect("live rmux run reports its session");
-            let rmux_bin = probe.path.as_deref().unwrap_or(RMUX_BINARY);
-            let mouse = tokio::process::Command::new(rmux_bin)
-                .args(["show-options", "-v", "-t", session, "mouse"])
-                .output()
-                .await
-                .expect("query rmux mouse option");
-            assert!(
-                mouse.status.success(),
-                "show-options mouse failed: {}",
-                String::from_utf8_lossy(&mouse.stderr).trim()
-            );
-            assert_eq!(String::from_utf8_lossy(&mouse.stdout).trim(), "on");
-            // Web Share proof: a spectator URL and/or operator URL, or an exact
-            // recorded limitation. Never expose a raw operator token.
-            let ws = &capabilities["web_share"];
-            assert_eq!(ws["attempted"], true);
-            let produced_url =
-                ws["spectator_url"].is_string() || ws["operator_url_redacted"].is_string();
-            assert!(
-                produced_url || ws["limitation"].is_string(),
-                "web-share must produce a URL or record a limitation: {ws}"
-            );
-            // Operator material is only ever surfaced redacted.
-            if let Some(redacted) = ws["operator_url_redacted"].as_str() {
-                assert!(
-                    redacted.contains("operator-token-redacted"),
-                    "operator url must be redacted: {redacted}"
-                );
-            }
         }
         s.control.release("cleanup").await.unwrap();
     }
@@ -3872,12 +3872,12 @@ mod tests {
         let DriverEvent::Ready { capabilities, .. } = ev else {
             panic!("expected Ready, got {ev:?}");
         };
-        // If the SDK degraded to inert (no daemon), there is nothing to stream;
-        // the inert path is covered by other tests.
+        // A degraded acquisition has nothing to stream, so this test would pass
+        // without ever exercising the line stream. That is the false green
+        // TASK-R2HDN removes: fail instead of returning early.
         if capabilities["inert"] == true {
-            assert!(capabilities["inert_reason"].is_string());
             s.control.release("cleanup").await.unwrap();
-            return;
+            assert_not_degraded("live_rmux_streams_output_and_completes_on_exit", true);
         }
 
         let mut saw_text = false;
@@ -3985,10 +3985,12 @@ mod tests {
         let DriverEvent::Ready { capabilities, .. } = ev else {
             panic!("expected Ready, got {ev:?}");
         };
+        // No live pane means no exported environment to read back; a degraded
+        // acquisition must fail this test rather than skip its assertion
+        // (TASK-R2HDN).
         if capabilities["inert"] == true {
-            assert!(capabilities["inert_reason"].is_string());
             s.control.release("cleanup").await.unwrap();
-            return;
+            assert_not_degraded("live_rmux_session_exports_orgasmic_run_id", true);
         }
 
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
@@ -4030,9 +4032,15 @@ mod tests {
         let DriverEvent::Ready { capabilities, .. } = ev else {
             panic!("expected Ready, got {ev:?}");
         };
+        // Without a live pane there is no process exit to observe, so this test
+        // must fail rather than report success on a degraded session
+        // (TASK-R2HDN).
         if capabilities["inert"] == true {
             s.control.release("cleanup").await.unwrap();
-            return;
+            assert_not_degraded(
+                "live_rmux_process_exit_emits_run_complete_without_text_chunks",
+                true,
+            );
         }
 
         let mut saw_text = false;

@@ -2,11 +2,47 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
-use orgasmic_drivers::modes::rmux::test_tooling::live_session_guard;
+use orgasmic_drivers::modes::rmux::test_tooling::{
+    assert_not_degraded, assert_required_test_tooling, live_session_guard, skip_test_if_missing,
+    test_environment_lock, ToolRequirement,
+};
 use orgasmic_drivers::{
-    probe_rmux_binary, DriverConfig, DriverContext, RmuxDriver, RunKind, ShellAdapter, WorkerDriver,
+    probe_rmux_binary, DriverConfig, DriverContext, RmuxBinaryProbe, RmuxDriver, RunKind,
+    ShellAdapter, WorkerDriver,
 };
 use serde_json::json;
+
+// orgasmic:task_R2HDN
+/// How many tests in this binary cannot run without a usable `rmux`. Both live
+/// tests below are gated; the sentinel itself is not. Adding another gated test
+/// to this file means bumping this number, nothing else.
+const RMUX_GATED_TESTS: usize = 2;
+
+/// Probe `rmux` under the shared environment lock, so a test that mutates
+/// process-global `PATH` can never make this binary see a missing tool.
+/// `blocking_lock` panics inside a runtime, hence the two spellings.
+fn probe_rmux_under_environment_lock() -> RmuxBinaryProbe {
+    let _environment = test_environment_lock().blocking_lock();
+    probe_rmux_binary()
+}
+
+async fn probe_rmux_under_environment_lock_async() -> RmuxBinaryProbe {
+    let _environment = test_environment_lock().lock().await;
+    probe_rmux_binary()
+}
+
+// orgasmic:task_R2HDN
+/// The one sentinel this default-running binary was missing. Without it, a host
+/// with no `rmux` produced a clean pass from two tests that printed `SKIPPED`
+/// and returned — the exact false green TASK-RRT4T set out to remove.
+#[test]
+fn required_test_tooling_is_present() {
+    assert_required_test_tooling(&[ToolRequirement::new(
+        "rmux",
+        RMUX_GATED_TESTS,
+        probe_rmux_under_environment_lock().usable(),
+    )]);
+}
 
 struct SessionGuard {
     rmux_bin: String,
@@ -42,19 +78,23 @@ async fn release_reaps_live_rmux_session() {
     let _live_guard =
         live_session_guard().owning(format!("run-release-reap-test-{}", std::process::id()));
     // Opt-in gate lane: unlike the ordinary developer smoke, this must fail
-    // closed when its declared rmux prerequisite is absent.
+    // closed when its declared rmux prerequisite is absent — even if the
+    // binary-level sentinel was explicitly waived with
+    // ORGASMIC_ALLOW_MISSING_TOOLS=rmux.
     let rmux_required = std::env::var("ORGASMIC_REQUIRE_LIVE_RMUX").as_deref() == Ok("1");
-    let probe = probe_rmux_binary();
-    if !probe.found || !probe.compatible {
+    let probe = probe_rmux_under_environment_lock_async().await;
+    if skip_test_if_missing(
+        "release_reaps_live_rmux_session",
+        &[("rmux", probe.usable())],
+    ) {
         assert!(
             !rmux_required,
             "ORGASMIC_REQUIRE_LIVE_RMUX=1 but compatible rmux is unavailable ({:?})",
             probe.version_error
         );
-        eprintln!(
-            "SKIPPED release_reaps_live_rmux_session: compatible rmux unavailable ({:?})",
-            probe.version_error
-        );
+        // `skip_test_if_missing` has printed the per-test diagnostic for
+        // `--nocapture`; `required_test_tooling_is_present` is what fails the
+        // binary, so this return can no longer be a silent green.
         return;
     }
     let rmux_bin = probe.path.expect("found rmux probe reports its path");
@@ -87,17 +127,13 @@ async fn release_reaps_live_rmux_session() {
     let DriverEvent::Ready { capabilities, .. } = ready else {
         panic!("expected rmux Ready, got {ready:?}");
     };
+    // A usable rmux binary is not an acquired session: `run_live_session`
+    // converts every SDK/daemon startup error into an inert `Ready`. There is
+    // no session to release or reap on that path, so reporting success would be
+    // a false green — fail unconditionally, not only under the opt-in gate
+    // (TASK-R2HDN).
     if capabilities["inert"] == true {
-        assert!(
-            !rmux_required,
-            "ORGASMIC_REQUIRE_LIVE_RMUX=1 but acquire was inert ({})",
-            capabilities["inert_reason"]
-        );
-        eprintln!(
-            "SKIPPED release_reaps_live_rmux_session: rmux daemon unavailable ({})",
-            capabilities["inert_reason"]
-        );
-        return;
+        assert_not_degraded("release_reaps_live_rmux_session", true);
     }
     let session = capabilities["session"]
         .as_str()
@@ -154,13 +190,11 @@ fn rmux_session_exists_blocking(rmux_bin: &str, session: &str) -> bool {
 /// runtime, and this proves it on the plainest possible path.
 #[test]
 fn live_session_guard_reaps_registered_session_when_the_body_panics() {
-    let probe = probe_rmux_binary();
-    if !probe.found || !probe.compatible {
-        eprintln!(
-            "SKIPPED live_session_guard_reaps_registered_session_when_the_body_panics: \
-             compatible rmux unavailable ({:?})",
-            probe.version_error
-        );
+    let probe = probe_rmux_under_environment_lock();
+    if skip_test_if_missing(
+        "live_session_guard_reaps_registered_session_when_the_body_panics",
+        &[("rmux", probe.usable())],
+    ) {
         return;
     }
     let rmux_bin = probe.path.expect("found rmux probe reports its path");

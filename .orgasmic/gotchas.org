@@ -115,10 +115,19 @@ skip only printed to stderr, which =cargo test= swallowed without =--nocapture=.
 
 Measured 2026-07-26 on one commit, one machine, one variable: with =rmux= on
 PATH the daemon suite is =502 passed / 2 failed= in 106 s; with =rmux= hidden
-it is =504 passed / 0 failed= in 22 s. A dispatched worker inherits the daemon's
-launchd PATH, which does not carry =~/.local/bin=, so workers get the second row
-and the operator gets the first. Three worker over-reports in one day trace to
-this and nothing else.
+it is =504 passed / 0 failed= in 22 s. Read that second row as what it is: a
+reproduced failure *simulation*, produced by hiding =rmux= from PATH by hand. It
+is not a measurement taken inside a dispatched worker.
+
+The mechanism this entry originally claimed — "a dispatched worker inherits a
+launchd PATH that does not carry =~/.local/bin=" — was measured false on this
+machine on 2026-07-28 (TASK-R2HDN): the LaunchAgent plist embeds the PATH
+captured at =daemon start=, =ps eww= on the live daemon shows =~/.local/bin= with
+an executable =rmux= in it, and =command -v rmux= succeeds inside a dispatched
+worker. Do not repeat that diagnosis. Why worker and manager test counts have
+historically diverged is still an open question; settle it by capturing the
+=required_test_tooling_is_present= result and per-test execution evidence from
+inside a real dispatched worker, not by inferring a PATH difference.
 
 The audit footprint was fourteen files across =orgasmic-daemon=,
 =orgasmic-drivers=, and =orgasmic-cli=, not just =api.rs=. Twelve contained
@@ -138,9 +147,11 @@ tool and gated-test count, so it cannot be mistaken for a fully exercised run.
 
 Manager rule: every test claim for these crates must include either the
 =required_test_tooling_is_present= result or the visible
-=ORGASMIC_ALLOW_MISSING_TOOLS= warning and counts. For the artifact/regenerate
-tests, =orgasmic-rmux-run-*= session growth remains useful corroboration: zero
-growth means the rmux path did not execute. Durable invariant as of TASK-RRT4T.
+=ORGASMIC_ALLOW_MISSING_TOOLS= warning and counts. Do not substitute
+=orgasmic-rmux-run-*= session counts for that: since TASK-Z3093 made release
+unconditional, zero net growth no longer distinguishes "the test skipped" from
+"the test ran and released its session". Durable invariant as of TASK-RRT4T,
+amended by TASK-R2HDN.
 
 ** Test daemon port isolation from checkout-resident production daemon
 Tests that spawn isolated test daemons must ensure the daemons don't default to
