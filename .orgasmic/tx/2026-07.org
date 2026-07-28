@@ -34269,3 +34269,15 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+
+* TX 2026-07-28 Tue 12:39:21 note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3237
+:TIME:         [2026-07-28 Tue 12:39:21]
+:TYPE:         note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Runtime reinstalled from source at HEAD (69CW6 merged). package-runtime.sh run with ORGASMIC_CODESIGN_IDENTITY set so the script signed the staged binary itself; designated requirement matches the incumbent byte for byte (identifier com.theaspirational.orgasmic, certificate root a70531007cd128ff), so the TCC grant carried. Installed by fresh-inode rename (inode 484528412 -> 485579122), never overwritten in place. daemon stop/start run from the INSTALLED binary. Live plist ExitTimeOut is now the derived 50, was 60. Daemon pid 16854, boot 383ff1a7, 5 projects, 0 parse errors — TCC access to ~/Documents confirmed intact by a successful reindex.
+:END:
