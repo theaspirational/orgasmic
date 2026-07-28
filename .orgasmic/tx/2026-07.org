@@ -37833,3 +37833,156 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       TCTTD merged and used in anger same-day; these are the steps that make replay bind by default
 :END:
+
+* TX 2026-07-28 Tue 20:09:40 task.property_updated TASK-DTCBP
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3455
+:TIME:         [2026-07-28 Tue 20:09:40]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DTCBP
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       prioritize follow-up integration work
+:PRIORITY:     P2
+:END:
+
+* TX 2026-07-28 Tue 20:09:42 task.state_transitioned TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3456
+:TIME:         [2026-07-28 Tue 20:09:42]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-DJ1WV to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 20:09:44 manager.dispatch_started TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3457
+:TIME:         [2026-07-28 Tue 20:09:44]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-dj1wv/worktree
+:BRANCH:       task-dj1wv-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-dj1wv/brief-dj1wv.md
+:STARTED_AT:   [2026-07-28 Tue 20:09:44]
+:LIVENESS:     afdc72698e688f4d681121fc3a114b469a3c1cca
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: rotation refill after TCTTD merge: flake registry with signatures so red means something mechanically
+:END:
+
+* TX 2026-07-28 Tue 20:09:44 run.created TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3458
+:TIME:         [2026-07-28 Tue 20:09:44]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-DJ1WV-implementer-20260728T200944.jsonl
+:REASON:       rotation refill after TCTTD merge: flake registry with signatures so red means something mechanically
+:RUN_ID:       run-20260728T200944-4ecac781923d4066bd67580aec4f7265
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-dj1wv/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-dj1wv/brief-dj1wv.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-dj1wv/brief-dj1wv-d66751b65c94419481da50a639a0eb4d-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-dj1wv/brief-dj1wv-d66751b65c94419481da50a639a0eb4d-stdout.log
+:DISPATCH_ATTEMPT: d66751b65c94419481da50a639a0eb4d
+:DISPATCH_TX:  tx-20260728-orgasmic-3457
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 20:17:24 implementer.reported TASK-MFJZ7
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3459
+:TIME:         [2026-07-28 Tue 20:17:24]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MFJZ7
+:RUN_ID:       run-20260728T200329-66cdb4b2006440129333a6e349832225
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-mfjz7/worktree
+:SHA:          49d5385e81c2a58a8abc9eadf9402fef29c86bd2
+:END:
+
+* TX 2026-07-28 Tue 20:20:43 implementer.done TASK-MFJZ7
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3460
+:TIME:         [2026-07-28 Tue 20:20:43]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MFJZ7
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    da05c7a
+:BRANCH:       task-mfjz7-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3449
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 20:20:47 task.state_transitioned TASK-MFJZ7
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3461
+:TIME:         [2026-07-28 Tue 20:20:47]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MFJZ7
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-MFJZ7 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 20:21:11 task.created TASK-0DANB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3462
+:TIME:         [2026-07-28 Tue 20:21:11]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0DANB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       MFJZ7 residual risk 1: daemon-side billed tests have only the ignore lock and availability-worded reasons
+:END:
+
+* TX 2026-07-28 Tue 20:21:38 task.property_updated TASK-0DANB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3463
+:TIME:         [2026-07-28 Tue 20:21:38]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0DANB
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       default-safe today; single-lock and wording hazard
+:PRIORITY:     P2
+:END:
