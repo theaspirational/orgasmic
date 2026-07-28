@@ -34493,3 +34493,72 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+
+* TX 2026-07-28 Tue 13:19:44 note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3248
+:TIME:         [2026-07-28 Tue 13:19:44]
+:TYPE:         note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       INCIDENT + revert. TASK-Q07Y5 (merged 0829c34) wrapped the whole axum serve future in the 10s connection-drain timeout at lib.rs:666 — tokio::time::timeout(budgets.connection_drain, serve) — instead of bounding only the post-signal drain. axum's serve future completes only after shutdown is requested, so the daemon killed a healthy server exactly 10.00s after it began listening, on every boot, then ran graceful_shutdown and exited; launchd KeepAlive restarted it, and each restart cycled the rmux LaunchAgent and destroyed every live session, killing three dispatches (VB9DQ, S0QRM, JQARS) within 15-35s of creation. Proved it was the binary and not launchd by running foreground serve with the LaunchAgent booted out: listening 13:11:19.125, drain-budget error 13:11:29.128. Proved the server was healthy during that window: curl to /api/daemon/status returned 401, so shutdown had not been signalled. Reverted as 0ac88d7; rebuilt, resigned via the script, installed by fresh-inode rename; daemon 87220 now stable across 60s+ with 5 projects and 0 parse errors. ExitTimeOut is back to 60. No daemon test runs a daemon for longer than 10s, which is why the whole suite stayed green.
+:END:
+
+* TX 2026-07-28 Tue 13:20:17 task.created TASK-R74E8
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3249
+:TIME:         [2026-07-28 Tue 13:20:17]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R74E8
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Q07Y5 merged 0829c34 killed a healthy daemon 10s after every boot; reverted 0ac88d7. No test runs a daemon longer than 10s, so every gate was green
+:END:
+
+* TX 2026-07-28 Tue 13:20:25 task.state_transitioned TASK-Q07Y5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3250
+:TIME:         [2026-07-28 Tue 13:20:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q07Y5
+:TARGET:       .orgasmic/tasks/cancelled.org
+:REASON:       merged 0829c34 then reverted 0ac88d7 the same day: it wrapped the whole axum serve future in the 10s drain timeout, killing a healthy daemon 10s after every boot. Redone as TASK-R74E8
+:FROM_STATE:   in_review
+:TO_STATE:     cancelled
+:END:
+
+* TX 2026-07-28 Tue 13:20:26 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3251
+:TIME:         [2026-07-28 Tue 13:20:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       its fix round TASK-Q07Y5 was reverted; reopened until TASK-R74E8 lands
+:FROM_STATE:   done
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-28 Tue 13:20:26 task.property_updated TASK-ATAXN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3252
+:TIME:         [2026-07-28 Tue 13:20:26]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ATAXN
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       escalated: observed firing continuously during the Q07Y5 incident — the predecessor held the home lock with its listener already closed, so every replacement refused to start with 'incumbent is not healthy'
+:PRIORITY:     P0
+:END:
