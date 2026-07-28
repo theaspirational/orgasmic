@@ -35059,3 +35059,137 @@
 :REASON:       chain incomplete: WGXKD.1 merged, but WGXKD.2's fix round TASK-Q07Y5 was reverted 0ac88d7 after it killed the daemon every 10s; stays open until TASK-R74E8 lands
 :BLOCKED_BY:   TASK-R74E8
 :END:
+
+* TX 2026-07-28 Tue 14:44:20 graph.decision.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3281
+:TIME:         [2026-07-28 Tue 14:44:20]
+:TYPE:         graph.decision.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/decisions.org
+:REASON:       edited decision node dec_Y5MPK
+:NODE_ID:      dec_Y5MPK
+:END:
+
+* TX 2026-07-28 Tue 14:44:50 task.created TASK-F9VEZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3282
+:TIME:         [2026-07-28 Tue 14:44:50]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-F9VEZ
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-H0TYV: recorded cross-harness matrix follow-up
+:END:
+
+* TX 2026-07-28 Tue 14:45:04 task.created TASK-B6D8W
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3283
+:TIME:         [2026-07-28 Tue 14:45:04]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-B6D8W
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-H0TYV: recorded cross-harness matrix follow-up
+:END:
+
+* TX 2026-07-28 Tue 14:45:20 task.created TASK-2B215
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3284
+:TIME:         [2026-07-28 Tue 14:45:20]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-2B215
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-H0TYV: recorded cross-harness matrix follow-up
+:END:
+
+* TX 2026-07-28 Tue 14:45:35 task.created TASK-ZY259
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3285
+:TIME:         [2026-07-28 Tue 14:45:35]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZY259
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-H0TYV: unverified persistence-suppression flag found while recording the cross-harness matrix
+:END:
+
+* TX 2026-07-28 Tue 14:45:53 task.created TASK-E3K1B
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3286
+:TIME:         [2026-07-28 Tue 14:45:53]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-E3K1B
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-H0TYV: dec_Y5MPK items 5 and 6 name doctor as the owner; nothing implements it
+:END:
+
+* TX 2026-07-28 Tue 14:46:14 task.edited TASK-F9VEZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3287
+:TIME:         [2026-07-28 Tue 14:46:14]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-F9VEZ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-F9VEZ
+:NODE_ID:      TASK-F9VEZ
+:END:
+
+* TX 2026-07-28 Tue 14:46:29 task.edited TASK-SGRTX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3288
+:TIME:         [2026-07-28 Tue 14:46:29]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-SGRTX
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-SGRTX
+:NODE_ID:      TASK-SGRTX
+:END:
+
+* TX 2026-07-28 Tue 14:47:09 task.edited TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3289
+:TIME:         [2026-07-28 Tue 14:47:09]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-VB9DQ
+:NODE_ID:      TASK-VB9DQ
+:END:
+
+* TX 2026-07-28 Tue 14:48:52 implementer.reported TASK-R74E8
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3290
+:TIME:         [2026-07-28 Tue 14:48:52]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R74E8
+:RUN_ID:       run-20260728T142142-19bf425f4f0a4187afd7e6f3d4c57e6c
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-r74e8/worktree
+:SHA:          c70a0c3d3d9bf5999e3231b46bbeb6927aff4f15
+:END:

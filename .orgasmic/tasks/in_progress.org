@@ -1197,6 +1197,33 @@ codex the open question is session-id correlation rather than persistence.
 
 Lands together with TASK-Z8WEJ — same adapter, same live dispatch proves both.
 LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
+ITEM 5 CLOSED — CROSS-HARNESS MATRIX RECORDED [2026-07-28] by TASK-H0TYV (VB9DQ fix round). Inspected at HEAD 5a8ebc6; every claim below was re-verified against the tree rather than inherited from the review.
+
+| harness      | native persistence          | session-id owner        | pre-launch pin | NativeRuntime today | finder confidence |
+|--------------+-----------------------------+-------------------------+----------------+---------------------+-------------------|
+| claude       | on; never suppressed        | orgasmic (runtime_id)   | yes, verified  | emitted             | high              |
+| codex        | on; vendor-driven           | codex (thread.id)       | no slot        | none (trait default)| high / medium     |
+| cursor-agent | on; vendor-driven           | cursor (sessionId)      | no slot (ACP)  | none (trait default)| high / medium     |
+| hermes       | on; vendor-driven           | hermes (sessionId)      | no slot (ACP)  | none (trait default)| high / medium     |
+
+Two properties hold across all four and were checked by grep over the whole tree, not by reading one adapter:
+
+- No harness passes a persistence-suppression flag. The only occurrences of the `--no-session-persistence` family anywhere in the tree are a comment at `crates/orgasmic-drivers/src/adapters/claude.rs:216` explaining its removal and the regression assertion that it stays removed. One flag needs a second look and is filed as TASK-ZY259: codex sends `persistExtendedHistory: false` on every `thread/start` (`adapters/codex.rs:883`), uncommented and untested. Codex still writes rollouts with it set, so it is not the blanket kill switch claude's flag was, but nothing records what it does suppress.
+- `HarnessEventAdapter::native_runtime` is overridden in exactly two places: `adapters/claude.rs:168` and the delegating `modes/acp_stdio.rs:111`. Codex, cursor_acp and hermes therefore take the trait default `None` at `crates/orgasmic-drivers/src/trait.rs:248`.
+
+Per harness:
+
+claude — orgasmic mints the id before launch. `let session_id = ctx.identity.runtime_id.clone()` at `adapters/claude.rs:374`, passed as `--session-id`, recorded in `NativeRuntimeMeta` with `session_path`, `launch_argv` and `resume_argv`. Proven live on run run-20260727T131952 (`df92384b-fd23-423c-ab2c-131beb03db82`), transcript filename equals runtime_id. Finder resolves the deterministic `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` at high confidence. 652 JSONL under `~/.claude/projects` (measured 2026-07-28).
+
+codex — `thread.id` is read from the `thread/start` response in `on_ws_thread_started` (`adapters/codex.rs:198-206`) and surfaced only in `Ready.capabilities` (`:225`). `thread_start_params` (`:864-885`) has no id field, so there is nothing to pin. 1457 rollout JSONL under `~/.codex/sessions`. Follow-up TASK-F9VEZ.
+
+cursor-agent — `sessionId` is read from the `session/new` result (`adapters/cursor_acp.rs:288-292`), surfaced only in `Ready.capabilities` (`:320`). ACP defines `session/new` as the agent minting the id, so this is protocol, not implementation choice. 909 JSONL under `~/.cursor`. Follow-up TASK-B6D8W.
+
+hermes — `sessionId` is read from the `session/new` result (`adapters/hermes.rs:287-292`, method at `:327`), same ACP constraint. 82 JSONL under `~/.hermes/sessions`. Follow-up TASK-2B215.
+
+CONCLUSION: this is not claude-specific, and it is also not the same defect. Claude had persistence actively suppressed; the other three persist fine on their own. What all three lack is a recorded native identity, which is what recovery (`resume_native_fork`) and retro read, and what dec_Y5MPK item 6 attribution is defined on. None of them can satisfy dec_Y5MPK item 3 as written — "orgasmic pins the native session id before launch ... every transport must" — because their protocols have no slot for a client-supplied id. That contract question is recorded against TASK-SGRTX and is deliberately not answered here. The `doctor` reporting dec_Y5MPK items 5 and 6 name is filed as TASK-E3K1B.
+
+Item 5 asked for a check, not for the fixes. The check is done and recorded; the work it found is filed.
 
 * IN_PROGRESS TASK-H0TYV VB9DQ fix round: decide the retention distinction, record the harness matrix, and make the session-id regression able to fail :drivers:claude:sessions:fix:
 :PROPERTIES:

@@ -614,6 +614,17 @@ Acceptance is unchanged and is live-only: the argv of a live spawned process
 carries the composed flags, and the vendor transcript filename equals the run's
 runtime_id. A green test is not evidence for this task.
 LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, acp-stdio/claude/claude-opus-5/high. THE CLAUDE PATH IS FIXED AND PROVEN LIVE. Observed argv via ps and via the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high, versus the bare stdio_spawn list this task recorded as the defect. runtime_id df92384b-fd23-423c-ab2c-131beb03db82 equals the vendor transcript filename exactly, so both halves of the live-only acceptance are met; compare against runtime_id, not the 32-hex suffix of run_id, which is the attempt token. capabilities.simulated=false with endpoint="" confirms f5c6913 live. THIS TASK DOES NOT CLOSE. The dec_S18RH scope is unmet: upgrades_simulated_to_subprocess still exists at 13 sites across trait.rs, adapters/hermes.rs, adapters/codex.rs, modes/acp_stdio.rs and tests/driver_modes.rs, and the Simulated arm at modes/acp_stdio.rs:342-364 still spawns subprocess_from_stdio_spawn(spawn, ..) rather than the composed request. Claude is fixed because f5c6913 stopped its adapter returning Simulated on an empty endpoint; every other acp-stdio adapter still takes the Simulated-then-upgrade route, so the next adapter to compose argv inherits the same silent discard. What remains is the shared design change, not the claude symptom. Second discard named in the task is closed: subprocess_stream_json.rs now takes native_runtime from adapter.native_runtime() instead of hardcoding None.
+OPEN QUESTION RECORDED BY TASK-H0TYV [2026-07-28], not answered here and deliberately not answered by a claude-specific patch.
+
+When a provider mints the session id server-side, should the cross-harness session contract permit immediate handshake capture followed by a `NativeRuntime` event, or is pre-launch pinning mandatory?
+
+Why it lands on this task: TASK-H0TYV recorded the codex / cursor-agent / hermes matrix that TASK-VB9DQ item 5 owed, and all three fail the shape claude now satisfies for the same reason. Each learns its identity *after* launch, from a protocol response — codex `thread.id` (`adapters/codex.rs:198-206`), cursor-agent `sessionId` (`adapters/cursor_acp.rs:288-292`), hermes `sessionId` (`adapters/hermes.rs:287-292`) — and none of their start calls has a slot for a client-supplied id. For the two ACP adapters this is not an implementation choice: ACP defines `session/new` as the agent minting the id.
+
+So dec_Y5MPK item 3 ("orgasmic pins the native session id before launch ... every transport must") is unsatisfiable as written for three of four harnesses. Either the contract admits a second lawful shape — capture at handshake, emit `NativeRuntime` immediately, still minted-by-someone and recorded rather than discovered — or item 3 needs narrowing to the harnesses that can honour it, and the rest are permanently outside the recovery and retro contract.
+
+This is the shared design change this task already identifies as what remains. The provider-specific work is filed and blocked behind the answer: TASK-F9VEZ (codex), TASK-B6D8W (cursor-agent), TASK-2B215 (hermes).
+
+Consequence of leaving it open, so it is not free: dec_Y5MPK item 6 defines a transcript as orgasmic-attributed exactly when its session id appears in a `NativeRuntime` record. Until this is answered, 1457 codex, 909 cursor and 82 hermes transcripts on the operator machine (measured 2026-07-28) are unattributable by construction, and `doctor` (TASK-E3K1B) can only report that it cannot tell.
 
 * BACKLOG TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run    :testing:drivers:flake:
 :PROPERTIES:
@@ -2197,3 +2208,114 @@ design.
   TASK-1T3FZ considered that and recorded it as the larger follow-on if the
   daemon-state-only boundary is ever rejected; it is not this task.
 
+* BACKLOG TASK-F9VEZ codex records no NativeRuntime, so its transcripts are neither resumable nor attributable    :drivers:codex:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-F9VEZ
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-VB9DQ TASK-H0TYV TASK-SGRTX
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round) from the recorded cross-harness matrix. See that matrix for the measurements this rests on.
+
+`CodexAdapter` never overrides `HarnessEventAdapter::native_runtime`, so it takes the trait default `None` (`crates/orgasmic-drivers/src/trait.rs:248`). Verified 2026-07-28: `native_runtime` is implemented in exactly two places in the tree — `adapters/claude.rs:168` and the delegating `modes/acp_stdio.rs:111`.
+
+Codex mints its own identity server-side: `thread.id` is read out of the `thread/start` response in `on_ws_thread_started` (`crates/orgasmic-drivers/src/adapters/codex.rs:198-206`) and surfaced only inside `Ready.capabilities` as `thread_id` (`:225`). `thread_start_params` (`:864-885`) has no id field, so orgasmic cannot pre-mint one the way `--session-id` lets it for claude.
+
+Two consequences, both live:
+1. `resolve_recovery_actions` cannot offer `resume_native_fork` for a codex run — there is no validated NativeRuntime session id to resume.
+2. dec_Y5MPK item 6 (worker/operator attribution) is not computable for codex. 1457 rollout JSONL files sit under `~/.codex/sessions` on the operator machine (measured 2026-07-28) and none of them can be attributed to an orgasmic dispatch, because attribution is defined as "its session id appears in a NativeRuntime record".
+
+Work:
+1. Emit `NativeRuntimeMeta` from the handshake response rather than from launch: provider `codex`, session id = `thread.id`, `session_path` = the rollout file the transcript finder already knows how to locate, and a `resume_argv`/resume params that codex actually accepts. Establish what codex resume looks like before designing the shape — `thread_id` currently flows only into turn params (`:326-410`), and there is no resume call in the adapter today.
+2. Confirm the mode carries a NativeRuntime that arrives *after* compose. `modes/acp_stdio.rs` reads `adapter.native_runtime()` immediately after composing the request, which is too early for a value the handshake produces. This is the real blocker and it is shared with TASK-B6D8W (cursor-agent) and TASK-2B215 (hermes).
+
+See also TASK-ZY259: `thread_start_params` also sends `persistExtendedHistory: false`, which is a separate dec_Y5MPK item 4 question and should be settled first since it touches the same call.
+
+Blocked on a contract decision recorded against TASK-SGRTX: whether the cross-harness session contract permits post-launch handshake capture followed by a `NativeRuntime` event, or requires pre-launch pinning. Do not answer it here with a codex-specific patch.
+
+* BACKLOG TASK-B6D8W cursor-agent records no NativeRuntime, so its transcripts are neither resumable nor attributable    :drivers:cursor:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-B6D8W
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-VB9DQ TASK-H0TYV TASK-SGRTX TASK-F9VEZ
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round) from the recorded cross-harness matrix. Sibling of TASK-F9VEZ (codex); same shape, different protocol.
+
+`CursorAcpAdapter` never overrides `HarnessEventAdapter::native_runtime`, so it takes the trait default `None` (`crates/orgasmic-drivers/src/trait.rs:248`).
+
+The session id is server-minted and post-launch: `sessionId` is read out of the `session/new` result in `on_ws_thread_started` (`crates/orgasmic-drivers/src/adapters/cursor_acp.rs:288-292`) and surfaced only inside `Ready.capabilities` (`:320`). Unlike codex this is not an implementation choice orgasmic could lobby to change: ACP defines `session/new` as the agent minting the session id, so a pre-launch pin in the claude `--session-id` sense has no protocol slot at all.
+
+Consequences: no `resume_native_fork` for cursor-agent runs, and dec_Y5MPK item 6 attribution is not computable — 909 JSONL files under `~/.cursor` on the operator machine (measured 2026-07-28), none attributable to an orgasmic dispatch.
+
+The transcript finder already handles the fallback: recorded path confined to `~/.cursor/projects`, else Ready `session_id` + worktree at **high** confidence, else cwd+launch-time at **medium** (`crates/orgasmic-drivers/src/transcript_finder.rs`). So locating a transcript mostly works; what is missing is the recorded NativeRuntime that makes it deterministic and makes attribution possible.
+
+Work: emit `NativeRuntimeMeta` from the `session/new` result — provider `cursor-agent`, session id, resolved session path, and whatever ACP `session/load` (or the cursor equivalent) needs as resume argv. Verify against the binary rather than the spec; `session/new` already returns an undocumented structured models block (`:295`), so the shipped surface is wider than the published one.
+
+Blocked on the same contract decision as TASK-F9VEZ, recorded against TASK-SGRTX: post-launch handshake capture versus mandatory pre-launch pinning. Cursor is the strongest evidence that pre-launch pinning cannot be made universal.
+
+* BACKLOG TASK-2B215 hermes records no NativeRuntime, so its transcripts are neither resumable nor attributable    :drivers:hermes:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-2B215
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-VB9DQ TASK-H0TYV TASK-SGRTX TASK-F9VEZ TASK-B6D8W
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round) from the recorded cross-harness matrix. Sibling of TASK-F9VEZ (codex) and TASK-B6D8W (cursor-agent).
+
+`HermesAdapter` never overrides `HarnessEventAdapter::native_runtime`, so it takes the trait default `None` (`crates/orgasmic-drivers/src/trait.rs:248`).
+
+The session id is server-minted and post-launch: `sessionId` is read out of the `session/new` result in `on_ws_thread_started` (`crates/orgasmic-drivers/src/adapters/hermes.rs:287-292`, method name at `:327`) and surfaced only inside `Ready.capabilities`. As with cursor-agent, ACP gives no slot for a client-supplied session id.
+
+Consequences: no `resume_native_fork` for hermes runs, and dec_Y5MPK item 6 attribution is not computable — 82 JSONL files under `~/.hermes/sessions` on the operator machine (measured 2026-07-28), none attributable to an orgasmic dispatch. The absolute number is small; the property is the same.
+
+The transcript finder already resolves `~/.hermes/sessions/<id>.jsonl` from the Ready `session_id` at **high** confidence, and notes the paired `session_<id>.json` is metadata only (`crates/orgasmic-drivers/src/transcript_finder.rs`). Emitting NativeRuntime turns that into a recorded path rather than a recomputed one.
+
+Work: emit `NativeRuntimeMeta` from the `session/new` result — provider `hermes`, session id, `~/.hermes/sessions/<id>.jsonl`, and a resume argv verified against the binary. Hermes is the cheapest of the three to prove because its path rule is the simplest.
+
+Blocked on the same contract decision as its siblings, recorded against TASK-SGRTX.
+
+* BACKLOG TASK-ZY259 codex thread/start sends persistExtendedHistory:false — decide whether that is a dec_Y5MPK item 4 violation    :drivers:codex:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-ZY259
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-H0TYV TASK-F9VEZ
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round). Small, bounded, and worth doing before TASK-F9VEZ.
+
+dec_Y5MPK item 4: "Orgasmic never suppresses vendor persistence. A transport that disables the harness's own session recording is a defect, not a configuration choice." TASK-VB9DQ removed claude's `--no-session-persistence` on exactly that ground.
+
+`thread_start_params` sends `persistExtendedHistory: false` to codex app-server on every run (`crates/orgasmic-drivers/src/adapters/codex.rs:883`). It is the only occurrence in the tree, it carries no comment, and no test asserts anything about it. It is set to `false` — the suppressing value — and nothing records why.
+
+What is known: codex still writes rollout JSONL with this flag set. A codex run that died on a provider 503 wrote `~/.codex/sessions/2026/07/25/rollout-....jsonl` (TASK-VB9DQ evidence), and 1457 rollout files exist under `~/.codex/sessions` on the operator machine (measured 2026-07-28). So it is not the blanket kill switch `--no-session-persistence` was.
+
+What is not known: what "extended history" actually is, and whether anything retro or resume would need is missing from those rollouts because of it.
+
+Work:
+1. Determine what codex app-server does with `persistExtendedHistory` — read the shipped app-server, do not infer from the name.
+2. If it removes content a retro run or a resume would want, remove the flag and say so under dec_Y5MPK item 4, exactly as claude's flag was removed.
+3. If it is genuinely orthogonal to session persistence, leave it and add the one-line comment that its absence is why this task had to be filed.
+
+Either way the outcome is a recorded answer. The defect being fixed here is that a persistence-shaped flag sits in the launch path with no stated reason.
+
+* BACKLOG TASK-E3K1B doctor reports no vendor-transcript inventory, so dec_Y5MPK's operator-owned retention has no numbers to act on    :doctor:sessions:evidence:
+:PROPERTIES:
+:ID: TASK-E3K1B
+:PRIORITY: P2
+:RELATES_TO: dec_Y5MPK TASK-H0TYV TASK-F9VEZ TASK-B6D8W TASK-2B215
+:END:
+
+Filed by TASK-H0TYV (VB9DQ fix round). dec_Y5MPK names `doctor` as the owner of two obligations and neither exists in code.
+
+Item 5 (2026-07-25): orgasmic never prunes a vendor transcript, and "its obligation is visibility: report per-harness counts, total size, and age distribution through `doctor` so the operator can act with full information."
+
+Item 6 (added 2026-07-28 by TASK-H0TYV): that per-harness report splits into orgasmic-attributed and unattributed, where a transcript is orgasmic-attributed exactly when its native session id appears in a `NativeRuntime` lifecycle record in orgasmic's own session JSONL.
+
+Neither has been filed until now, and `doctor` reports nothing about vendor stores. The decision assigns retention to the operator on the explicit premise that orgasmic supplies the numbers; without this the operator owns a duty they have no instrument for. Measured on the operator machine 2026-07-28: 652 JSONL under `~/.claude/projects`, 1457 under `~/.codex/sessions`, 909 under `~/.cursor`, 82 under `~/.hermes/sessions`.
+
+Work:
+1. Per-harness inventory in `doctor`: file count, total size, age distribution. Roots are already defined and test-overrideable — reuse `TranscriptRoots::from_env_home` (`crates/orgasmic-drivers/src/transcript_finder.rs`) rather than hardcoding a second copy of the path rules.
+2. Split each harness's numbers into orgasmic-attributed and unattributed by the item 6 rule. Read attribution from recorded `NativeRuntime` events; never from path shape, file age, or launch-time proximity — those are the discovery heuristics dec_Y5MPK item 3 forbids.
+3. Report honestly where the split is not computable. Today only claude mints its own session id, so codex, cursor-agent and hermes are wholly unattributable until TASK-F9VEZ, TASK-B6D8W and TASK-2B215 land. `doctor` must say "attribution unavailable for this harness" and name the blocking task, not silently report 0 attributed — a zero that means "cannot tell" reads as "orgasmic wrote none of these", which is false and would misdirect a prune.
+4. Report only. `doctor` never deletes, moves, or offers to delete a vendor file (item 5).
