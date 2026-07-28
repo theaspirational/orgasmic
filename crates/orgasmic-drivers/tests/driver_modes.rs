@@ -6,7 +6,8 @@ use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use orgasmic_core::{DriverEvent, RuntimeIdentity, TextStream};
 use orgasmic_drivers::modes::rmux::test_tooling::{
-    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+    assert_required_test_tooling, report_billed_tests, skip_test_if_missing,
+    skip_unless_billing_allowed, ToolRequirement,
 };
 use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
@@ -22,8 +23,26 @@ use tokio::time::{timeout, Duration};
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 
+// orgasmic:task_MFJZ7
+/// Tests in this binary that can submit a real, billed provider turn.
+///
+/// They are deliberately absent from the `ToolRequirement` counts below:
+/// those count tests skipped because a *binary is missing*, and a billed test
+/// is withheld on a fully-equipped host by policy. Listing them here is what
+/// keeps "skipped by default" from reading as "not there" — `report_billed_tests`
+/// names them in default `cargo test` output either way.
+const BILLED_TESTS: &[&str] = &["legacy_drivers_and_explicit_pairs_emit_equivalent_start_events"];
+
 #[test]
 fn required_test_tooling_is_present() {
+    // Reported before the assert, which panics on the first missing tool: a
+    // host without `codex` must still be told what billing withheld.
+    report_billed_tests(BILLED_TESTS);
+    // Each of these gates one case of `installed_harnesses_answer_their_own_
+    // readiness_probe`. The billed test needs the same three binaries but is
+    // gated on `ORGASMIC_ALLOW_BILLED_TESTS`, not on their presence, so
+    // installing a binary never silently arms it and these counts stayed the
+    // same when it was gated.
     assert_required_test_tooling(&[
         ToolRequirement::new("claude", 1, which("claude").is_some()),
         ToolRequirement::new("cursor-agent", 1, which("cursor-agent").is_some()),
@@ -1659,8 +1678,34 @@ async fn cursor_tool_policy_blocks_dangerous_cases() {
     let _ = fs::remove_file(&symlink_path);
 }
 
+// orgasmic:task_MFJZ7
+/// **Submits a real, billed provider turn.** Every case spawns the real harness
+/// binary and drives it to its first start event, which for `claude` means a
+/// turn the provider charges for (TASK-099T6 measured ~$0.10 for a
+/// one-character prompt; `.orgasmic/gotchas.org`, "Asking a harness to prove it
+/// can work costs real money").
+///
+/// The parity it checks is real and worth opting into deliberately: a legacy
+/// driver id and its explicit `(mode, harness)` pair must produce identical
+/// start events. What it is not worth is charging whoever runs `cargo test`.
+///
+/// Two locks, because they close different doors. `#[ignore]` keeps it out of a
+/// bare run; the `ORGASMIC_ALLOW_BILLED_TESTS` check keeps `--include-ignored`
+/// — the flag for "run the slow ones" — from arming it too. Until TASK-MFJZ7
+/// there were neither, and the control was a `--skip` flag every brief had to
+/// remember; on 2026-07-28 a worker holding that instruction in bold ran the
+/// suite without it twice.
+///
+/// Run it on purpose with:
+///   `ORGASMIC_ALLOW_BILLED_TESTS=1 cargo test -p orgasmic-drivers --test driver_modes \
+///    legacy_drivers_and_explicit_pairs_emit_equivalent_start_events -- --ignored`
 #[tokio::test]
+#[ignore = "billed: submits a real provider turn; needs ORGASMIC_ALLOW_BILLED_TESTS=1 too"]
 async fn legacy_drivers_and_explicit_pairs_emit_equivalent_start_events() {
+    if skip_unless_billing_allowed("legacy_drivers_and_explicit_pairs_emit_equivalent_start_events")
+    {
+        return;
+    }
     let cases = [
         ("claude-acp", "acp-stdio", "claude", DriverConfig::empty()),
         ("codex-appserver", "acp-ws", "codex", DriverConfig::empty()),

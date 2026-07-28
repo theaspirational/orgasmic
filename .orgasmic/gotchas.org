@@ -169,6 +169,19 @@ inert =Ready= — is never waivable and fails unconditionally via
 =assert_not_degraded= (TASK-R2HDN). A degraded daemon is a defect, not a missing
 tool; waiving it is how the false green came back the first time.
 
+=ORGASMIC_ALLOW_BILLED_TESTS= (TASK-MFJZ7) is a third variable and is *not* the
+forbidden shape. The rule above bans a fail-closed "this test must really run"
+lane, because one that is set nowhere looks like coverage and provides none.
+This one runs in the opposite direction: it *arms* tests that are off by default
+because executing them spends money, and nothing fails when it is unset — that
+unset state is the safe default, not a silent gap. It is also not a waiver:
+=ORGASMIC_ALLOW_MISSING_TOOLS= excuses a binary that is absent,
+=ORGASMIC_ALLOW_BILLED_TESTS= permits a charge on a host where every binary is
+present. Its accounting is the sentinel's, same as everything else: billed tests
+are declared in the binary's =BILLED_TESTS= list and =report_billed_tests= names
+them in default output, deliberately outside the =ToolRequirement= counts, since
+those count tests skipped for missing tooling and these are withheld by policy.
+
 ** Test daemon port isolation from checkout-resident production daemon
 Tests that spawn isolated test daemons must ensure the daemons don't default to
 port 4848 when running in parallel from a checkout where a production daemon is
@@ -362,6 +375,44 @@ and return an inconclusive verdict where only a billed turn could reach a real
 one. The corollary is worth stating where operators read it: a preflight that
 answers "ready" claims less than it sounds like - it proves a credential exists,
 not that the provider accepts it.
+
+The test that does submit a turn is now gated in code, so *stop passing =--skip=*.
+=legacy_drivers_and_explicit_pairs_emit_equivalent_start_events=
+spends real money, and until TASK-MFJZ7 the only thing preventing that was every
+brief remembering
+=-- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events=. It
+did not survive: on 2026-07-28 the TASK-QRB8S worker, whose brief carried the
+constraint in bold, ran the bare suite twice anyway. It happened not to cost
+anything because the real binary rejected the session id before the turn - luck,
+not a control.
+
+The current instruction is: *run =cargo test -p orgasmic-drivers= with no extra
+flags.* The test carries two locks. =#[ignore]= keeps it out of a bare run, which then prints
+=ignored, billed: submits a real provider turn= - so the skip is visible instead
+of tribal. =ORGASMIC_ALLOW_BILLED_TESTS=1= is the second, and it exists because
+=--include-ignored= is the flag people reach for to run "the slow ones" and must
+not silently also mean "and charge me". Opt in deliberately with both:
+
+: ORGASMIC_ALLOW_BILLED_TESTS=1 cargo test -p orgasmic-drivers --test driver_modes \
+:   legacy_drivers_and_explicit_pairs_emit_equivalent_start_events -- --ignored
+
+Audited at the same time, for the whole repo, "does any other test spawn a real
+harness and submit a turn?" - the answer is no other *ungated* one.
+=real_claude_stream_json_bridge_reports_auth_error= runs by default and does
+spawn real =claude=, but it names =api_key_env= with a deliberately invalid key,
+and a configured =api_key_env= selects =--bare= deterministically
+(=resolve_credentials= rule 2, pinned by =a configured api_key_env selects the
+bare path=), where the key is the only credential read. Every request is
+rejected at authentication before token accounting. =real_claude_input_ready_smoke=
+spawns the real Claude TUI but sends no prompt, and is =#[ignore]=d. The
+=live_rmux_*= family runs =sh=/=sleep= under rmux and reaches no provider at all.
+The billing-capable daemon tests
+(=dispatch_endpoint_routes_cursor_agent_through_supervisor_and_emits_run_created=,
+=dispatch_endpoint_routes_acp_stdio_codex_through_supervisor=,
+=dispatch_grace_path_writes_artifacts_without_terminal_session_marker=,
+=real_cursor_agent_stream_json_bridge_emits_events_and_releases=) are all
+=#[ignore]=d, so they are default-safe; their ignore reasons say "requires X
+installed" rather than "this bills", which is a wording gap, not a control gap.
 
 ** `orgasmic node` cannot write gotchas.org
 There is no gotchas node layer: =NodeLayer= covers decision, architecture,
