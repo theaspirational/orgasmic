@@ -786,52 +786,7 @@ CANDIDATE PANIC [2026-07-29, TASK-0RCRY full-workspace run]: `task_010_recovery_
 
 ATTRIBUTION CONTRADICTED [2026-07-29, TASK-K4G1D differential]: the `left: "interrupted"` reattach flake is now named for the first time — `driver tmux/claude attach proof exceeded inventory deadline`, the Err(_) timeout branch of finish_driver_attach (api.rs:9858). Measured with real tmux 3.6a on a 0RCRY owned server, with the rmux arm GREEN in the same process under the same load. This contradicts this task's standing attribution (cross-test contention over shared external mux state) — that would be the third withdrawn attribution. The live question is why a one-process-spawn tmux attach probe cannot finish inside the inventory deadline under load, and whether that deadline is sized for process-spawn starvation. Also note: K4G1D found the seven tmux_on_path-gated tests execute rmux in worker environments (owned by its follow-up task), so any worker-vs-manager comparison recorded here that relied on "the worker ran these under tmux" needs re-reading.
 
-* IN_PROGRESS TASK-GEZHQ Preflight accepts an unusable credential under parallel load: 200 where 400 is required, and a worktree is left behind
-:PROPERTIES:
-:ID: TASK-GEZHQ
-:PRIORITY: P1
-:END:
-
-From TASK-EP3H1's gate run (2026-07-29), full-suite under parallel load:
-`an_unusable_credential_leaves_no_lease_no_session_and_no_run`
-(crates/orgasmic-daemon/tests/dispatch_preflight.rs:211) failed with the daemon
-ACCEPTING a dispatch whose claude credential the test intends to be unusable:
-
-  assertion `left == right` failed: preflight rejection must be a 400 so the
-  CLI treats it as an unambiguous refusal and rolls back the worktree it
-  created: {"run_id":"run-20260728T221637-…","driver":"acp-stdio",
-  "harness":"claude",…}
-    left: 200
-   right: 400
-
-The `left: 200` body shows a REAL RUN was created. The assertion text names the
-stake: the CLI relies on the 400 to roll back the worktree it created, so a 200
-here leaves a worktree behind for a dispatch that should never have started.
-
-This is deliberately NOT filed into the load-flake class: the EP3H1 worker's
-read is that it is environment-dependent rather than timing-dependent — a
-usable claude credential exists on the dev machine, and parallelism changes
-which credential the preflight probe observes. A preflight that PASSES when it
-should refuse is a product defect surface, not a test-timing defect. Green in
-isolation, so the gate does not catch it.
-
-=== Ask
-
-1. Diagnose how the probe found a usable credential when the test constructs an
-   unusable one — fixture bleed (real ~/.claude reachable from the test env?),
-   probe fallback order, or a race in credential selection.
-2. Fix so the test's intent holds under parallel load: an unusable credential
-   yields 400, no lease, no session, no run, no leftover worktree — regardless
-   of what else is on the machine.
-3. If the root cause is the test env leaking the operator's real credentials
-   into the probe, treat that as the defect (isolation), not the assertion.
-
-=== Acceptance
-
-- The test survives >=5 consecutive full-suite loaded runs (pre-fix red count
-  pinned for A/B if reproducible).
-- Injection per TCTTD standard, `git apply`-clean, self-tested with
-  `orgasmic verify --artifact` before reporting.
+CANDIDATE PANIC [2026-07-29, TASK-GEZHQ gate run 3 of 5]: `api::tests::recovery_inventory_waits_for_atomic_claim_commit` (crates/orgasmic-daemon/src/api.rs:25017) — `recover POST completes: Elapsed(())` under load, green in isolation. Another recover-route timeout shape for this task's diagnosis; first time written down.
 
 * IN_PROGRESS TASK-JGHNC Seven tmux-gated daemon tests accept the rmux shim and have been measuring rmux while reporting tmux
 :PROPERTIES:
