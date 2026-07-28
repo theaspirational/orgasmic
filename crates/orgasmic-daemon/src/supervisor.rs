@@ -8054,7 +8054,9 @@ mod tests {
         let _live_guard = live_session_guard();
         let _environment = test_environment_lock().lock().await;
         assert_required_test_tooling(&[
-            ToolRequirement::new("rmux", 8, probe_rmux_binary().found),
+            // orgasmic:task_K4G1D — +1 for the rmux arm of the parameterized
+            // attach-proof test in `api`.
+            ToolRequirement::new("rmux", 9, probe_rmux_binary().found),
             ToolRequirement::new("tmux", 6, tmux_spawn_usable_for_test().await),
             ToolRequirement::new("bash", 1, command_available_for_test("bash")),
         ]);

@@ -17127,8 +17127,13 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
+                    // orgasmic:task_K4G1D — the rmux arm completes an existing
+                    // rule (derive the transport from the protocol) rather than
+                    // adding a parallel seeding path beside it.
                     transport: if protocol_version.starts_with("tmux") {
                         "tmux".into()
+                    } else if protocol_version.starts_with("rmux") {
+                        "rmux".into()
                     } else {
                         "acp-stdio".into()
                     },
@@ -21808,6 +21813,236 @@ mod tests {
             .unwrap_or(false)
     }
 
+    // orgasmic:task_K4G1D
+    /// The terminal-multiplexer mode a mux-dependent daemon test runs under.
+    ///
+    /// A test that exercises one mux cannot distinguish three different
+    /// defects: ours, the multiplexer's, and the deadline's. Running the same
+    /// assertions through both modes turns "is rmux at fault" into a reading:
+    /// red under rmux only indicts rmux, red under both indicts our code, green
+    /// under both indicts the deadline.
+    ///
+    /// The mode is carried in the *test name* rather than looped over inside
+    /// one test, because a loop reports `<test> failed` and leaves which
+    /// iteration to guesswork — cargo already prints the name, so a per-mode
+    /// test names the mode for free, and the two arms stay independently
+    /// runnable, which is what makes a differential result reproducible.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum MuxMode {
+        Tmux,
+        Rmux,
+    }
+
+    impl MuxMode {
+        /// The `SUPPORTED` transport id, and the word every failure message
+        /// from a parameterized test is built around.
+        fn id(self) -> &'static str {
+            match self {
+                MuxMode::Tmux => "tmux",
+                MuxMode::Rmux => "rmux",
+            }
+        }
+
+        /// The session name the driver's own reattach probe will look for.
+        /// Taken from the driver, never rebuilt here: a test that invents the
+        /// name proves nothing about the path production takes.
+        fn session_name(self, identity: &RuntimeIdentity) -> String {
+            match self {
+                MuxMode::Tmux => orgasmic_drivers::modes::tmux::tmux_session_name(identity),
+                MuxMode::Rmux => orgasmic_drivers::modes::rmux::rmux_session_name(identity),
+            }
+        }
+
+        /// The `Ready` protocol version this mode's driver really emits, so a
+        /// seeded session file is the one the driver would have written.
+        fn ready_protocol(self) -> &'static str {
+            match self {
+                MuxMode::Tmux => "tmux-tui/1",
+                MuxMode::Rmux => "rmux-smoke/1",
+            }
+        }
+
+        /// Whether this mode can actually be exercised, and — when it cannot —
+        /// why, in the words a reader needs to act on it.
+        ///
+        /// The tmux answer is deliberately stricter than [`tmux_on_path`].
+        /// Inside an orgasmic worker `tmux` on PATH is a symlink to `rmux`
+        /// (`.orgasmic/gotchas.org`, measured under TASK-0RCRY: `tmux -V` says
+        /// 3.4 while the real binary is 3.6a), so a run that trusts PATH would
+        /// compare rmux against rmux and report the two modes agreeing. That is
+        /// the one result this parameterization must never be able to
+        /// manufacture, so a shimmed tmux counts as *absent*.
+        fn availability(self) -> Result<(), String> {
+            match self {
+                MuxMode::Tmux => {
+                    // orgasmic:TASK-0RCRY — claim the owned server before any
+                    // session is created on it.
+                    orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
+                    tmux_mode_availability_for(which_binary("tmux").as_deref())
+                }
+                MuxMode::Rmux => {
+                    if orgasmic_drivers::modes::rmux::probe_rmux_binary().found {
+                        Ok(())
+                    } else {
+                        Err("no rmux binary".to_string())
+                    }
+                }
+            }
+        }
+
+        /// Which binary and which server this mode is about to drive. Every
+        /// assertion in a parameterized test carries it, because
+        /// `tmux new-session failed: server exited unexpectedly` is true and
+        /// useless when the interesting part is *whose* server (TASK-0RCRY).
+        fn diagnostic(self) -> String {
+            match self {
+                MuxMode::Tmux => format!(
+                    "mode=tmux binary={:?} {}",
+                    which_binary("tmux"),
+                    orgasmic_drivers::modes::tmux::tmux_server_selection()
+                ),
+                MuxMode::Rmux => format!(
+                    "mode=rmux binary={:?} (default rmux endpoint)",
+                    orgasmic_drivers::modes::rmux::probe_rmux_binary().path
+                ),
+            }
+        }
+
+        /// Start a detached session this mode's driver will find live, and hand
+        /// back the guard that reaps it on every exit path including a panic.
+        ///
+        /// `live` is the test's own [`live_session_guard`]: rmux sessions are
+        /// reaped through it by exact name, so nothing here can reach a session
+        /// this test did not create.
+        fn start_detached_session(
+            self,
+            name: &str,
+            live: &orgasmic_drivers::modes::rmux::test_tooling::LiveSessionGuard,
+        ) -> MuxSessionGuard {
+            let started = match self {
+                MuxMode::Tmux => orgasmic_drivers::modes::tmux::tmux_command()
+                    .args(["new-session", "-d", "-s", name, "sleep", "60"])
+                    .status()
+                    .map(|status| status.success())
+                    .unwrap_or(false),
+                MuxMode::Rmux => {
+                    live.owns_session(name);
+                    let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
+                    probe
+                        .path
+                        .filter(|_| probe.found)
+                        .map(|binary| {
+                            Command::new(binary)
+                                .args(["new-session", "-d", "-s", name, "sleep", "60"])
+                                .status()
+                                .map(|status| status.success())
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false)
+                }
+            };
+            assert!(
+                started,
+                "{} test session should start [{}]",
+                self.id(),
+                self.diagnostic()
+            );
+            match self {
+                MuxMode::Tmux => MuxSessionGuard::Tmux(TmuxSessionGuard(name.to_string())),
+                MuxMode::Rmux => MuxSessionGuard::Rmux,
+            }
+        }
+    }
+
+    // orgasmic:task_K4G1D
+    /// Reaps a [`MuxMode::start_detached_session`] session. The rmux arm is a
+    /// unit because the test's `live_session_guard` already owns that name.
+    enum MuxSessionGuard {
+        #[allow(dead_code)] // held only for the inner guard's Drop
+        Tmux(TmuxSessionGuard),
+        Rmux,
+    }
+
+    // orgasmic:task_K4G1D
+    /// Is the binary a PATH lookup of `tmux` landed on really tmux?
+    ///
+    /// Split from [`MuxMode::availability`] — the same split TASK-0RCRY made
+    /// for `tmux_socket_args_for` — so the property "a shimmed tmux is refused"
+    /// is provable without mutating process-global `PATH` while other tests are
+    /// spawning real mux clients.
+    ///
+    /// rmux installs a shim directory ahead of a worker's `PATH` in which
+    /// `tmux` is a symlink to `rmux` (`.orgasmic/gotchas.org`; `tmux -V` lies
+    /// and prints 3.4). Following the symlink is the only reliable tell, and it
+    /// matters more here than anywhere else in this binary: a tmux arm that
+    /// silently ran rmux would compare rmux against rmux and report the two
+    /// modes agreeing, which is the one answer this parameterization exists to
+    /// make impossible to manufacture.
+    fn tmux_mode_availability_for(resolved: Option<&FsPath>) -> Result<(), String> {
+        let Some(resolved) = resolved else {
+            return Err("no tmux on PATH".to_string());
+        };
+        let real = std::fs::canonicalize(resolved).unwrap_or_else(|_| resolved.to_path_buf());
+        if real.file_name().and_then(|name| name.to_str()) == Some("rmux") {
+            return Err(format!(
+                "tmux on PATH ({}) is the rmux shim ({}); a genuine tmux-mode run needs the \
+                 real binary resolved ahead of the shim",
+                resolved.display(),
+                real.display()
+            ));
+        }
+        Ok(())
+    }
+
+    // orgasmic:task_K4G1D
+    #[test]
+    fn tmux_mode_rejects_an_rmux_shim_resolved_as_tmux() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rmux = tmp.path().join("rmux");
+        std::fs::write(&rmux, "").unwrap();
+        let shim = tmp.path().join("shim-dir/tmux");
+        std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&rmux, &shim).unwrap();
+
+        let err = tmux_mode_availability_for(Some(&shim))
+            .expect_err("a tmux that is really rmux must not count as tmux available");
+        assert!(err.contains("is the rmux shim"), "{err}");
+
+        let real = tmp.path().join("real-dir/tmux");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "").unwrap();
+        assert_eq!(tmux_mode_availability_for(Some(&real)), Ok(()));
+        assert!(tmux_mode_availability_for(None).is_err());
+    }
+
+    /// Resolve a binary the way the drivers do — through PATH — and report
+    /// where it landed rather than just whether it exists.
+    fn which_binary(binary: &str) -> Option<PathBuf> {
+        let out = Command::new("which").arg(binary).output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!path.is_empty()).then(|| PathBuf::from(path))
+    }
+
+    /// Skip-and-say-so for a mux mode, in the shape the rest of this binary
+    /// already uses. Returns `true` when the caller must return early; the
+    /// binary-level `required_test_tooling_is_present` sentinel is what turns a
+    /// missing mux into a suite failure, so a skip here is never silent.
+    fn skip_mux_mode_if_unavailable(test_name: &str, mode: MuxMode) -> bool {
+        match mode.availability() {
+            Ok(()) => false,
+            Err(reason) => {
+                eprintln!(
+                    "skipping {test_name}: mode {} unusable: {reason}",
+                    mode.id()
+                );
+                skip_test_if_missing(test_name, &[(mode.id(), false)])
+            }
+        }
+    }
+
     #[tokio::test]
     async fn tmux_ws_mock_streams_and_echoes_send_keys() {
         // Held from the top: the first half asserts the *absence* of the mock
@@ -24032,13 +24267,19 @@ mod tests {
         .expect("dropping an inventory must abort and drop every pending attach probe");
     }
 
-    #[tokio::test]
-    async fn recovery_reattaches_tmux_session_when_handle_exists() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "recovery_reattaches_tmux_session_when_handle_exists",
-            &[("tmux", tmux_on_path())],
-        ) {
+    // orgasmic:task_K4G1D
+    /// The attach-proof assertions, run once per multiplexer.
+    ///
+    /// A live session of `mode` exists; the driver for that mode must prove a
+    /// live runtime handle, and the run must come back `reattached` with
+    /// `reattach_tmux` (a legacy action id — it covers both multiplexers) as
+    /// the first offered recovery. Nothing here is mode-specific except which
+    /// binary starts the session and which transport the session file records,
+    /// which is precisely what makes a divergence between the two arms a
+    /// statement about the multiplexer rather than about the test.
+    async fn assert_recovery_reattaches_mux_session(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -24046,26 +24287,17 @@ mod tests {
         home.ensure().unwrap();
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         let identity = RuntimeIdentity {
-            run_id: format!("run-tmux-{suffix}"),
+            run_id: format!("run-{}-{suffix}", mode.id()),
             runtime_id: format!("rt-{suffix}"),
             boot_id: "boot-test".into(),
         };
-        let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = orgasmic_drivers::modes::tmux::tmux_command()
-            .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "tmux test session should start on {}",
-            orgasmic_drivers::modes::tmux::tmux_server_selection()
-        );
-        let _guard = TmuxSessionGuard(session_name);
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
         let project_root = tmp.path().join("proj");
         write_nonterminal_session(
             &project_root,
             identity.clone(),
-            "tmux-tui/1",
+            mode.ready_protocol(),
             "manager-tmux-tui",
         );
 
@@ -24081,17 +24313,55 @@ mod tests {
         let run = recovered
             .iter()
             .find(|run| run.run_id == identity.run_id)
-            .unwrap();
-        assert_eq!(run.classification, "reattached");
-        assert!(run.reason.contains("proved live runtime handle"));
-        // Regression (dec_052): a live older-boot tmux session prefers
+            .unwrap_or_else(|| {
+                panic!(
+                    "{test_name}: no recovered run for {} [{}]",
+                    identity.run_id,
+                    mode.diagnostic()
+                )
+            });
+        assert_eq!(
+            run.classification,
+            "reattached",
+            "[{}] reason: {}",
+            mode.diagnostic(),
+            run.reason
+        );
+        assert!(
+            run.reason.contains("proved live runtime handle"),
+            "[{}] reason: {}",
+            mode.diagnostic(),
+            run.reason
+        );
+        // Regression (dec_052): a live older-boot mux session prefers
         // reattach_tmux as the first recovery action.
         assert_eq!(
             run.recovery_actions.first().map(|a| a.kind.as_str()),
             Some("reattach_tmux"),
-            "live older-boot tmux must prefer reattach_tmux: {:?}",
-            run.recovery_actions
+            "live older-boot {} must prefer reattach_tmux: {:?} [{}]",
+            mode.id(),
+            run.recovery_actions,
+            mode.diagnostic()
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_reattaches_tmux_session_when_handle_exists() {
+        assert_recovery_reattaches_mux_session(
+            MuxMode::Tmux,
+            "recovery_reattaches_tmux_session_when_handle_exists",
+        )
+        .await;
+    }
+
+    // orgasmic:task_K4G1D
+    #[tokio::test]
+    async fn recovery_reattaches_rmux_session_when_handle_exists() {
+        assert_recovery_reattaches_mux_session(
+            MuxMode::Rmux,
+            "recovery_reattaches_rmux_session_when_handle_exists",
+        )
+        .await;
     }
 
     #[tokio::test]
