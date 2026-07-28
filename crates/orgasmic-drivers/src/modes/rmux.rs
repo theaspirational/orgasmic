@@ -770,6 +770,309 @@ pub mod test_tooling {
         Ok(())
     }
 
+    // orgasmic:task_69CW6
+    /// A private rmux endpoint whose SDK transport can be frozen mid-run while
+    /// freshly opened CLI connections keep working.
+    ///
+    /// This exists because the reap contract (TASK-6FNAY) is *two* paths with
+    /// one identity: `Session::kill` over the SDK's single ordered transport,
+    /// and — only when that stalls — an endpoint-exact `rmux -S <endpoint>
+    /// kill-session` fallback. A double that simulates the stall proves
+    /// nothing; the stall has to happen to a real `rmux_sdk::Session` addressing
+    /// a real daemon, and the fallback has to reap a real session.
+    ///
+    /// Layout, all inside one temp dir exported as `RMUX_TMPDIR` so nothing
+    /// here can touch the developer's own daemon:
+    ///
+    /// ```text
+    ///   <root>/rmux-<uid>/default    <- proxy listener (the resolved endpoint)
+    ///   <root>/rmux-<uid>/upstream   <- the real rmux daemon
+    /// ```
+    ///
+    /// [`Self::stall_sdk_transport`] freezes every connection that was already
+    /// open — which is exactly the SDK's — and leaves connections opened
+    /// afterwards untouched, which is exactly the CLI fallback's. That
+    /// asymmetry is the whole fixture: it is what makes "SDK stalled, fallback
+    /// reached, session actually gone" observable instead of asserted.
+    ///
+    /// `RMUX_SDK_DAEMON_BINARY` points at a shim that records every `rmux`
+    /// argv the driver runs before exec'ing the real binary, so the fallback's
+    /// endpoint-exact argv is evidence rather than inference.
+    #[cfg(unix)]
+    pub struct StallableRmuxEndpoint {
+        root: tempfile::TempDir,
+        endpoint_path: std::path::PathBuf,
+        upstream_path: std::path::PathBuf,
+        argv_dir: std::path::PathBuf,
+        rmux_bin: String,
+        stalled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        proxy: tokio::task::JoinHandle<()>,
+        prior_tmpdir: Option<OsString>,
+        prior_daemon_binary: Option<OsString>,
+    }
+
+    #[cfg(unix)]
+    impl StallableRmuxEndpoint {
+        /// Session created purely so the upstream daemon outlives the run under
+        /// test; a daemon that exits with its last session would make "the
+        /// session is gone" ambiguous.
+        const KEEPALIVE_SESSION: &'static str = "orgasmic-stall-fixture-keepalive";
+
+        /// Bring up the isolated daemon, the recording shim and the proxy, and
+        /// point this process's rmux discovery at them.
+        ///
+        /// The caller must hold both [`test_environment_lock`] (this mutates
+        /// process environment) and [`live_session_guard`] (this starts a real
+        /// daemon) for the whole lifetime of the returned fixture.
+        pub async fn start() -> Result<Self, String> {
+            use std::os::unix::fs::PermissionsExt as _;
+
+            let probe = super::probe_rmux_binary();
+            let rmux_bin = probe
+                .path
+                .clone()
+                .filter(|_| probe.usable())
+                .ok_or_else(|| "no usable rmux binary".to_string())?;
+
+            let root = tempfile::TempDir::new().map_err(|e| format!("stall fixture root: {e}"))?;
+            // `rmux-ipc` resolves the socket root through the real path, so a
+            // `/var/...` temp dir surfaces as `/private/var/...` in
+            // `Session::endpoint()`. Canonicalize up front or every
+            // endpoint-exact comparison compares two spellings of one socket.
+            let root_path = std::fs::canonicalize(root.path())
+                .map_err(|e| format!("canonicalize stall fixture root: {e}"))?;
+            let socket_dir = root_path.join(format!("rmux-{}", unsafe { libc::getuid() }));
+            std::fs::create_dir_all(&socket_dir)
+                .and_then(|()| {
+                    std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700))
+                })
+                .map_err(|e| format!("stall fixture socket dir: {e}"))?;
+            let endpoint_path = socket_dir.join("default");
+            let upstream_path = socket_dir.join("upstream");
+
+            let argv_dir = root_path.join("argv");
+            std::fs::create_dir_all(&argv_dir)
+                .map_err(|e| format!("stall fixture argv dir: {e}"))?;
+            let shim = root_path.join("rmux-shim");
+            std::fs::write(
+                &shim,
+                format!(
+                    "#!/bin/sh\n\
+                     f=$(mktemp {argv}/argv.XXXXXXXX)\n\
+                     for a in \"$@\"; do printf '%s\\n' \"$a\"; done > \"$f\"\n\
+                     exec {rmux} \"$@\"\n",
+                    argv = argv_dir.display(),
+                    rmux = rmux_bin,
+                ),
+            )
+            .and_then(|()| std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)))
+            .map_err(|e| format!("stall fixture shim: {e}"))?;
+
+            let started = Command::new(&rmux_bin)
+                .args([
+                    OsString::from("-S"),
+                    upstream_path.clone().into_os_string(),
+                    OsString::from("new-session"),
+                    OsString::from("-d"),
+                    OsString::from("-s"),
+                    OsString::from(Self::KEEPALIVE_SESSION),
+                    OsString::from("--"),
+                    OsString::from("sh"),
+                    OsString::from("-c"),
+                    OsString::from("sleep 600"),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .output()
+                .map_err(|e| format!("start upstream rmux daemon: {e}"))?;
+            if !started.status.success() {
+                return Err(format!(
+                    "start upstream rmux daemon: {}",
+                    String::from_utf8_lossy(&started.stderr).trim()
+                ));
+            }
+
+            let listener = tokio::net::UnixListener::bind(&endpoint_path)
+                .map_err(|e| format!("bind stall proxy at {}: {e}", endpoint_path.display()))?;
+            let stalled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let proxy = tokio::spawn(run_stall_proxy(
+                listener,
+                upstream_path.clone(),
+                std::sync::Arc::clone(&stalled),
+            ));
+
+            // Repoint process-global rmux discovery only once every fallible
+            // step has succeeded: nothing above this line needs it (the daemon
+            // is addressed with an explicit `-S`), and only the returned value
+            // knows how to put it back.
+            let prior_tmpdir = std::env::var_os(RMUX_TMPDIR_ENV);
+            let prior_daemon_binary = std::env::var_os(super::RMUX_SDK_DAEMON_BINARY_ENV);
+            std::env::set_var(RMUX_TMPDIR_ENV, &root_path);
+            std::env::set_var(super::RMUX_SDK_DAEMON_BINARY_ENV, &shim);
+
+            Ok(Self {
+                root,
+                endpoint_path,
+                upstream_path,
+                argv_dir,
+                rmux_bin,
+                stalled,
+                proxy,
+                prior_tmpdir,
+                prior_daemon_binary,
+            })
+        }
+
+        /// The endpoint the driver's SDK resolves, and therefore the one its
+        /// CLI fallback must address exactly.
+        #[must_use]
+        pub fn endpoint_path(&self) -> &std::path::Path {
+            &self.endpoint_path
+        }
+
+        /// Freeze every already-open connection. The SDK's ordered transport is
+        /// open by now, so its next request — the release-time `Session::kill` —
+        /// never reaches the daemon and never answers.
+        pub fn stall_sdk_transport(&self) {
+            self.stalled
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        /// Ask the upstream daemon directly, bypassing the proxy, so a stalled
+        /// transport cannot make a live session look reaped.
+        #[must_use]
+        pub fn session_exists(&self, name: &str) -> bool {
+            Command::new(&self.rmux_bin)
+                .args([
+                    OsString::from("-S"),
+                    self.upstream_path.clone().into_os_string(),
+                    OsString::from("has-session"),
+                    OsString::from("-t"),
+                    OsString::from(name),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success())
+        }
+
+        /// Every `rmux` argv the process under test ran through the shim, in no
+        /// particular order.
+        #[must_use]
+        pub fn recorded_cli_invocations(&self) -> Vec<Vec<String>> {
+            let Ok(entries) = std::fs::read_dir(&self.argv_dir) else {
+                return Vec::new();
+            };
+            entries
+                .filter_map(std::result::Result::ok)
+                .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+                .map(|body| body.lines().map(ToOwned::to_owned).collect())
+                .collect()
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for StallableRmuxEndpoint {
+        fn drop(&mut self) {
+            self.proxy.abort();
+            let _ = Command::new(&self.rmux_bin)
+                .args([
+                    OsString::from("-S"),
+                    self.upstream_path.clone().into_os_string(),
+                    OsString::from("kill-server"),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            match self.prior_tmpdir.take() {
+                Some(value) => std::env::set_var(RMUX_TMPDIR_ENV, value),
+                None => std::env::remove_var(RMUX_TMPDIR_ENV),
+            }
+            match self.prior_daemon_binary.take() {
+                Some(value) => std::env::set_var(super::RMUX_SDK_DAEMON_BINARY_ENV, value),
+                None => std::env::remove_var(super::RMUX_SDK_DAEMON_BINARY_ENV),
+            }
+            // TempDir removal is best effort: the daemon owns files under it.
+            let _ = std::fs::remove_dir_all(self.root.path());
+        }
+    }
+
+    /// Socket-root override honored by `rmux-ipc`'s endpoint resolution, and
+    /// therefore by both the in-process SDK and every spawned `rmux` CLI.
+    #[cfg(unix)]
+    const RMUX_TMPDIR_ENV: &str = "RMUX_TMPDIR";
+
+    #[cfg(unix)]
+    async fn run_stall_proxy(
+        listener: tokio::net::UnixListener,
+        upstream: std::path::PathBuf,
+        stalled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        loop {
+            let Ok((client, _)) = listener.accept().await else {
+                return;
+            };
+            // A connection opened while stalled belongs to the CLI fallback,
+            // which must succeed. Only connections that predate the stall — the
+            // SDK's — are freezable.
+            let freezable = !stalled.load(std::sync::atomic::Ordering::SeqCst);
+            let stalled = std::sync::Arc::clone(&stalled);
+            let upstream = upstream.clone();
+            tokio::spawn(async move {
+                let Ok(server) = tokio::net::UnixStream::connect(&upstream).await else {
+                    return;
+                };
+                let (client_read, client_write) = client.into_split();
+                let (server_read, server_write) = server.into_split();
+                let freeze = freezable.then(|| std::sync::Arc::clone(&stalled));
+                tokio::join!(
+                    pump_until_frozen(client_read, server_write, freeze.clone()),
+                    pump_until_frozen(server_read, client_write, freeze),
+                );
+            });
+        }
+    }
+
+    /// Copy bytes one read at a time, checking the freeze flag *after* the read
+    /// and before the write. Checking only before the read would forward the
+    /// very request the test wants stalled: the pump is parked in `read` when
+    /// the flag flips, and the kill request is what wakes it.
+    #[cfg(unix)]
+    async fn pump_until_frozen<R, W>(
+        mut from: R,
+        mut to: W,
+        freeze: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    ) where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let Ok(read) = from.read(&mut buf).await else {
+                return;
+            };
+            if read == 0 {
+                return;
+            }
+            if freeze
+                .as_ref()
+                .is_some_and(|flag| flag.load(std::sync::atomic::Ordering::SeqCst))
+            {
+                // Hold the socket open and answer nothing, forever: what an
+                // unresponsive daemon looks like from inside the SDK.
+                std::future::pending::<()>().await;
+            }
+            if to.write_all(&buf[..read]).await.is_err() {
+                return;
+            }
+        }
+    }
+
     /// libtest captures `eprintln!` from passing tests. Write to the process
     /// stderr device so an explicitly opted-out green run remains visibly
     /// different in default `cargo test` output.
@@ -2337,6 +2640,21 @@ struct RmuxControl {
     /// Whether an implicit `Drop` (e.g. daemon shutdown) should reap the rmux
     /// session. `false` for system-wide and reattached runs, whose sessions are
     /// meant to outlive the daemon. Explicit `release` always reaps regardless.
+    ///
+    // orgasmic:task_69CW6
+    /// Cancellation boundary, deliberately asymmetric and therefore stated
+    /// rather than tested: for `kill_on_drop = true` runs an aborted `release`
+    /// is retried by the `Drop` backstop, and
+    /// `a_cancelled_release_still_reaps_through_the_drop_backstop` is that
+    /// regression. For `kill_on_drop = false` runs there is no retry, by
+    /// construction — `Drop` cannot distinguish "the operator's explicit stop
+    /// was cancelled" from "the daemon is shutting down", and reaping on the
+    /// second would destroy exactly the sessions these kinds exist to preserve.
+    /// An aborted explicit release of a system-wide or reattached run therefore
+    /// leaves the session alive and addressable, which is the recoverable
+    /// outcome: the operator can stop it again. `Supervisor::release` never
+    /// produces that abort on its own — its `DRIVER_RELEASE_TIMEOUT` exceeds the
+    /// 2s + 2s reap budget — so this is a boundary for external aborts only.
     kill_on_drop: bool,
     /// rmux CLI binary for paste-buffer/send-keys delivery and reap fallback.
     /// `None` on inert runs (no live session to address).

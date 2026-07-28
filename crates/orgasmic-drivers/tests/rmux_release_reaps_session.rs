@@ -4,7 +4,7 @@ use std::time::Duration;
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
 use orgasmic_drivers::modes::rmux::test_tooling::{
     assert_not_degraded, assert_required_test_tooling, live_session_guard, skip_test_if_missing,
-    test_environment_lock, ToolRequirement,
+    test_environment_lock, StallableRmuxEndpoint, ToolRequirement,
 };
 use orgasmic_drivers::{
     probe_rmux_binary, DriverConfig, DriverContext, RmuxBinaryProbe, RmuxDriver, RunKind,
@@ -12,11 +12,18 @@ use orgasmic_drivers::{
 };
 use serde_json::json;
 
-// orgasmic:task_R2HDN
-/// How many tests in this binary cannot run without a usable `rmux`. Both live
-/// tests below are gated; the sentinel itself is not. Adding another gated test
+// orgasmic:task_R2HDN,task_69CW6
+/// How many tests in this binary cannot run without a usable `rmux`. Every live
+/// test below is gated; the sentinel itself is not. Adding another gated test
 /// to this file means bumping this number, nothing else.
-const RMUX_GATED_TESTS: usize = 2;
+///
+/// This sentinel *is* the declared fail-closed lane for absent rmux (TASK-69CW6
+/// direction 2). It runs by default in `cargo test -p orgasmic-drivers`, needs
+/// no environment variable to arm, and fails — rather than skips — when rmux is
+/// missing. The previous `ORGASMIC_REQUIRE_LIVE_RMUX` opt-in was deleted rather
+/// than wired: set nowhere in the tree, it made the lane look covered while
+/// never running.
+const RMUX_GATED_TESTS: usize = 3;
 
 /// Probe `rmux` under the shared environment lock, so a test that mutates
 /// process-global `PATH` can never make this binary see a missing tool.
@@ -77,21 +84,11 @@ async fn rmux_session_exists(rmux_bin: &str, session: &str) -> Result<bool, Stri
 async fn release_reaps_live_rmux_session() {
     let _live_guard =
         live_session_guard().owning(format!("run-release-reap-test-{}", std::process::id()));
-    // Opt-in gate lane: unlike the ordinary developer smoke, this must fail
-    // closed when its declared rmux prerequisite is absent — even if the
-    // binary-level sentinel was explicitly waived with
-    // ORGASMIC_ALLOW_MISSING_TOOLS=rmux.
-    let rmux_required = std::env::var("ORGASMIC_REQUIRE_LIVE_RMUX").as_deref() == Ok("1");
     let probe = probe_rmux_under_environment_lock_async().await;
     if skip_test_if_missing(
         "release_reaps_live_rmux_session",
         &[("rmux", probe.usable())],
     ) {
-        assert!(
-            !rmux_required,
-            "ORGASMIC_REQUIRE_LIVE_RMUX=1 but compatible rmux is unavailable ({:?})",
-            probe.version_error
-        );
         // `skip_test_if_missing` has printed the per-test diagnostic for
         // `--nocapture`; `required_test_tooling_is_present` is what fails the
         // binary, so this return can no longer be a silent green.
@@ -163,6 +160,99 @@ async fn release_reaps_live_rmux_session() {
             .expect("probe rmux session after release"),
         "rmux session survived explicit release: {session}"
     );
+}
+
+// orgasmic:task_69CW6
+/// The explicit-release cancellation boundary, and the only regression that
+/// distinguishes the TASK-6FNAY fix from the bug it replaced.
+///
+/// `RmuxControl::release` borrows `self.session` across the cancellable reap and
+/// only `take()`s it afterwards. Restore the original `take()`-before-`await`
+/// and nothing observable changes on the happy path — the reap still runs, the
+/// session still dies. It changes exactly one thing: an *aborted* release hands
+/// the sole SDK handle to a future nobody is polling, so the `Drop` backstop
+/// finds `None` and the session outlives the run.
+///
+/// The supervisor lane cannot reach this. Its 5s budget deliberately exceeds
+/// the 2s + 2s reap budget, so `Supervisor::release` never cancels a release
+/// that is merely slow; only an external abort does. This test is that abort.
+#[tokio::test]
+async fn a_cancelled_release_still_reaps_through_the_drop_backstop() {
+    const TEST: &str = "a_cancelled_release_still_reaps_through_the_drop_backstop";
+    // Lock order is flock-then-environment everywhere in this binary; the
+    // fixture mutates process-global rmux discovery, so both are held for the
+    // whole body rather than just the probe. The probe below is therefore the
+    // bare one — `probe_rmux_under_environment_lock_async` would deadlock on a
+    // lock this test already holds.
+    let _live_guard = live_session_guard();
+    let _environment = test_environment_lock().lock().await;
+    if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
+        return;
+    }
+    let endpoint = StallableRmuxEndpoint::start()
+        .await
+        .expect("private stallable rmux endpoint");
+
+    let ctx = DriverContext {
+        identity: RuntimeIdentity::new(
+            format!("run-release-cancel-{}", std::process::id()),
+            "boot-release-cancel-test",
+        ),
+        run_kind: RunKind::Worker,
+        task_id: "TASK-69CW6".into(),
+        worker_id: "rmux-release-cancellation".into(),
+        project_id: Some("orgasmic".into()),
+        worktree: None,
+        babysitter_target: None,
+    };
+    let driver = RmuxDriver::new(Box::new(ShellAdapter::new()));
+    let config = DriverConfig::from_value(json!({
+        "command": "sh",
+        "args": ["-c", "while :; do printf 'release-cancel\\n'; sleep 0.05; done"],
+    }));
+    let mut driver_session = driver.acquire(ctx, config).await.expect("acquire rmux run");
+    let ready = tokio::time::timeout(Duration::from_secs(20), driver_session.events.recv())
+        .await
+        .expect("timed out waiting for rmux Ready")
+        .expect("rmux event stream closed before Ready");
+    let DriverEvent::Ready { capabilities, .. } = ready else {
+        panic!("expected rmux Ready, got {ready:?}");
+    };
+    assert_not_degraded(TEST, capabilities["inert"] == true);
+    let session = capabilities["session"]
+        .as_str()
+        .expect("live rmux Ready reports a session")
+        .to_string();
+    assert!(
+        endpoint.session_exists(&session),
+        "rmux session was not live before the cancelled release"
+    );
+
+    // From here the SDK's ordered transport answers nothing, so `release` parks
+    // inside its own 2s SDK budget with the session handle borrowed.
+    endpoint.stall_sdk_transport();
+    let mut control = driver_session.control;
+    let cancelled = tokio::time::timeout(
+        Duration::from_millis(300),
+        control.release("externally aborted release"),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "the stalled SDK kill must still be in flight when the caller aborts"
+    );
+    drop(control);
+
+    // `Drop` re-runs the whole reap: the SDK half stalls again, then the
+    // endpoint-exact CLI fallback opens a fresh connection and reaps for real.
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while endpoint.session_exists(&session) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "session {session} survived a cancelled release: the Drop backstop had no handle"
+        );
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
 }
 
 fn rmux_session_exists_blocking(rmux_bin: &str, session: &str) -> bool {

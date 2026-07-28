@@ -4450,13 +4450,14 @@ mod tests {
             rmux::{
                 probe_rmux_binary,
                 test_tooling::{
-                    assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
+                    assert_not_degraded, assert_required_test_tooling, skip_test_if_missing,
+                    test_environment_lock, StallableRmuxEndpoint, ToolRequirement,
                 },
             },
             tmux,
         },
-        BabysitterAck, BabysitterRequest, DriverError, DriverSession, TmuxTuiDriver, TransitionAck,
-        UserInputAck,
+        BabysitterAck, BabysitterRequest, DriverError, DriverSession, RmuxDriver, ShellAdapter,
+        TmuxTuiDriver, TransitionAck, UserInputAck,
     };
     use serde_json::json;
 
@@ -5044,15 +5045,6 @@ mod tests {
 
     struct HungReleaseControl;
 
-    struct StalledRmuxReapDriver {
-        session_live: Arc<std::sync::atomic::AtomicBool>,
-    }
-
-    struct StalledRmuxReapControl {
-        session_live: Arc<std::sync::atomic::AtomicBool>,
-        events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
-    }
-
     struct FailingRmuxReapDriver {
         producer_dropped: Arc<std::sync::atomic::AtomicBool>,
     }
@@ -5083,74 +5075,6 @@ mod tests {
 
         fn make_writer(&'a self) -> Self::Writer {
             CapturedLogWriter(Arc::clone(&self.0))
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl WorkerDriver for StalledRmuxReapDriver {
-        fn transport(&self) -> &'static str {
-            "rmux"
-        }
-
-        async fn acquire(
-            &self,
-            ctx: DriverContext,
-            _config: DriverConfig,
-        ) -> Result<DriverSession, DriverError> {
-            let (tx, rx) = tokio::sync::mpsc::channel(8);
-            tx.send(DriverEvent::Ready {
-                protocol_version: "stalled-rmux-reap/1".into(),
-                capabilities: json!({"test": true}),
-            })
-            .await
-            .unwrap();
-            Ok(DriverSession {
-                identity: ctx.identity,
-                pid: None,
-                events: rx,
-                control: Box::new(StalledRmuxReapControl {
-                    session_live: Arc::clone(&self.session_live),
-                    events: Some(tx),
-                }),
-                producer: None,
-                native_runtime: None,
-            })
-        }
-    }
-
-    #[async_trait::async_trait]
-    impl DriverControl for StalledRmuxReapControl {
-        async fn transition_state(
-            &mut self,
-            _req: TransitionRequest,
-        ) -> Result<TransitionAck, DriverError> {
-            Err(DriverError::Unsupported("transition_state"))
-        }
-
-        async fn babysitter_action(
-            &mut self,
-            _req: BabysitterRequest,
-        ) -> Result<BabysitterAck, DriverError> {
-            Err(DriverError::Unsupported("babysitter_action"))
-        }
-
-        async fn release(&mut self, reason: &str) -> Result<(), DriverError> {
-            let _ = self
-                .events
-                .as_ref()
-                .unwrap()
-                .send(DriverEvent::RunComplete {
-                    summary: Some(reason.to_string()),
-                })
-                .await;
-            let _ = tokio::time::timeout(
-                Duration::from_secs(2),
-                tokio::time::sleep(Duration::from_secs(6)),
-            )
-            .await;
-            self.session_live.store(false, Ordering::SeqCst);
-            self.events.take();
-            Ok(())
         }
     }
 
@@ -6936,8 +6860,9 @@ mod tests {
     #[tokio::test]
     async fn required_test_tooling_is_present() {
         let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
         assert_required_test_tooling(&[
-            ToolRequirement::new("rmux", 7, probe_rmux_binary().found),
+            ToolRequirement::new("rmux", 8, probe_rmux_binary().found),
             ToolRequirement::new("tmux", 6, tmux_spawn_usable_for_test().await),
             ToolRequirement::new("bash", 1, command_available_for_test("bash")),
         ]);
@@ -9899,19 +9824,87 @@ mod tests {
         );
     }
 
+    /// The rmux session name the driver reported on its persisted `Ready`, once
+    /// the supervisor has drained it. Fails rather than skips on a degraded
+    /// acquisition: an inert `Ready` owns no session, so every reap assertion
+    /// below would pass vacuously (TASK-R2HDN).
+    async fn live_rmux_session_from_session_file(path: &Path, timeout: Duration) -> String {
+        let start = Instant::now();
+        loop {
+            for envelope in session_events(path) {
+                if envelope.kind != SessionEventKind::DriverEvent
+                    || envelope.event.get("type").and_then(|ty| ty.as_str()) != Some("ready")
+                {
+                    continue;
+                }
+                let capabilities = &envelope.event["capabilities"];
+                assert_not_degraded(
+                    "supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill",
+                    capabilities["inert"] == true,
+                );
+                return capabilities["session"]
+                    .as_str()
+                    .expect("live rmux Ready reports a session")
+                    .to_string();
+            }
+            assert!(
+                start.elapsed() < timeout,
+                "no rmux Ready reached {} within {timeout:?}",
+                path.display()
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    // orgasmic:task_69CW6
+    /// TASK-6FNAY's acceptance criterion, driven through the production path
+    /// instead of a double: a real `RmuxControl` owning a real
+    /// `rmux_sdk::Session`, released by `Supervisor::release` at the real
+    /// `DRIVER_RELEASE_TIMEOUT` boundary, with the SDK's kill request stalled so
+    /// the endpoint-exact CLI fallback is the only thing that can reap.
+    ///
+    /// The surrogate this replaces slept and then flipped its own
+    /// `session_live` flag. Deleting the CLI fallback from
+    /// `RmuxControl::release`, or pointing it at a different daemon, left that
+    /// test green. Both turn this one red: the first because a real rmux
+    /// session survives; the second because the recorded argv stops naming the
+    /// session's own socket — and, on any host where a bare `rmux` resolves
+    /// somewhere else, because the session survives too.
     #[tokio::test]
     async fn supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill() {
+        const TEST: &str =
+            "supervisor_release_reserves_time_for_rmux_cli_fallback_after_stalled_sdk_kill";
+        // Lock order is flock-then-environment: the fixture starts a real rmux
+        // daemon and repoints process-global rmux discovery at it.
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
+            return;
+        }
+        let endpoint = StallableRmuxEndpoint::start()
+            .await
+            .expect("private stallable rmux endpoint");
+
         let (sup, dir, _writer) = make_supervisor();
         let session_path = dir.path().join("TASK-6FNAY-REAP.jsonl");
-        let session_live = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let driver = StalledRmuxReapDriver {
-            session_live: Arc::clone(&session_live),
-        };
-        let resp = sup
-            .acquire(&driver, impl_req("TASK-6FNAY-REAP", dir.path()))
-            .await
-            .unwrap();
+        let driver = RmuxDriver::new(Box::new(ShellAdapter::new()));
+        let mut req = impl_req("TASK-6FNAY-REAP", dir.path());
+        req.driver_config = DriverConfig::from_value(json!({
+            "command": "sh",
+            "args": ["-c", "while :; do printf 'reap\\n'; sleep 0.05; done"],
+        }));
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        let session =
+            live_rmux_session_from_session_file(&session_path, Duration::from_secs(30)).await;
+        assert!(
+            endpoint.session_exists(&session),
+            "rmux session {session} was not live before release"
+        );
 
+        // From here the SDK's ordered transport answers nothing. Only the CLI
+        // fallback can still reach the daemon.
+        endpoint.stall_sdk_transport();
+        let started = Instant::now();
         sup.release(
             &resp.run_id,
             "rmux reap regression",
@@ -9919,14 +9912,38 @@ mod tests {
         )
         .await
         .unwrap();
+        let elapsed = started.elapsed();
 
         assert!(
-            !session_live.load(Ordering::SeqCst),
-            "the real supervisor release timeout cancelled the stalled SDK kill before fallback"
+            !endpoint.session_exists(&session),
+            "rmux session {session} survived a supervisor release with a stalled SDK kill"
+        );
+        let kill_invocations = endpoint
+            .recorded_cli_invocations()
+            .into_iter()
+            .filter(|argv| argv.iter().any(|arg| arg == "kill-session"))
+            .collect::<Vec<_>>();
+        let endpoint_exact = vec![
+            "-S".to_string(),
+            endpoint.endpoint_path().display().to_string(),
+            "kill-session".to_string(),
+            "-t".to_string(),
+            session.clone(),
+        ];
+        assert!(
+            kill_invocations.contains(&endpoint_exact),
+            "the CLI fallback must address the session's own endpoint and name; recorded \
+             {kill_invocations:?}, expected {endpoint_exact:?}"
         );
         assert!(
             session_has_terminal_event(&session_events(&session_path)),
             "release-owned RunComplete must be drained before lifecycle cleanup"
+        );
+        // The stall has to have been real: a fallback that ran without the SDK
+        // consuming its budget would mean the kill request reached the daemon.
+        assert!(
+            elapsed >= Duration::from_secs(1),
+            "release returned in {elapsed:?}; the SDK kill cannot have stalled"
         );
     }
 
