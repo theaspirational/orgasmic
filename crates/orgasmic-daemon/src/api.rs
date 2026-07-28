@@ -21413,6 +21413,78 @@ mod tests {
         state.writer.shutdown().await;
     }
 
+    /// TASK-6AYEJ.1 (residual gap named by the TASK-6AYEJ review): `architect`
+    /// is a STAGE kind whose worker finalize now emits `architector.reported`
+    /// rather than `architector.done`, because finalize sees only `run.kind`
+    /// and cannot tell a dispatched architector from `stage architect` on main.
+    /// That is safe only if stage completion is driven by the finalize
+    /// TOMBSTONE and not by the tx type, and if a stage run leaves no
+    /// `manager.dispatch_started` record for a report-only tx to leave open.
+    /// Both halves are asserted here: the session below carries a
+    /// worker-finalize release and no terminal tx of any kind.
+    #[tokio::test]
+    async fn architect_stage_completes_off_the_finalize_tombstone_not_the_tx_type() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "orgasmic");
+        let state = direct_stage_test_state(home.clone()).await;
+        let mut rx = state.events.subscribe();
+        let session_path = home.sessions().join("stage-architect.jsonl");
+        let identity = RuntimeIdentity {
+            run_id: "run-stage-architect".into(),
+            runtime_id: "rt-stage-architect".into(),
+            boot_id: "boot-stage-architect".into(),
+        };
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-ARCH-STAGE".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        spawn_stage_completion_watcher(
+            state.clone(),
+            StageCompletion {
+                stage: "architect".to_string(),
+                project_id: "orgasmic".to_string(),
+                task_id: "TASK-ARCH-STAGE".to_string(),
+                target: task_file_rel("backlog.org"),
+                run_id: "run-stage-architect".to_string(),
+                session_path,
+            },
+        );
+
+        let event = next_bus_event_kind(&mut rx, Topic::Run, "stage_completed").await;
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["payload"]["stage"], "architect");
+        assert_eq!(value["payload"]["task_id"], "TASK-ARCH-STAGE");
+
+        let tx_body = std::fs::read_to_string(crate::default_home_tx_path(&home)).unwrap();
+        assert!(
+            tx_body.contains("architect.completed"),
+            "the tombstone must drive stage completion: {tx_body}"
+        );
+        assert!(
+            !tx_body.contains("manager.dispatch_started"),
+            "a stage run must create no dispatch record: {tx_body}"
+        );
+        assert!(
+            !tx_body.contains("architector.reported") && !tx_body.contains("architector.done"),
+            "stage completion must not depend on a worker terminal tx: {tx_body}"
+        );
+
+        state.writer.shutdown().await;
+    }
+
     #[tokio::test]
     async fn stage_failed_event_emitted_when_run_fails() {
         let tmp = tempfile::tempdir().unwrap();

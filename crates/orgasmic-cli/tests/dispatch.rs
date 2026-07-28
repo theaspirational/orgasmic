@@ -2630,7 +2630,7 @@ async fn dispatch_sleeping_implementer(
     head: &str,
     worktree: &Path,
     brief: &Path,
-) {
+) -> String {
     write(brief, "stub implementer brief");
     let dispatch_stdout = run_orgasmic(
         home,
@@ -2662,6 +2662,17 @@ async fn dispatch_sleeping_implementer(
     );
     assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
     assert!(worktree.is_dir(), "worktree should exist");
+    started_tx_from_dispatch_stdout(&dispatch_stdout)
+}
+
+/// The `manager.dispatch_started` tx id printed by `manager dispatch`, i.e. the
+/// generation token `dispatch-close --started-tx` takes (TASK-6AYEJ.1).
+fn started_tx_from_dispatch_stdout(stdout: &str) -> String {
+    stdout
+        .split_whitespace()
+        .find_map(|token| token.strip_prefix("started_tx="))
+        .unwrap_or_else(|| panic!("dispatch output has no started_tx=: {stdout}"))
+        .to_string()
 }
 
 /// Acceptance #1 (TASK-WFW1N): `orgasmic dispatch finalize` writes last.txt
@@ -3198,6 +3209,261 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
         count_occurrences(&tx_after, ":TYPE:         implementer.done"),
         1,
         "a repeated close must not append a second closing tx: {tx_after}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-6AYEJ.1, the ship blocker the double-close test above misses because it
+/// replays IMMEDIATELY, before a successor exists. The real workflow closes the
+/// implementer, which moves the task to IN_REVIEW, and then opens a REVIEWER
+/// for the same task. A stale implementer close replayed at that moment used to
+/// select the reviewer's open record: it released the live reviewer run,
+/// removed its worktree, deleted its branch and appended a `reviewer.done`.
+/// Bound to its own generation via `--started-tx`, it is a no-op instead.
+///
+/// The second half covers the other generation shape: abort → redispatch →
+/// stale abort retry.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stale_close_retry_does_not_touch_a_successor_dispatch_for_the_same_task() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    let impl_started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    // The manager closes the implementer normally. This is the generation the
+    // stale retry below belongs to.
+    let close_args = |started_tx: &str| {
+        vec![
+            "manager".to_string(),
+            "dispatch-close".to_string(),
+            "--task".to_string(),
+            "TASK-DISPATCH".to_string(),
+            "--started-tx".to_string(),
+            started_tx.to_string(),
+            "--status".to_string(),
+            "done".to_string(),
+            "--merge-sha".to_string(),
+            head.clone(),
+            "--worktree-remove".to_string(),
+            "--branch-delete".to_string(),
+            "--reason".to_string(),
+            "merged".to_string(),
+        ]
+    };
+    let impl_close_args = close_args(&impl_started_tx);
+    let impl_close_argv = impl_close_args
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    let close_stdout = run_orgasmic(&home, &running, &project_root, &path_env, &impl_close_argv);
+    assert!(
+        close_stdout.contains("closed: TASK-DISPATCH implementer.done tx="),
+        "unexpected implementer close output: {close_stdout}"
+    );
+    assert_task_stage(&project_root, "TASK-DISPATCH", "IN_REVIEW", "in_review");
+
+    // ...and dispatches a reviewer for the SAME task, exactly as the workflow
+    // prescribes. This is the successor a task-bound retry would grab.
+    let review_brief = tmp.path().join("codex/task-dispatch-review-brief.md");
+    write(&review_brief, "stub reviewer brief");
+    let review_worktree = tmp.path().join("worktrees/task-dispatch-review");
+    let review_dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
+            "--brief",
+            review_brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            review_worktree.to_str().unwrap(),
+            "--branch",
+            "task-dispatch-test-review",
+            "--reason",
+            "reviewer pass",
+        ],
+    );
+    assert!(review_dispatch_stdout.contains("dispatched: TASK-DISPATCH reviewer pid="));
+    let review_started_tx = started_tx_from_dispatch_stdout(&review_dispatch_stdout);
+    assert!(review_worktree.is_dir(), "reviewer worktree should exist");
+
+    // The stale retry: the same implementer close command, replayed.
+    let stale = run_orgasmic_output(&home, &running, &project_root, &path_env, &impl_close_argv);
+    let stale_stdout = String::from_utf8_lossy(&stale.stdout).to_string();
+    assert!(
+        stale.status.success(),
+        "a stale retry must still be a clean no-op\nstdout={stale_stdout}\nstderr={}",
+        String::from_utf8_lossy(&stale.stderr)
+    );
+    assert!(
+        stale_stdout.contains(&format!(
+            "already-closed: TASK-DISPATCH started_tx={impl_started_tx}"
+        )),
+        "the retry must no-op against ITS OWN generation: {stale_stdout}"
+    );
+
+    // The reviewer is untouched: still open, worktree on disk, branch alive,
+    // and no reviewer terminal tx was appended.
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains(&format!("TX_ID={review_started_tx}"))
+            && status_stdout.contains("KIND=reviewer"),
+        "the live reviewer dispatch must still be open: {status_stdout}"
+    );
+    assert!(
+        review_worktree.is_dir(),
+        "the stale retry must not remove the reviewer's worktree"
+    );
+    let branches = run_git(
+        &project_root,
+        &["branch", "--list", "task-dispatch-test-review"],
+    );
+    assert!(
+        !branches.trim().is_empty(),
+        "the stale retry must not delete the reviewer's branch: {branches}"
+    );
+    let tx_after = tx_log(&project_root);
+    assert_eq!(
+        count_occurrences(&tx_after, ":TYPE:         reviewer.done"),
+        0,
+        "the stale retry must not append a reviewer close: {tx_after}"
+    );
+    assert_eq!(
+        count_occurrences(&tx_after, ":TYPE:         implementer.done"),
+        1,
+        "the stale retry must not append a second implementer close: {tx_after}"
+    );
+
+    // Second shape: abort the reviewer, redispatch for the same task, replay
+    // the abort. Same fence, different terminal tx.
+    let abort_args = vec![
+        "manager",
+        "dispatch-close",
+        "--task",
+        "TASK-DISPATCH",
+        "--started-tx",
+        review_started_tx.as_str(),
+        "--status",
+        "aborted",
+        "--reason",
+        "reviewer wedged",
+        "--worktree-remove",
+        "--branch-delete",
+    ];
+    let abort_stdout = run_orgasmic(&home, &running, &project_root, &path_env, &abort_args);
+    assert!(
+        abort_stdout.contains("closed: TASK-DISPATCH manager.dispatch_aborted tx="),
+        "unexpected abort output: {abort_stdout}"
+    );
+
+    let redispatch_brief = tmp.path().join("codex/task-dispatch-review2-brief.md");
+    write(&redispatch_brief, "stub reviewer brief 2");
+    let redispatch_worktree = tmp.path().join("worktrees/task-dispatch-review2");
+    let redispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "reviewer",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
+            "--brief",
+            redispatch_brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--worktree",
+            redispatch_worktree.to_str().unwrap(),
+            "--branch",
+            "task-dispatch-test-review2",
+            "--reason",
+            "reviewer retry",
+        ],
+    );
+    let redispatch_started_tx = started_tx_from_dispatch_stdout(&redispatch_stdout);
+
+    let stale_abort = run_orgasmic_output(&home, &running, &project_root, &path_env, &abort_args);
+    let stale_abort_stdout = String::from_utf8_lossy(&stale_abort.stdout).to_string();
+    assert!(
+        stale_abort.status.success(),
+        "a stale abort retry must be a clean no-op\nstdout={stale_abort_stdout}\nstderr={}",
+        String::from_utf8_lossy(&stale_abort.stderr)
+    );
+    assert!(
+        stale_abort_stdout.contains(&format!(
+            "already-closed: TASK-DISPATCH started_tx={review_started_tx}"
+        )),
+        "the stale abort must no-op against its own generation: {stale_abort_stdout}"
+    );
+    assert!(
+        redispatch_worktree.is_dir(),
+        "the stale abort must not remove the redispatched worktree"
+    );
+    let status_after = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_after.contains(&format!("TX_ID={redispatch_started_tx}")),
+        "the redispatched reviewer must still be open: {status_after}"
+    );
+    let tx_final = tx_log(&project_root);
+    assert_eq!(
+        count_occurrences(&tx_final, ":TYPE:         manager.dispatch_aborted"),
+        1,
+        "the stale abort must not append a second abort tx: {tx_final}"
     );
 
     let _ = running.shutdown.send(());

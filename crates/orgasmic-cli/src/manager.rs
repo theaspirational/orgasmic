@@ -103,6 +103,12 @@ pub enum DispatchCloseStatus {
 pub struct DispatchCloseArgs {
     #[arg(long = "task", action = ArgAction::Append, required = true)]
     pub task: Vec<String>,
+    /// TX_ID of the `manager.dispatch_started` this close belongs to — the
+    /// dispatch GENERATION, printed by `manager dispatch` as `started_tx=` and
+    /// by `dispatch-status` as `TX_ID=`. Pass it: a close bound to a task
+    /// rather than a generation can select a SUCCESSOR dispatch (TASK-6AYEJ.1).
+    #[arg(long = "started-tx")]
+    pub started_tx: Option<String>,
     #[arg(long, value_enum)]
     pub status: DispatchCloseStatus,
     #[arg(long = "merge-sha")]
@@ -563,12 +569,15 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
     // POST succeeded — commit artifact ownership before any further I/O.
     reservation.commit();
 
+    // `started_tx` is the generation token `dispatch-close --started-tx` takes
+    // (TASK-6AYEJ.1); print it here so the manager never has to go looking.
     println!(
-        "dispatched: {} {} pid={} run_id={} worker={} driver={} harness={} brief={}",
+        "dispatched: {} {} pid={} run_id={} started_tx={} worker={} driver={} harness={} brief={}",
         task_list_property(&plan.tasks),
         plan.kind,
         response.pid,
         response.run_id,
+        response.dispatch_tx_id,
         response.worker_id,
         response.driver,
         response.harness,
@@ -590,21 +599,9 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     let project_root = find_project_root()?;
     let project_id = read_project_id(&project_root)?;
     let tasks = normalize_tasks(args.task.clone())?;
-    let open = match latest_open_dispatch_for_tasks(&project_root, &tasks)? {
-        Some(open) => open,
-        None => {
-            // Closing an already-closed dispatch is a no-op, not an error
-            // (TASK-6AYEJ): a manager that died mid-integration and re-runs
-            // the close must not be punished, and neither must a dispatch
-            // closed before this fix by the worker's own finalize. Only a task
-            // with no dispatch record at all is still an error.
-            let closed =
-                latest_closed_dispatch_for_tasks(&project_root, &tasks)?.ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "no open manager.dispatch_started tx for {}",
-                        task_list_property(&tasks)
-                    )
-                })?;
+    let open = match resolve_close_target(&project_root, &tasks, args.started_tx.as_deref())? {
+        CloseTarget::Open(open) => open,
+        CloseTarget::AlreadyClosed(closed) => {
             // Deliberately NOT re-running cleanup: "no-op" is the contract, and
             // the caller can tell the difference from a real close because the
             // line says `already-closed` and carries no new tx id. For the
@@ -659,6 +656,26 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
         && merge_sha.is_none()
     {
         bail!("--merge-sha is required when closing an architector dispatch as architector.done");
+    }
+    // Fail closed on the task-bound path (TASK-6AYEJ.1). `--merge-sha` is the
+    // manager's merge of a WORKER BRANCH, so it only belongs to an implementer
+    // or architector close; seeing it while the task-bound selection landed on
+    // a reviewer/griller/planner record means the caller is replaying an older
+    // generation's close onto a successor dispatch. Refuse instead of releasing
+    // and cleaning up a live one. `--started-tx` names the generation
+    // explicitly, so it is exempt.
+    if args.started_tx.is_none()
+        && args.status == DispatchCloseStatus::Done
+        && merge_sha.is_some()
+        && !matches!(tx_type, "implementer.done" | "architector.done")
+    {
+        bail!(
+            "--merge-sha was given but the open dispatch selected for {} is a {} \
+             (would close as {tx_type}); if you meant to close an earlier generation, \
+             pass --started-tx <TX_ID from dispatch-status>, otherwise drop --merge-sha",
+            task_list_property(&tasks),
+            open.kind
+        );
     }
     let abort_reason = if args.status == DispatchCloseStatus::Aborted {
         Some(
@@ -1212,10 +1229,20 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
 
     // Order matters (reviewer #2): the worker's terminal tx is the LAST thing
     // we emit, only after the durable artifacts (commit above, last.txt) and
-    // the lease release have all succeeded. If any earlier step fails or the
-    // process dies, no completion tx is on record — the run stalls and is
-    // flagged orphan (rescuable), never a "done" claim with no report + a held
-    // lease.
+    // the lease release have all succeeded, so there is never a "done" claim
+    // with no report and a still-held lease.
+    //
+    // What that ordering actually costs, measured (TASK-WGXKD, run
+    // run-20260727T131952-...): the intent was that a death before step 3
+    // leaves the run stalled, orphan-flagged and rescuable. It does not. Step 2
+    // tears down the driver, which SIGKILLs the harness whose shell is running
+    // this very CLI, so a death in the window between the release and the tx
+    // POST leaves a durable commit, a durable last.txt, a RELEASED lease, no
+    // terminal tx — and NO orphan flag, because from the daemon's side the
+    // release *was* a worker finalize. That fourth state is invisible to both
+    // the success path and the rescue path; only `dispatch-status`'s
+    // `[unreported]` marker shows it. Fixing the race is TASK-WGXKD; this
+    // comment only stops the ordering from reading as safer than it is.
 
     // 1. Write last.txt verbatim — the run's own artifact path, resolved from
     //    the daemon's live run record, never scraped scrollback.
@@ -2126,10 +2153,13 @@ fn close_done_request(
         extra.push(("GOAL_ID".to_string(), goal_id));
     }
     TxAppendRequest {
+        // Deterministic per (task, dispatch generation), not per invocation
+        // (TASK-6AYEJ.1): a replayed close of the same generation dedupes at
+        // the writer instead of appending a second terminal tx.
         request_id: Some(format!(
             "dispatch-close-{}-{}",
             request_slug(task),
-            Uuid::new_v4()
+            open.tx_id
         )),
         ty: tx_type.to_string(),
         actor: Some(format!("agent.{}", open.kind)),
@@ -2160,10 +2190,11 @@ fn close_aborted_request(
     }
     push_cleanup_extra(&mut extra, cleanup);
     TxAppendRequest {
+        // Deterministic per (task, dispatch generation) — see close_done_request.
         request_id: Some(format!(
             "dispatch-aborted-{}-{}",
             request_slug(task),
-            Uuid::new_v4()
+            open.tx_id
         )),
         ty: "manager.dispatch_aborted".to_string(),
         actor: None,
@@ -3391,6 +3422,80 @@ fn latest_open_dispatch_for_tasks(
     }))
 }
 
+/// Which dispatch generation a `dispatch-close` invocation acts on.
+#[derive(Debug)]
+enum CloseTarget {
+    /// A still-open dispatch: close it for real.
+    Open(DispatchRecord),
+    /// The generation this close names is already closed: no-op.
+    AlreadyClosed(DispatchRecord),
+}
+
+/// Resolve the dispatch generation a close acts on (TASK-6AYEJ.1).
+///
+/// Close identity is a GENERATION — one `manager.dispatch_started` tx — not a
+/// task. A task outlives its dispatches: closing the implementer moves the task
+/// to IN_REVIEW and a reviewer is opened for the SAME task, so a task-bound
+/// retry of the implementer close selects the reviewer's open record and
+/// releases and cleans up a live dispatch. With `--started-tx` the named
+/// generation decides and nothing else is consulted: a replay against an
+/// already-closed generation is a no-op *even while another dispatch for the
+/// task is open*, and a generation that is not in the ledger at all is a hard
+/// error rather than a fall-through to "whatever is open for this task".
+///
+/// Without `--started-tx` the legacy task-bound selection stands, for callers
+/// (and ~10 historical records) that predate the flag; `cmd_dispatch_close`
+/// applies a narrower kind fence on that path.
+fn resolve_close_target(
+    project_root: &Path,
+    tasks: &[String],
+    started_tx: Option<&str>,
+) -> Result<CloseTarget> {
+    if let Some(started_tx) = started_tx {
+        let record = scan_dispatches(project_root)?
+            .into_iter()
+            .rev()
+            .find(|record| record.tx_id == started_tx)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no manager.dispatch_started tx {started_tx} in the tx log \
+                     (--started-tx names the dispatch generation to close; \
+                     `orgasmic manager dispatch-status` prints it as TX_ID=)"
+                )
+            })?;
+        for task in tasks {
+            if !record.tasks.iter().any(|got| got == task) {
+                bail!(
+                    "dispatch {} covers {} and does not include requested task {}",
+                    record.tx_id,
+                    task_list_property(&record.tasks),
+                    task
+                );
+            }
+        }
+        return Ok(if record.closed {
+            CloseTarget::AlreadyClosed(record)
+        } else {
+            CloseTarget::Open(record)
+        });
+    }
+    if let Some(open) = latest_open_dispatch_for_tasks(project_root, tasks)? {
+        return Ok(CloseTarget::Open(open));
+    }
+    // Closing an already-closed dispatch is a no-op, not an error
+    // (TASK-6AYEJ): a manager that died mid-integration and re-runs the close
+    // must not be punished, and neither must a dispatch closed before this fix
+    // by the worker's own finalize. Only a task with no dispatch record at all
+    // is still an error.
+    let closed = latest_closed_dispatch_for_tasks(project_root, tasks)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no open manager.dispatch_started tx for {}",
+            task_list_property(tasks)
+        )
+    })?;
+    Ok(CloseTarget::AlreadyClosed(closed))
+}
+
 /// The newest already-closed dispatch covering every requested task, used only
 /// to make a repeated `dispatch-close` a clean no-op (TASK-6AYEJ).
 fn latest_closed_dispatch_for_tasks(
@@ -3594,9 +3699,16 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
 }
 
 /// Attach a worker's `*.reported` finalize tx to its still-open dispatch
-/// (TASK-6AYEJ). Matches on the exact run id when both sides carry one, and
-/// otherwise falls back to the same newest-unclosed-overlapping-task rule
-/// [`close_matching_dispatch`] uses.
+/// (TASK-6AYEJ). Matches on the exact run id when the report carries one, and
+/// falls back to the newest-unclosed-overlapping-task rule
+/// [`close_matching_dispatch`] uses ONLY for a report that genuinely lacks a
+/// RUN_ID.
+///
+/// A present-but-unmatched RUN_ID fails closed (TASK-6AYEJ.1): a late report
+/// for run A, dispatched and then aborted before run B took the same task,
+/// cannot match A (A is closed, and closed records are excluded), and falling
+/// through to task overlap would flag B — telling the manager the wrong worker
+/// finished. Unattached is the honest answer.
 fn mark_matching_dispatch_reported(open: &mut [DispatchRecord], reported: &TxEntry) {
     if let Some(run_id) = extra(reported, "RUN_ID") {
         for record in open.iter_mut().rev() {
@@ -3605,6 +3717,7 @@ fn mark_matching_dispatch_reported(open: &mut [DispatchRecord], reported: &TxEnt
                 return;
             }
         }
+        return;
     }
     let reported_tasks = reported
         .task
@@ -4120,6 +4233,7 @@ mod tests {
         let open = architector_record();
         let args = DispatchCloseArgs {
             task: vec!["TASK-086".to_string()],
+            started_tx: None,
             status: DispatchCloseStatus::Done,
             merge_sha: Some("abc123".to_string()),
             worker_commit: None,
@@ -4312,6 +4426,319 @@ mod tests {
         assert!(
             scan_open_dispatches(tmp.path()).unwrap().is_empty(),
             "the manager's `*.done` must close the dispatch"
+        );
+    }
+
+    // ---- TASK-6AYEJ.1 generation-bound close fixtures -------------------
+
+    fn tx_started(tx_id: &str, task: &str, kind: &str, time: &str) -> String {
+        format!(
+            "* TX 2026-07-26 Sun {time} manager.dispatch_started {task}\n:PROPERTIES:\n:TX_ID:        {tx_id}\n:TIME:         [2026-07-26 Sun {time}]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:KIND:         {kind}\n:WORKTREE:     /tmp/orgasmic-worktrees/{tx_id}\n:BRANCH:       {tx_id}-branch\n:STARTED_AT:   [2026-07-26 Sun {time}]\n:END:\n\n"
+        )
+    }
+
+    fn tx_run_created(
+        tx_id: &str,
+        task: &str,
+        dispatch_tx: &str,
+        run_id: &str,
+        kind: &str,
+        time: &str,
+    ) -> String {
+        format!(
+            "* TX 2026-07-26 Sun {time} run.created {task}\n:PROPERTIES:\n:TX_ID:        {tx_id}\n:TIME:         [2026-07-26 Sun {time}]\n:TYPE:         run.created\n:ACTOR:        daemon\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:ORIGIN:       cli_dispatch\n:DISPATCH_TX:  {dispatch_tx}\n:RUN_ID:       {run_id}\n:KIND:         {kind}\n:END:\n\n"
+        )
+    }
+
+    fn tx_terminal(tx_id: &str, task: &str, ty: &str, closed_tx: &str, time: &str) -> String {
+        format!(
+            "* TX 2026-07-26 Sun {time} {ty} {task}\n:PROPERTIES:\n:TX_ID:        {tx_id}\n:TIME:         [2026-07-26 Sun {time}]\n:TYPE:         {ty}\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:REASON:       fixture\n:CLOSED_TX:    {closed_tx}\n:END:\n\n"
+        )
+    }
+
+    fn tx_reported(tx_id: &str, task: &str, ty: &str, run_id: Option<&str>, time: &str) -> String {
+        let run_id_line = run_id
+            .map(|run_id| format!(":RUN_ID:       {run_id}\n"))
+            .unwrap_or_default();
+        format!(
+            "* TX 2026-07-26 Sun {time} {ty} {task}\n:PROPERTIES:\n:TX_ID:        {tx_id}\n:TIME:         [2026-07-26 Sun {time}]\n:TYPE:         {ty}\n:ACTOR:        agent.implementer\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n{run_id_line}:END:\n"
+        )
+    }
+
+    fn write_tx_log(project_root: &Path, body: &str) {
+        let tx_dir = project_root.join(".orgasmic/tx");
+        std::fs::create_dir_all(&tx_dir).unwrap();
+        std::fs::write(
+            tx_dir.join("2026-07.org"),
+            format!("#+title: tx\n#+orgasmic_version: 1\n\n{body}"),
+        )
+        .unwrap();
+    }
+
+    /// TASK-6AYEJ.1, the ship blocker: closing the implementer moves the task
+    /// to IN_REVIEW and a reviewer is opened for the SAME task, so a replayed
+    /// implementer close must no-op against its own already-closed generation
+    /// even though another dispatch for that task is open. Task-bound
+    /// selection picks the live reviewer instead and would release and clean
+    /// it up.
+    #[test]
+    fn stale_close_retry_noops_against_its_own_generation_while_a_successor_is_open() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}{}",
+                tx_started("tx-start-impl", "TASK-9", "implementer", "10:00:00"),
+                tx_terminal(
+                    "tx-done-impl",
+                    "TASK-9",
+                    "implementer.done",
+                    "tx-start-impl",
+                    "11:00:00"
+                ),
+                tx_started("tx-start-review", "TASK-9", "reviewer", "11:05:00"),
+            ),
+        );
+        let tasks = vec!["TASK-9".to_string()];
+
+        match resolve_close_target(tmp.path(), &tasks, Some("tx-start-impl")).unwrap() {
+            CloseTarget::AlreadyClosed(record) => assert_eq!(record.tx_id, "tx-start-impl"),
+            CloseTarget::Open(record) => panic!(
+                "a stale implementer close must no-op, not open-close {}",
+                record.tx_id
+            ),
+        }
+
+        // The successor is untouched and still closable on its own identity.
+        match resolve_close_target(tmp.path(), &tasks, Some("tx-start-review")).unwrap() {
+            CloseTarget::Open(record) => {
+                assert_eq!(record.tx_id, "tx-start-review");
+                assert_eq!(record.kind, "reviewer");
+            }
+            CloseTarget::AlreadyClosed(record) => {
+                panic!("the live reviewer must still be open: {}", record.tx_id)
+            }
+        }
+
+        // Fail closed: a generation that is not in the ledger is an error, not
+        // a fall-through to "whatever is open for this task".
+        let err = resolve_close_target(tmp.path(), &tasks, Some("tx-start-ghost")).unwrap_err();
+        assert!(
+            err.to_string().contains("tx-start-ghost"),
+            "unexpected error: {err}"
+        );
+
+        // A --started-tx for a different task never silently retargets.
+        let err = resolve_close_target(
+            tmp.path(),
+            &["TASK-OTHER".to_string()],
+            Some("tx-start-impl"),
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("does not include requested task"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// The other generation shape named by the review: a dispatch is aborted,
+    /// a fresh one is dispatched for the same task, and the abort is replayed.
+    #[test]
+    fn stale_abort_retry_noops_after_the_task_was_redispatched() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}{}",
+                tx_started("tx-start-a", "TASK-9", "implementer", "10:00:00"),
+                tx_terminal(
+                    "tx-abort-a",
+                    "TASK-9",
+                    "manager.dispatch_aborted",
+                    "tx-start-a",
+                    "10:30:00"
+                ),
+                tx_started("tx-start-b", "TASK-9", "implementer", "10:35:00"),
+            ),
+        );
+        let tasks = vec!["TASK-9".to_string()];
+
+        match resolve_close_target(tmp.path(), &tasks, Some("tx-start-a")).unwrap() {
+            CloseTarget::AlreadyClosed(record) => assert_eq!(record.tx_id, "tx-start-a"),
+            CloseTarget::Open(record) => panic!(
+                "a stale abort must not select the redispatched generation {}",
+                record.tx_id
+            ),
+        }
+        match resolve_close_target(tmp.path(), &tasks, Some("tx-start-b")).unwrap() {
+            CloseTarget::Open(record) => assert_eq!(record.tx_id, "tx-start-b"),
+            CloseTarget::AlreadyClosed(record) => {
+                panic!("the redispatched run must still be open: {}", record.tx_id)
+            }
+        }
+    }
+
+    /// Without `--started-tx` the legacy task-bound selection is retained for
+    /// historical records — including the no-op on a task whose only dispatch
+    /// is closed. This pins the boundary of the fix: task-bound close is only
+    /// safe while no successor exists, which is why `--started-tx` is the
+    /// documented way to close.
+    #[test]
+    fn close_without_started_tx_keeps_legacy_task_bound_selection() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}",
+                tx_started("tx-start-old", "TASK-9", "implementer", "10:00:00"),
+                tx_terminal(
+                    "tx-done-old",
+                    "TASK-9",
+                    "implementer.done",
+                    "tx-start-old",
+                    "11:00:00"
+                ),
+            ),
+        );
+        let tasks = vec!["TASK-9".to_string()];
+        match resolve_close_target(tmp.path(), &tasks, None).unwrap() {
+            CloseTarget::AlreadyClosed(record) => assert_eq!(record.tx_id, "tx-start-old"),
+            CloseTarget::Open(record) => panic!("expected already-closed, got {}", record.tx_id),
+        }
+        let err = resolve_close_target(tmp.path(), &["TASK-NONE".to_string()], None).unwrap_err();
+        assert!(
+            err.to_string().contains("no open manager.dispatch_started"),
+            "unexpected error: {err}"
+        );
+    }
+
+    /// TASK-6AYEJ.1 finding 3: a PRESENT but unmatched RUN_ID must not fall
+    /// through to task overlap. Case 1 — run A aborted, run B dispatched for
+    /// the same task, a late `*.reported` for A arrives.
+    #[test]
+    fn late_report_for_an_aborted_run_does_not_flag_its_successor_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}{}{}{}{}",
+                tx_started("tx-start-a", "TASK-9", "implementer", "10:00:00"),
+                tx_run_created(
+                    "tx-run-a",
+                    "TASK-9",
+                    "tx-start-a",
+                    "run-a",
+                    "implementer",
+                    "10:01:00"
+                ),
+                tx_terminal(
+                    "tx-abort-a",
+                    "TASK-9",
+                    "manager.dispatch_aborted",
+                    "tx-start-a",
+                    "10:30:00"
+                ),
+                tx_started("tx-start-b", "TASK-9", "implementer", "10:35:00"),
+                tx_run_created(
+                    "tx-run-b",
+                    "TASK-9",
+                    "tx-start-b",
+                    "run-b",
+                    "implementer",
+                    "10:36:00"
+                ),
+                tx_reported(
+                    "tx-reported-a",
+                    "TASK-9",
+                    "implementer.reported",
+                    Some("run-a"),
+                    "10:40:00"
+                ),
+            ),
+        );
+        let open = scan_open_dispatches(tmp.path()).unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].tx_id, "tx-start-b");
+        assert!(
+            !open[0].reported,
+            "run A's late report must not claim run B finished"
+        );
+    }
+
+    /// Case 2 — two overlapping OPEN records for the same task: the report
+    /// attaches to the run it names and to no other.
+    #[test]
+    fn report_with_run_id_attaches_only_to_the_run_it_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}{}{}{}",
+                tx_started("tx-start-a", "TASK-9", "implementer", "10:00:00"),
+                tx_run_created(
+                    "tx-run-a",
+                    "TASK-9",
+                    "tx-start-a",
+                    "run-a",
+                    "implementer",
+                    "10:01:00"
+                ),
+                tx_started("tx-start-b", "TASK-9", "reviewer", "10:05:00"),
+                tx_run_created(
+                    "tx-run-b",
+                    "TASK-9",
+                    "tx-start-b",
+                    "run-b",
+                    "reviewer",
+                    "10:06:00"
+                ),
+                tx_reported(
+                    "tx-reported-a",
+                    "TASK-9",
+                    "implementer.reported",
+                    Some("run-a"),
+                    "10:40:00"
+                ),
+            ),
+        );
+        let open = scan_open_dispatches(tmp.path()).unwrap();
+        assert_eq!(open.len(), 2);
+        let by_tx = |tx: &str| {
+            open.iter()
+                .find(|record| record.tx_id == tx)
+                .unwrap_or_else(|| panic!("missing {tx}"))
+        };
+        assert!(by_tx("tx-start-a").reported, "run-a's report attaches to A");
+        assert!(
+            !by_tx("tx-start-b").reported,
+            "the newest overlapping record must not absorb another run's report"
+        );
+    }
+
+    /// Case 3 — the only case where task overlap is still allowed: a report
+    /// that genuinely carries no RUN_ID (pre-RUN_ID records).
+    #[test]
+    fn report_without_run_id_still_falls_back_to_task_overlap() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}",
+                tx_started("tx-start-legacy", "TASK-9", "implementer", "10:00:00"),
+                tx_reported(
+                    "tx-reported-legacy",
+                    "TASK-9",
+                    "implementer.reported",
+                    None,
+                    "10:40:00"
+                ),
+            ),
+        );
+        let open = scan_open_dispatches(tmp.path()).unwrap();
+        assert_eq!(open.len(), 1);
+        assert!(
+            open[0].reported,
+            "a legacy report with no RUN_ID must still attach by task overlap"
         );
     }
 
