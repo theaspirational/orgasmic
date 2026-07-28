@@ -230,69 +230,10 @@ pub struct CachedMutation {
     pub mutation_id: String,
 }
 
-/// orgasmic:TASK-Q07Y5 — the writer half of the shutdown budget.
-///
-/// `WriterHandle::shutdown` queues behind every command the writer has already
-/// accepted, and the command being processed can be blocked in `write`/`fsync`.
-/// Unbounded, it makes the whole SIGTERM path unbounded, so no service-manager
-/// kill timeout can be *proven* larger than it — which is what TASK-WGXKD.2
-/// finding 1 objected to. 10s is one worst-case blocked fsync (a stalled or
-/// remote-backed volume) plus the queue behind it; past that the work is not
-/// arriving in time to be worth waiting for, and the loss is recorded instead
-/// of the daemon being SIGKILLed mid-write with nothing written down.
-pub const WRITER_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
-
-/// The write the writer task is executing (or was executing when a shutdown
-/// budget expired). Carries the run id when the command has one, because a
-/// shutdown-loss report an operator can act on has to name the run, not a count
-/// (TASK-Q07Y5).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingWrite {
-    /// `tx`, `session`, `transaction`, `mutate`, `rewrite`, or `shutdown`.
-    pub kind: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tx_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<PathBuf>,
-}
-
-/// What [`WriterHandle::shutdown_within`] observed. `TimedOut` is the outcome
-/// callers must make durable: the writer still owns unwritten work and the
-/// process is about to exit anyway.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum WriterShutdownOutcome {
-    /// The writer acknowledged the shutdown: everything it had accepted is
-    /// written and its handles are closed.
-    Clean,
-    /// The writer task was already gone, so there is nothing left to flush.
-    AlreadyGone,
-    /// The budget expired first. `in_flight` is the write that did not finish;
-    /// `queued` is the number still waiting behind it (a lower bound — commands
-    /// blocked on a full channel are not counted).
-    TimedOut {
-        queued: usize,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        in_flight: Option<PendingWrite>,
-    },
-}
-
-impl WriterShutdownOutcome {
-    /// Whether the writer stopped with nothing left unwritten.
-    pub fn is_clean(&self) -> bool {
-        matches!(self, Self::Clean | Self::AlreadyGone)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct WriterHandle {
     tx: mpsc::Sender<WriterCommand>,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
-    /// Head-of-line write, published by the writer task so a shutdown that
-    /// gives up can name what it gave up on.
-    in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
     #[cfg(test)]
     transaction_gate: Arc<Mutex<Option<Arc<TestTransactionGate>>>>,
 }
@@ -569,60 +510,16 @@ impl WriterHandle {
         Ok(())
     }
 
-    /// Stop the writer, giving up after `budget`.
-    ///
-    /// orgasmic:TASK-Q07Y5 — this used to be an unbounded `send().await` +
-    /// `rx.await`: it queues behind every accepted command, and the one being
-    /// executed can sit in a blocked `fsync`. The caller could therefore never
-    /// state a finite shutdown cost, so neither could the service manager's
-    /// kill timeout. The send is inside the budget too, because a full channel
-    /// *is* queueing behind the stuck write.
-    ///
-    /// A timeout does not abandon the writer task — it keeps running and may
-    /// still land its write — but the caller must treat the work as unproven
-    /// and record [`WriterShutdownOutcome::TimedOut`] durably before exiting.
-    pub async fn shutdown_within(&self, budget: std::time::Duration) -> WriterShutdownOutcome {
-        let deadline = tokio::time::Instant::now() + budget;
+    pub async fn shutdown(&self) {
         let (reply, rx) = oneshot::channel();
-        match tokio::time::timeout_at(deadline, self.tx.send(WriterCommand::Shutdown { reply }))
+        if self
+            .tx
+            .send(WriterCommand::Shutdown { reply })
             .await
+            .is_ok()
         {
-            Ok(Ok(())) => {}
-            Ok(Err(_)) => return WriterShutdownOutcome::AlreadyGone,
-            Err(_) => return self.shutdown_timed_out(),
+            let _ = rx.await;
         }
-        match tokio::time::timeout_at(deadline, rx).await {
-            Ok(Ok(())) => WriterShutdownOutcome::Clean,
-            Ok(Err(_)) => WriterShutdownOutcome::AlreadyGone,
-            Err(_) => self.shutdown_timed_out(),
-        }
-    }
-
-    fn shutdown_timed_out(&self) -> WriterShutdownOutcome {
-        WriterShutdownOutcome::TimedOut {
-            queued: self.tx.max_capacity().saturating_sub(self.tx.capacity()),
-            in_flight: self
-                .in_flight
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone(),
-        }
-    }
-
-    /// Test-only teardown for in-crate fixtures that just want the writer to
-    /// stop. Deliberately not public: production shutdown must state a budget
-    /// and handle [`WriterShutdownOutcome::TimedOut`] (TASK-Q07Y5).
-    #[cfg(test)]
-    pub(crate) async fn shutdown(&self) -> WriterShutdownOutcome {
-        self.shutdown_within(WRITER_SHUTDOWN_TIMEOUT).await
-    }
-
-    /// The write the writer task is executing right now, if any.
-    pub fn in_flight_write(&self) -> Option<PendingWrite> {
-        self.in_flight
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
     }
 
     #[cfg(test)]
@@ -640,104 +537,25 @@ impl WriterHandle {
 pub fn spawn(events: EventBus) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
-    let in_flight = Arc::new(std::sync::Mutex::new(None));
-    tokio::spawn(writer_loop(
-        rx,
-        events,
-        Arc::clone(&idempotency),
-        Arc::clone(&in_flight),
-    ));
+    tokio::spawn(writer_loop(rx, events, Arc::clone(&idempotency)));
     WriterHandle {
         tx,
         idempotency,
-        in_flight,
         #[cfg(test)]
         transaction_gate: Arc::new(Mutex::new(None)),
     }
-}
-
-/// What a command is, for the shutdown-loss report (TASK-Q07Y5).
-fn describe_command(cmd: &WriterCommand) -> PendingWrite {
-    match cmd {
-        WriterCommand::Tx { req, .. } => PendingWrite {
-            kind: "tx".to_string(),
-            run_id: None,
-            tx_type: Some(req.entry.ty.clone()),
-            path: Some(req.tx_path.clone()),
-        },
-        WriterCommand::Session { req, .. } => PendingWrite {
-            kind: "session".to_string(),
-            run_id: Some(req.run_id.clone()),
-            tx_type: None,
-            path: Some(req.session_path.clone()),
-        },
-        WriterCommand::Transaction { req, .. } => PendingWrite {
-            kind: "transaction".to_string(),
-            run_id: None,
-            tx_type: Some(req.tx.entry.ty.clone()),
-            path: Some(req.tx.tx_path.clone()),
-        },
-        WriterCommand::Rewrite { req, .. } => PendingWrite {
-            kind: "rewrite".to_string(),
-            run_id: None,
-            tx_type: None,
-            path: Some(req.path.clone()),
-        },
-        WriterCommand::Mutate { req, .. } => PendingWrite {
-            kind: "mutate".to_string(),
-            run_id: None,
-            tx_type: None,
-            path: Some(req.path.clone()),
-        },
-        WriterCommand::Shutdown { .. } => PendingWrite {
-            kind: "shutdown".to_string(),
-            run_id: None,
-            tx_type: None,
-            path: None,
-        },
-    }
-}
-
-/// Test-only stall injected in front of a matching write, so a test can hold
-/// the writer exactly the way a blocked `fsync` does — on the thread, inside
-/// the command, with `shutdown` queued behind it (TASK-Q07Y5).
-///
-/// `ORGASMIC_TEST_WRITER_STALL_MS` sets the stall;
-/// `ORGASMIC_TEST_WRITER_STALL_TX_TYPE` selects which tx type it applies to,
-/// so ordinary daemon writes are untouched.
-fn injected_write_stall(pending: &PendingWrite) -> Option<std::time::Duration> {
-    let millis = std::env::var("ORGASMIC_TEST_WRITER_STALL_MS")
-        .ok()?
-        .parse::<u64>()
-        .ok()
-        .filter(|millis| *millis > 0)?;
-    let selector = std::env::var("ORGASMIC_TEST_WRITER_STALL_TX_TYPE").ok()?;
-    (pending.tx_type.as_deref() == Some(selector.as_str()))
-        .then(|| std::time::Duration::from_millis(millis))
 }
 
 async fn writer_loop(
     mut rx: mpsc::Receiver<WriterCommand>,
     events: EventBus,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
-    in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
 ) {
     let mut tx_handles: HashMap<PathBuf, CachedTxWriter> = HashMap::new();
     let mut session_handles: HashMap<String, SessionWriter> = HashMap::new();
     let mut seq_cache = ProjectTxSeqCache::default();
     let mut cmd = rx.recv().await;
     while let Some(current) = cmd.take() {
-        // orgasmic:TASK-Q07Y5 — publish the head-of-line write before running
-        // it. A shutdown that gives up on its budget reads this to say which
-        // write it gave up on; without it the report is a bare count.
-        {
-            let pending = describe_command(&current);
-            let stall = injected_write_stall(&pending);
-            *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = Some(pending);
-            if let Some(stall) = stall {
-                std::thread::sleep(stall);
-            }
-        }
         match current {
             WriterCommand::Tx { req, reply } => {
                 let mut batch = vec![(req, reply)];
@@ -908,12 +726,10 @@ async fn writer_loop(
             WriterCommand::Shutdown { reply } => {
                 tx_handles.clear();
                 session_handles.clear();
-                *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 let _ = reply.send(());
                 break;
             }
         }
-        *in_flight.lock().unwrap_or_else(|e| e.into_inner()) = None;
         if cmd.is_none() {
             cmd = rx.recv().await;
         }
@@ -1597,85 +1413,6 @@ mod tests {
         assert_eq!(res.tx_id, "tx-test-1");
         let source = std::fs::read_to_string(&tx_path).unwrap();
         assert!(source.contains("tx-test-1"));
-    }
-
-    /// orgasmic:TASK-Q07Y5 — the defect TASK-WGXKD.2's reviewer named: shutdown
-    /// queued behind a write blocked in the writer task and waited forever, so
-    /// the SIGTERM path had an unbounded term and no kill timeout could be
-    /// proven larger than it. The stall here is a blocking `sleep` *inside* the
-    /// writer task, which is what a blocked `fsync` actually is.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn shutdown_gives_up_on_its_budget_and_names_the_write_it_blocked_on() {
-        let tmp = tempfile::tempdir().unwrap();
-        let stalled = tmp.path().join("stalled-write.org");
-        let bus = EventBus::new();
-        let handle = spawn(bus);
-
-        let stalling = handle.clone();
-        let stalled_path = stalled.clone();
-        tokio::spawn(async move {
-            stalling
-                .mutate_file(FileMutate {
-                    path: stalled_path,
-                    transform: Box::new(|_| {
-                        std::thread::sleep(std::time::Duration::from_secs(3));
-                        Ok(b"never observed\n".to_vec())
-                    }),
-                })
-                .await
-        });
-        // Let the writer pick the mutate up, so shutdown is genuinely queued
-        // behind a write in progress rather than racing to get in first.
-        while handle.in_flight_write().is_none() {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
-
-        let started = std::time::Instant::now();
-        let outcome = handle
-            .shutdown_within(std::time::Duration::from_millis(300))
-            .await;
-        let elapsed = started.elapsed();
-
-        assert!(
-            elapsed < std::time::Duration::from_secs(1),
-            "shutdown must give up on its budget, not on the stalled write: {elapsed:?}"
-        );
-        let WriterShutdownOutcome::TimedOut { in_flight, .. } = outcome else {
-            panic!("a writer stuck in a 3s write cannot report a clean shutdown: {outcome:?}");
-        };
-        let in_flight = in_flight.expect("the timed-out shutdown must name the write it waited on");
-        assert_eq!(in_flight.kind, "mutate");
-        assert_eq!(in_flight.path.as_deref(), Some(stalled.as_path()));
-    }
-
-    /// The bound must not cost anything in the normal case: an idle writer
-    /// still reports a clean stop, which is what lets the caller distinguish
-    /// "nothing was lost" from "something might have been".
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn shutdown_reports_clean_when_the_writer_is_not_stuck() {
-        let tmp = tempfile::tempdir().unwrap();
-        let bus = EventBus::new();
-        let handle = spawn(bus);
-        handle
-            .append_tx(
-                TxAppend {
-                    tx_path: tmp.path().join("tx").join("2026-07.org"),
-                    entry: sample_entry("tx-clean-shutdown"),
-                    project_id: Some("orgasmic".into()),
-                    tx_id_policy: TxIdPolicy::Preserve,
-                    request_id: None,
-                },
-                None,
-            )
-            .await
-            .expect("append");
-
-        let outcome = handle
-            .shutdown_within(std::time::Duration::from_secs(5))
-            .await;
-
-        assert_eq!(outcome, WriterShutdownOutcome::Clean);
-        assert!(outcome.is_clean());
     }
 
     #[tokio::test]

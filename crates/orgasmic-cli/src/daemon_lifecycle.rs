@@ -29,25 +29,14 @@ use crate::home::Home;
 // Generous enough to cover the daemon's startup bind-retry (up to ~8s while a
 // draining predecessor releases the port during a runtime-swap restart).
 const START_TIMEOUT: Duration = Duration::from_secs(20);
-/// Slack the CLI allows on top of the daemon's own shutdown budget before it
-/// calls a stop failed. Smaller than `daemon_service::SERVICE_STOP_MARGIN` on
-/// purpose: the CLI must give up *before* the service manager SIGKILLs, so the
-/// operator sees "did not stop" rather than a kill they cannot distinguish
-/// from a clean exit.
-const STOP_MARGIN: Duration = Duration::from_secs(5);
-
-/// How long `wait_until_down` waits for a graceful stop.
-///
-/// orgasmic:TASK-WGXKD.2 — a graceful stop is allowed to take real time: the
-/// daemon's SIGTERM path runs a connection drain, then the release-finalization
-/// drain, then the writer shutdown. At 10s this ceiling declared a healthy,
-/// still-progressing shutdown a failure.
-///
-/// orgasmic:TASK-Q07Y5 — derived from those budgets rather than picked to sit
-/// above them, so raising any of them moves this with it.
-fn stop_timeout() -> Duration {
-    orgasmic_daemon::ShutdownBudgets::default().total() + STOP_MARGIN
-}
+/// orgasmic:TASK-WGXKD.2 — a graceful stop is now allowed to take real time:
+/// the daemon's own SIGTERM path runs the release drain (up to
+/// `RELEASE_FINALIZATION_DRAIN_TIMEOUT` = 20s) and then the writer shutdown.
+/// At 10s this ceiling declared a healthy, still-progressing shutdown a
+/// failure. 35s covers that budget with margin and costs nothing when the
+/// daemon exits promptly, which is the normal case now that the CLI drains
+/// first.
+const STOP_TIMEOUT: Duration = Duration::from_secs(35);
 /// A healthy large-board rebuild can take several minutes. This ceiling is
 /// measured from the daemon-authored boot timestamp, not from a later CLI
 /// invocation, so autostart remains finite without cutting off responsive
@@ -791,30 +780,29 @@ fn bail_boot_backstop<T>(starting: &DaemonStarting, backstop: Duration) -> Resul
 
 fn wait_until_down(home: &Home) -> Result<()> {
     let started = Instant::now();
-    let timeout = stop_timeout();
     loop {
         match probe_local(home)? {
             LocalDaemonState::Down => return Ok(()),
             LocalDaemonState::Unauthorized => return Ok(()),
             LocalDaemonState::Starting(starting) => {
-                if started.elapsed() >= timeout {
+                if started.elapsed() >= STOP_TIMEOUT {
                     bail!(
                         "daemon{} did not stop after {}s",
                         starting
                             .pid
                             .map(|pid| format!(" pid {pid}"))
                             .unwrap_or_default(),
-                        timeout.as_secs()
+                        STOP_TIMEOUT.as_secs()
                     );
                 }
                 std::thread::sleep(Duration::from_millis(200));
             }
             LocalDaemonState::Running(status) => {
-                if started.elapsed() >= timeout {
+                if started.elapsed() >= STOP_TIMEOUT {
                     bail!(
                         "daemon pid {} did not stop after {}s",
                         status.pid,
-                        timeout.as_secs()
+                        STOP_TIMEOUT.as_secs()
                     );
                 }
                 std::thread::sleep(Duration::from_millis(200));
@@ -846,15 +834,7 @@ async fn probe_local_async(home: &Home) -> Result<LocalDaemonState> {
         .await
     {
         Ok(response) => response,
-        // orgasmic:TASK-Q07Y5 — a probe that lands *during* the graceful
-        // shutdown is not an error: the listener has stopped accepting but the
-        // socket is still bound, so the connection is made and then reset when
-        // the drain finishes. reqwest reports that as a request error, not a
-        // connect error, and `wait_until_down` used to abort the whole stop on
-        // it — `daemon restart` failed against a daemon that was shutting down
-        // exactly as designed. Any transport-level failure means "not
-        // answering", which is what the pid/lock fallback is for.
-        Err(error) if error.is_connect() || error.is_timeout() || error.is_request() => {
+        Err(error) if error.is_connect() || error.is_timeout() => {
             return Ok(starting_fallback(home));
         }
         Err(error) => return Err(anyhow!("probe daemon: {error}")),
@@ -1502,28 +1482,11 @@ mod tests {
             "CLI restart-drain timeout {RESTART_DRAIN_TIMEOUT:?} must exceed the \
              endpoint's release-finalization plus writer-drain budget {server_budget:?}"
         );
-        // orgasmic:TASK-Q07Y5 — the old assertion compared the CLI fuse against
-        // ONE phase of the daemon's shutdown (the release drain). The writer
-        // shutdown, which followed it, had no budget at all, so "35 > 20" said
-        // nothing about whether the stop could complete. Compare against the
-        // whole bounded budget.
-        let shutdown = orgasmic_daemon::ShutdownBudgets::default();
         assert!(
-            stop_timeout() > shutdown.total(),
-            "wait_until_down {:?} must outlast the daemon's entire SIGTERM budget \
-             {:?} (connection drain + release drain + writer shutdown), or a \
-             graceful stop is reported as a failure",
-            stop_timeout(),
-            shutdown.total()
-        );
-        // The service manager must be the last thing to act, not the first: if
-        // the SIGKILL landed before the CLI gave up, `daemon stop` would report
-        // success for a daemon that was killed mid-write.
-        assert!(
-            crate::daemon_service::service_stop_timeout() > stop_timeout(),
-            "service-manager kill timeout {:?} must outlast the CLI stop fuse {:?}",
-            crate::daemon_service::service_stop_timeout(),
-            stop_timeout()
+            STOP_TIMEOUT > orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT,
+            "wait_until_down {STOP_TIMEOUT:?} must outlast the daemon's own SIGTERM \
+             release drain {:?}, or a graceful stop is reported as a failure",
+            orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT
         );
     }
 

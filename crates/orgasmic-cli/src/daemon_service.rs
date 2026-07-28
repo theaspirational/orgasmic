@@ -260,29 +260,7 @@ pub(crate) fn stop(home: &Home) -> Result<()> {
 }
 
 fn selected_adapter_kind() -> AdapterKind {
-    if let Some(kind) = test_adapter_override() {
-        return kind;
-    }
     select_adapter_for_host(current_platform(), systemd_user_available())
-}
-
-/// Test-only escape from the host's real service manager.
-///
-/// orgasmic:TASK-Q07Y5 — the LaunchAgent label is a constant, so a test that
-/// drives `daemon stop`/`daemon restart` on macOS would bootout the operator's
-/// own daemon no matter which `$ORGASMIC_HOME` it points at. Forcing the
-/// detached-process adapter lets an end-to-end lifecycle test run the real stop
-/// → shutdown → replacement-bind sequence against a throwaway home
-/// (TASK-WGXKD.2 finding 2). Only `detached` is accepted; anything else is
-/// ignored so a stray value cannot silently disable persistence.
-fn test_adapter_override() -> Option<AdapterKind> {
-    match std::env::var("ORGASMIC_TEST_SERVICE_ADAPTER")
-        .ok()?
-        .as_str()
-    {
-        "detached" => Some(AdapterKind::GenericDetachedProcess),
-        _ => None,
-    }
 }
 
 fn select_adapter_for_host(platform: HostPlatform, systemd_available: bool) -> AdapterKind {
@@ -726,31 +704,12 @@ fn windows_service_dir(home: &Home) -> PathBuf {
     home.state().join("service")
 }
 
-/// Slack between the daemon's shutdown budget and the service manager's kill.
-///
-/// Covers what the budgets themselves do not: writing the shutdown loss record
-/// (an `fsync` on a file and its directory), unwinding the runtime, and the
-/// scheduling delay of a machine under the load that made the shutdown slow in
-/// the first place.
-pub(crate) const SERVICE_STOP_MARGIN: Duration = Duration::from_secs(10);
-
-/// The service manager's SIGTERM→SIGKILL budget, derived from the daemon's own.
-///
-/// orgasmic:TASK-Q07Y5 — this used to be a hard-coded 60, justified by prose
-/// against a shutdown whose writer phase had no budget at all, so the claim
-/// "60 > worst case" was unprovable rather than generous (TASK-WGXKD.2
-/// finding 1). Every phase is bounded now, so the number is computed from the
-/// same constants the shutdown spends, and changing either budget moves this
-/// value instead of silently invalidating it.
-pub(crate) fn service_stop_timeout() -> Duration {
-    orgasmic_daemon::ShutdownBudgets::default().total() + SERVICE_STOP_MARGIN
-}
-
 /// orgasmic:TASK-WGXKD.2 — `ExitTimeOut` is load-bearing, not cosmetic.
-/// launchd's default is 20 seconds between SIGTERM and SIGKILL, which lands
-/// inside the daemon's own release-finalization drain, so the SIGKILL can cut
-/// off exactly the work the drain exists to protect. The value written here is
-/// [`service_stop_timeout`], derived from the daemon's shutdown budgets.
+/// launchd's default is 20 seconds between SIGTERM and SIGKILL, and the
+/// daemon's own graceful shutdown budget is `RELEASE_FINALIZATION_DRAIN_TIMEOUT`
+/// (20s) followed by the writer shutdown. At the default the SIGKILL can land
+/// mid-drain, which is the loss the drain exists to prevent; 60s leaves the
+/// whole budget room to finish.
 fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -765,11 +724,10 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
   <key>StandardErrorPath</key>\n  <string>{stderr}</string>\n\
   <key>RunAtLoad</key>\n  <true/>\n\
   <key>KeepAlive</key>\n  <true/>\n\
-  <key>ExitTimeOut</key>\n  <integer>{exit_timeout}</integer>\n\
+  <key>ExitTimeOut</key>\n  <integer>60</integer>\n\
 </dict>\n\
 </plist>\n",
         label = MACOS_LABEL,
-        exit_timeout = service_stop_timeout().as_secs(),
         exe = xml_escape_path(&spec.exe),
         home = xml_escape_path(&spec.home),
         path = xml_escape(&spec.path),
@@ -1086,39 +1044,8 @@ mod tests {
         // after SIGTERM, inside the daemon's own 20s release-finalization
         // drain, so the graceful shutdown could be cut off mid-drain.
         assert!(plist.contains("<key>ExitTimeOut</key>"));
-        // orgasmic:TASK-Q07Y5 — the rendered value must be the DERIVED one. A
-        // literal here is how a shutdown budget change silently reopens the
-        // SIGKILL-mid-write window it was supposed to close.
-        assert!(
-            plist.contains(&format!(
-                "<integer>{}</integer>",
-                service_stop_timeout().as_secs()
-            )),
-            "plist must carry the derived ExitTimeOut {}s: {plist}",
-            service_stop_timeout().as_secs()
-        );
+        assert!(plist.contains("<integer>60</integer>"));
         assert!(plist.contains("Orgasmic &amp; Tools"));
-    }
-
-    /// orgasmic:TASK-Q07Y5 — the derivation itself, not just the rendering.
-    /// The kill timeout has to sit strictly above everything the daemon may
-    /// spend shutting down; launchd's 20s default sits inside the release drain
-    /// alone, which is the window TASK-WGXKD.2 was trying to close.
-    #[test]
-    fn service_stop_timeout_covers_the_whole_daemon_shutdown_budget() {
-        let budget = orgasmic_daemon::ShutdownBudgets::default();
-
-        assert_eq!(service_stop_timeout(), budget.total() + SERVICE_STOP_MARGIN);
-        assert!(
-            service_stop_timeout() > budget.total(),
-            "kill timeout {:?} must outlast the shutdown budget {:?}",
-            service_stop_timeout(),
-            budget.total()
-        );
-        assert!(
-            service_stop_timeout() > Duration::from_secs(20),
-            "launchd's 20s default lands inside the release drain"
-        );
     }
 
     #[test]
