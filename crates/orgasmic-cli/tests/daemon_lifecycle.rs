@@ -121,6 +121,122 @@ fn second_serve_exits_zero_when_healthy_incumbent_owns_home_lock() {
     );
 }
 
+/// orgasmic:TASK-QRB8S — a start that overlaps a departing predecessor.
+///
+/// TASK-ATAXN lets a replacement wait out a predecessor in graceful shutdown for
+/// that predecessor's whole shutdown budget (40s in production) before it can
+/// take the instance lock. The CLI's own start fuse stayed a 20s literal, so an
+/// overlapping start was reported *failed* at 20s while the daemon went on to
+/// come up correctly — a healthy machine and an error message.
+///
+/// The predecessor here is a stand-in that holds the real instance lock and
+/// publishes the real departure marker, which is what `graceful_shutdown` does.
+/// It is deliberately not a real drain: what is under test is the CLI's ceiling
+/// against production budgets, and the only way to make a spawned `serve` drain
+/// for 25s is to shrink the very budgets the fix is derived from. The
+/// replacement, the wait, the lock and the CLI command are all real.
+#[test]
+#[cfg(unix)]
+fn autostart_survives_a_predecessor_holding_the_lock_past_the_old_start_literal() {
+    use std::io::Write as _;
+
+    /// Longer than the retired 20s literal, shorter than the shutdown budget
+    /// the replacement is allowed to wait out.
+    const HOLD: Duration = Duration::from_secs(25);
+    /// The fuse this test exists to prove is gone.
+    const OLD_START_LITERAL: Duration = Duration::from_secs(20);
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = reservation.local_addr().unwrap().port();
+    drop(reservation);
+    std::fs::write(
+        home.config(),
+        format!("bind_host: 127.0.0.1\nbind_port: {port}\n"),
+    )
+    .unwrap();
+
+    // A predecessor inside its shutdown: instance lock held, nothing answering
+    // on the port, departure marker carrying the budget it says it is spending.
+    let mut lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(home.root.join("daemon.lock"))
+        .unwrap();
+    fs2::FileExt::lock_exclusive(&lock).unwrap();
+    lock.set_len(0).unwrap();
+    writeln!(lock, "{}", std::process::id()).unwrap();
+    lock.sync_data().unwrap();
+    let budgets = orgasmic_daemon::ShutdownBudgets::default();
+    let marker = orgasmic_daemon::DaemonShutdownMarker {
+        pid: std::process::id(),
+        boot_id: "predecessor-under-test".to_string(),
+        started_at: chrono::Utc::now(),
+        budget_ms: budgets.total().as_millis() as u64,
+    };
+    std::fs::write(
+        orgasmic_daemon::daemon_shutdown_marker_path(&home),
+        serde_json::to_vec(&marker).unwrap(),
+    )
+    .unwrap();
+
+    // The replacement, started inside that window: it finds the marker and waits
+    // the predecessor out instead of refusing on the held lock.
+    let mut replacement = Command::new(env!("CARGO_BIN_EXE_orgasmic"));
+    replacement
+        .arg("serve")
+        .env("ORGASMIC_HOME", &home.root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    {
+        use std::os::unix::process::CommandExt;
+        replacement.process_group(0);
+    }
+    let _replacement = ChildGuard(replacement.spawn().expect("spawn replacement serve"));
+
+    let release = std::thread::spawn(move || {
+        std::thread::sleep(HOLD);
+        fs2::FileExt::unlock(&lock).unwrap();
+    });
+
+    // `orgasmic status` autostarts, so this is the production CLI wait, not a
+    // helper called directly.
+    let started = Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_orgasmic"))
+        .arg("status")
+        .env("ORGASMIC_HOME", &home.root)
+        // Keep the operator's real LaunchAgent out of it if this ever decides
+        // to start a daemon itself.
+        .env("ORGASMIC_TEST_SERVICE_ADAPTER", "detached")
+        .output()
+        .expect("run orgasmic status");
+    let elapsed = started.elapsed();
+    release.join().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    assert!(
+        elapsed > OLD_START_LITERAL,
+        "the CLI answered in {elapsed:?}, inside the old {OLD_START_LITERAL:?} fuse \
+         — the predecessor was not still holding the lock, so this run did not \
+         produce the overlap it is about\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        output.status.success(),
+        "the CLI reported a failed start after {elapsed:?} for a daemon that took \
+         the lock and came up correctly\nstdout={stdout}\nstderr={stderr}"
+    );
+    assert!(
+        stdout.contains("boot_id"),
+        "status never reached the replacement daemon: {stdout}"
+    );
+}
+
 /// TASK-WGXKD.2 finding 2: a service stop must run the graceful shutdown.
 ///
 /// `orgasmic serve` used to await `ctrl_c()` and nothing else, so SIGTERM — what

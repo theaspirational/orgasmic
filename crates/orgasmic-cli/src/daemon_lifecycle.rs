@@ -26,9 +26,39 @@ use crate::daemon_runtime;
 use crate::daemon_service::{self, ServiceStart};
 use crate::home::Home;
 
-// Generous enough to cover the daemon's startup bind-retry (up to ~8s while a
-// draining predecessor releases the port during a runtime-swap restart).
-const START_TIMEOUT: Duration = Duration::from_secs(20);
+/// Slack the CLI allows for the boot work that can only begin once a
+/// replacement holds the instance lock.
+///
+/// orgasmic:TASK-QRB8S — this is what the old `START_TIMEOUT` literal was
+/// actually sized for: the pre-bind phases (config, auth, project scan, runtime,
+/// watchers) and the listener's own `AddrInUse` retry while a predecessor's
+/// socket finishes closing (~8s of it). Kept at the value that covered them, in
+/// the role it covers, with the wait that happens *before* the lock now derived
+/// separately below.
+const START_MARGIN: Duration = Duration::from_secs(20);
+
+/// How long the CLI waits for a daemon it started to become ready.
+///
+/// orgasmic:TASK-QRB8S — this was a literal 20s, correct when the only thing a
+/// start had to outlast was its own bind retry. TASK-ATAXN then made a
+/// replacement wait out a departing predecessor for that predecessor's whole
+/// shutdown budget before it can take the instance lock, so the CLI's ceiling
+/// ended up *below* the daemon layer's: a start that overlapped a full drain was
+/// reported failed at 20s for a daemon that came up correctly ~20s later, and
+/// the operator was left with a failure message and a healthy machine. Composed
+/// of the two things a start now waits on, in the order it waits on them:
+/// - [`orgasmic_daemon::ShutdownBudgets::total`] — the ceiling TASK-ATAXN puts
+///   on waiting out a departing predecessor (the marker carries the
+///   predecessor's own budget, capped by this), and
+/// - [`START_MARGIN`] — the boot work that only starts once the lock is taken.
+///
+/// Derived rather than written down, for the reason TASK-Q07Y5 gave for
+/// `service_stop_timeout`: raising any shutdown budget moves this with it
+/// instead of silently invalidating it.
+fn start_timeout() -> Duration {
+    orgasmic_daemon::ShutdownBudgets::default().total() + START_MARGIN
+}
+
 /// Slack the CLI allows on top of the daemon's own shutdown budget before it
 /// calls a stop failed. Smaller than `daemon_service::SERVICE_STOP_MARGIN` on
 /// purpose: the CLI must give up *before* the service manager SIGKILLs, so the
@@ -139,7 +169,7 @@ fn ensure_running_local(home: &Home, repair_unauthorized: bool) -> Result<()> {
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             let spawned_pid = start_via_selected_adapter(home)?;
-            wait_until_ready_after_start(home, spawned_pid, START_TIMEOUT).map(|_| ())
+            wait_until_ready_after_start(home, spawned_pid, start_timeout()).map(|_| ())
         }
     }
 }
@@ -166,7 +196,7 @@ async fn ensure_running_local_async(home: &Home, repair_unauthorized: bool) -> R
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             start_via_selected_adapter(home)?;
-            wait_until_ready_after_start_async(home, START_TIMEOUT)
+            wait_until_ready_after_start_async(home, start_timeout())
                 .await
                 .map(|_| ())
         }
@@ -180,7 +210,7 @@ async fn ensure_running_local_async_without_repair(home: &Home) -> Result<()> {
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             start_via_selected_adapter(home)?;
-            wait_until_ready_after_start_async(home, START_TIMEOUT)
+            wait_until_ready_after_start_async(home, start_timeout())
                 .await
                 .map(|_| ())
         }
@@ -213,7 +243,7 @@ fn start_local(home: &Home, repair_unauthorized: bool) -> Result<DaemonStartOutc
         LocalDaemonState::Unauthorized => bail_auth_token_mismatch(),
         LocalDaemonState::Down => {
             let spawned_pid = start_via_selected_adapter(home)?;
-            wait_until_running_after_start(home, spawned_pid, START_TIMEOUT)
+            wait_until_running_after_start(home, spawned_pid, start_timeout())
         }
     }
 }
@@ -485,7 +515,7 @@ fn stop_pid(pid: u32) -> Result<()> {
 }
 
 fn wait_until_running(home: &Home) -> Result<DaemonStatus> {
-    wait_until_ready_after_start(home, None, START_TIMEOUT)
+    wait_until_ready_after_start(home, None, start_timeout())
 }
 
 #[cfg(test)]
@@ -589,7 +619,7 @@ fn wait_until_running_after_start(
 }
 
 async fn wait_until_running_async(home: &Home) -> Result<DaemonStatus> {
-    wait_until_ready_after_start_async(home, START_TIMEOUT).await
+    wait_until_ready_after_start_async(home, start_timeout()).await
 }
 
 async fn wait_until_ready_after_start_async(
@@ -1524,6 +1554,46 @@ mod tests {
             "service-manager kill timeout {:?} must outlast the CLI stop fuse {:?}",
             crate::daemon_service::service_stop_timeout(),
             stop_timeout()
+        );
+    }
+
+    /// orgasmic:TASK-QRB8S — the start fuse is on the same axis as the stop
+    /// fuse above and must be ordered the same way: it has to outlast every
+    /// wait a start may legitimately spend, or a daemon that is coming up
+    /// correctly is reported as a failed start. Assert the composition, never
+    /// the number — a literal cannot be shown to still be correct once the
+    /// budgets it was sized against move.
+    #[test]
+    fn start_fuse_outlasts_the_predecessor_wait_a_replacement_may_spend() {
+        let shutdown = orgasmic_daemon::ShutdownBudgets::default();
+        assert_eq!(
+            start_timeout(),
+            shutdown.total() + START_MARGIN,
+            "the start fuse must be composed of the shutdown budget a replacement \
+             may wait out plus the post-lock boot margin, so changing \
+             ShutdownBudgets moves it"
+        );
+        // orgasmic:TASK-ATAXN — the ceiling on waiting out a departing
+        // predecessor is that predecessor's whole shutdown budget, capped by
+        // `ShutdownBudgets::default().total()`. The CLI cannot give up first:
+        // the old 20s literal did, and reported a failed start for a daemon
+        // that took the lock and came up afterwards.
+        assert!(
+            start_timeout() > shutdown.total(),
+            "start fuse {:?} must outlast the {:?} a replacement may spend waiting \
+             out a departing predecessor before it can even take the instance lock",
+            start_timeout(),
+            shutdown.total()
+        );
+        // The service manager is still the last actor: it forces a predecessor
+        // out at `service_stop_timeout`, so a start that outlasts that has
+        // waited for every way the lock can be released.
+        assert!(
+            start_timeout() > crate::daemon_service::service_stop_timeout(),
+            "start fuse {:?} must outlast the service manager's own kill deadline \
+             {:?}, which is the last thing that can free the instance lock",
+            start_timeout(),
+            crate::daemon_service::service_stop_timeout()
         );
     }
 
