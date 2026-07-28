@@ -776,123 +776,73 @@ fixture-process one, a different class.
 The 'recover returns 500 under load' signature is now observed on three separate
 tests. Whatever this task finds should explain all three, not one.
 
-* IN_PROGRESS TASK-WE0Q7 No gate runs a daemon longer than ten seconds; add a scheduled soak that would have caught Q07Y5 :daemon:testing:mechanism:
+* IN_PROGRESS TASK-XPYRR a task title cannot be corrected through any CLI surface, so a retracted claim outlives its correction
 :PROPERTIES:
-:ID: TASK-WE0Q7
-:PRIORITY: P2
+:ID: TASK-XPYRR
+:PRIORITY: P1
+:TAGS: cli,daemon,org-surface
 :END:
+** Description
+A task heading's title cannot be changed through any CLI surface. `task update`
+takes `--state`, `--priority`, `--reason` and `--property`, and rejects
+`--title` with `unexpected argument`. `node body set` edits prose and named
+sections, never the heading line. `node prop set` edits the drawer. Nothing
+edits the title.
 
-Filed 2026-07-28. No test in this repository runs a daemon longer than about
-ten seconds, so any defect that needs uptime to express passes every gate.
-That is not hypothetical: TASK-Q07Y5 shipped fully green and killed the
-operator's daemon 10.00s after every boot. TASK-R74E8 fixed it and added
-`daemon_serves_far_beyond_its_connection_drain_budget` — one test, watching one
-instance of the class (drain-budget misapplication, 8x budget ~ seconds). The
-CLASS — anything that expresses only with minutes of uptime: timers, budgets,
-watchers, leaks, heartbeat/stall interactions (see TASK-VZMZE), fd/session
-accumulation — still has nothing watching it.
+=== Why it matters, concretely
 
-=== Mechanism
+TASK-0RCRY was filed on 2026-07-28 with a diagnosis that was **retracted the
+same day** (tx-20260728-orgasmic-3226): the claim that workers inherit the
+daemon's `$TMUX`. The body was rewritten around the one surviving fact and now
+opens with an explicit correction. **The title could not be rewritten**, so the
+board still reads:
 
-A scheduled soak gate, not a per-merge one (minutes of wall clock do not belong
-in the merge path):
+  "Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server
+   and six gated tests never run"
 
-1. A self-contained script (suggested `scripts/soak.sh` or a subcommand) that:
-   boots a REAL daemon from the tree under test with an isolated
-   `ORGASMIC_HOME` and random port (the isolated smoke-daemon recipe in
-   gotchas/memory — never `daemon start`, never the LaunchAgent, never the
-   installed runtime), runs it for a configurable duration (default >= 5
-   minutes; >= 10x any derived budget), under light periodic traffic (status
-   probes, a task read, a tx list — hit real surfaces), then SIGTERMs it.
-2. Asserts across the whole window: one pid and one boot_id throughout; zero
-   parse errors; memory/fd growth bounded (record; alert on gross growth, do
-   not tune thresholds finely); clean exit within
-   `ShutdownBudgets::default().total()` + margin (derived, not a literal —
-   the R74E8/ATAXN/QRB8S standard); marker/lock files retracted after exit.
-3. Wire it into a schedule: the repo already has `nightly-macos` /
-   `nightly-runtime` workflows — add it there, and/or a local launchd schedule
-   for the operator machine. Decide and record which; a soak that exists but
-   never runs is the same blindspot with extra steps.
+The title is the most-read field on the board — it is what `dispatch-status`,
+the task lists and every survey print. A retracted claim sitting in a heading
+outlives the correction in the body, and the only reader guaranteed to see the
+correction is one who opens the task.
+
+The manager cannot fix this by hand: `.orgasmic` is daemon-owned and hand-edits
+are forbidden. So the wrong title is currently unfixable by any sanctioned path.
+
+=== Same class as TASK-JQARS
+
+JQARS was about a documented command that did not exist. This is the inverse:
+a field the product plainly owns, with no surface to write it. Both leave an
+operator with a state they can observe and cannot change.
+
+=== Ask
+
+1. Add title editing to the task surface, through the daemon with the same OCC +
+   structural guard as the other node writes. `task update --title` is the
+   obvious shape given the flag already suggested by clap's own "a similar
+   argument exists" tip.
+2. Decide and record whether a title edit is allowed to change the org tags on
+   the title line, or whether tags stay a separate concern. Do not let a title
+   write silently drop tags — the heading line carries both.
+3. Check the same question for the other node kinds that have titles (decision,
+   architecture, glossary, goal). Report which already have a write path and
+   which do not; fix only the ones in scope and file the rest.
+4. Fix TASK-0RCRY's title as the acceptance demonstration, to:
+   "No tmux call site passes -L/-S, so every probe and test session shares one
+    server — on a dev box, the operator's own"
 
 === Acceptance
 
-- The soak runs green on current HEAD for the full default duration, output
-  showing the single pid/boot_id assertion sampled across the window.
-- Injection proof: reintroduce the Q07Y5-class defect (apply the drain budget
-  to the server's whole life instead of the drain phase) and show the soak
-  catches it — daemon dies mid-window, soak exits nonzero with a message
-  naming when it died. Restore, green. This proves the gate watches the class,
-  not the code path R74E8 already guards.
-- A second, different uptime defect class is demonstrated caught (suggested: a
-  short-interval timer/watcher misbehavior injected artificially) — one
-  exemplar beyond Q07Y5's, to show the gate is not overfit.
-- The soak NEVER touches the installed runtime, the real LaunchAgent, or
-  `$ORGASMIC_HOME` proper — asserted in the script itself, not just documented.
+- `orgasmic task update <id> --title "..."` rewrites the heading, preserves the
+  drawer, the body, all named sections and the org tags, and records a tx.
+- Prove it by injection: a test that rewrites a title and asserts tags and body
+  survive fails if the tag-preserving path is removed. Show it red, then green.
+- A title containing org-significant characters (`*` at line start, `:tag:`
+  shapes, trailing colons) either round-trips or is rejected with a reason — say
+  which you chose and why. A silently corrupted heading is worse than a refusal.
+- TASK-0RCRY reads correctly on the board afterwards.
 
 === Non-goals
 
-- Not the PR test lane (TASK-S2KM0); this is the scheduled long-run complement.
-- No multi-hour endurance matrix; one honest daily soak at minutes-scale first.
-- Do not run harness/provider turns in the soak — zero billed cost by
-  construction.
-
-Related: TASK-S2KM0 (CI), TASK-VZMZE (a defect exactly this gate would
-express), memory "orgasmic daemon uptime blindspot".
-
-* IN_PROGRESS TASK-HQ970 tx record accepts a multi-line --reason and bricks the append-only ledger :tx:data-integrity:defect:
-:PROPERTIES:
-:ID: TASK-HQ970
-:PRIORITY: P1
-:TEST_CMD: cargo test -p orgasmic-core
-:END:
-
-`orgasmic tx record --reason "<multi-line text>"` writes the newlines verbatim
-into the org property drawer, returns success with a tx_id, and leaves the
-append-only ledger unparseable. Every subsequent CLI read fails, so no verb —
-including the ones you would use to repair it — can run. The only way out is a
-hand-edit of the file the manager is forbidden to hand-edit.
-
-REPRODUCED [2026-07-26], not inferred. `orgasmic tx record --type manager.action
---project orgasmic --task TASK-D0GA3 --reason "$(cat multi-line-file)"` returned
-
-    {"tx_id": "tx-20260726-orgasmic-2973", "tx_path": ".orgasmic/tx/2026-07.org"}
-
-and the next command failed with
-
-    Error: parse .orgasmic/tx/2026-07.org
-    Caused by: ...:29850: malformed property drawer entry: blank line inside
-    property drawer
-
-The remaining `--extra KEY=VALUE` properties were appended AFTER the injected
-prose, so they landed outside the drawer too. A second, subtler failure mode:
-once the blank lines were removed the parser then rejected the entry with "tx
-entry has trailing content after property drawer" — tx entries are drawer-only
-and carry no body at all, which is not stated anywhere in `tx record --help`.
-
-BLAST RADIUS. The write is accepted, so a manager has no signal until the next
-read. Both ledgers were hit in one session: the project ledger and, because
-`tx record` is not project-scoped by default (TASK-HXSW0 instance 6),
-`$ORGASMIC_HOME/state/tx/2026-07.org` as well. A daemon that cannot parse its
-tx file cannot dispatch, cannot close, cannot update a task.
-
-THREE SEPARATE DEFECTS, all in this one path:
-1. No validation. A value containing a newline must be rejected at the API
-   boundary with a clear error, before anything is written.
-2. No atomicity or verification. The writer should re-parse what it produced
-   before reporting success — a ledger that only accepts what it can read back
-   cannot be bricked by its own writer.
-3. No documented body support. If long prose belongs in a tx (and
-   `tx-scannable-bodies` implies it does), the entry format needs a body region
-   the parser accepts, or `--reason` needs to be documented as single-line and
-   the convention corrected.
-
-Acceptance:
-- `tx record --reason` with an embedded newline fails with a clear message and
-  writes nothing
-- a tx write that would not round-trip through the parser is rejected rather
-  than committed
-- `tx record --help` states the single-line constraint, or a body region exists
-  and is tested with multi-paragraph prose
-- a regression test asserts the ledger still parses after each supported write
-SIBLING FILED [2026-07-28]: TASK-ZYWZD applies this task's defect-2 principle (a writer must not commit what it cannot read back) to the node body surface, where `node body set` silently truncated TASK-ATAXN to 300 of 3959 chars. If either fix grows shared compose->re-parse->refuse machinery, use it for both.
+- Do not add a general "edit any org line" escape hatch. The structural guard is
+  the reason these surfaces are narrow.
 
