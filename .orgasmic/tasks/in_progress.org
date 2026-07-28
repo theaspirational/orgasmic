@@ -1385,3 +1385,112 @@ codex the open question is session-id correlation rather than persistence.
 Lands together with TASK-Z8WEJ — same adapter, same live dispatch proves both.
 LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
 
+* IN_PROGRESS TASK-H0TYV VB9DQ fix round: decide the retention distinction, record the harness matrix, and make the session-id regression able to fail :drivers:claude:sessions:fix:
+:PROPERTIES:
+:ID: TASK-H0TYV
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/**,.orgasmic/**
+:END:
+
+Fix round for the reviewer BLOCK SHIP on TASK-VB9DQ (implementation `61b9b7f`,
+reviewed at HEAD `35b08d4` including `b43fc70` and `f5c6913`).
+Reviewer: reviewer-codex-rmux, run-20260728T142217, closed tx-20260728-orgasmic-3267.
+
+**No code defect was found.** The reviewer independently verified the Claude
+native-session path end to end against real production evidence: the
+`native_runtime` event in
+`.orgasmic/tmp/sessions/dispatch-TASK-RWCRN-implementer-20260727T131952.jsonl`
+records runtime ID `df92384b-fd23-423c-ab2c-131beb03db82`, the same
+`--session-id`, provider, launch/resume argv and computed path — and the vendor
+transcript with that exact UUID exists under `~/.claude/projects` at 1,409,836
+bytes. Do not rewrite working code.
+
+What blocks is that two task-owned questions were never answered and one
+regression cannot see the property it exists to protect.
+
+=== 1. HIGH — dec_Y5MPK answers one retention question, not both
+
+`.orgasmic/decisions.org:2114`. The decision accepts unbounded vendor-store
+growth and assigns retention to the operator (`:2121-2124`). It never answers
+TASK-VB9DQ's *second* required question: **should worker sessions be
+distinguishable from operator sessions?** Item 3 records deterministic
+correlation and item 5 promises per-harness counts, total size and age
+distribution — neither is a yes/no policy.
+
+The consequence is concrete: an unbounded shared vendor store with no decided
+attribution boundary, owned by the operator who has to clean it up.
+
+Amend `dec_Y5MPK` through the daemon-authoritative node surface (`orgasmic
+decision` / `orgasmic node`), never by hand-editing `decisions.org`. Choose one
+interpretation explicitly:
+
+- distinction required → name the observable mechanism and its owner (a `doctor`
+  split, a recognizable vendor-session namespace, or something better); or
+- distinction deliberately unnecessary → state that the blended store is
+  accepted, and why.
+
+Either answer closes this. Silence does not.
+
+=== 2. MEDIUM — the cross-harness check was promised and never recorded
+
+`.orgasmic/tasks/in_review.org:40` requires a codex / cursor-agent / hermes
+check; the task's own transition text admits "item 5 still open".
+
+The reviewer did the inspection and it should be recorded rather than repeated:
+none of the three passes an explicit persistence-suppression flag, and none
+overrides `HarnessEventAdapter::native_runtime`
+(`crates/orgasmic-drivers/src/trait.rs:248`). All three learn their identity
+*after* launch, from protocol responses — codex `thread.id`
+(`adapters/codex.rs:198-225`), cursor-agent `sessionId`
+(`adapters/cursor_acp.rs:288-320`), hermes `sessionId`
+(`adapters/hermes.rs:287-300`). So they do not satisfy the pre-minted-ID +
+`NativeRuntime` shape that Claude now does.
+
+Record a per-harness matrix — native persistence, session-ID ownership,
+lifecycle evidence — and file provider-specific follow-ups where the protocol
+cannot accept an orgasmic-minted ID.
+
+**Do not fold the shared `dec_S18RH` redesign into this task.** The reviewer was
+explicit that the shared redesign is out of scope; only the missing recorded
+check is in scope.
+
+=== 3. LOW — the regression cannot see the property it guards
+
+`crates/orgasmic-drivers/src/adapters/claude.rs:1507` extracts the value after
+`--session-id` and proves `NativeRuntime.session_id` and `resume_argv` repeat
+it — but never that the value **equals `ctx.identity.runtime_id`**. The
+mode-layer test at `modes/acp_stdio.rs:1195` uses a hard-coded
+`pinned-session-id`.
+
+So a change to the 32-hex attempt-token suffix of `run_id` could keep both green
+while breaking the exact requirement the task states. Assert equality with
+`ctx.identity.runtime_id`, and carry that assertion through the mode-layer
+request rather than only the adapter.
+
+This is the same defect class as TASK-6FNAY and TASK-C0XMR: a test that agrees
+with itself. Prove the fix by injection — change what is passed to
+`--session-id`, watch both tests go red, restore, watch them pass.
+
+=== Open questions to answer, not to inherit
+
+- Does "distinguishable" mean a matching `NativeRuntime` record suffices, or does
+  the operator need an explicit worker/operator split? `dec_Y5MPK` must pick one.
+- When a provider mints the session ID server-side, should the cross-harness
+  contract permit immediate handshake capture followed by a `NativeRuntime`
+  event, or is pre-launch pinning mandatory? Record the question against the
+  shared design work; do not answer it with a Claude-specific patch.
+
+=== Acceptance
+
+- `dec_Y5MPK` states a worker/operator distinction decision, with mechanism and
+  owner if distinction is required.
+- A recorded codex/cursor-agent/hermes matrix exists, with follow-ups filed.
+- The regression fails if the launched session ID stops being
+  `ctx.identity.runtime_id`, proved by injection at both the adapter and mode
+  layers.
+
+=== Non-goals
+
+- Do not restore `--no-session-persistence`; its removal is what makes the
+  native transcript exist.
+- Do not redesign the cross-harness session contract here (`dec_S18RH`).

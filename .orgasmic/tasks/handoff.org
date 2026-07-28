@@ -52,26 +52,56 @@ WHAT LANDED
   StallableRmuxEndpoint driving the real RmuxControl through Supervisor::release.
 - Q07Y5 (0829c34) — ExitTimeOut derived at 50.
 
-THE RUNTIME IS REINSTALLED — this was the top item and it is done. Live plist
-ExitTimeOut is 50, was 60. Signed by package-runtime.sh itself (set
-ORGASMIC_CODESIGN_IDENTITY='orgasmic dev codesign' or it silently ships an
-unsigned bundle), DR verified byte-equal to the incumbent, installed by
-fresh-inode rename, started from the installed binary. TCC to ~/Documents
-survived (5 projects, 0 parse errors). Twenty minutes later the daemon and rmux
-reloaded together — runs=1, never exited, so a managed reload, not a crash;
-cost was one dispatch failing with an opaque 500 that did not say a restart was
-in progress.
+I TOOK THE DAEMON DOWN, AND THE CAUSE IS THE LESSON
+TASK-Q07Y5 (merged 0829c34, REVERTED 0ac88d7) wrapped the whole axum serve
+future in the 10s connection-drain timeout — `timeout(budgets.connection_drain,
+serve)` at lib.rs:666. That future only completes at shutdown, so the daemon
+killed a healthy server exactly 10.00s after every boot. launchd restarted it,
+each restart cycled the rmux LaunchAgent, every live session died, and three
+dispatched workers were destroyed 15-35s after creation.
+
+Proved it was the binary by booting the LaunchAgent out and running `serve` in
+the foreground: listening 13:11:19.125, drain error 13:11:29.128. Proved the
+server was healthy in that window: curl to /api/daemon/status returned 401, so
+shutdown had never been signalled.
+
+**Every gate was green, including mine, because no test anywhere runs a daemon
+for longer than ten seconds.** That is now the first acceptance criterion of
+TASK-R74E8, the redo. I had spent the day telling workers to ask what a test
+would do if the fix were reverted, then merged a change no test could observe.
+
+Second process failure worth keeping: at 16:01 I saw the restarts, read
+`runs = 1` / `never exited` as "a managed reload, not a crash", and filed it as
+a benign observation. That was the outage already running.
+
+STATE OF THE INSTALL RIGHT NOW
+Reverted, rebuilt, reinstalled; daemon holds one pid across 90+ minutes.
+**ExitTimeOut is back to 60** — the derived 50 went out with the revert and
+returns when R74E8 lands. Reinstall recipe that works: set
+ORGASMIC_CODESIGN_IDENTITY='orgasmic dev codesign' or package-runtime.sh
+silently ships an unsigned bundle; verify the designated requirement equals the
+incumbent's; install by fresh-inode rename; start from the INSTALLED binary.
+
+A KILLED DISPATCH LEAVES ITS BRANCH BEHIND
+The three destroyed workers left `task-<id>-impl` branches with no worktree, so
+re-dispatch failed with "a branch named ... already exists". `git branch -D` plus
+`git worktree prune` clears it. Worth a task if it recurs.
 
 OPEN, WITH BRIEFS ALREADY WRITTEN
+- TASK-R74E8 (P0, dispatched) — the Q07Y5 redo. Bound the drain AFTER the
+  shutdown signal, and add the uptime test the suite has never had.
 - TASK-S0QRM (P0, dispatched) — Z8WEJ fix round. `auto` picks BareApiKey on ANY
   non-empty key, so a stale key beats a working subscription login and the
   operator learns only after ownership is committed. The existing test asserts
   that behaviour — changing it is part of the fix.
 - TASK-JQARS (dispatched) — `orgasmic manager drivers` is documented and does not
   exist, so transport choice is arbitrary.
-- TASK-VB9DQ (reviewer dispatched) — last in_review with no review coverage.
+- TASK-H0TYV (dispatched) — VB9DQ fix round. Implementation verified correct
+  against production evidence; blocked on dec_Y5MPK deciding only one of its two
+  retention questions, an unrecorded harness matrix, and a regression that
+  proves the session id is repeated without proving it equals runtime_id.
 Not yet dispatched: TASK-SGRTX (P0, dec_S18RH), TASK-0RCRY, TASK-5HBST,
-TASK-ATAXN, TASK-95SGV, TASK-BCYMM, TASK-37TAF, TASK-KPMFK.
+TASK-ATAXN (now P0 — it fired continuously during the incident), TASK-95SGV, TASK-BCYMM, TASK-37TAF, TASK-KPMFK.
 
 CAPACITY, MEASURED
 Three concurrent rmux workers is comfortable, four is the ceiling (load 28 on 10
