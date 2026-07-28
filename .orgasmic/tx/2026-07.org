@@ -33507,3 +33507,67 @@
 :PROJECT:      orgasmic
 :REASON:       Evidence for TASK-RRVX0 and TASK-870YX from the TASK-Q07Y5 worker's residual-risk analysis, merged as 0829c34: the daemon holds its home instance lock until graceful_shutdown returns, and when the writer task is blocked in a syscall the process can outlive its 40s budget because dropping the tokio runtime waits for that worker thread. DAEMON_LOCK_RETRY_BUDGET is 125ms, so a daemon restart whose predecessor is stuck past the budget fails its replacement start with 'instance lock is held'. That is visible and retryable rather than a loss, but it means the 870YX transient-hold retry window is sized for a CLI probe, not for a stuck predecessor - the two hold the same lock for wildly different durations. Worth deciding explicitly whether the retry budget should derive from the shutdown budget the way ExitTimeOut now does.
 :END:
+
+* TX 2026-07-28 Tue 11:42:23 manager.dispatch_started TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3189
+:TIME:         [2026-07-28 Tue 11:42:23]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-870yx-review/worktree
+:BRANCH:       task-870yx-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-870YX-review/brief-870YX-review.md
+:STARTED_AT:   [2026-07-28 Tue 11:42:23]
+:LIVENESS:     0213cb9fde3aa50c511fed1857b9a368e32e7d83
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review e4b6b7b: bounded daemon-side retry for a transient CLI lock probe must stay fail-closed
+:END:
+
+* TX 2026-07-28 Tue 11:42:23 run.created TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3190
+:TIME:         [2026-07-28 Tue 11:42:23]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-870YX-reviewer-20260728T114222.jsonl
+:REASON:       review e4b6b7b: bounded daemon-side retry for a transient CLI lock probe must stay fail-closed
+:RUN_ID:       run-20260728T114222-907fdb200d0441d186a50c068193aeb4
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-870yx-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-870YX-review/brief-870YX-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-870YX-review/brief-870YX-review-63e9053d72e84a45aded27280ba29ef9-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-870YX-review/brief-870YX-review-63e9053d72e84a45aded27280ba29ef9-stdout.log
+:DISPATCH_ATTEMPT: 63e9053d72e84a45aded27280ba29ef9
+:DISPATCH_TX:  tx-20260728-orgasmic-3189
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 11:43:22 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3191
+:TIME:         [2026-07-28 Tue 11:43:22]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:
