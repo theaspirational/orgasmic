@@ -237,3 +237,24 @@ Resolve all seven HIGH findings from TASK-4W8XH review of de94d4d: atomic reserv
 
 Resolve all five HIGH findings from TASK-Y8HCP review of f80d971: receiver-only quiescence including timeout drain; complete immutable pre-spawn plan and lifecycle backfill; handle-bound claim authority; explicit symlink-capable pinned Claude install identity with PATH-shim proof; unique fail-closed fork discovery and two-recovery chain.
 
+* CANCELLED TASK-RRVX0 TASK-35TK4 fix: eliminate CLI lock-probe acquisition race :fix:daemon:
+:PROPERTIES:
+:ID: TASK-RRVX0
+:PRIORITY: high
+:READ_SCOPE: .orgasmic/gotchas.org,crates/orgasmic-daemon,crates/orgasmic-cli
+:TEST_CMD: cargo test -p orgasmic-daemon && cargo test -p orgasmic-cli
+:WRITE_SCOPE: crates/orgasmic-daemon,crates/orgasmic-cli
+:END:
+
+** Description
+Claude Opus review of b18808c..bd3d7bd returned SHIP but identified one medium new regression: the CLI lock-state probe briefly acquires daemon.lock exclusively, while daemon startup makes a single nonblocking exclusive-lock attempt. A microsecond overlap can make a legitimate booting daemon misclassify the CLI probe as an unhealthy incumbent and exit.
+
+** Acceptance Criteria
+- Daemon lock acquisition tolerates the CLI probe transient without weakening single-instance exclusion or spawning work before lock ownership.
+- Retry behavior is tightly bounded (roughly 100-150 ms total), handles only WouldBlock, and preserves immediate propagation of other filesystem/lock errors.
+- Deterministic regression forces the overlap and proves the daemon eventually acquires after the probe releases; a continuously held incumbent still fails closed.
+- Preserve Rust 1.87 compatibility by calling fs2::FileExt methods explicitly.
+- Run focused lock/autostart/double-serve tests, cargo fmt --all --check, cargo test -p orgasmic-daemon, cargo test -p orgasmic-cli, and cargo clippy --workspace --all-targets -- -D warnings; classify known baseline watcher/bootstrap flakes separately.
+** Notes
+The two originally assigned Codex gpt-5.6-terra/high attempts were interrupted by shared daemon restarts and produced no edits. A concurrently dispatched equivalent fix completed under TASK-870YX: commit 4c0a151, merged to main as e4b6b7b. Manager independently reran the focused daemon-lock, CLI boot-owner, and double-serve regressions; all passed. This duplicate record is cancelled as superseded, not left as an unfixed defect.
+

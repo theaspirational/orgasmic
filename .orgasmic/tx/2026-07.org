@@ -33571,3 +33571,307 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-28 Tue 11:50:40 implementer.reported TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3192
+:TIME:         [2026-07-28 Tue 11:50:40]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:RUN_ID:       run-20260728T113211-982fc18d5aba4af79fca139574d450ad
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-r2hdn/worktree
+:SHA:          4090156bc7b177e14ea8eec77ff9302976b8d569
+:END:
+
+* TX 2026-07-28 Tue 11:54:28 implementer.done TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3193
+:TIME:         [2026-07-28 Tue 11:54:28]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 4090156bc7b177e14ea8eec77ff9302976b8d569
+:MERGE_SHA:    5d4651ab837da6322da0583fdd1f71b1f77b4253
+:BRANCH:       task-r2hdn-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3180
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 11:54:29 task.state_transitioned TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3194
+:TIME:         [2026-07-28 Tue 11:54:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-R2HDN to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 11:55:56 task.created TASK-5HBST
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3195
+:TIME:         [2026-07-28 Tue 11:55:56]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5HBST
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       R2HDN residual risk 1: three daemon sites prepend a stub dir to PATH with no shared lock; a concurrent probe resolves the stub and passes silently
+:END:
+
+* TX 2026-07-28 Tue 11:56:43 reviewer.reported TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3196
+:TIME:         [2026-07-28 Tue 11:56:43]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:RUN_ID:       run-20260728T114222-907fdb200d0441d186a50c068193aeb4
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-870yx-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 11:56:57 task.state_transitioned TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3197
+:TIME:         [2026-07-28 Tue 11:56:57]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-69CW6 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 11:56:58 manager.dispatch_started TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3198
+:TIME:         [2026-07-28 Tue 11:56:58]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-69cw6/worktree
+:BRANCH:       task-69cw6-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-69CW6-impl/brief-69CW6-impl.md
+:STARTED_AT:   [2026-07-28 Tue 11:56:58]
+:LIVENESS:     5d4651ab837da6322da0583fdd1f71b1f77b4253
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: 6FNAY fix round; rmux_release_reaps_session.rs is free now that R2HDN merged
+:END:
+
+* TX 2026-07-28 Tue 11:56:58 run.created TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3199
+:TIME:         [2026-07-28 Tue 11:56:58]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-69CW6-implementer-20260728T115658.jsonl
+:REASON:       6FNAY fix round; rmux_release_reaps_session.rs is free now that R2HDN merged
+:RUN_ID:       run-20260728T115658-26acdb99a3f54d849a447f20e81ba0c9
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-69cw6/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-69CW6-impl/brief-69CW6-impl.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-69CW6-impl/brief-69CW6-impl-8531261c77194719b44e26160c8838b3-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-69CW6-impl/brief-69CW6-impl-8531261c77194719b44e26160c8838b3-stdout.log
+:DISPATCH_ATTEMPT: 8531261c77194719b44e26160c8838b3
+:DISPATCH_TX:  tx-20260728-orgasmic-3198
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 11:58:01 reviewer.done TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3200
+:TIME:         [2026-07-28 Tue 11:58:01]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3189
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 11:58:01 task.state_transitioned TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3201
+:TIME:         [2026-07-28 Tue 11:58:01]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-870YX to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 11:58:08 task.state_transitioned TASK-870YX
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3202
+:TIME:         [2026-07-28 Tue 11:58:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-870YX
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewer SHIP (run-20260728T114222, tx-3189): no actionable findings; 125ms/10ms retry bounded, only WouldBlock retried, both regressions force the overlap rather than depend on timing
+:FROM_STATE:   in_progress
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 11:58:08 task.state_transitioned TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3203
+:TIME:         [2026-07-28 Tue 11:58:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged 4090156; verified by injection — forcing inert turns all five live tests red, hiding rmux turns the new sentinel red where the pre-fix binary printed 2 passed
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 11:58:25 task.state_transitioned TASK-RRVX0
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3204
+:TIME:         [2026-07-28 Tue 11:58:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRVX0
+:TARGET:       .orgasmic/tasks/cancelled.org
+:REASON:       superseded by TASK-870YX (merged e4b6b7b); RRVX0's own notes say so and the 870YX reviewer independently confirmed the retry covers the CLI probe race
+:FROM_STATE:   todo
+:TO_STATE:     cancelled
+:END:
+
+* TX 2026-07-28 Tue 11:58:26 task.state_transitioned TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3205
+:TIME:         [2026-07-28 Tue 11:58:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-R2HDN merged and injection-verified; all four reviewer items closed
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 11:58:31 task.state_transitioned TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3206
+:TIME:         [2026-07-28 Tue 11:58:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewed (BLOCK SHIP tx-3173), fix round TASK-R2HDN merged 4090156 and verified by injection; the false-green class is closed and the launchd diagnosis corrected
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 11:58:38 task.state_transitioned TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3207
+:TIME:         [2026-07-28 Tue 11:58:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round merged
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 11:58:38 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3208
+:TIME:         [2026-07-28 Tue 11:58:38]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round merged
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 11:58:39 task.state_transitioned TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3209
+:TIME:         [2026-07-28 Tue 11:58:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewed (BLOCK SHIP), fix round TASK-QSSQH merged 4c3fd00: RunFail is sticky by kind regardless of position, plus a durable worker_finalize_admitted note for driver errors
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 11:58:39 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3210
+:TIME:         [2026-07-28 Tue 11:58:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewed (BLOCK SHIP), fix round TASK-Q07Y5 merged 0829c34: ExitTimeOut is derived at 50 from a now-bounded shutdown budget, CLI fuse at 45 in between
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:

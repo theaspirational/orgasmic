@@ -954,78 +954,6 @@ FIX DIRECTION (reviewer): register release/finalization tasks in daemon-owned li
 ** Manager note
 The reviewer asked in Open Questions whether the live acp-stdio trial passed. That trial is the TASK-6AYEJ.2 dispatch on the rebuilt runtime; its result will be recorded on TASK-WGXKD when it lands. It does not gate this fix round - both findings are code-level and hold regardless of the trial outcome.
 
-* IN_PROGRESS TASK-WGXKD.2 release admission must be atomic with tracker closure; restart must actually await the drain :dispatch:daemon:cli:defect:race:
-:PROPERTIES:
-:ID: TASK-WGXKD.2
-:PRIORITY: P0
-:END:
-
-Fix round for the TASK-WGXKD.1 reviewer BLOCK SHIP (run-20260728T063208-1080f3a600dc40b6946754da476afca8, merge 1fbc3f7). Findings verbatim.
-
-IMPORTANT CORROBORATION: finding 1 was found INDEPENDENTLY by a second reviewer in a separate worktree - it is finding 3 of the TASK-6AYEJ.2 review (run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1), with the same file:line anchors and the same conclusion. Two independent derivations; treat it as confirmed, not speculative.
-
-** Finding 1 - HIGH: release admission is not atomic with tracker closure
-api.rs:217-240, 6672-6702, 9857-9861. post_run_release reads is_closed() and THEN awaits supervisor.snapshot() before calling spawn(). close() only flips an independent atomic flag, while spawn() increments active unconditionally and never rechecks the closed state. On the multi-thread runtime a release can read false, restart can then close the tracker and observe active == 0, and the release can register and run AFTER the release drain and potentially after the writer barrier. That recreates the exact graceful-shutdown loss this task exists to eliminate: the lease is released while its terminal tx lands after the barrier or dies with the service.
-
-The added late-release assertion does not cover this straddling request - it sends the release only after the restart response, when is_closed() is already true. The endpoint test at dispatch_endpoint.rs:3734-3774 sleeps 500ms until it is inside the injected delay and only then requests restart, so it proves waiting for an ALREADY-REGISTERED task, not atomic close-versus-registration.
-
-FIX DIRECTION: replace the separate is_closed() + spawn() sequence with one atomic admission operation (try_acquire / try_spawn) that checks closed and increments active under the same synchronization boundary, acquired BEFORE any await that restart can overtake. If closure won, drop the count and return 503. Add a barrier-controlled race test with a deterministic hook between handler admission and tracker registration, raced against controlled restart, proving the release is either tracked to completion or rejected.
-
-** Finding 2 - HIGH: the real restart command abandons the drain after 5s, discards warnings, and stops the service anyway
-daemon_lifecycle.rs:242, 847-868; api.rs:145-148, 9856-9877; main.rs:1795-1833. request_restart_drain() gives the HTTP request a 5-SECOND timeout, DROPS the send() result, returns Ok, and stop_inner() immediately invokes the OS service stop. The new API may legitimately wait 15 seconds. Driver teardown alone is budgeted 5s plus producer join 5s (supervisor.rs:4021-4051), and rmux can spend 2s on the SDK kill plus 2s on the CLI fallback (rmux.rs:83-87, 1514-1525). So a realistic teardown exceeds the lifecycle client's 5s fuse before the terminal tx append.
-
-The endpoint warning is not actionable because the CLI never parses it. And the non-restart mirror in lib.rs is NOT a backstop for service shutdown: cmd_serve converts only Ctrl+C into RunningDaemon.shutdown, whereas LaunchAgent/systemd stop terminates the service.
-
-MANAGER VERIFIED THIS DIRECTLY: crates/orgasmic-cli/src/main.rs:1830-1831 awaits tokio::signal::ctrl_c() and nothing else - there is no SIGTERM handler. Every launchctl kickstart -k of orgasmic.daemon, which is the manager's standard runtime-rebuild step and has run four times today, therefore SIGTERMs the daemon WITHOUT running the finalization drain at all. The graceful-shutdown fix is currently unreachable on the only shutdown path this machine actually uses.
-
-The passing integration test uses a 3s delay and calls /daemon/restart directly, staying below the hidden 5s production boundary and never exercising service stop.
-
-FIX DIRECTION: make the lifecycle restart request typed and authoritative - timeout GREATER than release-finalization plus writer-drain budgets, propagate request failures, parse RestartResponse, and do not stop the service after a drain timeout without a durable recovery plan. Include run ids / dispatch generations and copyable rescue commands in timeout output. Route SIGTERM and service-stop through RunningDaemon.shutdown so the library drain actually runs. Add an end-to-end lifecycle test with a delay beyond 5s and the real stop sequence.
-
-** Finding 3 - MEDIUM: a panicked or aborted finalization decrements the count but its lost tx is invisible
-api.rs:178-195, 230-239, 6702-6705. The drop guard correctly lets wait_idle() finish, but the tracker retains only a COUNT, not the JoinHandle or the completion outcome. The sole join-error log lives in the HTTP request future - and dropping that future is the NORMAL worker-finalize case this whole change documents. If the detached task panics after release and before append, the guard moves the count to zero, restart reports a clean drain, and no durable warning or rescue record identifies the lost tx. There is no panic/abort regression test. This is a live-daemon task failure, NOT the accepted whole-daemon crash gap.
-
-FIX DIRECTION: give the tracker ownership of task OUTCOMES, not just a count. Catch and retain panic/abort results keyed by run id and intended terminal tx, surface them through restart warnings and dispatch recovery/status, and add panic/abort tests proving both count release and visible loss recovery.
-
-** Reviewer conclusions that are settled - do not re-litigate
-- The duplicated capability string has effective integration coverage: CLI finalize tests run against the current daemon and would fail if the constants drifted.
-- Failing closed on transient probe errors is the CORRECT safety trade, because the retry remains pre-commit and the error includes the underlying transport/HTTP detail.
-- scripts/install.sh can temporarily place a new CLI in front of an old daemon, but its final orgasmic status staleness check prints 'restart recommended'. orgasmic update performs the restart itself. No silent standard upgrade path was found beyond the defects above.
-- The one-way close is consistent with the pre-existing one-way acquisition pause; not filed separately. Fixing finding 2 should make restart failure/timeout explicit and define whether the daemon reopens or stays quiesced.
-- The TASK-6AYEJ.2 interaction leaves a USABLE path, not a dead end: dispatch-status prints TX_ID, tokened close remains available, and fresh recovery records run.created ORIGIN=recovery. Caveat: the WGXKD refusal text's 'run the same finalize command again' is optimistic - the operator may first need orgasmic recovery status / orgasmic run recover. Consider softening that text while you are here.
-
-* IN_PROGRESS TASK-C0XMR a worker that finalizes from its active turn is recorded as architect.failed :daemon:architect:defect:
-:PROPERTIES:
-:ID: TASK-C0XMR
-:PRIORITY: P1
-:END:
-
-Found by the TASK-6AYEJ.2 reviewer (run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1, finding 2, HIGH). Filed separately because it is a defect in stage outcome computation, not in the dispatch-close generation work that review was scoped to.
-
-It was previously written off as a test-stub artifact. It is not: the reviewer traced the production ordering and the false failure is user-visible.
-
-** The path
-The production-path test acknowledges that real finalize records architect.failed and declines to assert completion (cli/tests/dispatch.rs:5223-5230). That test launches the real ACP stage and invokes real finalize (dispatch.rs:4911-4979, 5124-5221).
-
-1. ACP release interrupts/closes the active turn (drivers/src/adapters/codex.rs:479-496).
-2. Teardown reaps the harness process group (drivers/src/modes/acp_stdio.rs:817-833).
-3. subprocess_stream_json.rs:315-360 synthesizes a FATAL driver error for the resulting non-success exit, because no terminal event preceded it.
-4. The supervisor drains that error before appending the authoritative finalized_by_worker release (daemon/src/supervisor.rs:2181-2239).
-5. But stage_outcome_from_session returns Failed IMMEDIATELY on the earlier fatal error (daemon/src/api.rs:5889-5924) and never reaches the finalized-tombstone handling at api.rs:5937-5949.
-
-So the session contains BOTH a teardown-induced fatal driver error AND an authoritative worker-finalize release, and the outcome function honours the wrong one because it short-circuits on the first.
-
-** Why it matters
-A worker finalizing from its still-active turn is the NORMAL contract, not an edge case - that is what orgasmic dispatch finalize does. So a successful architect stage can be recorded as failed on the ordinary path.
-
-The daemon unit at api.rs:21758-21833 synthesizes only a clean release, so it never exercises the production ordering and cannot catch this.
-
-** Fix direction (reviewer)
-Parse the COMPLETE stage session and make an authoritative Lifecycle::Release { finalized_by_worker: true } DOMINATE teardown-induced driver errors. Retain genuine pre-finalize failure semantics - an error that precedes any finalize must still fail the stage. Extend the production CLI stage test to REQUIRE architect.completed and FORBID architect.failed, and add a session-order regression with a fatal driver error immediately before the finalized release.
-
-** Note
-Check whether the same short-circuit affects non-architect stage kinds and the implementer/reviewer outcome paths, or whether stage_outcome_from_session is architect-only. The reviewer did not state this either way.
-
 * IN_PROGRESS TASK-6AYEJ.3 crash-reconciled recovery loses its dispatch association and can be cleaned up beneath a live run :dispatch:cli:daemon:defect:
 :PROPERTIES:
 :ID: TASK-6AYEJ.3
@@ -1153,181 +1081,6 @@ Acceptance:
 - at least one test fails, rather than skips, when rmux is absent in a lane
   designated as a gate
 
-* IN_PROGRESS TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
-:PROPERTIES:
-:ID: TASK-RRT4T
-:PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
-:TEST_CMD:    cargo test -p orgasmic-daemon --lib
-:END:
-
-Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
-return (and therefore PASS) when `rmux` is not on PATH:
-
-    if !rmux_available_for_test() {
-        eprintln!("skipping <name>: rmux binary not found");
-        return;
-    }
-
-`rmux_available_for_test()` is `probe_rmux_binary().found`, which resolves
-`rmux` from PATH only (crates/orgasmic-drivers/src/modes/rmux.rs:197-210). The
-skip prints to stderr, which `cargo test` swallows without `--nocapture`. The
-run then reports `504 passed; 0 failed` — literally true, and completely
-misleading.
-
-MEASURED 2026-07-26, manager-direct, on main at the TASK-STWVB merge, same
-machine, same commit, one variable changed:
-
-| PATH                             | result          | wall   | syspolicyd CPU |
-|----------------------------------|-----------------|--------|----------------|
-| normal (rmux on ~/.local/bin)    | 502 passed, 2 failed | 106.5 s | +281 s |
-| /usr/bin:/bin:/usr/sbin:/sbin... | 504 passed, 0 failed |  22.3 s | + 32 s |
-
-The second row reproduces, to the second, what the TASK-STWVB round-2
-implementer reported as proof its fix worked: 504/0 at 24.9 / 27.5 / 26.1 s.
-Its fix did not green those tests; its environment skipped them.
-
-WHY THIS IS P0
-
-This is the mechanism behind three consecutive over-reports today:
-- TASK-8W30B: worker measured +5 leaked sessions/run, manager measured +1
-- TASK-6FNAY: worker reported 504/0, manager measured 502/2 three times
-- TASK-STWVB r2: worker reported 504/0 x3, manager measured 502/2 four times
-
-Every one is the same shape, and the shape is not worker dishonesty — each
-phrased its claim carefully. A dispatched worker inherits the daemon's PATH.
-The daemon runs under launchd, which does not carry `~/.local/bin`, so `rmux`
-is absent for workers and present for the operator. Worker green on this crate
-therefore does not mean what it says, and no amount of brief discipline fixes
-it.
-
-Corroborating evidence in the round-2 report itself: it recorded
-`orgasmic-rmux-run-*` sessions as 7 before / 7 after three runs. A real run of
-`post_artifact_regenerate_hot_path_reuses_live_run_id` creates rmux sessions,
-and the manager's runs grew 7 -> 10 (+1 per run, the known panic-abandon).
-Zero growth was the tell that the test never ran.
-
-FIX
-
-1. A skipped test must be visible in the default `cargo test` summary. Options,
-   in preference order: (a) make the guard `panic!` unless an explicit
-   `ORGASMIC_ALLOW_SKIP_RMUX_TESTS=1` opt-out is set, so the default is loud;
-   (b) mark them `#[ignore]` and run them via an explicit filtered gate, so the
-   summary counts them as ignored rather than passed.
-2. Whatever the mechanism, `cargo test -p orgasmic-daemon --lib` must not be
-   able to print `504 passed; 0 failed` while eight tests did nothing.
-3. Give dispatched workers a PATH that finds the tools their gates need, OR
-   make the worker persona report the skip count with every test claim. Prefer
-   the first; the second is a documentation fix for an environment defect.
-4. Audit for the same pattern elsewhere: any `if !X_available() { return }` in
-   a test is the same trap. tmux and cursor-agent guards are the likely
-   siblings.
-
-Acceptance:
-- with rmux absent, the daemon suite cannot report a clean all-passed summary
-- the count of skipped-for-missing-tooling tests is visible without --nocapture
-- a manager reading a worker's test claim can tell whether the scoped test ran
-
-FOOTPRINT CORRECTED [2026-07-26], before dispatch. Two changes to the numbers
-above; neither weakens the finding and one widens it considerably.
-
-1. The count is SEVEN `if !rmux_available_for_test()` call sites in api.rs, not
-   eight. The eighth match in the original grep was the helper's own definition.
-   Every measurement in this task stands; only the count was wrong, and it was
-   repeated into gotchas.org and three commit messages.
-
-2. The pattern is not confined to api.rs. Fourteen files across three crates
-   carry a tooling skip:
-   - crates/orgasmic-daemon/src/api.rs (7 rmux guards), supervisor.rs
-     (command_available_for_test("tmux")), watcher.rs
-   - crates/orgasmic-drivers/src/modes/rmux.rs, modes/tmux.rs,
-     adapters/claude.rs, adapters/codex.rs
-   - crates/orgasmic-daemon/tests/{dispatch_endpoint,boot_resilience,
-     recovery_fault_restart}.rs
-   - crates/orgasmic-drivers/tests/{driver_modes,cursor_agent}.rs
-   - crates/orgasmic-cli/tests/dispatch.rs, crates/orgasmic-cli/src/manager.rs
-
-   So `cargo test -p orgasmic-drivers` reporting "236 passed / 0 failed" has the
-   same hole, and that figure was already quoted as evidence in a worker report
-   today.
-
-3. Four of the skips are worse than tool-absent — they read
-   "skipping ...: SDK degraded to inert". A test that skips because the driver
-   degraded skips exactly when there is something to find. Those deserve to be
-   errors, not skips, and are worth calling out separately from the PATH problem.
-
-DESIGN DIRECTION chosen for the dispatch: one sentinel test per test binary that
-fails when tooling its gated tests need is absent, plus a per-tool environment
-opt-out, plus routing the existing guards through one shared helper so the gated
-set is discoverable in one place. Converting 63 call sites into 63 hard failures
-was rejected: it would stop anyone without claude on PATH from running the suite
-at all, which is how an escape hatch becomes permanent.
-LANDED [2026-07-26]. Merged f894a7a. Second attempt — the first reached `ready`
-and never began a turn (see TASK-VZMZE). Implementer implementer-codex-acp-stdio
-(acp-stdio / codex / gpt-5.6-sol / xhigh), run
-run-20260726T154818-c0acbe719bd141879e00d3d3d3a483be, 42 minutes, +579/-214
-across 13 files.
-
-MANAGER VERIFICATION — the acceptance criterion, run directly, not read from the
-report.
-
-A. Hidden PATH, `cargo test -p orgasmic-daemon --lib`. Before this change that
-   printed `504 passed; 0 failed` in 22 s while seven tests did nothing. Now:
-
-     exit 101
-     test supervisor::tests::required_test_tooling_is_present ... FAILED
-     required test tooling is missing: rmux (gates 7 tests); gated tests did not
-     run. Install the tooling or explicitly acknowledge only these skips with
-     ORGASMIC_ALLOW_MISSING_TOOLS=rmux
-
-   That is exactly the scenario that produced three false green reports today,
-   and it can no longer happen silently. The message names the tool, the count,
-   and the remedy.
-
-B. Hidden PATH with ORGASMIC_ALLOW_MISSING_TOOLS=rmux: the sentinel passes, so
-   the per-tool opt-out works. The run was not clean for an unrelated reason —
-   `api::tests::recovery_reattaches_tmux_session_when_handle_exists` failed with
-   "interrupted" instead of "reattached". That test is on the original TASK-STWVB
-   list of four and has a history of intermittency, but note it FAILED rather
-   than skipped under a restricted PATH, which suggests it may be sensitive to
-   PATH in production code rather than in the test. Worth its own look; not
-   attributed to this change.
-
-C. Normal PATH: 504 passed / 2 failed of 506. The two are exactly the
-   pre-existing STWVB pair. Test count rose by one for the sentinel. No
-   regression.
-
-WHAT SHIPPED
-- `orgasmic_drivers::modes::rmux::test_tooling` — per-tool probes, the sentinel
-  API, per-test skip diagnostics, a shared environment lock, and
-  `assert_not_degraded`.
-- `required_test_tooling_is_present` in every affected default-running test
-  binary, with explicit gated-test counts: daemon lib rmux 7 / tmux 6 / bash 1;
-  drivers lib rmux 9 / tmux 8 / claude 7 / codex 1 / sleep 1 / bash 1; and
-  smaller counts for the four integration binaries.
-- The four "SDK degraded to inert" exits became assertion failures. Those were
-  the worst of the set — a test that skips because the driver degraded skips
-  exactly when there is something to find.
-- Paid live smokes moved to `#[ignore]`, so default output counts them instead
-  of hiding them, and an explicit invocation fails loudly if its tool is absent.
-
-FINDINGS FOR THE REVIEWER PASS
-1. `test_tooling` is a `pub mod` in the production drivers crate, not test-gated.
-   The comment gives a real reason — integration-test crates cannot import
-   `#[cfg(test)]` modules — but the idiomatic answer is a `test-support` cargo
-   feature or a separate dev-dependency crate. As shipped, test scaffolding is
-   public API of a production library and cannot be removed without a breaking
-   change.
-2. The sentinel is slow: `has been running for over 60 seconds` in-suite, while
-   `command_available` is only a PATH lookup. Either `command_succeeds` spawns
-   are paying the macOS exec cost, or the sentinel is queued behind live tests on
-   the shared `test_environment_lock`. Either way its duration is a function of
-   unrelated tests, which is a poor property for the one test that reports
-   environment health.
-3. Suite wall time went from ~106 s to 152 s on the same machine. Some of that is
-   variance — 140 s was observed earlier today — but it should be measured
-   deliberately rather than assumed.
-
 * IN_PROGRESS TASK-1T3FZ 6AYEJ.3 fix round: destructive close must hold a daemon-owned worktree reservation across the liveness decision :dispatch:cli:daemon:fix:race:
 :PROPERTIES:
 :ID: TASK-1T3FZ
@@ -1452,119 +1205,115 @@ as regressions.
 - Do not revert `edc68b4`; its replacement-association work is sound and reviewed.
 - Do not weaken generation binding or the mandatory-close rule from `.1` and `.2`.
 
-* IN_PROGRESS TASK-R2HDN RRT4T fix round: a live test must fail when acquisition degrades to inert, not only when the binary is missing :testing:drivers:trust:fix:
+* IN_PROGRESS TASK-69CW6 6FNAY fix round: prove the stalled-SDK release through the real Supervisor path, and wire the absent-rmux gate :drivers:rmux:testing:fix:
 :PROPERTIES:
-:ID: TASK-R2HDN
-:PRIORITY: P0
+:ID: TASK-69CW6
+:PRIORITY: P1
 :test_cmd: cargo test -p orgasmic-drivers
-:write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs .orgasmic/gotchas.org
+:write_scope: crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs crates/orgasmic-drivers/src/modes/rmux.rs
 :END:
 
-Fix round for the reviewer BLOCK SHIP on TASK-RRT4T (merged `f894a7a`).
+Fix round for the reviewer BLOCK SHIP on TASK-6FNAY (merged `83ea420`).
 Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
-run-20260728T110841, closed tx-20260728-orgasmic-3173.
+run-20260728T110839, closed tx-20260728-orgasmic-3168.
 
-The new default sentinel works and is not in question. Independently probed on
-current HEAD with a stripped PATH and both `ORGASMIC_RUN_ID` and
-`ORGASMIC_ALLOW_MISSING_TOOLS` unset, the daemon sentinel exited 101, named
-`rmux (gates 7 tests)` and `tmux (gates 6 tests)`, stated the gated tests did not
-run, and printed the per-tool opt-out. The original hidden-PATH scenario is
-fixed. `ORGASMIC_ALLOW_MISSING_TOOLS` is set nowhere in the tree, so the opt-out
-cannot be inherited accidentally.
+**The implementation is correct. The proof is not.** That distinction is the
+whole content of this round — do not rewrite working code.
 
-What blocks is that "a compatible binary is on PATH" was treated as equivalent to
-"a live session was really acquired", and three false-green paths survive that
-gap.
+** What the reviewer verified as sound, from the commit blobs at `83ea420^1..83ea420`
 
-** 1. HIGH — four live-rmux tests still accept an inert session (in this diff)
+- The budget arithmetic works: `DRIVER_RELEASE_TIMEOUT = 5s`, SDK reap 2s, CLI
+  reap 2s, leaving one second of reserve.
+- The fallback receives `Session::endpoint()` and `Session::name()` **before**
+  the SDK attempt — endpoint-exact, as required.
+- `release` borrows `self.session` across the cancellable reap and takes it only
+  afterward, so normal per-run `Drop` retains a retry owner. The original
+  `take()`-before-await hazard is genuinely gone.
+- `RunComplete` gets a detached sender before reaping.
+- The supervisor logs both inner release errors and outer timeouts with run,
+  transport and reason, then still performs producer/drain/lifecycle cleanup.
 
-`crates/orgasmic-drivers/src/modes/rmux.rs:3171-3175,3244-3249,3357-3360,3402-3404`.
+Also settled, and it answers the question this review was dispatched to answer:
+**the post-merge orphan sessions are NOT attributable to the production release
+path.** `tx-20260728-orgasmic-3117` identifies both as
+`orgasmic_daemon-e5f5d4f31537ab72.fixture.sh artifact-ready`, 404 from the
+daemon and absent from every ledger; the earlier three share the signature. That
+was the panic-skipped `LiveSessionGuard` cleanup, since fixed by TASK-Z3093
+(`268de73`). It explains the observed sessions and provides no evidence against
+this commit.
 
-`f894a7a` converted each test's missing-binary guard to `skip_test_if_missing`
-and introduced `assert_not_degraded`, but left the pre-existing
-inert-success branches in place. `run_live_session` converts **every** SDK or
-daemon startup error into an inert `Ready` (`rmux.rs:765-810`), while the binary
-sentinel (`modes/tmux.rs:2532-2542`) only proves a compatible executable exists.
+** 1. HIGH — the required supervisor-path regression is a surrogate that cannot
+   detect a regression (in this diff)
 
-So a compatible `rmux` **plus** an SDK/daemon connection failure makes the
-sentinel pass while `live_rmux_session_lifecycle_when_available`,
-`live_rmux_streams_output_and_completes_on_exit`,
-`live_rmux_session_exports_orgasmic_run_id` and
-`live_rmux_process_exit_emits_run_complete_without_text_chunks` all report success
-without exercising their named behaviour. That is the false-green class this task
-exists to remove, surviving in the very tests it was filed about.
+`crates/orgasmic-daemon/src/supervisor.rs:4698,4788,9309`.
 
-Required: route all four retained inert branches through `assert_not_degraded`.
-A live test must fail when acquisition degrades to inert.
+`StalledRmuxReapControl::release` waits on a local sleep and then sets
+`session_live = false` **itself**. It never constructs `RmuxControl`, never owns
+an `rmux_sdk::Session`, never stalls `Session::kill`, never invokes
+`run_rmux_cli_os`, and never proves an rmux session disappeared.
 
-** 2. HIGH — `rmux_release_reaps_session` is a default-running binary with no
-   sentinel (pre-existing, missed by the audit)
+So restoring the original `self.session.take()`-before-await bug, deleting the
+CLI call from `RmuxControl::release`, or pointing the fallback at the wrong
+endpoint would all leave this test **green**. The live test at
+`crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs:137` calls
+`control.release` directly and covers only the happy path, so the two do not
+compose into the acceptance criterion.
 
-`crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs:60-77,109-119`.
+The TASK-6FNAY acceptance asked for exactly one thing this does not deliver: a
+stalled SDK request driven through the real 5-second `Supervisor::release` path,
+with the fallback observed and the real session gone.
 
-It still prints `SKIPPED` and returns success when `rmux` is unavailable or
-acquisition degrades to inert. It has no `required_test_tooling_is_present`
-sentinel and is not `#[ignore]`.
-`git diff --exit-code f894a7a^1 f894a7a -- <that file>` returns 0, so the
-tree-wide audit missed it. `cargo test -p orgasmic-drivers --test
-rmux_release_reaps_session` can still print a clean pass with no live release or
-reap assertion — contradicting the one-sentinel-per-affected-binary design.
+Required (reviewer direction 1): replace the `StalledRmuxReapControl` proof with
+a test that sends a real `RmuxControl` through `Supervisor::release`. Give it a
+controllable SDK endpoint that stalls the kill request and an endpoint-exact CLI
+fallback whose argv can be observed. Assert three things: the fallback ran, the
+actual session is absent, and `RunComplete` was persisted — after the real
+5-second caller boundary, not a simulated one.
 
-Note this is the same file TASK-69CW6 (the TASK-6FNAY fix round) must also
-change, for the adjacent reason that `ORGASMIC_REQUIRE_LIVE_RMUX` is set nowhere.
-**Coordinate: these two rounds must not be dispatched concurrently.**
+** 2. MEDIUM — the fail-closed rmux lane is not wired (in this diff)
 
-Required: put it under the shared per-binary sentinel contract, or make it an
-explicit `#[ignore]` live smoke that fails loudly when invoked without a usable
-live session.
+`crates/orgasmic-drivers/tests/rmux_release_reaps_session.rs:65-77,109-119`.
 
-** 3. HIGH — the shared environment lock does not cover every availability probe
-   (pre-existing)
+The test fails closed only when `ORGASMIC_REQUIRE_LIVE_RMUX=1`. Otherwise a
+missing or incompatible rmux, and an inert acquire, still return success. At
+`83ea420`, `git grep` finds that variable **only in this test** — no workflow,
+script or checked-in gate sets it, and the assigned drivers gate does not either.
+A worker without rmux still gets a green skip.
 
-`crates/orgasmic-drivers/src/adapters/claude.rs:1863-1874,1926-1935`.
+That does not satisfy the acceptance item "at least one test fails, rather than
+skips, when rmux is absent in a lane designated as a gate."
 
-`gate_simulates_for_empty_endpoint_stdio_when_claude_missing` holds the shared
-lock and sets process-global `PATH=""`.
-`real_claude_stream_json_bridge_reports_auth_error` evaluates
-`claude_available()` **before** acquiring that same lock. Interleaved, the latter
-returns through `skip_test_if_missing`, then the library sentinel waits for PATH
-restoration and passes its own probe. Green suite, one test silently skipped.
+Required (reviewer direction 2): wire the absent-rmux failure into a durable
+gate. On current main the cheapest correct answer is to explicitly declare
+TASK-RRT4T's `required_test_tooling_is_present` sentinel as the lane that
+satisfies this task — but *declare* it, in the task or a convention, rather than
+leaving it implicit. If you instead keep `ORGASMIC_REQUIRE_LIVE_RMUX`, it must be
+set by a checked-in gate that installs rmux and fails if it is absent.
 
-Required: acquire `test_environment_lock` before **every** availability probe
-that can race with process-environment mutation, and hold it through the guarded
-test.
+** Open question the reviewer left, worth resolving here
 
-** 4. Correct the recorded diagnosis
-
-The task's stated mechanism — "launchd does not carry `~/.local/bin`" — does not
-hold on this machine, measured 2026-07-28 (tx-20260728-orgasmic-3134): the plist
-embeds the PATH captured at `daemon start` and `ps eww` on the live daemon shows
-`~/.local/bin` with an executable `rmux` in it. The reviewer confirmed
-`command -v rmux` succeeded in the dispatched worker environment.
-
-So the PATH table in TASK-RRT4T is a **reproduced failure simulation**, not a
-measurement of a worker. Update `gotchas.org` to say so, and remove the claim
-that a dispatched worker lacks rmux.
-
-** Open question, carried forward deliberately
-
-The real cause of the historical worker/manager divergence is still unknown. The
-worker transcript proves `rmux` resolved before the reported runs, and net
-session-count stability cannot distinguish "test skipped" from "test ran and
-released its session" — especially now that TASK-Z3093 makes release
-unconditional. Capturing the sentinel result and per-test execution evidence
-inside a real dispatched worker is the way to settle it. File that as its own
-task if it does not fall out of this work.
+Does "cancellation-safe" cover an **externally aborted** explicit release for
+system-wide or reattached runs? Those controls have `kill_on_drop = false`
+(`rmux.rs:698,812`) and `Drop` returns without retry at `rmux.rs:1942` even when
+`release` had already begun. The reviewer did not count this as a finding —
+the scoped supervisor timeout keeps one second of reserve after the 2s + 2s
+budgets, and these session kinds deliberately survive implicit daemon drops — but
+**no regression defines the explicit-release cancellation boundary**. Either
+define it with a test or record why those kinds are exempt.
 
 ** Acceptance
 
-- Acquisition degrading to inert fails all four live rmux tests.
-- `rmux_release_reaps_session` cannot report success without a live session.
-- No availability probe reads process-global PATH outside `test_environment_lock`.
-- `gotchas.org` describes the hidden-PATH scenario as a simulation.
+- A test drives a real `RmuxControl` through `Supervisor::release` with a stalled
+  SDK kill, observes the fallback argv, and proves the session is gone.
+- Reintroducing any of the three original defects turns that test red. Say how
+  you checked — an injection run, as TASK-Z3093 did, is the standard here.
+- The absent-tool gate is named and durable, not env-var-shaped and unset.
+- The explicit-release cancellation boundary for `kill_on_drop = false` controls
+  is either tested or explicitly exempted in writing.
 
 ** Non-goals
 
-- Do not weaken the new default sentinel; it is verified working.
-- Do not chase the TASK-STWVB load-only failures. `recovery_reattaches_tmux_session_when_handle_exists`
-  ("interrupted" vs "reattached") is known-red and out of scope.
+- Do not revert or rewrite `RmuxControl::release`. The reviewer verified it.
+- Do not touch the `LiveSessionGuard` reap (TASK-Z3093, `268de73`); it is
+  merged, verified, and orthogonal.
+
