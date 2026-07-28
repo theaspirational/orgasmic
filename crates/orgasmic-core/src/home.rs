@@ -69,6 +69,11 @@ impl Home {
     pub fn tx(&self) -> PathBuf {
         self.state().join("tx")
     }
+    /// In-flight `dispatch-close` worktree guards, held by CLI processes and
+    /// inherited by a replacement daemon (TASK-AK6EM).
+    pub fn close_guards(&self) -> PathBuf {
+        self.state().join("close-guards")
+    }
     pub fn sessions(&self) -> PathBuf {
         self.root.join("sessions")
     }

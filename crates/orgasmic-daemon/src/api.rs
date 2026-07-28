@@ -594,6 +594,10 @@ pub fn router(state: ApiState) -> Router {
             "/projects/:id/tasks/:task_id/dispatch/close-guard/finish",
             post(post_task_dispatch_close_guard_finish),
         )
+        .route(
+            "/projects/:id/tasks/:task_id/dispatch/close-guard/renew",
+            post(post_task_dispatch_close_guard_renew),
+        )
         .route("/tasks/:id/subtasks", post(post_task_subtask))
         .route("/tasks/:id/comments", post(post_task_comment))
         .route("/tasks/:id/activity", get(get_task_activity))
@@ -4685,10 +4689,15 @@ pub struct DispatchCloseGuardRequest {
 
 #[derive(Debug, Serialize)]
 pub struct DispatchCloseGuardResponse {
-    /// `reserved` | `reservation_held` | `blocked`
+    /// `reserved` | `reservation_held` | `blocked` | `boot_reattach_pending`
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guard_id: Option<String>,
+    /// How often the holder must renew this guard to keep it (TASK-AK6EM). A
+    /// holder that stops renewing is reclaimed one lease TTL later, on every
+    /// platform — including the ones where the daemon cannot probe its pid.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renew_within_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub blocking_run_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4703,6 +4712,19 @@ pub struct DispatchCloseGuardFinishRequest {
 #[derive(Debug, Serialize)]
 pub struct DispatchCloseGuardFinishResponse {
     pub status: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DispatchCloseGuardRenewRequest {
+    pub guard_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DispatchCloseGuardRenewResponse {
+    /// `renewed` | `unknown`
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub renew_within_secs: Option<u64>,
 }
 
 /// Reserve the dispatch worktree for a destructive `dispatch-close`, and
@@ -4759,15 +4781,27 @@ async fn post_task_dispatch_close_guard(
     };
 
     let response = match state.supervisor.reserve_dispatch_close(&params).await {
-        DispatchCloseGuardOutcome::Reserved { guard_id } => DispatchCloseGuardResponse {
+        DispatchCloseGuardOutcome::Reserved {
+            guard_id,
+            renew_within,
+        } => DispatchCloseGuardResponse {
             status: "reserved".into(),
             guard_id: Some(guard_id),
+            renew_within_secs: Some(renew_within.as_secs()),
             blocking_run_id: None,
             blocking_worktree: None,
         },
         DispatchCloseGuardOutcome::ReservationHeld => DispatchCloseGuardResponse {
             status: "reservation_held".into(),
             guard_id: None,
+            renew_within_secs: None,
+            blocking_run_id: None,
+            blocking_worktree: None,
+        },
+        DispatchCloseGuardOutcome::BootReattachPending => DispatchCloseGuardResponse {
+            status: "boot_reattach_pending".into(),
+            guard_id: None,
+            renew_within_secs: None,
             blocking_run_id: None,
             blocking_worktree: None,
         },
@@ -4775,6 +4809,7 @@ async fn post_task_dispatch_close_guard(
             DispatchCloseGuardResponse {
                 status: "blocked".into(),
                 guard_id: None,
+                renew_within_secs: None,
                 blocking_run_id: Some(run_id),
                 blocking_worktree: worktree,
             }
@@ -4798,6 +4833,24 @@ async fn post_task_dispatch_close_guard_finish(
     state.supervisor.finish_dispatch_close(&req.guard_id).await;
     Ok(Json(DispatchCloseGuardFinishResponse {
         status: "released".into(),
+    }))
+}
+
+/// Extend the holder lease on a close guard (TASK-AK6EM).
+///
+/// This is the reclamation identity that works on every platform: the daemon
+/// cannot probe a pid on non-Unix targets, so a holder proves it is still there
+/// by renewing. `unknown` means the guard is no longer held — the caller has
+/// lost its fence and is deleting files nobody is protecting.
+async fn post_task_dispatch_close_guard_renew(
+    State(state): State<ApiState>,
+    Path((_project_id, _task_id)): Path<(String, String)>,
+    Json(req): Json<DispatchCloseGuardRenewRequest>,
+) -> Result<Json<DispatchCloseGuardRenewResponse>, ApiError> {
+    let renewed = state.supervisor.renew_dispatch_close(&req.guard_id).await;
+    Ok(Json(DispatchCloseGuardRenewResponse {
+        status: if renewed { "renewed" } else { "unknown" }.into(),
+        renew_within_secs: renewed.then(|| crate::supervisor::CLOSE_GUARD_RENEW_WITHIN.as_secs()),
     }))
 }
 
@@ -16964,7 +17017,11 @@ mod tests {
         let boot = Arc::new(BootIdentity::new());
         let index = Index::new(home.clone());
         index.rebuild().await;
-        let supervisor = Supervisor::new(writer.clone(), boot.clone());
+        let supervisor = Supervisor::new(
+            writer.clone(),
+            boot.clone(),
+            crate::supervisor::CloseGuardStore::at(home.close_guards()),
+        );
         ApiState {
             home: home.clone(),
             index,
@@ -18952,6 +19009,356 @@ mod tests {
         assert_eq!(recovered.run_id, "run-legacy-app");
         assert_eq!(recovered.runtime_id, "rt-legacy-app");
         assert_eq!(recovered.transport, "tmux");
+    }
+
+    // orgasmic:TASK-AK6EM
+    // ---------------------------------------------------------------------
+    // Each of the three reattach shapes reaches `Supervisor::reattach` with
+    // the worktree it wants to occupy, so each is fenced by a held close
+    // guard. `Supervisor::reattach` is the one door (see `admission`), and
+    // these tests are what proves each call site actually walks through it.
+    // ---------------------------------------------------------------------
+
+    /// Writes an interrupted, genuinely reattachable run over `worktree` and
+    /// starts the tmux session that makes it live.
+    fn seed_live_interrupted_run(
+        project_root: &FsPath,
+        worktree: &FsPath,
+        task_id: &str,
+    ) -> (RuntimeIdentity, TmuxSessionGuard, PathBuf) {
+        let suffix = uuid::Uuid::new_v4().simple().to_string();
+        let identity = RuntimeIdentity {
+            run_id: format!("run-fence-{suffix}"),
+            runtime_id: format!("rt-{suffix}"),
+            boot_id: "boot-before-restart".into(),
+        };
+        let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
+        let status = Command::new("tmux")
+            .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "tmux test session should start");
+        let guard = TmuxSessionGuard(session_name);
+
+        let session_path =
+            project_sessions_dir(project_root).join(format!("{}.jsonl", identity.run_id));
+        std::fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        let mut writer = orgasmic_core::SessionWriter::open(&session_path, identity.clone())
+            .expect("open session writer");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Acquire {
+                    task_id: task_id.into(),
+                    kind: "implementer".into(),
+                    worker_id: "implementer-claude-rmux".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::RunMeta {
+                    transport: "tmux".into(),
+                    harness: Some("claude".into()),
+                    project_id: Some("orgasmic".into()),
+                    worktree: Some(worktree.to_path_buf()),
+                    last_path: None,
+                    stdout_path: None,
+                    dispatch_attempt_token: None,
+                    role: Some("implementer".into()),
+                    requires_worker_finalize: Some(true),
+                    credential_mode: None,
+                    driver_config: json!({}),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::TextChunk {
+                    stream: orgasmic_core::TextStream::Assistant,
+                    chunk: "## Report\nfenced reattach fixture".into(),
+                    seq: 0,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+        (identity, guard, session_path)
+    }
+
+    fn close_guard_params(task_id: &str, worktree: &FsPath) -> DispatchCloseGuardParams {
+        DispatchCloseGuardParams {
+            project_id: "orgasmic".into(),
+            task_id: task_id.into(),
+            kind: RunKind::Worker,
+            branch: "task-fence-impl".into(),
+            worktree_path: worktree.to_path_buf(),
+            dispatch_attempt_token: None,
+            last_path: None,
+            stdout_path: None,
+            // This process is the holder, and it is alive for the whole test.
+            owner_pid: Some(std::process::id()),
+            releasing_run_id: None,
+            owned_run_ids: Vec::new(),
+        }
+    }
+
+    async fn reserve_guard(state: &ApiState, task_id: &str, worktree: &FsPath) -> String {
+        match state
+            .supervisor
+            .reserve_dispatch_close(&close_guard_params(task_id, worktree))
+            .await
+        {
+            DispatchCloseGuardOutcome::Reserved { guard_id, .. } => guard_id,
+            other => panic!("close guard must be reserved for this fixture: {other:?}"),
+        }
+    }
+
+    /// Shape 3 of 3: boot rehydration.
+    ///
+    /// Injection: remove the reservation check from `Inner::admit_live_run` (or
+    /// stop passing `worktree` from `Supervisor::reattach`) and the run below is
+    /// rehydrated into a worktree a destructive close is holding.
+    #[tokio::test]
+    async fn boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        let _live_guard = live_session_guard();
+        if skip_test_if_missing(
+            "boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds",
+            &[("tmux", tmux_on_path())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let worktree = tmp.path().join("worktrees/task-boot-fence");
+        std::fs::create_dir_all(&worktree).unwrap();
+        seed_project(&home, &project_root, "orgasmic");
+        let (identity, _tmux, _session_path) =
+            seed_live_interrupted_run(&project_root, &worktree, "TASK-BOOT-FENCE");
+
+        let state = direct_stage_test_state(home).await;
+        let guard_id = reserve_guard(&state, "TASK-BOOT-FENCE", &worktree).await;
+
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            !state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "boot rehydration must not admit a run into a worktree a close guard holds"
+        );
+
+        // The fixture really is reattachable — without the guard the very same
+        // boot rehydration installs it.
+        state.supervisor.finish_dispatch_close(&guard_id).await;
+        reattach_live_runs_on_boot(&state, std::slice::from_ref(&project_root)).await;
+        assert!(
+            state
+                .supervisor
+                .snapshot()
+                .await
+                .runs
+                .iter()
+                .any(|run| run.run_id == identity.run_id),
+            "the fixture must rehydrate once the guard is released, or the test above proves nothing"
+        );
+        let _ = state
+            .supervisor
+            .release(
+                &identity.run_id,
+                "test cleanup",
+                orgasmic_core::ReleaseOutcome::Completed,
+            )
+            .await;
+    }
+
+    /// Shape 1 of 3: the explicit `reattach_tmux` recovery action.
+    #[tokio::test]
+    async fn explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        let _live_guard = live_session_guard();
+        if skip_test_if_missing(
+            "explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
+            &[("tmux", tmux_on_path())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        // A real dispatch worktree is a checkout of the project, and
+        // `RecoveredRun.worktree` is only exposed for one whose own
+        // `.orgasmic/project.org` names the same project.
+        let worktree = tmp.path().join("worktrees/task-explicit-fence");
+        std::fs::create_dir_all(worktree.join(".orgasmic")).unwrap();
+        seed_project(&home, &project_root, "orgasmic");
+        write(
+            worktree.join(".orgasmic/project.org"),
+            "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:               orgasmic\n:END:\n",
+        );
+        let (identity, _tmux, _session_path) =
+            seed_live_interrupted_run(&project_root, &worktree, "TASK-EXPLICIT-FENCE");
+
+        let state = direct_stage_test_state(home).await;
+        let guard_id = reserve_guard(&state, "TASK-EXPLICIT-FENCE", &worktree).await;
+
+        let request = RunRecoverRequest {
+            action: Some("reattach_tmux".into()),
+            project: Some("orgasmic".into()),
+            request_id: Some("req-explicit-fence".into()),
+            force_inert: None,
+            mode: None,
+            harness: None,
+        };
+        let refused = post_run_recover(
+            State(state.clone()),
+            Path(identity.run_id.clone()),
+            Json(request),
+        )
+        .await
+        .expect_err("reattach_tmux must be refused while a close guard holds the worktree");
+        assert!(
+            refused.message.contains("cleanup"),
+            "the refusal must name the cleanup reservation: {}",
+            refused.message
+        );
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "a refused reattach must leave no live run behind"
+        );
+
+        state.supervisor.finish_dispatch_close(&guard_id).await;
+        let admitted = post_run_recover(
+            State(state.clone()),
+            Path(identity.run_id.clone()),
+            Json(RunRecoverRequest {
+                action: Some("reattach_tmux".into()),
+                project: Some("orgasmic".into()),
+                request_id: Some("req-explicit-fence-2".into()),
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect("the same action is admitted once the guard is released");
+        assert_eq!(admitted.run_id, identity.run_id);
+        let _ = state
+            .supervisor
+            .release(
+                &identity.run_id,
+                "test cleanup",
+                orgasmic_core::ReleaseOutcome::Completed,
+            )
+            .await;
+    }
+
+    /// Shape 2 of 3: the pending-plan `reattach_existing` crash replay — the
+    /// one that can install a *replacement* id the close's record does not
+    /// name, which is why fencing by worktree rather than by id is the point.
+    #[tokio::test]
+    async fn pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree() {
+        let _live_guard = live_session_guard();
+        if skip_test_if_missing(
+            "pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree",
+            &[("tmux", tmux_on_path())],
+        ) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        let worktree = tmp.path().join("worktrees/task-pending-fence");
+        std::fs::create_dir_all(&worktree).unwrap();
+        seed_project(&home, &project_root, "orgasmic");
+        let origin_path = write_failed_recoverable_session(
+            &project_root,
+            "run-pending-fence-origin",
+            "protocol_end_without_finalize",
+            false,
+        );
+        let replacement_path =
+            project_sessions_dir(&project_root).join("recover-pending-fence.jsonl");
+
+        let spec = PendingRecoveryClaimSpec {
+            project_id: "orgasmic".into(),
+            origin_run_id: "run-pending-fence-origin".into(),
+            request_id: "req-pending-fence".into(),
+            origin_session_path: origin_path,
+            replacement_session_path: replacement_path,
+            boot_id: "boot-pending-fence".into(),
+            action: "start_recovery_run".into(),
+            target: "worker".into(),
+            draft_prompt: Some("pending fence draft".into()),
+            force_inert: true,
+            task_id: "TASK-PENDING-FENCE".into(),
+            kind: "worker".into(),
+            worker_id: "implementer-claude-acp".into(),
+            role: "implementer".into(),
+            requires_worker_finalize: true,
+            transport: "tmux".into(),
+            harness: Some("claude".into()),
+            driver_config: json!({"force_inert": true, "harness": "claude"}),
+            worktree: Some(worktree.clone()),
+            last_path: None,
+            stdout_path: None,
+            planned_native_runtime: None,
+            run_options: RecoveryRunOptions {
+                stall_timeout_secs: None,
+                max_run_duration_secs: None,
+                idle_timeout_secs: None,
+                babysitter_target: None,
+                cleanup_on_failure: false,
+            },
+        };
+        let plan = plan_pending_recovery_claim(&home, &spec).expect("plan pending claim");
+        // The planned replacement's mux session is alive: this is the crash
+        // replay that reattaches an *existing* runtime rather than spawning.
+        let planned_session =
+            orgasmic_drivers::modes::tmux::tmux_session_name(&plan.planned_identity);
+        let status = Command::new("tmux")
+            .args(["new-session", "-d", "-s", &planned_session, "sleep", "60"])
+            .status()
+            .unwrap();
+        assert!(status.success(), "planned tmux session should start");
+        let _planned_guard = TmuxSessionGuard(planned_session);
+
+        let state = direct_stage_test_state(home).await;
+        let _guard_id = reserve_guard(&state, "TASK-PENDING-FENCE", &worktree).await;
+
+        let refused = post_run_recover(
+            State(state.clone()),
+            Path("run-pending-fence-origin".to_string()),
+            Json(RunRecoverRequest {
+                action: Some("start_recovery_run".into()),
+                project: Some("orgasmic".into()),
+                request_id: Some("req-pending-fence".into()),
+                force_inert: Some(true),
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("a crash-replay reattach must not enter a guarded worktree");
+        assert!(
+            refused.message.contains("cleanup"),
+            "the refusal must name the cleanup reservation: {}",
+            refused.message
+        );
+        assert!(
+            state.supervisor.snapshot().await.runs.is_empty(),
+            "a refused crash replay must leave no live replacement behind"
+        );
     }
 
     /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher

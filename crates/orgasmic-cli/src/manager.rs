@@ -9,6 +9,9 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{self, AtomicBool};
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use clap::{ArgAction, Args, ValueEnum};
@@ -721,10 +724,14 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     // acted on here has a window no amount of in-process care can close: only
     // the supervisor lock, which the acquire path also takes, can install a
     // fence and read liveness as one step. The verdict comes back with it.
-    let close_guard = if remove_worktree {
-        runtime
+    let mut close_guard = if remove_worktree {
+        let guard = runtime
             .block_on(reserve_close_guard(&client, &project_id, &open))
-            .context("liveness check before dispatch-close cleanup")?
+            .context("liveness check before dispatch-close cleanup")?;
+        if guard.is_some() {
+            dispatch_close_pause_after_guard();
+        }
+        guard
     } else {
         None
     };
@@ -765,13 +772,7 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
         None
     };
     if let Some(error) = release {
-        finish_close_guard(
-            &runtime,
-            &client,
-            &project_id,
-            &open,
-            close_guard.as_deref(),
-        );
+        finish_close_guard(&runtime, &client, &project_id, &open, close_guard.as_mut());
         return Err(error);
     }
 
@@ -789,13 +790,7 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     } else {
         cleanup_dispatch(&project_root, &open, remove_worktree, args.branch_delete)
     };
-    finish_close_guard(
-        &runtime,
-        &client,
-        &project_id,
-        &open,
-        close_guard.as_deref(),
-    );
+    finish_close_guard(&runtime, &client, &project_id, &open, close_guard.as_mut());
     if cleanup_status_reports_warning(cleanup.status) {
         eprintln!(
             "warning: dispatch cleanup status={} error={}",
@@ -2124,9 +2119,60 @@ struct CloseGuardResponse {
     #[serde(default)]
     guard_id: Option<String>,
     #[serde(default)]
+    renew_within_secs: Option<u64>,
+    #[serde(default)]
     blocking_run_id: Option<String>,
     #[serde(default)]
     blocking_worktree: Option<PathBuf>,
+}
+
+#[derive(Debug, Serialize)]
+struct CloseGuardRenewRequest<'a> {
+    guard_id: &'a str,
+}
+
+#[derive(Debug, Deserialize)]
+struct CloseGuardRenewResponse {
+    status: String,
+}
+
+/// A close guard this process holds, and the heartbeat that proves it is still
+/// here (TASK-AK6EM).
+///
+/// The daemon reclaims a guard whose holder stopped renewing. That is the only
+/// reclamation signal available on targets where the daemon cannot probe a pid
+/// (`subprocess_exited` has no portable non-Unix form), so the renewal runs on
+/// every platform rather than only the one that needs it — a heartbeat that
+/// only Windows exercised would be a heartbeat nobody ever tested.
+struct HeldCloseGuard {
+    guard_id: String,
+    stop: Arc<AtomicBool>,
+    /// Set by the heartbeat when the daemon says it no longer holds this guard.
+    lost: Arc<AtomicBool>,
+    heartbeat: Option<std::thread::JoinHandle<()>>,
+}
+
+impl HeldCloseGuard {
+    fn id(&self) -> &str {
+        &self.guard_id
+    }
+
+    fn was_lost(&self) -> bool {
+        self.lost.load(atomic::Ordering::Relaxed)
+    }
+
+    fn stop_heartbeat(&mut self) {
+        self.stop.store(true, atomic::Ordering::Relaxed);
+        if let Some(handle) = self.heartbeat.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+impl Drop for HeldCloseGuard {
+    fn drop(&mut self) {
+        self.stop_heartbeat();
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -2159,7 +2205,7 @@ async fn reserve_close_guard(
     client: &DaemonClient,
     project_id: &str,
     open: &DispatchRecord,
-) -> Result<Option<String>> {
+) -> Result<Option<HeldCloseGuard>> {
     let Some(worktree) = open.worktree.as_deref() else {
         return Ok(None);
     };
@@ -2191,9 +2237,24 @@ async fn reserve_close_guard(
             error
         })?;
     match response.status.as_str() {
-        "reserved" => Ok(Some(response.guard_id.ok_or_else(|| {
-            anyhow::anyhow!("daemon reserved the worktree but returned no guard id")
-        })?)),
+        "reserved" => {
+            let guard_id = response.guard_id.ok_or_else(|| {
+                anyhow::anyhow!("daemon reserved the worktree but returned no guard id")
+            })?;
+            Ok(Some(spawn_close_guard_heartbeat(
+                client,
+                &close_guard_path(project_id, open, "/renew"),
+                guard_id,
+                response.renew_within_secs,
+            )))
+        }
+        "boot_reattach_pending" => bail!(
+            "refusing to clean up dispatch {}: the daemon is still rehydrating runs that \
+             outlived its predecessor, so it cannot yet say whether a live worker occupies \
+             worktree {}. Re-run this close in a moment.",
+            open.tx_id,
+            worktree.display()
+        ),
         "blocked" => {
             let blocking = response.blocking_run_id.unwrap_or_else(|| "?".to_string());
             bail!(
@@ -2223,28 +2284,140 @@ async fn reserve_close_guard(
     }
 }
 
+/// Keep renewing a held close guard until cleanup is done.
+///
+/// A plain OS thread with its own runtime: the cleanup it protects
+/// (`cleanup_dispatch`) is synchronous and can be slow — salvage walks the whole
+/// worktree — so the renewal cannot share the close's own runtime turn.
+fn spawn_close_guard_heartbeat(
+    client: &DaemonClient,
+    renew_path: &str,
+    guard_id: String,
+    renew_within_secs: Option<u64>,
+) -> HeldCloseGuard {
+    let stop = Arc::new(AtomicBool::new(false));
+    let lost = Arc::new(AtomicBool::new(false));
+    // Renew at a third of the deadline the daemon asked for, so two lost
+    // renewals in a row still do not drop a guard whose holder is alive.
+    let interval = Duration::from_secs(renew_within_secs.unwrap_or(30).max(3) / 3);
+    let heartbeat = {
+        let client = client.clone();
+        let renew_path = renew_path.to_string();
+        let guard_id = guard_id.clone();
+        let stop = Arc::clone(&stop);
+        let lost = Arc::clone(&lost);
+        std::thread::Builder::new()
+            .name("close-guard-heartbeat".into())
+            .spawn(move || {
+                let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                else {
+                    return;
+                };
+                loop {
+                    // Sleep in short slices so `stop` ends the thread promptly.
+                    let deadline = std::time::Instant::now() + interval;
+                    while std::time::Instant::now() < deadline {
+                        if stop.load(atomic::Ordering::Relaxed) {
+                            return;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    if stop.load(atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    let renewed = runtime.block_on(client.post_json::<_, CloseGuardRenewResponse>(
+                        &renew_path,
+                        &CloseGuardRenewRequest {
+                            guard_id: &guard_id,
+                        },
+                    ));
+                    match renewed {
+                        Ok(response) if response.status == "renewed" => {}
+                        Ok(response) => {
+                            // The daemon no longer holds this guard: it was
+                            // reclaimed, or a replacement never inherited it.
+                            // Say so — this cleanup is no longer fenced.
+                            if !lost.swap(true, atomic::Ordering::Relaxed) {
+                                eprintln!(
+                                    "warning: the daemon no longer holds this dispatch-close \
+                                     worktree reservation (renew status={}); cleanup is \
+                                     continuing without a fence",
+                                    response.status
+                                );
+                            }
+                        }
+                        Err(_) => {
+                            // Transport failure: the daemon may be restarting.
+                            // Keep trying; the lease outlives several misses.
+                        }
+                    }
+                }
+            })
+            .ok()
+    };
+    HeldCloseGuard {
+        guard_id,
+        stop,
+        lost,
+        heartbeat,
+    }
+}
+
 /// Hand the worktree reservation back. Best effort on purpose: the close's own
-/// outcome must not turn on it, and a holder that never gets here is swept by
-/// the daemon when its pid is gone.
+/// outcome must not turn on it, and a holder that never gets here is reclaimed
+/// by the daemon once its pid is gone or its holder lease expires.
 fn finish_close_guard(
     runtime: &tokio::runtime::Runtime,
     client: &DaemonClient,
     project_id: &str,
     open: &DispatchRecord,
-    guard_id: Option<&str>,
+    guard: Option<&mut HeldCloseGuard>,
 ) {
-    let Some(guard_id) = guard_id else {
+    let Some(guard) = guard else {
         return;
     };
+    guard.stop_heartbeat();
+    if guard.was_lost() {
+        eprintln!(
+            "warning: this dispatch-close lost its worktree reservation before cleanup \
+             finished; the worktree was no longer fenced while it was being removed"
+        );
+    }
     let result = runtime.block_on(client.post_json::<_, CloseGuardFinishResponse>(
         &close_guard_path(project_id, open, "/finish"),
-        &CloseGuardFinishRequest { guard_id },
+        &CloseGuardFinishRequest {
+            guard_id: guard.id(),
+        },
     ));
     if let Err(err) = result {
         eprintln!(
             "warning: dispatch-close could not release its worktree reservation ({err}); the \
-             daemon releases it when this process exits"
+             daemon releases it when this process exits or its holder lease expires"
         );
+    }
+}
+
+/// Test-only rendezvous between the guard response and the destructive work it
+/// protects, mirroring `recovery_failpoint`'s env-driven shape.
+///
+/// The interleaving TASK-AK6EM is about — a daemon replaced *while an external
+/// process holds a close guard* — cannot be driven from inside the daemon: by
+/// construction the holder is another process, and the window is exactly the
+/// one where it is not talking to the daemon at all. No-op unless the env var
+/// names a file.
+fn dispatch_close_pause_after_guard() {
+    let Ok(raw) = std::env::var("ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE") else {
+        return;
+    };
+    if raw.is_empty() {
+        return;
+    }
+    let path = PathBuf::from(raw);
+    let _ = std::fs::write(path.with_extension("reached"), "1");
+    while path.exists() {
+        std::thread::sleep(Duration::from_millis(25));
     }
 }
 
