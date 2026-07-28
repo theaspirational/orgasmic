@@ -32285,3 +32285,183 @@
 :PROJECT:      orgasmic
 :REASON:       TASK-8W30B evidence 2026-07-28: with live worker runs at 0 and no open dispatches, rmux ls still shows 2 orphan sessions from today's test fixtures (orgasmic_daemon-e5f5d4f31537ab72.fixture.sh artifact-ready), pane_dead=0, ages 3h18m and 2h46m, both parented to the rmux server (pid 75258), neither run id present in .orgasmic/tx/2026-07.org nor in /runs; one still names .orgasmic/tmp/dispatch/task-C0XMR/worktree which dispatch-close already removed, so a leaked session outlives worktree teardown; leak count matches the 3 dispatch-heavy hours since the last runtime restart
 :END:
+
+
+* TX 2026-07-28 Tue 10:32:33 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3118
+:TIME:         [2026-07-28 Tue 10:32:33]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       runtime rebuilt at ca3f9df and installed; LaunchAgent plist now carries ExitTimeOut 60 (TASK-WGXKD.2) so launchd SIGKILL waits 60s, wider than the 20s release drain; daemon pid 32814 boot a0f6700e parse_errors 0; binary codesigned with the incumbent identity so TCC grants survive
+:END:
+
+* TX 2026-07-28 Tue 10:32:40 manager.dispatch_started TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3119
+:TIME:         [2026-07-28 Tue 10:32:40]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.2-review/worktree
+:BRANCH:       task-wgxkd.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-WGXKD2-review/brief-WGXKD2-review.md
+:STARTED_AT:   [2026-07-28 Tue 10:32:40]
+:LIVENESS:     ca3f9dfa60e2e3e18380bea3b421211753839229
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review the merged WGXKD.2 fix round: atomic release admission, restart awaits the drain, plist ExitTimeOut
+:END:
+
+* TX 2026-07-28 Tue 10:32:40 run.created TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3120
+:TIME:         [2026-07-28 Tue 10:32:40]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-WGXKD.2-reviewer-20260728T103240.jsonl
+:REASON:       review the merged WGXKD.2 fix round: atomic release admission, restart awaits the drain, plist ExitTimeOut
+:RUN_ID:       run-20260728T103240-3591c57ecd8440b4a07800163c32d580
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.2-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-WGXKD2-review/brief-WGXKD2-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-WGXKD2-review/brief-WGXKD2-review-bb2e2729d6de4c169679a55e48c2b6c8-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-WGXKD2-review/brief-WGXKD2-review-bb2e2729d6de4c169679a55e48c2b6c8-stdout.log
+:DISPATCH_ATTEMPT: bb2e2729d6de4c169679a55e48c2b6c8
+:DISPATCH_TX:  tx-20260728-orgasmic-3119
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 10:32:45 manager.dispatch_started TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3121
+:TIME:         [2026-07-28 Tue 10:32:45]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.3-review/worktree
+:BRANCH:       task-6ayej.3-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-6AYEJ3-review/brief-6AYEJ3-review.md
+:STARTED_AT:   [2026-07-28 Tue 10:32:45]
+:LIVENESS:     ca3f9dfa60e2e3e18380bea3b421211753839229
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review the merged 6AYEJ.3 fix round: recovery association on all replacement paths; close refuses cleanup beneath a live run
+:END:
+
+* TX 2026-07-28 Tue 10:32:45 run.created TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3122
+:TIME:         [2026-07-28 Tue 10:32:45]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ.3-reviewer-20260728T103245.jsonl
+:REASON:       review the merged 6AYEJ.3 fix round: recovery association on all replacement paths; close refuses cleanup beneath a live run
+:RUN_ID:       run-20260728T103245-041f13f86fad42978172d0aa3986f64c
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.3-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-6AYEJ3-review/brief-6AYEJ3-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-6AYEJ3-review/brief-6AYEJ3-review-bc4c7aad1dd44519a94fb99d3e12347f-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-6AYEJ3-review/brief-6AYEJ3-review-bc4c7aad1dd44519a94fb99d3e12347f-stdout.log
+:DISPATCH_ATTEMPT: bc4c7aad1dd44519a94fb99d3e12347f
+:DISPATCH_TX:  tx-20260728-orgasmic-3121
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 10:32:49 manager.dispatch_started TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3123
+:TIME:         [2026-07-28 Tue 10:32:49]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-c0xmr-review/worktree
+:BRANCH:       task-c0xmr-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-C0XMR-review/brief-C0XMR-review.md
+:STARTED_AT:   [2026-07-28 Tue 10:32:49]
+:LIVENESS:     ca3f9dfa60e2e3e18380bea3b421211753839229
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review the merged C0XMR fix: worker finalize dominates teardown-induced errors in session order
+:END:
+
+* TX 2026-07-28 Tue 10:32:49 run.created TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3124
+:TIME:         [2026-07-28 Tue 10:32:49]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-C0XMR-reviewer-20260728T103249.jsonl
+:REASON:       review the merged C0XMR fix: worker finalize dominates teardown-induced errors in session order
+:RUN_ID:       run-20260728T103249-807f7a44690e460984d859f2a35ad705
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-c0xmr-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-C0XMR-review/brief-C0XMR-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-C0XMR-review/brief-C0XMR-review-2837228327c949bf9b1dc70bc5c23deb-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-C0XMR-review/brief-C0XMR-review-2837228327c949bf9b1dc70bc5c23deb-stdout.log
+:DISPATCH_ATTEMPT: 2837228327c949bf9b1dc70bc5c23deb
+:DISPATCH_TX:  tx-20260728-orgasmic-3123
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 10:33:43 task.state_transitioned TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3125
+:TIME:         [2026-07-28 Tue 10:33:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       work merged as 83ea420 on 2026-07-26 (implementer.done tx-20260726-orgasmic-2892) but the heading was never moved off in_progress and no reviewer ever ran; correcting the state so the fix round can be gated
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
