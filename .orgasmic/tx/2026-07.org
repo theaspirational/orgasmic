@@ -32489,3 +32489,121 @@
 :PROJECT:      orgasmic
 :REASON:       TASK-8W30B root-cause split, measured not inferred: the production-path fix (TASK-6FNAY, merged 83ea420) cannot close the leak because the observed orphans come from the TEST path, and there LiveSessionGuard reaps nothing. All 9 copies of struct LiveSessionGuard are flock-only; Drop calls fs2::FileExt::unlock and returns. Session cleanup is a trailing statement in each test body, so any panic above it skips the reap - and TASK-STWVB's load-only failures ARE panics, which makes the flake and the leak the same event. 85 call sites across 3 crates, 9 duplicate definitions. Filed as TASK-Z3093.
 :END:
+
+* TX 2026-07-28 Tue 10:37:54 task.state_transitioned TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3128
+:TIME:         [2026-07-28 Tue 10:37:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       dispatching an implementer for the live-session guard reap
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 10:38:05 task.state_transitioned TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3129
+:TIME:         [2026-07-28 Tue 10:38:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       dispatch owns the in_progress transition; reverting my premature state change
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-28 Tue 10:38:05 task.state_transitioned TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3130
+:TIME:         [2026-07-28 Tue 10:38:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-Z3093 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 10:38:07 manager.dispatch_started TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3131
+:TIME:         [2026-07-28 Tue 10:38:07]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-z3093/worktree
+:BRANCH:       task-z3093-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-Z3093-impl/brief-Z3093-impl.md
+:STARTED_AT:   [2026-07-28 Tue 10:38:07]
+:LIVENESS:     9cb474f6fa8e6916d2c7650b08de39e8cea0939e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: make LiveSessionGuard reap on Drop so a panicking live-session test cannot leak an rmux session
+:END:
+
+* TX 2026-07-28 Tue 10:38:07 run.created TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3132
+:TIME:         [2026-07-28 Tue 10:38:07]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-Z3093-implementer-20260728T103807.jsonl
+:REASON:       make LiveSessionGuard reap on Drop so a panicking live-session test cannot leak an rmux session
+:RUN_ID:       run-20260728T103807-c26b71a3cdbc41dfb71221e441ef23c1
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-z3093/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-Z3093-impl/brief-Z3093-impl.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-Z3093-impl/brief-Z3093-impl-f813a8ea12cb42f98bd147c3d94eccd8-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-Z3093-impl/brief-Z3093-impl-f813a8ea12cb42f98bd147c3d94eccd8-stdout.log
+:DISPATCH_ATTEMPT: f813a8ea12cb42f98bd147c3d94eccd8
+:DISPATCH_TX:  tx-20260728-orgasmic-3131
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 10:38:13 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3133
+:TIME:         [2026-07-28 Tue 10:38:13]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       dispatch gotcha: implementer dispatch is admitted only from BACKLOG or TODO, and the dispatch itself owns the transition to in_progress. Setting --state in_progress by hand first makes the very next dispatch fail with 'lifecycle stage in_progress; implementer dispatch is allowed only from BACKLOG or TODO'. Hit on TASK-Z3093; recovered by moving it back to todo. Do not pre-set state before dispatching.
+:END:
+
+* TX 2026-07-28 Tue 10:42:56 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3134
+:TIME:         [2026-07-28 Tue 10:42:56]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-RRT4T nuance, measured on the live daemon 2026-07-28: the task attributes the false green to launchd not carrying ~/.local/bin, but that is not true on this machine. The LaunchAgent plist embeds the PATH captured at daemon start, and ps eww on daemon pid 32814 shows /Users/aspirational/.local/bin present with an executable rmux in it, so a dispatched worker DOES resolve rmux here. The measured PATH table in the task is a simulation of a worker environment (an explicitly stripped PATH), not a measurement of one; the direct evidence that workers actually skipped is the zero rmux-session growth in the round-2 report, which is separate and stronger. Also ruled out for the daemon lib binary: the only PATH mutations there (api.rs:24529, tests/dispatch_endpoint.rs:2406) PREPEND a dir and restore, so they cannot hide rmux; the crate that empties PATH outright is orgasmic-drivers (adapters/claude.rs:1866 sets PATH to empty and restores at :1874), a different test binary. None of this changes the fix - a skip must be loud - but the stated mechanism should not be carried forward unverified.
+:END:
