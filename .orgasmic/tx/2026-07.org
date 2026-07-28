@@ -36751,3 +36751,177 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-28 Tue 17:35:35 reviewer.reported TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3387
+:TIME:         [2026-07-28 Tue 17:35:35]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:RUN_ID:       run-20260728T171859-a064356ed7d14d9b98433c644d9c17d3
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-1t3fz-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 17:37:40 task.created TASK-AK6EM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3388
+:TIME:         [2026-07-28 Tue 17:37:40]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AK6EM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-AK6EM
+:END:
+
+* TX 2026-07-28 Tue 17:37:41 task.edited TASK-AK6EM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3389
+:TIME:         [2026-07-28 Tue 17:37:41]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AK6EM
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-AK6EM
+:NODE_ID:      TASK-AK6EM
+:END:
+
+* TX 2026-07-28 Tue 17:37:52 reviewer.done TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3390
+:TIME:         [2026-07-28 Tue 17:37:52]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3371
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 17:37:53 task.state_transitioned TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3391
+:TIME:         [2026-07-28 Tue 17:37:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-1T3FZ to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 17:37:53 task.edited TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3392
+:TIME:         [2026-07-28 Tue 17:37:53]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-1T3FZ
+:NODE_ID:      TASK-1T3FZ
+:END:
+
+* TX 2026-07-28 Tue 17:37:54 review orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3393
+:TIME:         [2026-07-28 Tue 17:37:54]
+:TYPE:         review
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-1T3FZ reviewer returned BLOCK SHIP on two P0s: Supervisor::reattach is a second live-run admission path that never consults cleanup_reservations so the monotone-verdict claim holds only for acquire_impl, and the close guard lives only in memory so ATAXN's daemon handoff lets a replacement admit work while the CLI is still removing the worktree. Fix round TASK-AK6EM; 1T3FZ stays open.
+:END:
+
+* TX 2026-07-28 Tue 17:38:23 task.state_transitioned TASK-AK6EM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3394
+:TIME:         [2026-07-28 Tue 17:38:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AK6EM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-AK6EM to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 17:38:24 manager.dispatch_started TASK-AK6EM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3395
+:TIME:         [2026-07-28 Tue 17:38:24]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AK6EM
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ak6em/worktree
+:BRANCH:       task-ak6em-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-AK6EM-impl/brief-AK6EM-impl.md
+:STARTED_AT:   [2026-07-28 Tue 17:38:24]
+:LIVENESS:     0a054b371fa66fa3c41d326c071c4cc8600c785a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P0 destructive path: a live worker can still have its worktree removed; finding 2 was created today by ATAXN
+:END:
+
+* TX 2026-07-28 Tue 17:38:24 run.created TASK-AK6EM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3396
+:TIME:         [2026-07-28 Tue 17:38:24]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AK6EM
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-AK6EM-implementer-20260728T173824.jsonl
+:REASON:       P0 destructive path: a live worker can still have its worktree removed; finding 2 was created today by ATAXN
+:RUN_ID:       run-20260728T173824-82ab4af7bbc84e528bfc1efc61902718
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-ak6em/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-AK6EM-impl/brief-AK6EM-impl.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-AK6EM-impl/brief-AK6EM-impl-3cc2b7f51d6749a9852a5253c7435e47-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-AK6EM-impl/brief-AK6EM-impl-3cc2b7f51d6749a9852a5253c7435e47-stdout.log
+:DISPATCH_ATTEMPT: 3cc2b7f51d6749a9852a5253c7435e47
+:DISPATCH_TX:  tx-20260728-orgasmic-3395
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 17:38:44 graph.handoff.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3397
+:TIME:         [2026-07-28 Tue 17:38:44]
+:TYPE:         graph.handoff.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/handoff.org
+:REASON:       edited handoff node handoff-current
+:NODE_ID:      handoff-current
+:END:

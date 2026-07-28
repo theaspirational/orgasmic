@@ -245,30 +245,28 @@ Three workers, dispatched 2026-07-28 17:18-17:20Z.
   START_TIMEOUT is the last literal on the shutdown-budget axis.
 
 ** Divergence / Risks
-- WORKER TEST CLAIMS ON THE DAEMON CRATE ARE NOT EVIDENCE until TASK-RRT4T lands.
-  Three over-reports today, one mechanism. Re-run the scoped test yourself and
-  verify a side effect that proves it executed.
-- The daemon suite is not green: post_artifact_regenerate_hot_path (now 409
-  "harness busy") and poll_direct_child_pid (30 s deadline) fail in-suite and pass
-  alone; recovery_inventory fails about 1 run in 3.
-- 0.0.15 is unpublished and the running daemon predates every fix from today.
-  Do not run `orgasmic update` — it would revert the machine to 0.0.14.
-- There is still no CI, so every green claim is one local run on one machine.
-  This is the root of the "chasing issues while fixing issues" feeling the
-  operator named: without a shared gate, each fix is verified once, by whoever
-  happened to run it, in an environment nobody else can reproduce. TASK-S2KM0.
-- A live dispatch remains the only acceptable evidence for driver argv changes.
-  Every defect found in the last two days had a passing test standing over it.
-- TASK-VB9DQ and TASK-Z8WEJ sit in in_review with Evidence written against
-  pre-SGRTX behaviour. VB9DQ's "not verified end to end" is stale in the opposite
-  direction: it IS verified, but only after SGRTX. Re-read both before closing.
-- Superseded and retained so it is not repeated: an earlier note in this handoff
-  claimed `orgasmic run release` does not exist by omission and that `run list`
-  reported 0 live. The first is by design (release is the daemon's job; the
-  manager's surface is `orgasmic run recover`, and `manager dispatch-close`
-  releases the run when the record carries a run_id, manager.rs:627). The second
-  was simply false — the run was live for about 80 minutes and was cleared by a
-  daemon restart, which cost about a minute of downtime and required
-  `rmux kill-server` first because a stale rmux-daemon owned the socket.
+LIVE DESTRUCTIVE-PATH DEFECT UNTIL TASK-AK6EM LANDS
+The TASK-1T3FZ reviewer found that the close reservation fences `acquire_impl`
+only. `Supervisor::reattach` (supervisor.rs:1647-1690) is a second live-run
+admission path that never consults `cleanup_reservations`, and the close guard
+lives only in memory so a daemon replacement mid-close starts with an empty map.
+Either can let `dispatch-close` remove a worktree under a live worker.
+
+Operational precaution while this is open, and it is what the manager has been
+doing by habit rather than by rule:
+- Close a dispatch only when `dispatch-status` shows it `[run-gone]` and
+  `[reported]`. With no live run there is nothing for reattach to install.
+- Do not restart or reinstall the daemon while a `dispatch-close` is in
+  flight — the CLI does salvage, `git worktree remove` and branch deletion
+  *after* the guard response, and a replacement daemon will not know the guard
+  exists.
+- Both precautions become unnecessary when AK6EM lands; remove this note then.
+
+WINDOWS RECLAMATION IS BROKEN AND UNTESTABLE HERE
+`subprocess_exited` returns false unconditionally on non-Unix, so a Windows CLI
+that dies after reserving leaves a reservation nothing can sweep and the daemon
+refuses acquires for that worktree until restart. Windows is a shipped runtime
+target. In AK6EM's scope; cannot be exercised on this host, and the worker has
+been told not to fake a test for it.
 ** Description
 (superseded — this section was created in error; the handoff is the free prose above)
