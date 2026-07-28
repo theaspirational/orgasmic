@@ -186,6 +186,11 @@ pub struct DaemonOptions {
     /// leaves this `None`. Tests use it to force the CLI dispatch timeout path
     /// while the daemon has already spawned the worker.
     pub dispatch_response_delay: Option<std::time::Duration>,
+    /// Artificial delay between a run release and the terminal tx that release
+    /// carries. Production leaves this `None` (the two are consecutive awaits).
+    /// Tests widen the gap so a caller can be made to vanish inside it
+    /// (TASK-WGXKD).
+    pub release_terminal_tx_delay: Option<std::time::Duration>,
     /// Trusted host-supplied executable implementing the internal
     /// `__exec-pinned` boundary. Production leaves this unset and uses the
     /// running orgasmic executable; process-isolated integration hosts may
@@ -208,6 +213,7 @@ impl Default for DaemonOptions {
             fs_watcher_enabled: true,
             tmux_input_ready_timeout_secs: None,
             dispatch_response_delay: None,
+            release_terminal_tx_delay: None,
             trusted_exec_wrapper_override: None,
         }
     }
@@ -564,6 +570,7 @@ impl Daemon {
             dispatch_watcher_grace: opts.dispatch_watcher_grace,
             tmux_input_ready_timeout_secs: opts.tmux_input_ready_timeout_secs,
             dispatch_response_delay: opts.dispatch_response_delay,
+            release_terminal_tx_delay: opts.release_terminal_tx_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),

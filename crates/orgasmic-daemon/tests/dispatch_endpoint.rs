@@ -3473,6 +3473,171 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
     let _ = running.join.await;
 }
 
+/// TASK-WGXKD: the terminal tx a worker finalize hands to its release must be
+/// written even when the caller is gone before the response could reach it.
+///
+/// That is the normal case, not an edge case: the release tears down the driver,
+/// which reaps the harness's whole setsid process group — and the `orgasmic
+/// dispatch finalize` process is in that group. Here the caller writes the
+/// request and closes the socket without ever reading a byte back, which drops
+/// the request future on the daemon side. The tx must still be on record, or
+/// the run lands in the state that has no name: work committed, report written,
+/// lease released, nothing reported, no orphan flag.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-FINALIZE-TX";
+    seed_project(
+        &home,
+        &project_root,
+        project_id,
+        "implementer-codex-acp-ws",
+        task_id,
+    );
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let codex = bin_dir.join("codex");
+    write(&codex, "#!/bin/sh\nsleep 120\n");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&codex).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&codex, perms).unwrap();
+    }
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-finalize-tx");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = stem_dir.join("brief.md");
+    write(&brief, "finalize tx brief");
+    let last = stem_dir.join("last.txt");
+    let stdout = stem_dir.join("stdout.log");
+    write(&last, "worker report");
+    write(&stdout, "");
+
+    // `release_terminal_tx_delay` widens the daemon's own release-to-tx gap so
+    // the caller can be made to vanish inside it. In production that gap is two
+    // consecutive awaits; the invariant under test is that whoever is holding
+    // it, it is not the caller.
+    let running = Daemon::run(
+        home.clone(),
+        DaemonOptions {
+            release_terminal_tx_delay: Some(Duration::from_secs(3)),
+            ..test_options()
+        },
+    )
+    .await
+    .expect("boot daemon");
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some("implementer-codex-acp-ws"),
+    );
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    let run_id = body["run_id"]
+        .as_str()
+        .expect("dispatch response run_id")
+        .to_string();
+
+    // The finalize call, as `cmd_dispatch_finalize` sends it — then the caller
+    // vanishes without reading the response, exactly as the group reap leaves it.
+    let payload = serde_json::json!({
+        "reason": format!("worker finalize for {task_id}"),
+        "request_id": format!("dispatch-release-finalize-tx-{run_id}"),
+        "finalized_by_worker": true,
+        "terminal_tx": {
+            "request_id": format!("dispatch-finalize-{task_id}-{run_id}"),
+            "type": "implementer.reported",
+            "actor": "agent.implementer",
+            "project": project_id,
+            "task": task_id,
+            "extra": [["RUN_ID", run_id]],
+        },
+    })
+    .to_string();
+    {
+        use std::io::Write as _;
+        let mut socket = std::net::TcpStream::connect(running.addr).unwrap();
+        write!(
+            socket,
+            "POST /api/runs/{run_id}/release HTTP/1.1\r\n\
+             Host: {}\r\n\
+             Authorization: Bearer {token}\r\n\
+             Content-Type: application/json\r\n\
+             Content-Length: {}\r\n\
+             Connection: close\r\n\r\n{payload}",
+            running.addr,
+            payload.len()
+        )
+        .unwrap();
+        socket.flush().unwrap();
+        // Land inside the release-to-tx gap, then vanish without ever reading
+        // the response. This is the real shape of the loss: the request is in
+        // flight, the caller is not.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            !read_project_tx(&project_root).contains(":TYPE:         implementer.reported"),
+            "the tx landed before the caller disconnected — this test would \
+             prove nothing; the release is finishing too fast to interrupt"
+        );
+    }
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    let reported = loop {
+        let raw = read_project_tx(&project_root);
+        if raw.contains(":TYPE:         implementer.reported") {
+            break raw;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "released run never got its terminal tx — [unreported] again:\n{raw}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    let reported_block = reported
+        .split("\n* TX ")
+        .find(|block| block.contains(":TYPE:         implementer.reported"))
+        .expect("implementer.reported block");
+    assert!(
+        reported_block
+            .lines()
+            .any(|line| line.starts_with(":RUN_ID:") && line.contains(&run_id)),
+        "the terminal tx must carry this run's RUN_ID so dispatch matching \
+         attaches it (TASK-6AYEJ.1):\n{reported_block}"
+    );
+    assert!(
+        !reported.contains(":TYPE:         manager.dispatch_orphaned"),
+        "a reported worker finalize must not also flag an orphan"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// TASK-NW4WV: mismatched cleanup while a live tokened worker holds the lease
 /// must conflict and leave process/worktree/branch/artifacts intact.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

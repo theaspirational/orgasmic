@@ -121,6 +121,8 @@ pub struct ApiState {
     pub tmux_input_ready_timeout_secs: Option<u64>,
     /// Artificial delay before the dispatch HTTP handler returns (tests only).
     pub dispatch_response_delay: Option<std::time::Duration>,
+    /// Artificial delay between a release and its terminal tx (tests only).
+    pub release_terminal_tx_delay: Option<std::time::Duration>,
     /// Per-artifact locks serializing reviews.org read-modify-write across the
     /// two feedback handlers. See [`ApiState::artifact_write_lock`].
     pub artifact_write_locks:
@@ -1991,6 +1993,17 @@ async fn post_tx(
     State(state): State<ApiState>,
     Json(req): Json<TxAppendRequest>,
 ) -> Result<Json<TxAppendResponse>, ApiError> {
+    append_tx_request(&state, req).await.map(Json)
+}
+
+/// The body of `POST /tx`, callable from other handlers so a tx emitted as
+/// part of a larger daemon-side operation is byte-identical to one a client
+/// POSTs itself. `/runs/:id/release` uses it for the worker's terminal tx
+/// (TASK-WGXKD).
+async fn append_tx_request(
+    state: &ApiState,
+    req: TxAppendRequest,
+) -> Result<TxAppendResponse, ApiError> {
     let now = Utc::now();
     let snap = state.index.snapshot().await;
     let project_entry = req
@@ -1998,7 +2011,7 @@ async fn post_tx(
         .as_deref()
         .and_then(|id| snap.board.iter().find(|entry| entry.id == id))
         .cloned();
-    let destination = tx_destination(&state, &req, project_entry.as_ref(), &now)?;
+    let destination = tx_destination(state, &req, project_entry.as_ref(), &now)?;
     let tx_id = match &destination.tx_id_policy {
         TxIdPolicy::Preserve => format!(
             "tx-{}-{}",
@@ -2012,7 +2025,7 @@ async fn post_tx(
         &tx_id,
         &req.r#type,
         &time_str,
-        choose_actor(&req, project_entry.as_ref(), &state),
+        choose_actor(&req, project_entry.as_ref(), state),
         req.machine.clone().unwrap_or_else(|| state.machine.clone()),
     );
     entry.project = req.project.clone();
@@ -2044,11 +2057,11 @@ async fn post_tx(
     } else {
         state.index.refresh_home_tx().await;
     }
-    Ok(Json(TxAppendResponse {
+    Ok(TxAppendResponse {
         tx_id: res.tx_id,
         tx_path: res.tx_path,
         time: time_str,
-    }))
+    })
 }
 
 async fn get_prompt_specs(
@@ -6375,6 +6388,20 @@ pub struct RunReleaseRequest {
     /// human manager path (dispatch-close, lease-release).
     #[serde(default)]
     pub caller_identity: Option<RuntimeIdentity>,
+    /// Set by `orgasmic dispatch finalize` (TASK-WGXKD): the worker's terminal
+    /// tx, to be written by the DAEMON immediately after this release succeeds
+    /// rather than by the client afterwards.
+    ///
+    /// The client cannot write it afterwards: releasing the lease tears down
+    /// the driver, and the driver reaps the harness's whole setsid process
+    /// group — which the `orgasmic dispatch finalize` process is a member of.
+    /// The client is therefore signalled by the very call it is waiting on,
+    /// and on acp-stdio it never returns. Handing the tx to the daemon with
+    /// the release is what makes "released but unreported" impossible; the
+    /// content is the client's verbatim, so tx matching (RUN_ID, deterministic
+    /// request id — TASK-6AYEJ.1) is unchanged.
+    #[serde(default)]
+    pub terminal_tx: Option<TxAppendRequest>,
 }
 
 #[derive(Debug, Serialize)]
@@ -6382,6 +6409,11 @@ pub struct RunReleaseResponse {
     pub run_id: String,
     pub task_id: String,
     pub owner: TaskOwner,
+    /// Id of the tx written from `terminal_tx`, when the request carried one.
+    /// `None` tells a finalize client the daemon did not write its terminal tx
+    /// (older daemon, or no `terminal_tx` sent) so it can still post it itself.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_tx_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -6516,6 +6548,43 @@ async fn post_run_release(
         .find(|run| run.run_id == id)
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("active run {id}")))?;
+    let task_id = run.task_id.clone();
+    // orgasmic:TASK-WGXKD — run the release, and the terminal tx that must
+    // follow it, on a detached task. Hyper drops this handler's future the
+    // moment the caller's connection closes (measured, not assumed: without the
+    // spawn, `dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect`
+    // loses the tx) — and for a worker finalize the caller is killed BY this
+    // very call, because the driver teardown reaps the harness's setsid process
+    // group and the finalize CLI is in it. Anything left on the request future
+    // is therefore lost exactly when it matters most; anything on the spawned
+    // task completes regardless of who is still listening.
+    let handle = tokio::spawn(async move { release_run_and_record_tx(state, id, req).await });
+    let (id, terminal_tx_id) = handle.await.map_err(|error| {
+        tracing::error!(error = %error, "run release task failed to join");
+        ApiError::internal("failed to release run")
+    })??;
+    Ok(Json(RunReleaseResponse {
+        run_id: id,
+        task_id,
+        owner: TaskOwner::Human,
+        terminal_tx_id,
+    }))
+}
+
+/// Release `id`, then — only if the release itself succeeded — write the
+/// worker's terminal tx when the caller sent one (TASK-WGXKD).
+///
+/// The ordering is the one `cmd_dispatch_finalize` has always argued for: the
+/// release is the authority on whether this worker may claim completion at all
+/// (ownership mismatch, a slot reclaimed by another run, a stall sweep that
+/// already released), so a refused release must leave no "done" claim behind.
+/// What changes is only WHO holds the gap between the two steps: the daemon,
+/// which is not the process the release kills.
+async fn release_run_and_record_tx(
+    state: ApiState,
+    id: String,
+    req: RunReleaseRequest,
+) -> Result<(String, Option<String>), ApiError> {
     let reason = req.reason.unwrap_or_else(|| "run released".to_string());
     // orgasmic:TASK-S52X9 — a worker-declared terminal call is Completed;
     // every other release path stays Cancelled (manager cancel, etc.).
@@ -6558,11 +6627,30 @@ async fn post_run_release(
         }
         Err(other) => return Err(supervisor_release_error(&id, other)),
     }
-    Ok(Json(RunReleaseResponse {
-        run_id: id,
-        task_id: run.task_id,
-        owner: TaskOwner::Human,
-    }))
+    let terminal_tx_id = match req.terminal_tx {
+        Some(tx) => {
+            if let Some(delay) = state.release_terminal_tx_delay {
+                tokio::time::sleep(delay).await;
+            }
+            let ty = tx.r#type.clone();
+            match append_tx_request(&state, tx).await {
+                Ok(res) => Some(res.tx_id),
+                // The lease is already gone, so there is nobody left to retry:
+                // log loudly rather than let the run go quietly unreported.
+                Err(error) => {
+                    tracing::error!(
+                        run_id = %id,
+                        tx_type = %ty,
+                        error = %error.message,
+                        "released run but failed to write its terminal tx"
+                    );
+                    return Err(error);
+                }
+            }
+        }
+        None => None,
+    };
+    Ok((id, terminal_tx_id))
 }
 
 #[derive(Debug, Deserialize)]
@@ -15840,6 +15928,7 @@ mod tests {
             dispatch_watcher_grace: std::time::Duration::from_secs(30),
             tmux_input_ready_timeout_secs: Some(1),
             dispatch_response_delay: None,
+            release_terminal_tx_delay: None,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),

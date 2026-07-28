@@ -280,7 +280,7 @@ impl DispatchPlan {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct TxAppendRequest {
     request_id: Option<String>,
     #[serde(rename = "type")]
@@ -316,12 +316,25 @@ struct RunReleaseRequest {
     /// manager path, unauthenticated release unchanged).
     #[serde(default)]
     caller_identity: Option<RuntimeIdentity>,
+    /// Only `orgasmic dispatch finalize` sends this — the worker's terminal tx,
+    /// handed to the daemon so IT writes the tx right after the release it just
+    /// performed (TASK-WGXKD). This process cannot be relied on to write it
+    /// afterwards: the release tears down the driver, which reaps the harness's
+    /// whole setsid process group, and this CLI runs inside that group.
+    #[serde(default)]
+    terminal_tx: Option<TxAppendRequest>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RunReleaseResponse {
     #[allow(dead_code)]
     run_id: String,
+    /// Present when the daemon wrote the `terminal_tx` this release carried.
+    /// Absent from a daemon that predates TASK-WGXKD — the client then still
+    /// posts the tx itself (best effort; the deterministic request id makes a
+    /// double emit a dedupe, not a duplicate).
+    #[serde(default)]
+    terminal_tx_id: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -1227,22 +1240,36 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         extra.push(("SHA".to_string(), sha.to_string()));
     }
 
-    // Order matters (reviewer #2): the worker's terminal tx is the LAST thing
-    // we emit, only after the durable artifacts (commit above, last.txt) and
-    // the lease release have all succeeded, so there is never a "done" claim
-    // with no report and a still-held lease.
+    // Order matters (reviewer #2): the worker's terminal tx lands only after
+    // the durable artifacts (commit above, last.txt) and the lease release have
+    // all succeeded, so there is never a "done" claim with no report and a
+    // still-held lease. The release is also the authority on whether this
+    // worker may claim completion at all — it is what rejects a reclaimed slot
+    // or a stall-swept run — so a refused release must leave no tx behind.
     //
-    // What that ordering actually costs, measured (TASK-WGXKD, run
-    // run-20260727T131952-...): the intent was that a death before step 3
-    // leaves the run stalled, orphan-flagged and rescuable. It does not. Step 2
-    // tears down the driver, which SIGKILLs the harness whose shell is running
-    // this very CLI, so a death in the window between the release and the tx
-    // POST leaves a durable commit, a durable last.txt, a RELEASED lease, no
-    // terminal tx — and NO orphan flag, because from the daemon's side the
-    // release *was* a worker finalize. That fourth state is invisible to both
-    // the success path and the rescue path; only `dispatch-status`'s
-    // `[unreported]` marker shows it. Fixing the race is TASK-WGXKD; this
-    // comment only stops the ordering from reading as safer than it is.
+    // What that ordering cost while the CLIENT owned the gap, measured
+    // (TASK-WGXKD, runs run-20260727T131952-…, run-20260728T042231-…,
+    // run-20260728T042232-…): the intent was that a death before the tx leaves
+    // the run stalled, orphan-flagged and rescuable. It did not. Step 2 tears
+    // down the driver, which reaps the harness's whole setsid process group
+    // (`reap_process_group`, TERM then KILL) — and this CLI is a member of that
+    // group, because the harness spawned it. Release kills the process that
+    // still had to write the tx. On acp-stdio that reap is a direct
+    // `kill(-pgid, …)` and the tx was lost every time (3/3); on rmux it goes
+    // through the rmux server, and the extra hop left just enough time to win
+    // (2/2). Losing it left a durable commit, a durable last.txt, a RELEASED
+    // lease, no terminal tx — and NO orphan flag, because from the daemon's
+    // side the release *was* a worker finalize. That fourth state is invisible
+    // to both the success path and the rescue path; only `dispatch-status`'s
+    // `[unreported]` marker showed it.
+    //
+    // The fix keeps this ordering and moves the gap off this process: the tx is
+    // handed to the daemon WITH the release (`terminal_tx`), and the daemon
+    // writes it immediately after the release it just performed. Whatever this
+    // process's fate, the tx is on record iff the lease was released. The
+    // client-side POST below survives only as the fallback for the two paths
+    // the daemon cannot own: a pre-daemon-fix daemon, and the stall-sweep race
+    // where our release call 404s and no daemon-side release happened at all.
 
     // 1. Write last.txt verbatim — the run's own artifact path, resolved from
     //    the daemon's live run record, never scraped scrollback.
@@ -1258,80 +1285,10 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     std::fs::write(&last_path, &summary)
         .with_context(|| format!("write {}", last_path.display()))?;
 
-    // 2. Release the lease, marked finalized_by_worker so the completion
-    //    watcher suppresses its fallback scrape. Presents this run's own
-    //    identity so the daemon can reject a stale/reclaimed-slot release
-    //    (TASK-DWJVH item A). Resilient to the stall-sweep race (item B):
-    //    the commit + last.txt write above already made this run's work
-    //    durable, so if the stall sweep released this same run in the
-    //    window between `resolve_finalize_run` and here, "already released"
-    //    is a success-with-warning, not a hard error — otherwise the run
-    //    would end up a done-less orphan despite an intact report.
-    if let Some(delay) = finalize_release_delay_for_tests() {
-        std::thread::sleep(delay);
-    }
-    if let Err(e) = runtime.block_on(release_dispatch_run_with_reason(
-        &client,
-        &run.run_id,
-        &format!("worker finalize for {task}"),
-        &task,
-        true,
-        Some(&run.identity),
-    )) {
-        if is_release_run_not_found_error(&e) {
-            let session_path = run.session_path.as_deref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "live run {} has no session_path; cannot verify release tombstone",
-                    run.run_id
-                )
-            })?;
-            match dispatch_release_tombstone(session_path)? {
-                DispatchReleaseTombstone::WorkerFinalized
-                | DispatchReleaseTombstone::ArtifactSubmitted
-                | DispatchReleaseTombstone::ManagerReleased => {
-                    eprintln!(
-                        "warning: run {} was already released by a prior worker finalize; \
-                         skipping duplicate terminal tx",
-                        run.run_id
-                    );
-                    println!(
-                        "finalized: {} {} already recorded run={} last={}",
-                        task,
-                        tx_type,
-                        run.run_id,
-                        last_path.display()
-                    );
-                    return Ok(());
-                }
-                DispatchReleaseTombstone::StallSweep => {
-                    eprintln!(
-                        "warning: run {} was already released before finalize's own release call \
-                         (stall-sweep race); proceeding — commit and last.txt are already durable",
-                        run.run_id
-                    );
-                }
-                DispatchReleaseTombstone::ProtocolEndWithoutFinalize => {
-                    bail!(
-                        "run {} ended at protocol before finalize could release the lease; \
-                         refusing to emit {tx_type} (would record both done and orphaned)",
-                        run.run_id
-                    );
-                }
-                DispatchReleaseTombstone::Unrecognized | DispatchReleaseTombstone::None => {
-                    bail!(
-                        "run {} was already released but session has no worker-finalize tombstone; \
-                         refusing to emit {tx_type}",
-                        run.run_id
-                    );
-                }
-            }
-        } else {
-            return Err(e);
-        }
-    }
-
-    // 3. Emit the terminal tx last. Request id is deterministic per run so
-    // concurrent double-finalize cannot double-emit (writer dedupes replays).
+    // The terminal tx, built before the release because the release is what
+    // carries it (TASK-WGXKD). Request id is deterministic per run so
+    // concurrent double-finalize cannot double-emit (writer dedupes replays) —
+    // which also makes the client-side fallback POST below safe to attempt.
     let tx_request = TxAppendRequest {
         request_id: Some(format!(
             "dispatch-finalize-{}-{}",
@@ -1352,13 +1309,115 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         extra,
         tx_path: None,
     };
-    let tx_response: TxAppendResponse = runtime.block_on(client.post_json("/tx", &tx_request))?;
+
+    // 2. Release the lease, marked finalized_by_worker so the completion
+    //    watcher suppresses its fallback scrape, and carrying the terminal tx
+    //    so the daemon writes it the moment the release succeeds. Presents this
+    //    run's own identity so the daemon can reject a stale/reclaimed-slot
+    //    release (TASK-DWJVH item A). Resilient to the stall-sweep race (item
+    //    B): the commit + last.txt write above already made this run's work
+    //    durable, so if the stall sweep released this same run in the
+    //    window between `resolve_finalize_run` and here, "already released"
+    //    is a success-with-warning, not a hard error — otherwise the run
+    //    would end up a done-less orphan despite an intact report.
+    if let Some(delay) = finalize_release_delay_for_tests() {
+        std::thread::sleep(delay);
+    }
+    let release = match runtime.block_on(release_dispatch_run_with_reason(
+        &client,
+        &run.run_id,
+        &format!("worker finalize for {task}"),
+        &task,
+        true,
+        Some(&run.identity),
+        Some(tx_request.clone()),
+    )) {
+        Ok(response) => Some(response),
+        Err(e) => {
+            if is_release_run_not_found_error(&e) {
+                let session_path = run.session_path.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "live run {} has no session_path; cannot verify release tombstone",
+                        run.run_id
+                    )
+                })?;
+                match dispatch_release_tombstone(session_path)? {
+                    DispatchReleaseTombstone::WorkerFinalized
+                    | DispatchReleaseTombstone::ArtifactSubmitted
+                    | DispatchReleaseTombstone::ManagerReleased => {
+                        eprintln!(
+                            "warning: run {} was already released by a prior worker \
+                             finalize; skipping duplicate terminal tx",
+                            run.run_id
+                        );
+                        println!(
+                            "finalized: {} {} already recorded run={} last={}",
+                            task,
+                            tx_type,
+                            run.run_id,
+                            last_path.display()
+                        );
+                        return Ok(());
+                    }
+                    DispatchReleaseTombstone::StallSweep => {
+                        eprintln!(
+                            "warning: run {} was already released before finalize's own \
+                             release call (stall-sweep race); proceeding — commit and \
+                             last.txt are already durable",
+                            run.run_id
+                        );
+                    }
+                    DispatchReleaseTombstone::ProtocolEndWithoutFinalize => {
+                        bail!(
+                            "run {} ended at protocol before finalize could release the \
+                             lease; refusing to emit {tx_type} (would record both done \
+                             and orphaned)",
+                            run.run_id
+                        );
+                    }
+                    DispatchReleaseTombstone::Unrecognized | DispatchReleaseTombstone::None => {
+                        bail!(
+                            "run {} was already released but session has no \
+                             worker-finalize tombstone; refusing to emit {tx_type}",
+                            run.run_id
+                        );
+                    }
+                }
+                None
+            } else {
+                return Err(e);
+            }
+        }
+    };
+
+    // Test-only: die exactly where production dies — the instant the release
+    // call returns, before anything else this process might still do. A
+    // finalize that still needs its own turn after the release cannot survive
+    // the group reap the release triggers.
+    finalize_kill_self_after_release_for_tests();
+
+    // 3. The terminal tx is on record. Normally the daemon wrote it as part of
+    // the release above, which is what makes "lease released, run unreported"
+    // impossible even when this process is killed by that release. The
+    // client-side POST is the fallback for the two cases the daemon did not
+    // cover: a daemon older than TASK-WGXKD (no `terminal_tx_id` in its
+    // response), and the stall-sweep race above, where our release 404'd and
+    // the daemon never released anything for us. Same deterministic request id
+    // either way, so a redundant attempt dedupes.
+    let tx_id = match release.and_then(|response| response.terminal_tx_id) {
+        Some(tx_id) => tx_id,
+        None => {
+            let tx_response: TxAppendResponse =
+                runtime.block_on(client.post_json("/tx", &tx_request))?;
+            tx_response.tx_id
+        }
+    };
 
     println!(
         "finalized: {} {} tx={} run={} last={}",
         task,
         tx_type,
-        tx_response.tx_id,
+        tx_id,
         run.run_id,
         last_path.display()
     );
@@ -1986,14 +2045,16 @@ async fn release_dispatch_run(
         task_property,
         false,
         None,
+        None,
     )
     .await
 }
 
 /// Shared release call for both `dispatch-close` (manager authority) and
 /// `dispatch finalize` (worker authority, dec_3M7M0) — same terminal
-/// endpoint, differing only in reason text, `finalized_by_worker`, and
-/// `caller_identity` (only `dispatch finalize` presents one; TASK-DWJVH item A).
+/// endpoint, differing only in reason text, `finalized_by_worker`,
+/// `caller_identity` (only `dispatch finalize` presents one; TASK-DWJVH item A)
+/// and `terminal_tx` (only `dispatch finalize` sends one; TASK-WGXKD).
 async fn release_dispatch_run_with_reason(
     client: &DaemonClient,
     run_id: &str,
@@ -2001,6 +2062,7 @@ async fn release_dispatch_run_with_reason(
     request_slug_source: &str,
     finalized_by_worker: bool,
     caller_identity: Option<&RuntimeIdentity>,
+    terminal_tx: Option<TxAppendRequest>,
 ) -> Result<RunReleaseResponse> {
     let request = RunReleaseRequest {
         reason: Some(reason.to_string()),
@@ -2011,6 +2073,7 @@ async fn release_dispatch_run_with_reason(
         )),
         finalized_by_worker,
         caller_identity: caller_identity.cloned(),
+        terminal_tx,
     };
     client
         .post_json(&format!("/runs/{}/release", path_segment(run_id)), &request)
@@ -2103,6 +2166,21 @@ fn finalize_release_delay_for_tests() -> Option<std::time::Duration> {
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|ms| *ms > 0)
         .map(std::time::Duration::from_millis)
+}
+
+/// Test-only: SIGKILL this process the instant the release call in
+/// `cmd_dispatch_finalize` returns, reproducing what the release itself does to
+/// a real worker (the driver teardown reaps the harness's setsid process group,
+/// and this CLI is in it — TASK-WGXKD). Unset in production — zero effect.
+fn finalize_kill_self_after_release_for_tests() {
+    if std::env::var("ORGASMIC_TEST_FINALIZE_KILL_SELF_AFTER_RELEASE").as_deref() != Ok("1") {
+        return;
+    }
+    // SIGKILL, not exit(): nothing in this process may get another turn, no
+    // destructor, no flush — exactly the production death.
+    unsafe {
+        libc::kill(std::process::id() as libc::pid_t, libc::SIGKILL);
+    }
 }
 
 fn close_done_request(
