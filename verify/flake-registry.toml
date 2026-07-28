@@ -113,7 +113,12 @@ filed = "2026-07-28"
 #   index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh
 #     Same run: assertion left == right, left "" right
 #     "ssh://git@example.com/org/project.git", index.rs:2095.
-#     Both are load-dependent and neither has an owning task, so neither can be
-#     registered: an excuse with no owner is a permanent exemption. They need
-#     tasks filed before they belong in this file.
+#     Both are load-dependent and neither had an owning task, so neither could
+#     be registered: an excuse with no owner is a permanent exemption.
+#
+#     FIXED 2026-07-29 by TASK-5FEN5, so they never became entries. Both panics
+#     above were reproduced verbatim here first (3 of 11 and 1 of 11 loaded runs
+#     at --test-threads=64 under 10-12 hogs), and both tests turned out to be
+#     observing background work on a fixed budget rather than waiting for it to
+#     finish. Proof: verify/TASK-5FEN5.
 # --------------------------------------------------------------------------

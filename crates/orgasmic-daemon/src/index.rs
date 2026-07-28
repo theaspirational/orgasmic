@@ -2095,6 +2095,33 @@ mod tests {
         );
     }
 
+    /// Establish the precondition "this project has a Git-backed repo_url".
+    ///
+    /// `refresh_repo_url` bounds its Git probe and, when that bound is spent,
+    /// returns without writing anything — a legitimate production outcome
+    /// that leaves the URL exactly as it was. A single awaited probe is
+    /// therefore a coin flip on a loaded machine, not a guarantee, and a test
+    /// that spends its one probe and then asserts the result is asserting that
+    /// Git won a race (TASK-5FEN5). Drive the probe until it lands instead;
+    /// what the probe does when its bound *is* spent is
+    /// `blocking_git_origin_child_is_killed_and_reaped_on_timeout`'s subject,
+    /// not this one's.
+    async fn resolve_repo_url_live(index: &Index, project_id: &str, expected: &str) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            index.refresh_repo_urls().await;
+            if index.snapshot().await.projects[project_id].repo_url == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the live Git probe for {project_id} never resolved {expected}: \
+                 every attempt returned without writing a URL"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     #[tokio::test]
     async fn live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh() {
         fn git(cwd: &Path, args: &[&str]) {
@@ -2129,12 +2156,8 @@ mod tests {
         index
             .repo_url_refresh_enabled
             .store(true, Ordering::Release);
-        index.refresh_repo_urls().await;
         let expected = "ssh://git@example.com/org/project.git";
-        assert_eq!(
-            index.snapshot().await.projects["project"].repo_url,
-            expected
-        );
+        resolve_repo_url_live(&index, "project", expected).await;
         let attempts_before_rebuild = index.git_spawn_attempts.load(Ordering::Relaxed);
 
         // POST /reindex follows this same live-rebuild path. Publishing the
