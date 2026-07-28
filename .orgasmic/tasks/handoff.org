@@ -11,87 +11,79 @@
 :GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
-Session 2026-07-28 (manager-direct + nine dispatches). The theme: every merged
-fix round in the WGXKD / 6AYEJ / C0XMR / 8W30B family was reviewed for the first
-time, and every single one came back BLOCK SHIP — not because the code was
-wrong, but because the proof was.
+Session 2026-07-28 (manager-direct + thirteen dispatches). The WGXKD / 6AYEJ /
+C0XMR / 8W30B / RRT4T family is fully closed — every parent and every fix round.
+Four rounds merged today, each verified by injection.
 
 THE ONE THING TO KNOW
-Three of the four reviews said, in different words, the same thing: the
-implementation is correct and the test that guards it cannot detect its own
-regression. TASK-6FNAY's `StalledRmuxReapControl::release` sleeps and then sets
-`session_live = false` itself — it never builds an `RmuxControl`, so restoring
-any of the three original defects leaves it green. TASK-RRT4T's new sentinel
-proves a binary is on PATH, but `run_live_session` turns every SDK startup error
-into an inert `Ready`, so four live tests still pass against nothing.
-TASK-C0XMR's negative test used `finalized_by_worker: false`, missing the only
-case that mattered. When a worker reports "gates green", ask what the test would
-do if the fix were reverted. Two rounds now have answered "still pass".
+Every fix round in that family was blocked on proof, not code, and the fix for
+that stuck: R2HDN, 1T3FZ, 69CW6 and Q07Y5 all shipped with the defect reinjected
+and the test shown going red, outputs recorded. TASK-870YX came back SHIP — the
+first. Keep the standard: when a worker reports "gates green", ask what the test
+would do if the fix were reverted, and expect an answer with an exit code in it.
 
-THE LEAK IS TWO LEAKS, AND BOTH ARE THE FLAKE
-`LiveSessionGuard` was nine copies of a flock-only guard whose `Drop` unlocked a
-file and reaped nothing; session cleanup was a trailing statement a panic skips.
-Fixed and merged (TASK-Z3093, 268de73), verified by injection and by an
-independent manager rerun (drivers 275/0, session list 3 before → 2 after).
-But the same shape survives for *processes*: three orphaned
-`cursor-worker-sibling` fixture trees were found holding `/bin/sleep 3600`, two
-executing from a worktree `dispatch-close` had already removed. Filed
-TASK-BCYMM; the fix must kill the process GROUP, since killing the parent alone
-is what orphans the sleep to init. In both classes the load-induced test failure
-IS the leak event, so leak rate scales with dispatch volume.
+THE DIAGNOSIS I GOT WRONG, AND HOW
+I reported that workers inherit the daemon's $TMUX and so reach the rmux server.
+False. The pid I measured was a claude worker — `pgrep -f "orgasmic.*daemon"`
+matched its *prompt text*. The real daemon carries no TMUX. rmux sets TMUX on
+panes it creates and prepends a shim where tmux -> rmux, so a worker's tmux calls
+reach a live server and exit 0. Then the decisive test: a full daemon --lib run
+in the manager environment — no shim, no TMUX — reproduced three of the worker's
+six failures (528 passed / 5 failed / 451s). Not a worker/manager divergence at
+all. Lesson: never identify a process by a pgrep pattern that can match a prompt.
+The RRT4T/R2HDN open question is open again, with its leading candidate removed.
+
+WHAT STWVB ACTUALLY IS
+Five tests, not four, and four of the five are a RECOVERY path — three `recover`
+calls returning 500 plus one tmux reattach. That concentration is the strongest
+structural clue on the task and it is not a "slow machine" story. Recorded on
+TASK-STWVB with the full table. TASK-0RCRY carries the one surviving mechanism
+candidate: no tmux call site passes -L/-S, so every probe, test session and
+production call shares one server — on a dev box, the operator's own.
 
 WHAT LANDED
-- TASK-Z3093 (268de73) — one shared guard, reaps on Drop. `tokio::spawn` from
-  `Drop` is a silent no-op (the runtime dies at the same instant) and
-  `Handle::block_on` panics on a runtime worker thread; the answer is a blocking
-  reap on a std thread with a bounded join.
-- TASK-QSSQH (4c3fd00) — C0XMR fix. The two cases produce a byte-identical
-  release, so the boundary is two rules: `RunFail` sticky by KIND regardless of
-  position, plus a durable `worker_finalize_admitted` note for driver errors.
-- TASK-Q07Y5 (0829c34) — WGXKD.2 fix. `ExitTimeOut` is now DERIVED and lands at
-  50 (connection drain 10 + release drain 20 + writer shutdown 10, plus a 10s
-  margin), with the CLI stop fuse at 45 in between. On expiry the daemon writes
-  a durable loss record outside the writer.
+- R2HDN (5d4651a) — a live test now fails when acquisition degrades to inert;
+  the missing per-binary sentinel added; every availability probe moved behind
+  test_environment_lock.
+- 1T3FZ (68f3ed6) — destructive close holds a daemon-owned worktree reservation
+  installed under the supervisor lock BEFORE the verdict, so the verdict is
+  monotone. The CLI's second opinion is deleted; undetermined liveness refuses.
+- 69CW6 (03f4d05) — the self-satisfying reap surrogate deleted, replaced by
+  StallableRmuxEndpoint driving the real RmuxControl through Supervisor::release.
+- Q07Y5 (0829c34) — ExitTimeOut derived at 50.
 
-DO THIS FIRST
-**The live plist still says 60.** Rebuild and reinstall to pick up the derived
-50, using the sanctioned path: `scripts/package-runtime.sh`, then codesign the
-staged binary with the `orgasmic dev codesign` identity (the script only signs
-when `ORGASMIC_CODESIGN_IDENTITY` is set, and an ad-hoc signature keys TCC to a
-per-build cdhash and silently costs the headless daemon its access to
-`~/Documents`), then a fresh-inode rename into `~/.orgasmic/bin/orgasmic`, then
-`daemon start` from the INSTALLED binary. Never from a worktree build.
+THE RUNTIME IS REINSTALLED — this was the top item and it is done. Live plist
+ExitTimeOut is 50, was 60. Signed by package-runtime.sh itself (set
+ORGASMIC_CODESIGN_IDENTITY='orgasmic dev codesign' or it silently ships an
+unsigned bundle), DR verified byte-equal to the incumbent, installed by
+fresh-inode rename, started from the installed binary. TCC to ~/Documents
+survived (5 projects, 0 parse errors). Twenty minutes later the daemon and rmux
+reloaded together — runs=1, never exited, so a managed reload, not a crash;
+cost was one dispatch failing with an opaque 500 that did not say a restart was
+in progress.
 
-STILL OPEN, AND IT MATTERS
-The real cause of the historical worker/manager divergence is unknown.
-TASK-RRT4T blamed launchd not carrying `~/.local/bin`; that is false on this
-machine — the plist embeds the PATH captured at `daemon start`, `ps eww` shows
-rmux present, and the reviewer confirmed `command -v rmux` succeeded inside a
-dispatched worker. The PATH table in that task is a reproduced simulation, not a
-measurement. Net session-count stability cannot distinguish "skipped" from "ran
-and released", especially now that Z3093 makes release unconditional. Settling
-it needs the sentinel result captured inside a real dispatched worker.
+OPEN, WITH BRIEFS ALREADY WRITTEN
+- TASK-S0QRM (P0, dispatched) — Z8WEJ fix round. `auto` picks BareApiKey on ANY
+  non-empty key, so a stale key beats a working subscription login and the
+  operator learns only after ownership is committed. The existing test asserts
+  that behaviour — changing it is part of the fix.
+- TASK-JQARS (dispatched) — `orgasmic manager drivers` is documented and does not
+  exist, so transport choice is arbitrary.
+- TASK-VB9DQ (reviewer dispatched) — last in_review with no review coverage.
+Not yet dispatched: TASK-SGRTX (P0, dec_S18RH), TASK-0RCRY, TASK-5HBST,
+TASK-ATAXN, TASK-95SGV, TASK-BCYMM, TASK-37TAF, TASK-KPMFK.
 
 CAPACITY, MEASURED
-The `LiveSessionGuard` flock is shared across every test binary in the
-workspace, so concurrent worker suites serialize their live sections against each
-other: a daemon suite that normally takes ~106s took 378s with three workers
-running. Four concurrent rmux workers put load at 28 on 10 cores and cost ~4 GB
-of disk each in worktree target dirs. Three is comfortable; four is the ceiling.
-
-A HALF-APPLIED CLOSE, OBSERVED LIVE
-`manager dispatch-close` printed "close tx appended but lifecycle update failed"
-and then "closed" on the next line. The daemon never died — transient request
-failure under load. The ledger now records a `reviewer.done` whose task-heading
-transition never happened, and the CLI reported success on the same line as the
-failure. Same non-atomic boundary the WGXKD/6AYEJ family is about, reproduced in
-the manager path (tx-20260728-orgasmic-3170).
+Three concurrent rmux workers is comfortable, four is the ceiling (load 28 on 10
+cores, ~4 GB of worktree target dir each). The LiveSessionGuard flock is shared
+across every test binary in the workspace, so concurrent suites serialize their
+live sections — a daemon suite that normally takes ~106s took 378s under three.
 
 THE INSTALL, unchanged and still true
-The operator's daemon is a locally built 0.0.15-dev.1. install.json names the
-stable channel and the installer is equality-based, so `orgasmic update` would
-see stable advertising 0.0.14, treat it as a change, and revert the machine.
-Do not run it. Publishing 0.0.15 needs operator approval.
+Locally built 0.0.15-dev.1. install.json names the stable channel and the
+installer is equality-based, so `orgasmic update` would see stable advertising
+0.0.14, treat it as a change, and revert the machine. Do not run it. Publishing
+0.0.15 needs operator approval.
 
 ** Done so far
 Session 2026-07-26, in order.
