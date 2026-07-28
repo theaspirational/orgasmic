@@ -807,208 +807,160 @@ FIX DIRECTION (reviewer): register release/finalization tasks in daemon-owned li
 ** Manager note
 The reviewer asked in Open Questions whether the live acp-stdio trial passed. That trial is the TASK-6AYEJ.2 dispatch on the rebuilt runtime; its result will be recorded on TASK-WGXKD when it lands. It does not gate this fix round - both findings are code-level and hold regardless of the trial outcome.
 
-* IN_PROGRESS TASK-Z8WEJ Select the claude credential mode instead of hardcoding --bare :drivers:dispatch:bug:
+* IN_PROGRESS TASK-ATAXN Daemon lock retry is sized for a transient probe, so a restart fails against a shutting-down predecessor :daemon:lifecycle:hardening:
 :PROPERTIES:
-:ID: TASK-Z8WEJ
+:ID: TASK-ATAXN
 :PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/**
 :END:
 
-Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:136` hardcodes `--bare` in the claude stdio argv. Per the CLI's own help, `--bare` means "Anthropic auth is strictly ANTHROPIC_API_KEY or apiKeyHelper via --settings (OAuth and keychain are never read)". An operator authenticated through a claude.ai subscription therefore cannot dispatch a claude worker at all: the credential exists, `claude auth status` reports `loggedIn: true, authMethod: claude.ai, subscriptionType: max`, and the dispatch still dies 1.2 s after acquire with "Not logged in - Please run /login" (observed TASK-KWSTJ reviewer dispatch, run-20260725T073841).
+Not a duplicate of TASK-870YX, and not TASK-RRVX0 (cancelled as superseded).
+870YX sized `DAEMON_LOCK_RETRY_BUDGET` at 125 ms with 10 ms steps, and its
+reviewer confirmed that is correct **for the case it was filed about**: a
+transient CLI lock probe that holds the lock for microseconds. This task is about
+a different holder with a budget three orders of magnitude larger.
 
-`--bare` is wanted and should stay available: it skips hooks, LSP, plugin sync, auto-memory, background prefetches and CLAUDE.md auto-discovery, which is the right shape for a worker. The defect is that it is unconditional, and it silently carries a credential policy that a subscription operator cannot satisfy.
+** The mismatch, made concrete by TASK-Q07Y5
 
-Measured channel matrix, same binary and prompt, obviously-fake credential values (2026-07-25, claude 2.1.220):
+`orgasmic-daemon` holds its home instance lock until `graceful_shutdown` returns.
+Q07Y5 (merged `0829c34`) established what that can cost: `ShutdownBudgets::default().total()`
+is 40 s — connection drain 10 + release finalization drain 20 + writer shutdown 10 —
+and a writer blocked in a syscall can push the process to the far end of it.
 
-Under `--bare`:
-- no credential -> "Not logged in - Please run /login"
-- `ANTHROPIC_API_KEY=<fake>` -> "Invalid API key - Fix external API key" (channel LIVE)
-- `CLAUDE_CODE_OAUTH_TOKEN=<fake>` -> "Not logged in" (channel DEAD; the token is ignored)
-- `apiKeyHelper` via `--settings` -> "Invalid API key" (channel LIVE)
+So the same lock has two classes of holder:
 
-Without `--bare`:
-- keychain OAuth -> authenticates and completes
-- `--strict-mcp-config` + empty `--mcp-config` + minimal `--settings` -> authenticates, `mcp_servers: []`, 30 tools, 2.0 s round trip
+| holder | hold time | retry budget needed |
+|--------|-----------|---------------------|
+| transient CLI probe | microseconds | 125 ms — correct today |
+| daemon in graceful shutdown | up to 40 s | 125 ms — fails immediately |
 
-Critical negative result: `CLAUDE_CODE_SIMPLE=1` on its own, with no `--bare` flag, also fails with "Not logged in". The lightweight behaviour and the credential policy are the same switch, so there is no way to keep bare-mode lightness while reading the keychain. Any design that assumes they can be separated is wrong.
+A `daemon restart` whose predecessor is mid-shutdown therefore fails its
+replacement start with "instance lock is held", even though the predecessor is
+shutting down exactly as designed and the lock will be free shortly. The restart
+is reported as a failure and the machine is left with no daemon.
 
-Both live `--bare` channels want an API key, not an OAuth credential, and a subscription's keychain credential is not an API key. So "`--bare` plus the user's keychain auth" is not achievable, by the flag's contract rather than by oversight.
+Recorded 2026-07-28 as tx-20260728-orgasmic-3188 from Q07Y5's residual-risk
+analysis. Not yet reproduced end-to-end — reproducing it is the first ask.
 
-Work:
-1. Make the claude adapter select a credential mode instead of hardcoding one. At minimum: bare+API key (preferred, lightest) when an API key or apiKeyHelper is configured; non-bare with narrow isolation when auth is OAuth/subscription.
-2. Build the fallback tier explicitly rather than by dropping flags: `--strict-mcp-config` with an empty `--mcp-config`, a minimal `--settings`, and the existing `--no-session-persistence`. Verify it suppresses MCP, hooks, and CLAUDE.md discovery — do not assume the narrow flags cover everything `--bare` did, and record what is not covered.
-3. Detect, do not guess. `claude auth status` is non-interactive and returns structured JSON with `authMethod`; use it to choose the tier. Note it is necessary but not sufficient — see 5.
-4. Let the manager override the tier per dispatch, and record which tier was used in the run's RunMeta so a failure is diagnosable from the session JSONL alone.
-5. Feeds TASK-TJKFC: a generic auth probe is not enough. `claude auth status` reports `loggedIn: true` while the `--bare` invocation fails. The preflight must exercise the argv the worker will actually run.
-6. Consider whether the same credential-mode question exists for codex, cursor-agent, and hermes, or whether this is claude-specific. Do not generalise without checking.
+** Ask
 
-Acceptance:
-- a subscription-authenticated operator can dispatch a claude worker with no API key
-- an API-key operator still gets the light `--bare` path
-- the selected credential mode is visible in RunMeta
-- a mode that cannot authenticate is rejected before a worktree, lease, or dispatch record is created
-** Evidence
-Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+1. **Reproduce it.** Stall a writer so the predecessor sits in `graceful_shutdown`
+   past 125 ms, then start a replacement and capture the failure. If it does not
+   reproduce, say so and say why — the analysis may be wrong about where the lock
+   is released relative to shutdown, and that is a useful finding on its own.
+2. **Distinguish the two holders rather than raising one number.** Simply raising
+   the budget to 40 s would make the transient-probe case that 870YX fixed hang
+   for 40 s on a genuinely-held lock, which is worse than the bug. The incumbent
+   classification path already exists (`DaemonInstanceLockHeld` vs
+   `DaemonAlreadyRunning`) — the question is whether a shutting-down predecessor
+   can be identified as such, and waited for on a budget derived from
+   `ShutdownBudgets::default().total()` the way `ExitTimeOut` now is.
+3. Whatever budget the shutdown case gets must be **derived**, not a literal, for
+   the same reason Q07Y5's reviewer blocked a literal `60`: an unexplained
+   constant cannot be shown to still be correct after the thing it was sized
+   against changes.
 
-`adapters/claude.rs` now resolves a `ClaudeCredentialMode` in `compose_request` rather than hardcoding flags in `stdio_spawn`:
-- `BareApiKey` when `api_key_env` resolves or `ANTHROPIC_API_KEY` is present — keeps the light `--bare` path, which is the one credential channel `--bare` accepts.
-- `NativeLogin` otherwise — drops `--bare` so the harness reads its own keychain/OAuth login, and rebuilds isolation from `--strict-mcp-config` plus a minimal `--settings`.
+** Acceptance
 
-`stdio_spawn` now returns the credential-agnostic wire flags only; mode flags and the pinned session id are added where the run context is available.
+- A regression that forces a shutting-down predecessor to overlap a replacement
+  start, and that would fail if the wait were removed. Prove it by injection.
+- A transient-probe hold still resolves in well under a second — 870YX's two
+  regressions must still pass unmodified.
+- A genuinely stuck predecessor (one that never finishes shutting down) still
+  fails fast enough to be actionable, and says which of the two cases it hit.
+  "Instance lock is held" without saying by what, and whether that thing is
+  leaving, is the diagnostic gap underneath this whole task.
 
-Item 2's instruction to verify rather than assume the narrow flags cover everything `--bare` did produced one negative result worth recording. Measured against claude 2.1.220:
-- MCP is fully suppressed: `--strict-mcp-config` alone yields `mcp_servers: []`, against nine servers loaded without it on the measurement machine.
-- Hooks are NOT suppressible. `--settings '{}'` and `--settings '{"hooks":{}}'` both still executed SessionStart hooks; `--include-hook-events` governs reporting, not execution; `--bare` is the only flag that skips them.
+** Non-goals
 
-So native-login workers execute whatever hooks the operator has configured. This is accepted deliberately — the alternative is that subscription-authenticated operators cannot dispatch claude at all — and is documented on the `NativeLogin` variant rather than left for a later reader to rediscover. It surfaced through a real test failure (`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events` began comparing nondeterministic hook uuids), not through inspection.
+- Do not revisit the 125 ms transient budget itself. It is reviewed and correct.
+- Do not touch the shutdown budgets from Q07Y5. This task consumes that
+  derivation; it does not change it.
+** Description
+Not a duplicate of TASK-870YX, and not TASK-RRVX0 (cancelled as superseded).
+870YX sized `DAEMON_LOCK_RETRY_BUDGET` at 125 ms with 10 ms steps, and its
+reviewer confirmed that is correct **for the case it was filed about**: a
+transient CLI lock probe that holds the lock for microseconds. This task is about
+a different holder with a budget three orders of magnitude larger.
 
-Item 4 remains open: the resolved mode is logged at debug but is not yet recorded in RunMeta, so a failure is not yet diagnosable from the session JSONL alone. Item 6 also remains open — codex, cursor-agent and hermes have not been checked for the same credential-mode question.
+=== The mismatch, made concrete by TASK-R74E8 (the landed redo of TASK-Q07Y5)
 
-Gates: `cargo fmt`, `cargo clippy --workspace --all-targets`, `git diff --check` clean. orgasmic-drivers 213 lib tests pass; `driver_modes` returns to its pre-change baseline of 20 passed / 4 failed, those four being pre-existing codex failures verified identical on the clean branch by stashing. orgasmic-core 132 pass.
+`orgasmic-daemon` holds its home instance lock until `graceful_shutdown` returns.
+R74E8 (merged `e1b94b2`, after Q07Y5 `0829c34` was reverted) established what that can cost: `ShutdownBudgets::default().total()`
+is 40 s — connection drain 10 + release finalization drain 20 + writer shutdown 10 —
+and a writer blocked in a syscall can push the process to the far end of it.
 
-Not verified end to end: the running daemon is the installed 0.0.14 build, so a live dispatch still uses the old adapter. Proving this against a real dispatch needs a daemon rebuild and restart, which is an operator decision.
-BLOCKER RESTATED [2026-07-26]. Stays in_review, but not for the reason the
-evidence above gives.
+So the same lock has two classes of holder:
 
-"The running daemon is the installed 0.0.14 build" is stale twice over. The
-daemon is now 0.0.15-dev.1, and TASK-SGRTX (b43fc70, f5c6913) established
-something worse than "unverified": this code was INERT in production. claude
-simulation_reason treated an empty endpoint as grounds to simulate, which is
-every dispatch, so compose_request returned Simulated before building any argv.
-The credential mode this task resolves was computed, recorded, and then dropped
-on the floor. Read the evidence above as verified in test and inert in
-production, not as verified-but-unproven.
+| holder | hold time | retry budget needed |
+|--------|-----------|---------------------|
+| transient CLI probe | microseconds | 125 ms — correct today |
+| daemon in graceful shutdown | up to 40 s | 125 ms — fails immediately |
 
-So the verification this task needs is a live claude dispatch on a daemon
-carrying todays main. The operators daemon is the installed 0.0.15-dev.1
-bundle, which predates those commits. That publish is itself gated behind
-TASK-8W30B -> TASK-6FNAY. This is a chain, and it is the reason the task cannot
-simply be closed by re-reading the diff.
+A `daemon restart` whose predecessor is mid-shutdown therefore fails its
+replacement start with "instance lock is held", even though the predecessor is
+shutting down exactly as designed and the lock will be free shortly. The restart
+is reported as a failure and the machine is left with no daemon.
 
-Two acceptance criteria are also still unmet, independently of verification:
-- "the selected credential mode is visible in RunMeta" — work item 4 is open;
-  the mode is logged at debug only. This is the same gap filed today as
-  TASK-A55J7 (model and effort are likewise never persisted to RunMeta or the
-  dispatch tx). Whoever does one should do both; it is one field set on one
-  record.
-- work item 6 — whether codex, cursor-agent and hermes have the same
-  credential-mode question — has not been checked.
+Recorded 2026-07-28 as tx-20260728-orgasmic-3188 from R74E8/Q07Y5's residual-risk
+analysis. Not yet reproduced end-to-end — reproducing it is the first ask.
 
-Closing this needs: the live dispatch, item 4, and item 6. Not a reviewer.
-LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
+=== Ask
 
-* IN_PROGRESS TASK-VB9DQ Persist native session evidence for acp-stdio claude runs :drivers:recovery:evidence:
+1. **Reproduce it.** Stall a writer so the predecessor sits in `graceful_shutdown`
+   past 125 ms, then start a replacement and capture the failure. If it does not
+   reproduce, say so and say why — the analysis may be wrong about where the lock
+   is released relative to shutdown, and that is a useful finding on its own.
+2. **Distinguish the two holders rather than raising one number.** Simply raising
+   the budget to 40 s would make the transient-probe case that 870YX fixed hang
+   for 40 s on a genuinely-held lock, which is worse than the bug. The incumbent
+   classification path already exists (`DaemonInstanceLockHeld` vs
+   `DaemonAlreadyRunning`) — the question is whether a shutting-down predecessor
+   can be identified as such, and waited for on a budget derived from
+   `ShutdownBudgets::default().total()` the way `ExitTimeOut` now is.
+3. Whatever budget the shutdown case gets must be **derived**, not a literal, for
+   the same reason Q07Y5's reviewer blocked a literal `60`: an unexplained
+   constant cannot be shown to still be correct after the thing it was sized
+   against changes.
+
+=== Acceptance
+
+- A regression that forces a shutting-down predecessor to overlap a replacement
+  start, and that would fail if the wait were removed. Prove it by injection.
+- A transient-probe hold still resolves in well under a second — 870YX's two
+  regressions must still pass unmodified.
+- A genuinely stuck predecessor (one that never finishes shutting down) still
+  fails fast enough to be actionable, and says which of the two cases it hit.
+  "Instance lock is held" without saying by what, and whether that thing is
+  leaving, is the diagnostic gap underneath this whole task.
+
+=== Non-goals
+
+- Do not revisit the 125 ms transient budget itself. It is reviewed and correct.
+- Do not touch the shutdown budgets from R74E8. This task consumes that
+  derivation; it does not change it. R74E8 is merged and verified live: the
+  daemon holds one pid across 181s, and `ExitTimeOut` is the derived 50.
+
+* IN_PROGRESS TASK-JQARS Implement the documented orgasmic manager drivers command :cli:runtime:docs:
 :PROPERTIES:
-:ID: TASK-VB9DQ
+:ID: TASK-JQARS
 :PRIORITY: P1
 :END:
 
-Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:144` passes `--no-session-persistence` on every acp-stdio claude run, and the adapter never passes `--session-id` or emits a `NativeRuntime` lifecycle event. The consequence is that acp-stdio claude runs leave no harness-native evidence of any kind.
+Problem: `shipped/entry/router.org` tells every manager "Use `orgasmic --help` and `orgasmic manager drivers` to discover installed transport pairs (`mode` + `harness`)". That subcommand does not exist; it exits with `unrecognized subcommand 'drivers'`.
 
-Measured 2026-07-25 (claude 2.1.220, counting files under `~/.claude/projects`):
-- run with `--no-session-persistence`: 0 new native transcripts
-- identical run without it: 1 new native transcript
+This is not cosmetic. dec_WDR5K item 1 makes the `SUPPORTED` (mode, harness) matrix in `orgasmic-drivers` "the sole authority" for transport selection, and item 9 assigns per-dispatch model and effort choice to manager judgment rather than configuration. The runtime therefore depends on a manager reading that matrix — and gives it no way to.
 
-Confirmed by inspection:
-- `NativeRuntimeMeta` appears only in `modes/rmux.rs` and `modes/tmux.rs`; `adapters/claude.rs` never emits it
-- the acp-stdio reviewer run `run-20260725T073841` recorded lifecycle phases `acquire, run_meta, release` only — no `native_runtime`
-
-Contrast the TUI path, which already does this correctly. A real rmux run recorded:
-- `launch_argv: [claude, --dangerously-skip-permissions, --model, claude-sonnet-5, --session-id, a9fe25ff-...]`
-- `resume_argv: [claude, --resume, a9fe25ff-..., --fork-session, --dangerously-skip-permissions]`
-- `session_id: a9fe25ff-...`
-
-It passes an orgasmic-minted session id up front, so correlation is deterministic rather than discovered. acp-stdio should follow that pattern.
-
-Three consequences, all currently live:
-
-1. TASK-VBSG2 is impossible for this transport. Its slice A resolves "verified NativeRuntime provider/session/path metadata" and parses "Claude native JSONL". Neither exists for acp-stdio runs, so retro over an arbitrary past claude run cannot work no matter how good the materializer is.
-
-2. dec_WDR5K item 7 is violated in effect. TUI screen capture was removed on the premise that "session transcripts come from harness-native JSONL located by per-harness transcript finder adapters". For acp-stdio claude the finder adapter has nothing to find, so those runs have no transcript at all — not a lossy one, none. The decision's own sequencing constraint (finders must land before capture removal, or runs lose their session inputs) is satisfied in letter and broken in substance here.
-
-3. Recovery is degraded. `resolve_recovery_actions` offers `resume_native_fork` only when `session_native_runtime` yields a validated claude session id. acp-stdio records none, so that action can never be offered for this transport; recovery falls through to a fresh run even when resuming was possible.
+Observed consequence 2026-07-25: a manager needing a reviewer transport ran the documented command, got the error, fell back to grepping `pub const SUPPORTED` out of `crates/orgasmic-drivers/src/lib.rs`, and picked the first entry of the array. The dispatch was decided by source-order, not judgement. A missing discovery surface does not produce a careful manager; it produces an arbitrary one.
 
 Work:
-1. Drop `--no-session-persistence` from the acp-stdio claude argv, or make it a deliberate per-dispatch option rather than a hardcoded default.
-2. Mint and pass an explicit `--session-id`, matching the TUI path, so correlation never depends on discovery heuristics.
-3. Emit a `NativeRuntime` lifecycle event from the acp-stdio path with provider, session id, launch argv, and resume argv, so recovery and retro read one shape regardless of transport.
-4. Weigh and record the retention tradeoff rather than assuming it away. Persisting worker sessions grows `~/.claude/projects` without bound (446 transcripts already present on this machine), and the retro contract holds vendor JSONL to be vendor-owned and immutable — so orgasmic may not prune it. Decide explicitly whether that is acceptable, whether worker sessions should be distinguishable from operator sessions, and record the answer.
-5. Check the same three properties for codex, cursor-agent, and hermes under acp-stdio. Do not assume this is claude-specific.
-
-Coordinates with TASK-Z8WEJ: both change `stdio_spawn` in the same adapter and should land together.
+1. Implement `orgasmic manager drivers`: list the `SUPPORTED` (mode, harness) pairs from the drivers crate, so the documented command matches reality.
+2. Include what a manager actually needs to choose between them, not just the pair list — at minimum which pairs are non-interactive versus which spawn an interactive TUI pane, since that distinction decides whether a dispatch can run unattended.
+3. Surface per-harness runtime options where a protocol catalog exists (dec_WDR5K item 9 permits structured protocol adapters only; never CLI text parsing). Where no catalog exists, say so explicitly rather than omitting the harness.
+4. Add a router/CLI consistency check so a command named in shipped entry text cannot silently not exist. The general defect is that shipped prose and the CLI surface drifted with nothing to catch it.
 
 Acceptance:
-- an acp-stdio claude run leaves a native transcript that the existing transcript finder resolves
-- its session id is recorded in a NativeRuntime lifecycle event, not discovered after the fact
-- `resume_native_fork` is offered for a recoverable acp-stdio claude run
-- the retention tradeoff is a recorded decision, not an implicit one
-** Notes
-Item 4's retention tradeoff is now settled by dec_Y5MPK: retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites or expires a vendor file; its obligation is visibility (per-harness counts, total size, age distribution through `doctor`). So this task does not need to solve growth — it needs to stop suppressing persistence, mint the session id, and emit NativeRuntime. The doctor reporting is separate work.
-** Evidence
-Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
-
-- `--no-session-persistence` removed from the claude stdio argv. Verified beforehand that it was the sole cause: an otherwise identical run wrote one new file under `~/.claude/projects` without it and zero with it. Also verified that `--bare` does not suppress persistence, so both credential modes keep evidence.
-- `--session-id` is now pinned to the run's `runtime_id`, matching `modes/tmux.rs`. Verified that `-p` mode honours it and that the vendor transcript lands at exactly `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, the path `claude_session_path` computes. Correlation is minted, not discovered (dec_Y5MPK item 3).
-- `HarnessEventAdapter::native_runtime` added, defaulting to `None`. The claude adapter populates it while composing the request; `AcpStdioComposeAdapter` delegates it; `modes/acp_stdio.rs` reads it immediately after composing and carries it onto the `DriverSession` in place of the previous hardcoded `native_runtime: None`.
-- `claude_session_path` promoted to `pub(crate)` in `modes/tmux.rs` rather than duplicating the cwd-encoding rule in a second place.
-
-`resume_argv` is recorded as `[claude, --resume, <session-id>, --fork-session]`. Note it deliberately omits `--dangerously-skip-permissions`, which the TUI path includes: the stdio path never passed that flag at launch, and a resume argv should reproduce the original run's permission posture rather than widen it.
-
-Regression `every_mode_persists_a_locatable_native_session` asserts no `--no-session-persistence`, a pinned session id, and NativeRuntime whose `session_id` and `resume_argv` both target it.
-
-Still open from this task's work list: item 5, whether codex, cursor-agent and hermes need the same treatment. Codex is known to persist natively without orgasmic asking — a run that died on a provider 503 still wrote `~/.codex/sessions/2026/07/25/rollout-...jsonl` — so the question there is session-id correlation, not persistence.
-
-Gates as recorded on TASK-Z8WEJ. Not verified end to end: the running daemon is the installed 0.0.14 build, so proving this against a live dispatch needs a daemon rebuild and restart.
-BLOCKER RESTATED [2026-07-26]. Stays in_review; the closing line above is stale
-in the opposite direction from how it reads.
-
-"Not verified end to end: the running daemon is the installed 0.0.14 build"
-suggests the work is done and merely unproven. TASK-SGRTX (b43fc70, f5c6913)
-showed it was INERT in production: the claude adapter returned Simulated before
-building argv, so the pinned --session-id and the NativeRuntime event this task
-adds never reached a real process. After SGRTX it does work — so the honest
-status is "verified only after a fix that landed later, on a runtime the
-operator is not yet running".
-
-The verification this needs is a live claude acp-stdio dispatch on a daemon
-carrying todays main, proving the three acceptance criteria against a real run:
-a native transcript the existing finder resolves, a NativeRuntime lifecycle
-event carrying the minted session id, and resume_native_fork actually offered
-for that run by resolve_recovery_actions. The operators daemon is
-0.0.15-dev.1, which predates SGRTX; the publish is gated behind
-TASK-8W30B -> TASK-6FNAY.
-
-Work item 5 also remains open: whether codex, cursor-agent and hermes need the
-same treatment. The body already notes codex persists natively without being
-asked (a run that died on a 503 still wrote ~/.codex/sessions/...jsonl), so for
-codex the open question is session-id correlation rather than persistence.
-
-Lands together with TASK-Z8WEJ — same adapter, same live dispatch proves both.
-LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
-ITEM 5 CLOSED — CROSS-HARNESS MATRIX RECORDED [2026-07-28] by TASK-H0TYV (VB9DQ fix round). Inspected at HEAD 5a8ebc6; every claim below was re-verified against the tree rather than inherited from the review.
-
-| harness      | native persistence          | session-id owner        | pre-launch pin | NativeRuntime today | finder confidence |
-|--------------+-----------------------------+-------------------------+----------------+---------------------+-------------------|
-| claude       | on; never suppressed        | orgasmic (runtime_id)   | yes, verified  | emitted             | high              |
-| codex        | on; vendor-driven           | codex (thread.id)       | no slot        | none (trait default)| high / medium     |
-| cursor-agent | on; vendor-driven           | cursor (sessionId)      | no slot (ACP)  | none (trait default)| high / medium     |
-| hermes       | on; vendor-driven           | hermes (sessionId)      | no slot (ACP)  | none (trait default)| high / medium     |
-
-Two properties hold across all four and were checked by grep over the whole tree, not by reading one adapter:
-
-- No harness passes a persistence-suppression flag. The only occurrences of the `--no-session-persistence` family anywhere in the tree are a comment at `crates/orgasmic-drivers/src/adapters/claude.rs:216` explaining its removal and the regression assertion that it stays removed. One flag needs a second look and is filed as TASK-ZY259: codex sends `persistExtendedHistory: false` on every `thread/start` (`adapters/codex.rs:883`), uncommented and untested. Codex still writes rollouts with it set, so it is not the blanket kill switch claude's flag was, but nothing records what it does suppress.
-- `HarnessEventAdapter::native_runtime` is overridden in exactly two places: `adapters/claude.rs:168` and the delegating `modes/acp_stdio.rs:111`. Codex, cursor_acp and hermes therefore take the trait default `None` at `crates/orgasmic-drivers/src/trait.rs:248`.
-
-Per harness:
-
-claude — orgasmic mints the id before launch. `let session_id = ctx.identity.runtime_id.clone()` at `adapters/claude.rs:374`, passed as `--session-id`, recorded in `NativeRuntimeMeta` with `session_path`, `launch_argv` and `resume_argv`. Proven live on run run-20260727T131952 (`df92384b-fd23-423c-ab2c-131beb03db82`), transcript filename equals runtime_id. Finder resolves the deterministic `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` at high confidence. 652 JSONL under `~/.claude/projects` (measured 2026-07-28).
-
-codex — `thread.id` is read from the `thread/start` response in `on_ws_thread_started` (`adapters/codex.rs:198-206`) and surfaced only in `Ready.capabilities` (`:225`). `thread_start_params` (`:864-885`) has no id field, so there is nothing to pin. 1457 rollout JSONL under `~/.codex/sessions`. Follow-up TASK-F9VEZ.
-
-cursor-agent — `sessionId` is read from the `session/new` result (`adapters/cursor_acp.rs:288-292`), surfaced only in `Ready.capabilities` (`:320`). ACP defines `session/new` as the agent minting the id, so this is protocol, not implementation choice. 909 JSONL under `~/.cursor`. Follow-up TASK-B6D8W.
-
-hermes — `sessionId` is read from the `session/new` result (`adapters/hermes.rs:287-292`, method at `:327`), same ACP constraint. 82 JSONL under `~/.hermes/sessions`. Follow-up TASK-2B215.
-
-CONCLUSION: this is not claude-specific, and it is also not the same defect. Claude had persistence actively suppressed; the other three persist fine on their own. What all three lack is a recorded native identity, which is what recovery (`resume_native_fork`) and retro read, and what dec_Y5MPK item 6 attribution is defined on. None of them can satisfy dec_Y5MPK item 3 as written — "orgasmic pins the native session id before launch ... every transport must" — because their protocols have no slot for a client-supplied id. That contract question is recorded against TASK-SGRTX and is deliberately not answered here. The `doctor` reporting dec_Y5MPK items 5 and 6 name is filed as TASK-E3K1B.
-
-Item 5 asked for a check, not for the fixes. The check is done and recorded; the work it found is filed.
+- every command named in `shipped/entry/router.org` resolves
+- a manager can choose a transport without reading Rust source
+- the output distinguishes unattended-capable transports from interactive ones
 
