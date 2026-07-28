@@ -1049,7 +1049,7 @@ mod tests {
                 "payload": {
                     "session_id": sid,
                     "cwd": "/tmp/proj",
-                    "originator": "orgasmic"
+                    "originator": launched_codex_originator()
                 }
             })
         )
@@ -1098,7 +1098,7 @@ mod tests {
                 "payload": {
                     "session_id": sid,
                     "cwd": cwd,
-                    "originator": "orgasmic",
+                    "originator": launched_codex_originator(),
                     "timestamp": "2026-07-16T10:00:06Z"
                 }
             })
@@ -1144,7 +1144,7 @@ mod tests {
                 "payload": {
                     "session_id": sid,
                     "cwd": cwd,
-                    "originator": "orgasmic",
+                    "originator": launched_codex_originator(),
                     "timestamp": "2026-07-09T13:04:24Z"
                 }
             })

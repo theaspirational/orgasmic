@@ -745,29 +745,6 @@ passes `-L`/`-S`, so every probe, test session and production call shares a
 single tmux server. If isolating that server does not fix these, the result
 belongs back here.
 
-* IN_PROGRESS TASK-JQARS Implement the documented orgasmic manager drivers command :cli:runtime:docs:
-:PROPERTIES:
-:ID: TASK-JQARS
-:PRIORITY: P1
-:END:
-
-Problem: `shipped/entry/router.org` tells every manager "Use `orgasmic --help` and `orgasmic manager drivers` to discover installed transport pairs (`mode` + `harness`)". That subcommand does not exist; it exits with `unrecognized subcommand 'drivers'`.
-
-This is not cosmetic. dec_WDR5K item 1 makes the `SUPPORTED` (mode, harness) matrix in `orgasmic-drivers` "the sole authority" for transport selection, and item 9 assigns per-dispatch model and effort choice to manager judgment rather than configuration. The runtime therefore depends on a manager reading that matrix — and gives it no way to.
-
-Observed consequence 2026-07-25: a manager needing a reviewer transport ran the documented command, got the error, fell back to grepping `pub const SUPPORTED` out of `crates/orgasmic-drivers/src/lib.rs`, and picked the first entry of the array. The dispatch was decided by source-order, not judgement. A missing discovery surface does not produce a careful manager; it produces an arbitrary one.
-
-Work:
-1. Implement `orgasmic manager drivers`: list the `SUPPORTED` (mode, harness) pairs from the drivers crate, so the documented command matches reality.
-2. Include what a manager actually needs to choose between them, not just the pair list — at minimum which pairs are non-interactive versus which spawn an interactive TUI pane, since that distinction decides whether a dispatch can run unattended.
-3. Surface per-harness runtime options where a protocol catalog exists (dec_WDR5K item 9 permits structured protocol adapters only; never CLI text parsing). Where no catalog exists, say so explicitly rather than omitting the harness.
-4. Add a router/CLI consistency check so a command named in shipped entry text cannot silently not exist. The general defect is that shipped prose and the CLI surface drifted with nothing to catch it.
-
-Acceptance:
-- every command named in `shipped/entry/router.org` resolves
-- a manager can choose a transport without reading Rust source
-- the output distinguishes unattended-capable transports from interactive ones
-
 * IN_PROGRESS TASK-Z8WEJ Select the claude credential mode instead of hardcoding --bare :drivers:dispatch:bug:
 :PROPERTIES:
 :ID: TASK-Z8WEJ
