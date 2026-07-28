@@ -776,3 +776,144 @@ fixture-process one, a different class.
 The 'recover returns 500 under load' signature is now observed on three separate
 tests. Whatever this task finds should explain all three, not one.
 
+* IN_PROGRESS TASK-TCTTD Injection proofs are re-authored at merge time against the fixed tree; ship them as artifacts replayed by one verb :cli:verification:mechanism:
+:PROPERTIES:
+:ID: TASK-TCTTD
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-28 after a session in which the manager's own re-injection probes
+were malformed four times, every time failing toward FALSE GREEN: an org-verbatim
+span tested against a backtick extractor, a std-Mutex API probe against a tokio
+Mutex, a "removed" lock that was still one shared static, and a genuine removal
+run after the ambient load that reproduced the race had gone. A broken probe
+that passes looks identical to a working fix. Each was caught only by manual
+suspicion, which does not scale and fails silently.
+
+Root cause: the injection proof is a RITUAL, re-authored from scratch at merge
+time against the ALREADY-FIXED tree — which is precisely where false green
+lives. The worker demonstrated red once, pre-fix, when red was cheap; that
+demonstration is then thrown away and the manager improvises a new probe.
+
+=== The mechanism
+
+Make the injection a shipped ARTIFACT, authored once at the moment the defect
+demonstrably exists, then replayed — never re-authored.
+
+1. The implementer, while the defect still reproduces (pre-fix), captures:
+   - a patch that reintroduces the defect onto the fixed tree (reverse of the
+     fix, or a minimal hand-written defect patch),
+   - the exact test command (single line, with the mandatory
+     `--skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+     baked in where the drivers suite is involved),
+   - the expected RED signature: a substring/regex of the failure output plus
+     the nonzero exit class.
+2. These live in the repo with the fix (suggested: `verify/TASK-<id>/` with
+   `injection.patch`, `cmd`, `expect-red`), so they survive worktree removal
+   and travel with the merge. The task drawer records the path.
+3. A new verb `orgasmic verify TASK-<id>` replays it: assert clean tree, apply
+   patch, run cmd, ASSERT RED MATCHING SIGNATURE (a green or wrong-red run
+   fails verification loudly), revert patch byte-clean, run cmd, assert green.
+   Machine-readable result; nonzero exit on any deviation.
+
+The property this buys: probe authorship happens exactly once, against a
+known-broken state, with its red output pinned. Replay cannot silently degrade
+into false green — a probe that no longer bites fails the replay itself.
+It also makes merge verification delegable (reviewer or manager runs one verb)
+instead of a manager-serial bespoke step.
+
+=== Design points the worker must decide and record
+
+- Patch application on a moved tree: if `injection.patch` no longer applies,
+  verify must FAIL (stale artifact), not skip.
+- Where the verb lives (`orgasmic verify` vs `orgasmic task verify`) and how it
+  finds the artifact (drawer property vs path convention). Prefer drawer
+  property `verify_artifact` set by the implementer, validated at close.
+- Safety: refuse to run on a dirty tree; always restore (RAII/temp-worktree ok,
+  but note dispatch worktrees already exist — do not invent a second worktree
+  mechanism if `git stash`-discipline suffices).
+
+=== Acceptance
+
+- One real, already-merged fix (suggested: TASK-R74E8's drain-budget defect) is
+  re-expressed as a verify artifact, and `orgasmic verify` shows the full
+  red-then-green replay with output.
+- A deliberately malformed artifact (patch that does not change behavior, or
+  wrong expected signature) makes verify FAIL loudly — demonstrated, with
+  output. This is the false-green detector and the core of the task.
+- Replay leaves the tree byte-identical (`git status` clean, `git diff` empty).
+- `verify --help` documents the artifact layout.
+
+=== Non-goals
+
+- Do not retrofit artifacts onto historical merges beyond the one exemplar.
+- Do not gate `manager dispatch-close` on verify yet — that is a follow-up
+  decision once the verb has been used in anger.
+- Do not touch the billed harness test in any way; its name appears here only
+  inside the mandatory skip flag.
+
+Related: TASK-S2KM0 (a CI lane could run `orgasmic verify` per merged task),
+TASK-MFJZ7 (mechanism-over-prose for the billed test, same philosophy).
+
+* IN_PROGRESS TASK-ZYWZD node body set silently drops nested headings: a write verb that lost 92 percent of a body and reported success :cli:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-ZYWZD
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-28. `orgasmic node body set` replaces only the free prose between
+the property drawer and the first nested heading. A body containing `**`
+sub-headings is silently truncated at the first one — TASK-ATAXN was filed with
+300 of its 3959 characters and nobody was told. The read side compounds it:
+nested `**` sections are NOT returned in the JSON `description` field, so the
+loss is invisible through the same surface that caused it. A write verb that
+can drop 92% of its payload and report success is the single worst surface in
+the CLI.
+
+=== The principle (shared with TASK-HQ970, defect 2)
+
+A writer must not commit what it cannot read back. TASK-HQ970 states it for
+`tx record` (re-parse before reporting success); this task applies the same
+round-trip guarantee to the node body surface. If the fix grows shared
+machinery (compose -> re-parse -> diff-against-intent -> refuse on loss), use
+it for both.
+
+=== Work
+
+1. WRITE: `node body set` must either persist the full submitted body
+   (including nested `**` headings, correctly re-depthed under the task
+   heading) or REFUSE, naming exactly what would be lost ("body contains 3
+   nested headings starting at '** The gap'; this verb replaces prose only —
+   use ... or restructure with ==="). Never a silent partial write. Same audit
+   for `node body append` and any sibling that composes org content.
+2. READ: `task get` / `node` reads must expose the full body, or explicitly
+   mark elision ("+ 3 nested sections not shown") — never present a truncated
+   body as complete. Pick and record one; full exposure preferred.
+3. Post-write verification: after composing the new file content, re-parse and
+   assert the submitted body round-trips before the write is committed
+   (mirrors HQ970's acceptance "a write that would not round-trip is rejected
+   rather than committed").
+
+=== Acceptance
+
+- Setting a body containing `** Section` either persists it fully (verified by
+  reading the raw org node) or errors naming the offending heading — proven
+  both ways in tests.
+- The ATAXN shape is the regression fixture: a ~4000-char body with three `**`
+  sections survives set + get with zero loss, or is refused up front.
+- No silent partial write remains on any `node body` verb (enumerate them in
+  the report).
+- Injection proof per project standard: restore the truncating behavior, show
+  the round-trip test red with output, restore the fix, green.
+
+=== Non-goals
+
+- Do not implement TASK-HQ970 (tx record validation) here; share machinery if
+  natural, cross-reference regardless.
+- Do not redesign the org body/section model; make the existing surface honest
+  about it.
+
+Related: TASK-HQ970 (same round-trip principle on tx record), TASK-XPYRR
+(title, the other unwritable field), the recorded gotcha "`node body set`
+replaces prose only, so `**` headings in a body are lost".
+

@@ -240,3 +240,74 @@ existing ones.
   restart) is **out of scope** and filed separately. It is pre-existing and
   outside this diff.
 
+* IN_REVIEW TASK-GQPGR manager/task/tx CLI run from a dispatch worktree reports frozen snapshot state as fact and writes can silently not apply :cli:agent-ergonomics:hardening:
+:PROPERTIES:
+:ID: TASK-GQPGR
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-28 from three measured false readings in one session, all caused
+by one mechanism: the CLI resolves the project from the cwd, and a dispatch
+worktree contains a FROZEN `.orgasmic/` snapshot from the commit the worktree
+was created at. Run from inside one, state commands answer confidently from
+stale data, and some writes report success without applying.
+
+=== Measured, 2026-07-28 (all after `cd` into
+`.orgasmic/tmp/dispatch/task-z8wej-review/worktree` to inspect a commit)
+
+1. `orgasmic manager dispatch-status` returned EMPTY while three workers were
+   live and healthy (`rmux ls` showed both sessions; `git worktree list` showed
+   all three worktrees). Briefly read as "all workers died".
+2. `orgasmic manager dispatch-close --started-tx tx-...-3305` failed with
+   "no manager.dispatch_started tx in the tx log" — the worktree's snapshot
+   predates that tx.
+3. `orgasmic task update --property BLOCKED_BY=...` RETURNED A TX ID and
+   silently did not apply to the live project. A write verb that succeeds
+   against a frozen snapshot is the worst variant: no signal, wrong state.
+
+The failure is plausible rather than loud, which distinguishes it from
+TASK-HXSW0's argument-level silent drops (same disease, different organ: this is
+PROJECT RESOLUTION, not flag parsing).
+
+=== The fix
+
+The CLI created these worktrees; it can recognize them. Detect that the resolved
+project root is a dispatch worktree — by path shape
+(`.orgasmic/tmp/dispatch/*/worktree`), or better, by a marker the dispatch
+machinery already writes (or should write) into the worktree at creation.
+
+Then, for every verb that reads project state or writes the tx/ledger surface
+(`manager *`, `task *`, `tasks *`, `tx *`, `node *`, `board`, ...):
+
+- REFUSE with an error naming the situation and the primary project root
+  ("this is the dispatch worktree for TASK-X; run from <root> or pass
+  --project"), OR auto-resolve to the primary root and say so on stderr.
+  Choose one policy, record why. Refusal is the conservative default; a worker
+  legitimately operating inside its own worktree (the `dispatch` verb group,
+  dec_3M7M0) must keep working — the worker-facing surface is the carve-out
+  that must be explicitly decided and tested.
+- Daemon-routed verbs with explicit `--project` are already safe and must keep
+  working from anywhere.
+
+=== Acceptance
+
+- From inside a dispatch worktree: `manager dispatch-status` either reports the
+  LIVE project's state or refuses naming the primary root — proven by a test
+  that creates a real dispatch worktree shape and runs the verb from it.
+- From the same location, `task update` on a live task either applies (visible
+  from the primary root) or errors; it must never return a tx id that does not
+  land in the live ledger.
+- The worker-authority `dispatch` verb group still functions from inside its
+  own worktree (regression test).
+- Injection proof per project standard: with the guard removed, show the stale
+  EMPTY dispatch-status reading red against the new test; restore, green.
+
+=== Non-goals
+
+- Do not change how snapshots get into worktrees or what workers may read.
+- Do not implement TASK-HXSW0's help/arg-validation items here; cross-reference
+  only.
+
+Related: TASK-HXSW0 (silent no-ops on write verbs), the recorded gotcha
+"Manager commands run from a dispatch worktree report stale state as fact".
+

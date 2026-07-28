@@ -37450,3 +37450,261 @@
 :REASON:       edited task node TASK-S2KM0
 :NODE_ID:      TASK-S2KM0
 :END:
+
+* TX 2026-07-28 Tue 19:47:11 task.state_transitioned TASK-TCTTD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3435
+:TIME:         [2026-07-28 Tue 19:47:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TCTTD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-TCTTD to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 19:47:12 manager.dispatch_started TASK-TCTTD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3436
+:TIME:         [2026-07-28 Tue 19:47:12]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TCTTD
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-tcttd/worktree
+:BRANCH:       task-tcttd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-tcttd/brief-tcttd.md
+:STARTED_AT:   [2026-07-28 Tue 19:47:12]
+:LIVENESS:     c99c4a7d32373edfb542e3e2c52d5bb673f8ee9e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: mechanism rotation 1/3: injection proofs become shipped artifacts replayed by orgasmic verify; kills the false-green probe class
+:END:
+
+* TX 2026-07-28 Tue 19:47:12 run.created TASK-TCTTD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3437
+:TIME:         [2026-07-28 Tue 19:47:12]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TCTTD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-TCTTD-implementer-20260728T194712.jsonl
+:REASON:       mechanism rotation 1/3: injection proofs become shipped artifacts replayed by orgasmic verify; kills the false-green probe class
+:RUN_ID:       run-20260728T194712-61c71913798048ffb2b90266e7bc4cae
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-tcttd/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-tcttd/brief-tcttd.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-tcttd/brief-tcttd-85758b9bf750426b9f82eaf58d32ecaa-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-tcttd/brief-tcttd-85758b9bf750426b9f82eaf58d32ecaa-stdout.log
+:DISPATCH_ATTEMPT: 85758b9bf750426b9f82eaf58d32ecaa
+:DISPATCH_TX:  tx-20260728-orgasmic-3436
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 19:47:18 task.state_transitioned TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3438
+:TIME:         [2026-07-28 Tue 19:47:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-GQPGR to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 19:47:19 manager.dispatch_started TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3439
+:TIME:         [2026-07-28 Tue 19:47:19]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-gqpgr/worktree
+:BRANCH:       task-gqpgr-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-gqpgr/brief-gqpgr.md
+:STARTED_AT:   [2026-07-28 Tue 19:47:19]
+:LIVENESS:     c99c4a7d32373edfb542e3e2c52d5bb673f8ee9e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: mechanism rotation 2/3: worktree-cwd guard so state verbs never answer from a frozen snapshot
+:END:
+
+* TX 2026-07-28 Tue 19:47:19 run.created TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3440
+:TIME:         [2026-07-28 Tue 19:47:19]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-GQPGR-implementer-20260728T194719.jsonl
+:REASON:       mechanism rotation 2/3: worktree-cwd guard so state verbs never answer from a frozen snapshot
+:RUN_ID:       run-20260728T194719-1449cc35a5b445adae5ee1795dcf6895
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-gqpgr/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-gqpgr/brief-gqpgr.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-gqpgr/brief-gqpgr-28513a3560574ec6bb7ced5d52f43c64-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-gqpgr/brief-gqpgr-28513a3560574ec6bb7ced5d52f43c64-stdout.log
+:DISPATCH_ATTEMPT: 28513a3560574ec6bb7ced5d52f43c64
+:DISPATCH_TX:  tx-20260728-orgasmic-3439
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 19:47:25 task.state_transitioned TASK-ZYWZD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3441
+:TIME:         [2026-07-28 Tue 19:47:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZYWZD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-ZYWZD to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 19:47:26 manager.dispatch_started TASK-ZYWZD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3442
+:TIME:         [2026-07-28 Tue 19:47:26]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZYWZD
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-zywzd/worktree
+:BRANCH:       task-zywzd-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-zywzd/brief-zywzd.md
+:STARTED_AT:   [2026-07-28 Tue 19:47:26]
+:LIVENESS:     c99c4a7d32373edfb542e3e2c52d5bb673f8ee9e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: mechanism rotation 3/3: node body set round-trips or refuses; no silent partial writes
+:END:
+
+* TX 2026-07-28 Tue 19:47:26 run.created TASK-ZYWZD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3443
+:TIME:         [2026-07-28 Tue 19:47:26]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZYWZD
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-ZYWZD-implementer-20260728T194726.jsonl
+:REASON:       mechanism rotation 3/3: node body set round-trips or refuses; no silent partial writes
+:RUN_ID:       run-20260728T194726-4e3bec9afb6749998465928ee395599f
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-zywzd/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-zywzd/brief-zywzd.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-zywzd/brief-zywzd-82901e75668a40a4bf761053701d42a2-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-zywzd/brief-zywzd-82901e75668a40a4bf761053701d42a2-stdout.log
+:DISPATCH_ATTEMPT: 82901e75668a40a4bf761053701d42a2
+:DISPATCH_TX:  tx-20260728-orgasmic-3442
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 19:55:42 task.property_updated TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3444
+:TIME:         [2026-07-28 Tue 19:55:42]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       TASK-GQPGR probe: verify a daemon-routed write issued from inside a dispatch worktree lands in the LIVE ledger
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 19:59:08 implementer.reported TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3445
+:TIME:         [2026-07-28 Tue 19:59:08]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:RUN_ID:       run-20260728T194719-1449cc35a5b445adae5ee1795dcf6895
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-gqpgr/worktree
+:SHA:          69fea7f699fce23638fab801753dd3248d146044
+:END:
+
+* TX 2026-07-28 Tue 20:02:29 implementer.done TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3446
+:TIME:         [2026-07-28 Tue 20:02:29]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    9f3e399
+:BRANCH:       task-gqpgr-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3439
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 20:02:31 task.state_transitioned TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3447
+:TIME:         [2026-07-28 Tue 20:02:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-GQPGR to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
