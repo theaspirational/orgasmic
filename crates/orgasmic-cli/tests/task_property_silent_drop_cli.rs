@@ -73,7 +73,8 @@ fn run_cli_json(
     args: &[&str],
 ) -> serde_json::Value {
     let stdout = run_cli(home, running, project_root, args);
-    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("orgasmic {args:?} json: {e}\n{stdout}"))
+    serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("orgasmic {args:?} json: {e}\n{stdout}"))
 }
 
 /// stderr of a command that MUST fail. The assertion is the point: a silent

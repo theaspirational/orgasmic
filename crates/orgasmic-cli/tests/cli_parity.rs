@@ -384,7 +384,8 @@ fn shipped_prose_files(root: &std::path::Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
-        let entries = std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
+        let entries =
+            std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("read {}: {e}", dir.display()));
         for entry in entries {
             let path = entry.expect("dir entry").path();
             if path.is_dir() {

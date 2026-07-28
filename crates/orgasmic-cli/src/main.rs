@@ -1258,8 +1258,10 @@ fn unknown_subcommand_hint(
     }
     // The singular/plural split is a hallucination generator on its own: both
     // groups exist and neither used to mention the other.
-    if matches!(path.first().map(String::as_str), Some("task") | Some("tasks"))
-        || matches!(guessed, "task" | "tasks")
+    if matches!(
+        path.first().map(String::as_str),
+        Some("task") | Some("tasks")
+    ) || matches!(guessed, "task" | "tasks")
     {
         lines.push(
             "`orgasmic tasks` is the LISTING group (`tasks list`); `orgasmic task` is the \
