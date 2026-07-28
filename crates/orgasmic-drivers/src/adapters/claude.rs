@@ -1101,6 +1101,21 @@ mod tests {
     /// Compose a real subprocess request and return its argv, bypassing the
     /// simulate short-circuit so the actual launch flags are asserted.
     fn composed_args(cfg: Value) -> (Vec<String>, Option<NativeRuntimeMeta>) {
+        let (args, native, _) = composed_args_with_ctx(cfg);
+        (args, native)
+    }
+
+    /// As `composed_args`, but also hands back the context the request was
+    /// composed for.
+    ///
+    /// Without the context a test can only assert that *some* value was pinned
+    /// after `--session-id` and that NativeRuntime repeats it — a claim the
+    /// argv proves against itself. The property that matters is narrower: the
+    /// launched session id is the run's `runtime_id`, which is what makes the
+    /// vendor transcript path computable rather than discovered.
+    fn composed_args_with_ctx(
+        cfg: Value,
+    ) -> (Vec<String>, Option<NativeRuntimeMeta>, DriverContext) {
         let mut adapter = ClaudeAdapter::new();
         let ctx = ctx("run-args", RunKind::Worker);
         let request = adapter
@@ -1112,7 +1127,7 @@ mod tests {
                 "expected a subprocess request, got {other:?}; is `claude` missing from PATH?"
             ),
         };
-        (args, adapter.native_runtime())
+        (args, adapter.native_runtime(), ctx)
     }
 
     /// A config on the real (non-simulated) path, with no api_key_env so
@@ -1514,7 +1529,8 @@ mod tests {
         ) {
             return;
         }
-        let (args, native) = composed_args(subprocess_config());
+        let (args, native, ctx) = composed_args_with_ctx(subprocess_config());
+        let runtime_id = ctx.identity.runtime_id.as_str();
 
         // Suppressing persistence left these runs with no resumable transcript,
         // so no retro source and no resume_native_fork recovery action.
@@ -1529,18 +1545,43 @@ mod tests {
             .map(|w| w[1].clone())
             .expect("a native session id must be pinned before launch");
 
+        // Every assertion below compares against `runtime_id`, not against
+        // `session_id`. Comparing NativeRuntime to the argv only proves the
+        // adapter is self-consistent: swap the source of the pinned value for
+        // any other string and all three still agree. What makes the vendor
+        // transcript locatable is that the pinned value *is* the run's
+        // runtime_id, which is also what every lifecycle event carries.
+        assert_eq!(
+            session_id, runtime_id,
+            "the launched session id must be the run's runtime_id, not merely \
+             some stable value: {args:?}"
+        );
         let native = native.expect("the adapter must report NativeRuntime metadata");
         assert_eq!(native.provider, "claude");
-        assert_eq!(native.session_id.as_deref(), Some(session_id.as_str()));
+        assert_eq!(native.session_id.as_deref(), Some(runtime_id));
         assert!(
             native
                 .resume_argv
                 .windows(2)
-                .any(|w| w == ["--resume", session_id.as_str()]),
-            "resume argv must target the pinned session: {:?}",
+                .any(|w| w == ["--resume", runtime_id]),
+            "resume argv must target the run's runtime_id: {:?}",
             native.resume_argv
         );
-        assert!(native.launch_argv.iter().any(|a| a == "--session-id"));
+        assert!(
+            native
+                .launch_argv
+                .windows(2)
+                .any(|w| w == ["--session-id", runtime_id]),
+            "launch argv must record the run's runtime_id: {:?}",
+            native.launch_argv
+        );
+        // `run_id` ends in a 32-hex dispatch attempt token that reads like a
+        // session id and is not one — the near-miss most likely to be pinned by
+        // accident. If the pin ever drifts onto it, this is what notices.
+        assert_ne!(
+            session_id, ctx.identity.run_id,
+            "the pinned session id must not be the run_id"
+        );
     }
 
     #[tokio::test]

@@ -2515,7 +2515,7 @@ mod tests {
             ToolRequirement::new("tmux", 8, tmux_spawn_usable().await),
             ToolRequirement::new("sleep", 1, command_available("sleep")),
             ToolRequirement::new("bash", 1, command_available("bash")),
-            ToolRequirement::new("claude", 7, command_succeeds("claude", &["--version"])),
+            ToolRequirement::new("claude", 8, command_succeeds("claude", &["--version"])),
             ToolRequirement::new("codex", 1, command_available("codex")),
         ]);
     }
