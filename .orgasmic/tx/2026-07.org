@@ -32465,3 +32465,27 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-07-28 Tue 10:36:09 task.created TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3126
+:TIME:         [2026-07-28 Tue 10:36:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-Z3093
+:END:
+
+* TX 2026-07-28 Tue 10:36:16 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3127
+:TIME:         [2026-07-28 Tue 10:36:16]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-8W30B root-cause split, measured not inferred: the production-path fix (TASK-6FNAY, merged 83ea420) cannot close the leak because the observed orphans come from the TEST path, and there LiveSessionGuard reaps nothing. All 9 copies of struct LiveSessionGuard are flock-only; Drop calls fs2::FileExt::unlock and returns. Session cleanup is a trailing statement in each test body, so any panic above it skips the reap - and TASK-STWVB's load-only failures ARE panics, which makes the flake and the leak the same event. 85 call sites across 3 crates, 9 duplicate definitions. Filed as TASK-Z3093.
+:END:
