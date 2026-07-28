@@ -1,0 +1,19 @@
+diff --git a/crates/orgasmic-cli/src/daemon_service.rs b/crates/orgasmic-cli/src/daemon_service.rs
+index 7b0a8a3..02f52c7 100644
+--- a/crates/orgasmic-cli/src/daemon_service.rs
++++ b/crates/orgasmic-cli/src/daemon_service.rs
+@@ -536,7 +536,13 @@ const MACOS_UNLOAD_MARGIN: Duration = Duration::from_secs(5);
+ /// first would instead fail stops that were still working, which is the defect
+ /// being fixed.
+ fn macos_unload_timeout() -> Duration {
+-    service_stop_timeout() + MACOS_UNLOAD_MARGIN
++    // TASK-G7E4R injection: the 5s literal, restored. `bootout` sends SIGTERM
++    // and the job leaves the domain only once the daemon has finished a
++    // shutdown it is allowed to spend `ShutdownBudgets::default().total()`
++    // (40s) on, so this ceiling expires in the middle of a healthy drain and
++    // fails the stop with "launchd still reports ... loaded 5s after bootout"
++    // — a failure message for something that was working.
++    Duration::from_secs(5)
+ }
+ 
+ const MACOS_UNLOAD_POLL: Duration = Duration::from_millis(150);

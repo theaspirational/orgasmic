@@ -1,0 +1,9 @@
+# One line. Run from the repo root by `orgasmic verify TASK-G7E4R`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses.
+#
+# orgasmic-cli has no lib target; its unit tests live in the binary, hence
+# `--bin orgasmic`. Scoped to the module that owns the service-manager end of
+# the shutdown-budget axis, so the replay exercises the two new relationship
+# tests together with the `service_stop_timeout` derivation they are ordered
+# against — and nothing else in the workspace.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bin orgasmic daemon_service::tests::
