@@ -962,3 +962,79 @@ CANDIDATE FIXES, to be argued rather than assumed:
 
 ACCEPTANCE. A worker finalize whose harness is killed the instant the lease is released still produces its terminal tx; proven by a test that kills the finalizing client between release and tx, plus one live dispatch. dispatch-status must never again show a released run as [unreported] after a successful finalize.
 
+* IN_PROGRESS TASK-6AYEJ.2 make generation-bound close mandatory when a live dispatch exists; fix recovery-run [unreported] :dispatch:cli:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ.2
+:PRIORITY: P0
+:END:
+
+Fix round for the TASK-6AYEJ.1 reviewer BLOCK SHIP (run-20260728T045554-7e845a232c4a4ce4a4a576c5ba0ae9be, merge 19264a7). Findings verbatim below.
+
+** Finding 1 - HIGH correctness
+manager.rs:103-111, 1856-1867, 3446-3496. dispatch-close is still task-bound unless the caller volunteers --started-tx, so the acceptance-breaking successor-close hazard remains reachable. The exact-generation branch is sound, but the option is not required: without it, resolve_close_target still chooses the newest open dispatch covering the task. The --merge-sha fence at manager.rs:660-679 catches only a done retry landing on a non-implementer/non-architector; it does not protect an aborted retry or a same-kind successor.
+
+NOT HYPOTHETICAL - the reviewer found it in the real ledger: .orgasmic/tx/2026-07.org:26280-26290,26524-26550,26662-26673 records reviewer A for TASK-KWSTJ being aborted, reviewer B opening for the same task, and B later being aborted. A stale tokenless abort for A during B's lifetime selects B.
+
+The repo also still teaches the unsafe form: the copyable recovery hint at manager.rs:1863-1867 omits --started-tx, and the ordinary finalize->close integration at tests/dispatch.rs:3104-3122 exercises a tokenless close. The new boundary test at manager.rs:4581-4613 explicitly preserves task-bound selection.
+
+FIX DIRECTION: require --started-tx whenever an open matching dispatch exists. Preserve tokenless compatibility only as a no-op when there is no open record and a historical closed record exists - historical records never need to act on a LIVE record by task. Add the token to the manager-generated close hint and to the ordinary finalize->close integration; retain the stale implementer->reviewer and abort->redispatch adversarial tests.
+
+** Finding 2 - LOW correctness
+manager.rs:3701-3720 and daemon/src/api.rs:7543-7909. The fail-closed RUN_ID rule leaves a legitimate fresh recovery run permanently [unreported]. Initial CLI dispatches write a run.created association carrying RUN_ID and DISPATCH_TX (api.rs:5109-5200), and attach_run_created_to_dispatch stores that original run id (manager.rs:3655-3697). But resume_native_fork and start_recovery_run acquire a REPLACEMENT run and return a new id while preserving the task and terminal contract - and never call the sole record_dispatch_created site, so no replacement association is emitted. dispatch finalize then reports the live replacement id (manager.rs:1218-1221), which cannot equal the open generation's original id, and mark_matching_dispatch_reported now returns without task fallback. Reattach-in-place is unaffected because it preserves the id.
+
+So the answer to the brief's adversarial probe is YES: fresh recovery/resume is a valid mismatch shape, and its manager status never becomes [reported]. The wrong-marking bug was traded for a never-marking bug in this one shape.
+
+FIX DIRECTION: persist a replacement-run-to-manager.dispatch_started generation association for fresh recovery/resume, and match *.reported by that generation rather than by task overlap. Add an end-to-end dispatched-run -> interruption -> recovery -> finalize status test.
+
+** Finding 3 - LOW test
+daemon/src/api.rs:21416-21485. The added architect-stage test does not prove a stage run creates no manager.dispatch_started record. It opens a synthetic session, appends a Lifecycle::Release and calls spawn_stage_completion_watcher directly. The tombstone-driven architect.completed assertion is useful, but the negative dispatch assertion is TAUTOLOGICAL because the production stage launch/recording path never ran.
+
+FIX DIRECTION: drive the assertion through the real stage launch endpoint / shared production spawn path, then finalize-tombstone it and inspect both project and home ledgers.
+
+** Finding 4 - LOW test
+tests/shipped_conventions.rs:49-71. The forced-cleanup guard is both syntax-brittle and blind to realistic dangerous variants. It matches only the adjacent substring 'worktree remove --force', while the ORIGINAL dangerous instruction read 'git worktree remove <path> --force' - which would evade the needle entirely, alone or paired with a generalized 'git branch -D <branch>'. Conversely it requires exactly one occurrence and the exact phrase 'destroys exactly that', so innocent rewording fails it. The convention at manager-dispatch.org:205-227 is currently safe; the guard is the problem. A brittle guard gets deleted the first time it fails spuriously, and then protects nothing.
+
+FIX DIRECTION: replace exact prose matching with a semantic guard that rejects 'git worktree remove' combined with '--force' regardless of intervening arguments, and rejects 'git branch -D' regardless of branch spelling. Permit zero warning literals, or anchor any allowed warning to an explicit structured marker rather than a sentence.
+
+** Reviewer notes that are NOT findings (do not re-litigate)
+- The --merge-sha behaviour change is ACCEPTED: no production, convention or daemon path supplies it for a reviewer close, and manager.rs:672-678 names both remedies.
+- Deterministic request ids are belt-and-braces, not the restart fence. Terminal records persist CLOSED_TX (manager.rs:2150-2163) and ledger replay resolves that exact generation as closed (manager.rs:3434-3480,3739-3753), so an exact-token replay after a daemon restart still no-ops.
+- The corrected TASK-WGXKD ordering comment at manager.rs:1230-1245 was verified accurate. NOTE: TASK-WGXKD has since landed (merge 80dc4ec) and moved terminal-tx emission into the daemon release call, so re-read that comment against current code before touching it.
+
+* IN_PROGRESS TASK-WGXKD.1 terminal-tx emission must survive version skew and graceful daemon shutdown :dispatch:daemon:cli:defect:
+:PROPERTIES:
+:ID: TASK-WGXKD.1
+:PRIORITY: P0
+:END:
+
+Fix round for the TASK-WGXKD reviewer BLOCK SHIP (run-20260728T054156-cc1dc747e09c42898e9805950fac473f, merge 80dc4ec). Two HIGH findings, verbatim below.
+
+** Finding 1 - HIGH correctness: the version-skew fallback is unreachable on the transport that motivated the task
+manager.rs:1326-1412. The new client waits for /runs/:id/release to return and only then POSTs /tx when terminal_tx_id is absent. A pre-80dc4ec daemon ignores the unknown terminal_tx field, performs only release_with_finalization, and returns the old response shape. On acp-stdio that release calls reap_process_group (crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs:231-242) and signals the finalize CLI's own setsid group BEFORE the response or the fallback can execute.
+
+So new CLI + old daemon reproduces the original defect exactly: durable commit, durable report, released lease, no terminal tx. The claimed version-skew safety is false for precisely the transport WGXKD existed to fix. This is a realistic upgrade / source-build window - the two halves ship in one runtime bundle but a user can run a freshly built CLI against a daemon that has not been restarted yet.
+
+FIX DIRECTION (reviewer): add a pre-release capability handshake for atomic release+terminal-tx support. If the daemon lacks it, FAIL BEFORE RELEASING and tell the operator to restart/upgrade the daemon - do not rely on a post-release client fallback, because on subprocess transports there is no 'post-release' for the client. Add a version-skew regression that reproduces pre-80dc4ec daemon behaviour on acp-stdio and asserts either atomic reporting or refusal with the lease still held.
+
+Note the failure mode of the fix itself: refusing to release leaves the lease held, which is the state the ORIGINAL ordering comment was trying to avoid. That is acceptable here because a held lease is visible and rescuable, whereas the lost tx is the invisible fourth state. Say so explicitly in the code comment so the next reader does not 'fix' it back.
+
+** Finding 2 - HIGH correctness: the detached finalization task is not owned by graceful shutdown
+api.rs:6561-6565. The detached task's only JoinHandle lives in the request future. When the caller disconnects - which is the normal case this whole fix exists for - that handle is dropped and the task continues untracked.
+
+Controlled restart drains only work already enqueued in the writer (api.rs:9630-9665), while daemon shutdown stops the writer immediately after axum returns (crates/orgasmic-daemon/src/lib.rs:637-650). If a restart lands while the detached task is still in driver teardown or has not yet reached append_tx_request, the drain barrier can pass first, the writer and runtime shut down, and the terminal tx is lost.
+
+This is a normal graceful-restart race, DISTINCT from the already-accepted daemon-crash gap. It is live on the manager's own machine: every launchctl kickstart of orgasmic.daemon during a runtime rebuild is exactly this window.
+
+The existing disconnect test does not cover it - it widens the gap to three seconds via release_terminal_tx_delay but then waits for the tx before shutting down.
+
+FIX DIRECTION (reviewer): register release/finalization tasks in daemon-owned lifecycle state, e.g. a task tracker or JoinSet held outside request futures. Graceful restart/shutdown must stop accepting new releases, await those tasks, THEN place the writer drain barrier and shut the writer down. Add a test that disconnects during release_terminal_tx_delay, initiates controlled restart before the append, and proves the terminal tx is durable before the old daemon exits.
+
+** Reviewer conclusions that are NOT findings - do not re-litigate
+- append_tx_request extraction is faithful: POST /tx delegates directly to it, so actor choice, destination, tx-id policy and project/home refresh are identical for both callers.
+- Generation ordering is safe: the terminal tx carries the exact RUN_ID, mark_matching_dispatch_reported fails closed on a present-but-unmatched run id, and dispatch creation rejects overlapping open task records.
+- The failed-append shape is visible: release removes the run before the terminal append, append failure is logged and returned, dispatch-status leaves the record [run-gone] [unreported] and --orphans-only includes it. That was the acceptance floor and it is met.
+- Old CLI + new daemon is compatible: absent terminal_tx defaults to None and the old client does its existing POST /tx.
+- No reachable restart double-emission was found. Caveat carried forward: writer request-id caching is in-memory only, so any FUTURE transport-error fallback would need persistent ledger-aware dedupe.
+
+** Manager note
+The reviewer asked in Open Questions whether the live acp-stdio trial passed. That trial is the TASK-6AYEJ.2 dispatch on the rebuilt runtime; its result will be recorded on TASK-WGXKD when it lands. It does not gate this fix round - both findings are code-level and hold regardless of the trial outcome.

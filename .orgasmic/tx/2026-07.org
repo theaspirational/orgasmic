@@ -31759,3 +31759,128 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-28 Tue 06:47:53 reviewer.reported TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3085
+:TIME:         [2026-07-28 Tue 06:47:53]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:RUN_ID:       run-20260728T063208-1080f3a600dc40b6946754da476afca8
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.1-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 06:51:01 reviewer.reported TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3086
+:TIME:         [2026-07-28 Tue 06:51:01]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:RUN_ID:       run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.2-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 06:52:04 reviewer.done TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3087
+:TIME:         [2026-07-28 Tue 06:52:04]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3081
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 06:52:04 task.state_transitioned TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3088
+:TIME:         [2026-07-28 Tue 06:52:04]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-6AYEJ.2 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 06:52:07 reviewer.done TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3089
+:TIME:         [2026-07-28 Tue 06:52:07]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3083
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 06:52:07 task.state_transitioned TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3090
+:TIME:         [2026-07-28 Tue 06:52:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-WGXKD.1 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 06:52:46 task.created TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3091
+:TIME:         [2026-07-28 Tue 06:52:46]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-WGXKD.1 reviewer BLOCK SHIP: 2 HIGH + 1 MEDIUM; finding 1 independently corroborated by the 6AYEJ.2 reviewer; finding 2 verified by the manager against main.rs:1830
+:END:
+
+* TX 2026-07-28 Tue 06:53:14 task.created TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3092
+:TIME:         [2026-07-28 Tue 06:53:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-6AYEJ.2 reviewer BLOCK SHIP findings 1 and 4; finding 3 deduped into TASK-WGXKD.2, finding 2 filed separately as a stage-outcome defect
+:END:
+
+* TX 2026-07-28 Tue 06:53:33 task.created TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3093
+:TIME:         [2026-07-28 Tue 06:53:33]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       TASK-6AYEJ.2 reviewer finding 2, HIGH; reclassified from stub artifact to real defect and filed on its own
+:END:
