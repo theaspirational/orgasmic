@@ -34053,3 +34053,112 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       1T3FZ residual: the NW4WV rollback path recomputes its key after removal; a leaked reservation makes the task's deterministic worktree permanently undispatchable
 :END:
+
+* TX 2026-07-28 Tue 12:11:45 reviewer.reported TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3222
+:TIME:         [2026-07-28 Tue 12:11:45]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:RUN_ID:       run-20260728T115951-de8048c27223450dadf80e9a2872b907
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-z8wej-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 12:19:05 reviewer.done TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3223
+:TIME:         [2026-07-28 Tue 12:19:05]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3212
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 12:19:06 task.state_transitioned TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3224
+:TIME:         [2026-07-28 Tue 12:19:06]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-Z8WEJ to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 12:23:50 task.created TASK-S0QRM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3225
+:TIME:         [2026-07-28 Tue 12:23:50]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S0QRM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reviewer BLOCK SHIP tx-3223: auto selects BareApiKey on any non-empty key, so a stale key beats a working subscription login, and the existing test asserts that behaviour
+:END:
+
+* TX 2026-07-28 Tue 12:24:28 note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3226
+:TIME:         [2026-07-28 Tue 12:24:28]
+:TYPE:         note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       CORRECTION to tx-3217: the TMUX-inheritance diagnosis was wrong. Daemon pid 32814 carries no TMUX; the worker gets TMUX because rmux creates its pane, and rmux prepends a shim dir where tmux is a symlink to rmux, so a worker's tmux calls reach the rmux server and succeed (measured exit 0 under the exact worker PATH+TMUX). The sentinel passes in isolation in both environments. A full daemon --lib run in the MANAGER env (no shim, no TMUX) reproduced 3 of the worker's 6 failures identically: production_resume_native_fork_uses_pinned_claude_not_path_shim, recovery_reattaches_tmux_session_when_handle_exists, two_recovery_chain_second_resume_uses_first_fork_session_id, 528 passed 5 failed in 451s. So these are full-suite concurrency failures (TASK-STWVB family), not a worker/manager divergence. The one true fact salvaged: no tmux call site passes -L/-S, so all tests share one tmux server.
+:END:
+
+* TX 2026-07-28 Tue 12:25:11 task.edited TASK-0RCRY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3227
+:TIME:         [2026-07-28 Tue 12:25:11]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0RCRY
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-0RCRY
+:NODE_ID:      TASK-0RCRY
+:END:
+
+* TX 2026-07-28 Tue 12:25:20 task.property_updated TASK-0RCRY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3228
+:TIME:         [2026-07-28 Tue 12:25:20]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0RCRY
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       downgraded from P0: the worker-blindspot premise was measured false; what remains is shared-tmux-server contention in full-suite runs, a STWVB-family lead
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 12:25:52 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3229
+:TIME:         [2026-07-28 Tue 12:25:52]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:

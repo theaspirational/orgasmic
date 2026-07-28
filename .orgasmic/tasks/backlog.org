@@ -1953,14 +1953,96 @@ analysis. Not yet reproduced end-to-end — reproducing it is the first ask.
 * BACKLOG TASK-0RCRY Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server and six gated tests never run    :daemon:drivers:tmux:testing:
 :PROPERTIES:
 :ID: TASK-0RCRY
-:PRIORITY: P0
+:PRIORITY: P1
 :WRITE_SCOPE: crates/orgasmic-drivers/**,crates/orgasmic-daemon/**,.orgasmic/gotchas.org
 :END:
 
-This closes the open question TASK-RRT4T and TASK-R2HDN both carried forward:
-why worker and manager test counts diverge. It is not PATH. PATH was measured
-correct twice (tx-20260728-orgasmic-3134, and again first-hand from inside a
-dispatched worker by the R2HDN worker).
+**This task was filed on 2026-07-28 with a wrong diagnosis and rewritten the same
+day.** The original claim — that workers inherit the daemon's `$TMUX` and so
+reach the rmux server — is false and is recorded as such in
+tx-20260728-orgasmic-3226. What survives is a narrower, measured problem.
+
+=== What was measured, and what it ruled out
+
+Filed after a TASK-1T3FZ dispatch reported six daemon failures with
+`tmux new-session failed (exit 1): server exited unexpectedly` and
+`required test tooling is missing: tmux (gates 6 tests)`.
+
+Ruled out, each by direct measurement:
+
+- *The daemon does not carry `TMUX`.* `ps eww 32814` shows none. (The earlier
+  contrary reading came from `pgrep` matching a worker's prompt text instead of
+  the daemon; the pid was a claude worker, not the daemon.)
+- *A worker's tmux calls are not broken.* rmux creates the worker's pane, sets
+  `TMUX=/private/tmp/rmux-501/default,...`, and prepends a shim directory in
+  which `tmux` is a symlink to `rmux`. Under the exact worker `PATH` + `TMUX`,
+  `tmux new-session -d -s … -- sleep 1` exits **0**.
+- *It is not environmental at all.* `supervisor::tests::required_test_tooling_is_present`
+  passes in isolation in both the manager environment and a replicated worker
+  environment (0.04 s / 0.03 s).
+- *It is not worker-specific.* A full `cargo test -p orgasmic-daemon --lib` in
+  the **manager** environment — no shim, no `TMUX` — reproduced three of the
+  worker's six failures identically: `production_resume_native_fork_uses_pinned_claude_not_path_shim`,
+  `recovery_reattaches_tmux_session_when_handle_exists`, and
+  `two_recovery_chain_second_resume_uses_first_fork_session_id`
+  (528 passed, 5 failed, 451 s).
+
+So these are **full-suite concurrency failures — the TASK-STWVB family** — and
+this task is not about a worker/manager divergence. The RRT4T/R2HDN open question
+is still open, and is now *more* open, because the leading candidate is gone.
+
+=== The real, narrower defect
+
+No tmux call site anywhere passes `-L` or `-S`
+(`crates/orgasmic-drivers/src/modes/tmux.rs:1506`, `:2489`, `:3730`). Every
+probe, every test session, and every production call therefore shares **one tmux
+server** — whichever the environment selects. Concurrent tests create, query and
+reap sessions on that single shared server, and on a developer machine it is the
+same server the operator's own sessions live on.
+
+`server exited unexpectedly` under a full-suite run, from a server that was
+verified alive throughout (pid 32723, up since 13:32, still running at 15:1x), is
+consistent with contention on that shared server rather than with a missing or
+broken tmux.
+
+=== Ask
+
+- Give the test path an owned server: an explicit `-L <socket>` per test binary
+  (or per test), so no test can reach a server it did not create, and so a
+  developer's own tmux sessions are never touched by a test run.
+- Decide separately, and state, whether production call sites should pin a
+  socket too. An operator running the daemon inside tmux is the mirror image of
+  this and would be a product bug, not a test bug.
+- Make the diagnostic name the cause. `tmux test session should start` and
+  `required test tooling is missing: tmux` are both true and both useless when
+  tmux is installed, on PATH, and working — the message should name the server it
+  tried and how that server was selected.
+
+=== Acceptance
+
+- The tmux-gated daemon tests use a server the test run owns, and a concurrent
+  full-suite run does not produce `server exited unexpectedly`.
+- Reproduce first: show the contention on the shared server before the fix.
+  If it cannot be reproduced, say so plainly rather than shipping a speculative
+  isolation change — that is precisely the mistake this task's first version made.
+- Sessions created on the owned server are reaped. TASK-Z3093's guard covers
+  rmux sessions, not a new tmux socket; say which mechanism reaps this one.
+- The three failures that reproduce in the manager environment are re-run after
+  the change and their status reported honestly, whether or not this fixes them.
+
+=== Relationship to TASK-STWVB
+
+STWVB is "four daemon tests fail on every full-suite run and pass alone". This
+measurement says the set is at least five and includes the tmux-session-start
+failures. If the socket isolation here does not fix them, that is a genuine
+result and STWVB keeps them; do not widen this task into STWVB's investigation.
+
+=== Non-goals
+
+- Do not weaken the TASK-RRT4T sentinel to make the red go away. The red is
+  correct — the tests really did not run.
+- Do not use `ORGASMIC_ALLOW_MISSING_TOOLS` to paper over this. A contended
+  server is not a missing tool, and the waiver would recreate the silent skip.
 
 ** Measured, one variable, 2026-07-28
 
@@ -2114,3 +2196,119 @@ design.
 - Do not restructure `cleanup_dispatch` or move it behind the daemon endpoint.
   TASK-1T3FZ considered that and recorded it as the larger follow-on if the
   daemon-state-only boundary is ever rejected; it is not this task.
+
+* BACKLOG TASK-S0QRM Z8WEJ fix round: detect the claude credential tier instead of guessing it from an ambient key    :drivers:claude:credentials:fix:
+:PROPERTIES:
+:ID: TASK-S0QRM
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-drivers/**,crates/orgasmic-daemon/**,crates/orgasmic-core/**,crates/orgasmic-cli/**
+:END:
+
+Fix round for the reviewer BLOCK SHIP on TASK-Z8WEJ (introduced `61b9b7f`,
+reviewed against HEAD `4c7fbfa` including follow-ups `28247fd`, `ceba559`,
+`f5c6913`, `0f65de5`).
+Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
+run-20260728T115951, closed tx-20260728-orgasmic-3223.
+
+What is not in question: the production-discard regression now has a mode-layer
+test (`modes/acp_stdio.rs:1187-1252`), the no-op `--settings '{}'` was correctly
+removed by `28247fd`, and `--no-session-persistence` was deliberately dropped for
+TASK-VB9DQ. Do not restore either.
+
+** 1. HIGH — `auto` still guesses from environment, and the test protects the bug
+
+`crates/orgasmic-drivers/src/adapters/claude.rs:584`.
+
+`resolve_credentials` selects `BareApiKey` whenever a configured `api_key_env` or
+an inherited `ANTHROPIC_API_KEY` is present (`claude.rs:586-599`). It never calls
+`claude auth status` to choose the tier and never reads `authMethod`; `auth status`
+runs only *after* the resolver has already picked `NativeLogin`
+(`claude.rs:301-315`).
+
+So an operator with `authMethod: claude.ai` **plus a stale non-empty key** is
+admitted, spawned with `--bare`, prevented from using the working keychain
+credential, and fails after lease/session/dispatch ownership has been committed —
+the exact failure this task was filed to remove. The bare preflight returns
+`Unsupported` for every non-empty key (`claude.rs:633-644`, pinned by
+`1352-1363`), so nothing catches it.
+
+Worse, the existing test uses an obviously fake non-empty key and asserts it
+selects `--bare` (`claude.rs:1220-1241`). **The suite currently protects the
+failure mode.** Changing that test is part of the fix, not a regression.
+
+This violates "detect, do not guess" and the acceptance criterion that a mode
+known to be unusable is rejected before ownership is taken.
+
+Also missing: the second measured live bare channel. There is no
+`apiKeyHelper`/settings input or detector anywhere in `ClaudeAcpConfig`
+(`claude.rs:127-147`), so a helper-backed operator cannot select the light tier
+at all.
+
+** 2. HIGH — the selected mode is a tracing field, not a contract
+
+Both `credential_mode = …` occurrences are `tracing::debug!` fields
+(`claude.rs:317-320`, `417-420`).
+
+- No override anywhere: `ClaudeAcpConfig` has none (`claude.rs:127-147`), daemon
+  `DriverOverrides` exposes only provider/model/effort
+  (`crates/orgasmic-daemon/src/api.rs:3376-3381`), and `DispatchRequest` has no
+  credential-mode input (`api.rs:4101-4133`). The manager cannot force
+  `NativeLogin` to bypass a stale ambient key, which is the operator escape hatch
+  finding 1 needs.
+- No persistence: `Lifecycle::RunMeta` has no credential-mode member
+  (`crates/orgasmic-core/src/session.rs:320-350`) and `write_run_meta` does not
+  write one (`crates/orgasmic-daemon/src/supervisor.rs:1475-1502`).
+  `NativeRuntime.launch_argv` can indirectly reveal `--bare` after composition,
+  but that is a different lifecycle event and does not satisfy the stated
+  contract.
+
+Persist the final **mode string, never credential material**, in a
+backward-compatible `RunMeta`, and prove it end to end by reading it back from
+the session JSONL.
+
+** 3. MEDIUM — NativeLogin rebuilds only MCP isolation, and says otherwise
+
+`claude.rs:359-365` adds only `--strict-mcp-config`. The measured MCP result is
+recorded and the SessionStart-hook gap is candidly documented
+(`claude.rs:59-71`) — that candour is good and should be kept.
+
+But the enum documentation says `--bare` also skips LSP, plugin sync,
+auto-memory, background prefetches and `CLAUDE.md` discovery
+(`claude.rs:39-40`), and nothing records what happens to those under
+`NativeLogin`. A subscription worker can therefore run operator hooks and may
+auto-load project and user Claude instructions plus background services, with no
+record of which gaps were accepted.
+
+Re-measure the exact production argv for MCP, hooks, `CLAUDE.md`, memory,
+plugins, LSP and background activity. Add narrow flags where they exist; where
+they do not, say so explicitly. Do not infer coverage from
+`--strict-mcp-config`.
+
+** Open questions the reviewer left, to be answered by this round
+
+- When a structured native login **and** an ambient API key both exist, what is
+  the precedence? "Any key wins" cannot distinguish a preferred key from a stale
+  one. Reserving bare mode for an explicit per-dispatch override is the
+  reviewer's suggestion; decide and record the rule.
+- Is `CLAUDE.md`/memory/plugin/LSP/prefetch activity **accepted** for
+  `NativeLogin`, the way hooks were? That is a legitimate answer. It needs
+  measurement against real argv, not inference.
+
+** Acceptance
+
+- A stale non-empty key plus a valid native login selects `NativeLogin`, proved
+  by a regression that fails on the current resolver.
+- Explicit per-dispatch override works in both directions, through manager CLI →
+  daemon request → `ClaudeAcpConfig`.
+- `apiKeyHelper` selection is detectable and testable.
+- The mode string round-trips through `RunMeta` and is read back from JSONL.
+- The final Claude argv is asserted through `AcpStdioDriver`, not only direct
+  adapter composition.
+- Every irreducible `NativeLogin` gap is named in one place.
+
+** Non-goals
+
+- Do not restore `--settings '{}'` or `--no-session-persistence`.
+- Do not weaken the bare preflight's `Unsupported` verdict; it is correct.
+- Do not submit a real Claude turn. `legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+  (TASK-099T6) bills real money and must stay skipped.
