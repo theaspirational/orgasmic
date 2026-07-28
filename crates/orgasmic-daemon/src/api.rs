@@ -16337,7 +16337,12 @@ mod release_task_tracker_tests {
 }
 
 #[cfg(test)]
-mod tests {
+// orgasmic:task_JGHNC — `pub(crate)` for one item: `supervisor::tests` gates
+// its own tmux tests, and the binary's tooling sentinel, on the same rule as
+// `tmux_mode_availability_for` below. Two copies of "is this tmux really tmux"
+// would be free to disagree, and a sentinel that disagrees with the gate is
+// how a suite reports a tool present while its tests silently do not run it.
+pub(crate) mod tests {
     use super::*;
     use std::time::Duration;
 
@@ -19318,29 +19323,26 @@ mod tests {
     // ---------------------------------------------------------------------
 
     /// Writes an interrupted, genuinely reattachable run over `worktree` and
-    /// starts the tmux session that makes it live.
+    /// starts the `mode` session that makes it live.
+    // orgasmic:task_JGHNC — parameterized over the multiplexer per K4G1D. The
+    // fencing these fixtures feed is a property of the close guard, not of a
+    // multiplexer, and a fixture that can only be built from tmux takes the
+    // whole shape out of every worker-run suite.
     fn seed_live_interrupted_run(
+        mode: MuxMode,
+        live: &orgasmic_drivers::modes::rmux::test_tooling::LiveSessionGuard,
         project_root: &FsPath,
         worktree: &FsPath,
         task_id: &str,
-    ) -> (RuntimeIdentity, TmuxSessionGuard, PathBuf) {
+    ) -> (RuntimeIdentity, MuxSessionGuard, PathBuf) {
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         let identity = RuntimeIdentity {
-            run_id: format!("run-fence-{suffix}"),
+            run_id: format!("run-fence-{}-{suffix}", mode.id()),
             runtime_id: format!("rt-{suffix}"),
             boot_id: "boot-before-restart".into(),
         };
-        let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = orgasmic_drivers::modes::tmux::tmux_command()
-            .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "tmux test session should start on {}",
-            orgasmic_drivers::modes::tmux::tmux_server_selection()
-        );
-        let guard = TmuxSessionGuard(session_name);
+        let session_name = mode.session_name(&identity);
+        let guard = mode.start_detached_session(&session_name, live);
 
         let session_path =
             project_sessions_dir(project_root).join(format!("{}.jsonl", identity.run_id));
@@ -19362,7 +19364,7 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
-                    transport: "tmux".into(),
+                    transport: mode.id().into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(worktree.to_path_buf()),
@@ -19425,13 +19427,10 @@ mod tests {
     /// Injection: remove the reservation check from `Inner::admit_live_run` (or
     /// stop passing `worktree` from `Supervisor::reattach`) and the run below is
     /// rehydrated into a worktree a destructive close is holding.
-    #[tokio::test]
-    async fn boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds",
-            &[("tmux", tmux_on_path())],
-        ) {
+    // orgasmic:task_JGHNC
+    async fn assert_boot_rehydration_is_fenced_by_a_close_guard(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -19441,8 +19440,13 @@ mod tests {
         let worktree = tmp.path().join("worktrees/task-boot-fence");
         std::fs::create_dir_all(&worktree).unwrap();
         seed_project(&home, &project_root, "orgasmic");
-        let (identity, _tmux, _session_path) =
-            seed_live_interrupted_run(&project_root, &worktree, "TASK-BOOT-FENCE");
+        let (identity, _mux, _session_path) = seed_live_interrupted_run(
+            mode,
+            &live_guard,
+            &project_root,
+            &worktree,
+            "TASK-BOOT-FENCE",
+        );
 
         let state = direct_stage_test_state(home).await;
         let guard_id = reserve_guard(&state, "TASK-BOOT-FENCE", &worktree).await;
@@ -19456,7 +19460,9 @@ mod tests {
                 .runs
                 .iter()
                 .any(|run| run.run_id == identity.run_id),
-            "boot rehydration must not admit a run into a worktree a close guard holds"
+            "{test_name}: boot rehydration must not admit a run into a worktree \
+             a close guard holds [{}]",
+            mode.diagnostic()
         );
 
         // The fixture really is reattachable — without the guard the very same
@@ -19471,7 +19477,9 @@ mod tests {
                 .runs
                 .iter()
                 .any(|run| run.run_id == identity.run_id),
-            "the fixture must rehydrate once the guard is released, or the test above proves nothing"
+            "{test_name}: the fixture must rehydrate once the guard is released, \
+             or the test above proves nothing [{}]",
+            mode.diagnostic()
         );
         let _ = state
             .supervisor
@@ -19483,14 +19491,31 @@ mod tests {
             .await;
     }
 
-    /// Shape 1 of 3: the explicit `reattach_tmux` recovery action.
     #[tokio::test]
-    async fn explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
-            &[("tmux", tmux_on_path())],
-        ) {
+    async fn boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        assert_boot_rehydration_is_fenced_by_a_close_guard(
+            MuxMode::Tmux,
+            "boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds",
+        )
+        .await;
+    }
+
+    // orgasmic:task_JGHNC
+    #[tokio::test]
+    async fn boot_rehydration_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        assert_boot_rehydration_is_fenced_by_a_close_guard(
+            MuxMode::Rmux,
+            "boot_rehydration_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
+        )
+        .await;
+    }
+
+    /// Shape 1 of 3: the explicit `reattach_tmux` recovery action — a legacy
+    /// action id that covers both multiplexers, which is why this shape is run
+    /// through both (orgasmic:task_JGHNC).
+    async fn assert_explicit_reattach_is_fenced_by_a_close_guard(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -19507,8 +19532,13 @@ mod tests {
             worktree.join(".orgasmic/project.org"),
             "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:               orgasmic\n:END:\n",
         );
-        let (identity, _tmux, _session_path) =
-            seed_live_interrupted_run(&project_root, &worktree, "TASK-EXPLICIT-FENCE");
+        let (identity, _mux, _session_path) = seed_live_interrupted_run(
+            mode,
+            &live_guard,
+            &project_root,
+            &worktree,
+            "TASK-EXPLICIT-FENCE",
+        );
 
         let state = direct_stage_test_state(home).await;
         let guard_id = reserve_guard(&state, "TASK-EXPLICIT-FENCE", &worktree).await;
@@ -19530,12 +19560,14 @@ mod tests {
         .expect_err("reattach_tmux must be refused while a close guard holds the worktree");
         assert!(
             refused.message.contains("cleanup"),
-            "the refusal must name the cleanup reservation: {}",
-            refused.message
+            "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
+            refused.message,
+            mode.diagnostic()
         );
         assert!(
             state.supervisor.snapshot().await.runs.is_empty(),
-            "a refused reattach must leave no live run behind"
+            "{test_name}: a refused reattach must leave no live run behind [{}]",
+            mode.diagnostic()
         );
 
         state.supervisor.finish_dispatch_close(&guard_id).await;
@@ -19553,7 +19585,12 @@ mod tests {
         )
         .await
         .expect("the same action is admitted once the guard is released");
-        assert_eq!(admitted.run_id, identity.run_id);
+        assert_eq!(
+            admitted.run_id,
+            identity.run_id,
+            "{test_name} [{}]",
+            mode.diagnostic()
+        );
         let _ = state
             .supervisor
             .release(
@@ -19564,16 +19601,31 @@ mod tests {
             .await;
     }
 
+    #[tokio::test]
+    async fn explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        assert_explicit_reattach_is_fenced_by_a_close_guard(
+            MuxMode::Tmux,
+            "explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
+        )
+        .await;
+    }
+
+    // orgasmic:task_JGHNC
+    #[tokio::test]
+    async fn explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds() {
+        assert_explicit_reattach_is_fenced_by_a_close_guard(
+            MuxMode::Rmux,
+            "explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds",
+        )
+        .await;
+    }
+
     /// Shape 2 of 3: the pending-plan `reattach_existing` crash replay — the
     /// one that can install a *replacement* id the close's record does not
     /// name, which is why fencing by worktree rather than by id is the point.
-    #[tokio::test]
-    async fn pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree",
-            &[("tmux", tmux_on_path())],
-        ) {
+    async fn assert_pending_plan_reattach_existing_is_fenced(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -19608,7 +19660,7 @@ mod tests {
             worker_id: "implementer-claude-acp".into(),
             role: "implementer".into(),
             requires_worker_finalize: true,
-            transport: "tmux".into(),
+            transport: mode.id().into(),
             harness: Some("claude".into()),
             driver_config: json!({"force_inert": true, "harness": "claude"}),
             worktree: Some(worktree.clone()),
@@ -19626,18 +19678,8 @@ mod tests {
         let plan = plan_pending_recovery_claim(&home, &spec).expect("plan pending claim");
         // The planned replacement's mux session is alive: this is the crash
         // replay that reattaches an *existing* runtime rather than spawning.
-        let planned_session =
-            orgasmic_drivers::modes::tmux::tmux_session_name(&plan.planned_identity);
-        let status = orgasmic_drivers::modes::tmux::tmux_command()
-            .args(["new-session", "-d", "-s", &planned_session, "sleep", "60"])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "planned tmux session should start on {}",
-            orgasmic_drivers::modes::tmux::tmux_server_selection()
-        );
-        let _planned_guard = TmuxSessionGuard(planned_session);
+        let planned_session = mode.session_name(&plan.planned_identity);
+        let _planned_guard = mode.start_detached_session(&planned_session, &live_guard);
 
         let state = direct_stage_test_state(home).await;
         let _guard_id = reserve_guard(&state, "TASK-PENDING-FENCE", &worktree).await;
@@ -19658,13 +19700,35 @@ mod tests {
         .expect_err("a crash-replay reattach must not enter a guarded worktree");
         assert!(
             refused.message.contains("cleanup"),
-            "the refusal must name the cleanup reservation: {}",
-            refused.message
+            "{test_name}: the refusal must name the cleanup reservation: {} [{}]",
+            refused.message,
+            mode.diagnostic()
         );
         assert!(
             state.supervisor.snapshot().await.runs.is_empty(),
-            "a refused crash replay must leave no live replacement behind"
+            "{test_name}: a refused crash replay must leave no live replacement \
+             behind [{}]",
+            mode.diagnostic()
         );
+    }
+
+    #[tokio::test]
+    async fn pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree() {
+        assert_pending_plan_reattach_existing_is_fenced(
+            MuxMode::Tmux,
+            "pending_plan_reattach_existing_is_fenced_out_of_a_guarded_worktree",
+        )
+        .await;
+    }
+
+    // orgasmic:task_JGHNC
+    #[tokio::test]
+    async fn pending_plan_reattach_existing_rmux_is_fenced_out_of_a_guarded_worktree() {
+        assert_pending_plan_reattach_existing_is_fenced(
+            MuxMode::Rmux,
+            "pending_plan_reattach_existing_rmux_is_fenced_out_of_a_guarded_worktree",
+        )
+        .await;
     }
 
     /// TASK-567JG: a daemon restart mid-run must respawn the completion watcher
@@ -19674,13 +19738,9 @@ mod tests {
     /// — simulating the restart with a second, independent
     /// `ApiState`/`Supervisor` that never acquired the run itself — then
     /// releases the run and asserts no artifact is synthesized.
-    #[tokio::test]
-    async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "boot_reattach_respawns_dispatch_completion_watcher_without_artifacts",
-            &[("tmux", tmux_on_path())],
-        ) {
+    async fn assert_boot_reattach_respawns_completion_watcher(mode: MuxMode, test_name: &str) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -19691,21 +19751,12 @@ mod tests {
 
         let suffix = uuid::Uuid::new_v4().simple().to_string();
         let identity = RuntimeIdentity {
-            run_id: format!("run-reattach-watcher-{suffix}"),
+            run_id: format!("run-reattach-watcher-{}-{suffix}", mode.id()),
             runtime_id: format!("rt-{suffix}"),
             boot_id: "boot-before-restart".into(),
         };
-        let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = orgasmic_drivers::modes::tmux::tmux_command()
-            .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "tmux test session should start on {}",
-            orgasmic_drivers::modes::tmux::tmux_server_selection()
-        );
-        let _guard = TmuxSessionGuard(session_name);
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
 
         let session_path =
             project_sessions_dir(&project_root).join(format!("{}.jsonl", identity.run_id));
@@ -19728,7 +19779,7 @@ mod tests {
             .append(
                 SessionEventKind::Lifecycle,
                 serde_json::to_value(Lifecycle::RunMeta {
-                    transport: "tmux".into(),
+                    transport: mode.id().into(),
                     harness: Some("claude".into()),
                     project_id: Some("orgasmic".into()),
                     worktree: Some(project_root.clone()),
@@ -19768,7 +19819,9 @@ mod tests {
                 .runs
                 .iter()
                 .any(|run| run.run_id == identity.run_id),
-            "run should be rehydrated into the post-restart supervisor"
+            "{test_name}: run should be rehydrated into the post-restart \
+             supervisor [{}]",
+            mode.diagnostic()
         );
 
         state
@@ -19787,8 +19840,29 @@ mod tests {
         }
         assert!(
             !last_path.exists(),
-            "release without worker finalize must not synthesize last.txt via the respawned watcher"
+            "{test_name}: release without worker finalize must not synthesize \
+             last.txt via the respawned watcher [{}]",
+            mode.diagnostic()
         );
+    }
+
+    #[tokio::test]
+    async fn boot_reattach_respawns_dispatch_completion_watcher_without_artifacts() {
+        assert_boot_reattach_respawns_completion_watcher(
+            MuxMode::Tmux,
+            "boot_reattach_respawns_dispatch_completion_watcher_without_artifacts",
+        )
+        .await;
+    }
+
+    // orgasmic:task_JGHNC
+    #[tokio::test]
+    async fn boot_reattach_rmux_respawns_dispatch_completion_watcher_without_artifacts() {
+        assert_boot_reattach_respawns_completion_watcher(
+            MuxMode::Rmux,
+            "boot_reattach_rmux_respawns_dispatch_completion_watcher_without_artifacts",
+        )
+        .await;
     }
 
     #[tokio::test]
@@ -21941,7 +22015,23 @@ mod tests {
         }
     }
 
-    fn tmux_on_path() -> bool {
+    // orgasmic:task_JGHNC
+    /// Is a *real* tmux on PATH — the gate every tmux-mode test in this binary
+    /// passes through?
+    ///
+    /// Named `real_` because the distinction is the whole point. The former
+    /// `tmux_on_path` asked only whether a PATH lookup of `tmux` succeeded, and
+    /// inside an orgasmic worker it always does: rmux prepends a shim directory
+    /// in which `tmux` is a symlink to `rmux`. Measured 2026-07-29 in a worker,
+    /// on this very binary: all seven tests this gated ran, and the owned
+    /// server they created landed in `/private/tmp/rmux-501/`. They reported
+    /// tmux and executed rmux, in every worker-run suite.
+    ///
+    /// So the gate is [`tmux_mode_availability_for`] (TASK-K4G1D) applied to
+    /// the same PATH lookup the drivers do — one rule, so a tmux-mode test and
+    /// the tmux availability of the parameterized [`MuxMode::Tmux`] arm cannot
+    /// disagree about what counts as tmux.
+    fn real_tmux_on_path() -> bool {
         // orgasmic:TASK-0RCRY
         // Every tmux-gated test in this binary gates on this, so this is where
         // the run claims the server it owns — before any fixture session is
@@ -21950,13 +22040,61 @@ mod tests {
         // orgasmic worker (where `tmux` on PATH is a symlink to `rmux`) the
         // rmux server hosting live worker panes.
         orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
-        Command::new("which")
-            .arg("tmux")
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        tmux_mode_availability_for(which_binary("tmux").as_deref()).is_ok()
+    }
+
+    // orgasmic:task_JGHNC
+    /// The gate the tmux-mode tests share refuses the rmux shim.
+    ///
+    /// [`tmux_mode_rejects_an_rmux_shim_resolved_as_tmux`] proves the *rule*;
+    /// this proves the *wiring* — that the function the tmux-gated tests
+    /// actually call is that rule and not a bare PATH lookup. Without it the
+    /// two can drift apart silently, which is exactly the state this task
+    /// found: a strict rule sitting next to seven tests that did not use it.
+    ///
+    /// PATH is repointed at a synthetic shim shaped like rmux's, so the proof
+    /// is the same on every host, needs neither multiplexer, and starts no
+    /// session. The owned-server claim is made *before* the repoint, so this
+    /// test can never decide which server the rest of the binary owns.
+    #[test]
+    fn the_tmux_gate_the_daemon_tests_share_refuses_a_shimmed_tmux() {
+        orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
+        let mut env = TestEnvGuard::acquire_blocking();
+        let tmp = tempfile::tempdir().unwrap();
+
+        let rmux = tmp.path().join("rmux");
+        write_executable_stub(&rmux);
+        let shim_dir = tmp.path().join("shim-bin");
+        std::fs::create_dir_all(&shim_dir).unwrap();
+        std::os::unix::fs::symlink(&rmux, shim_dir.join("tmux")).unwrap();
+        env.prepend_path(&shim_dir);
+        assert!(
+            !real_tmux_on_path(),
+            "the gate every tmux-mode daemon test shares must refuse a PATH \
+             whose tmux is the rmux shim: which_binary(tmux) = {:?}",
+            which_binary("tmux")
+        );
+
+        // Positive control: the gate is not simply always false. A tmux ahead
+        // of the shim, that really is tmux, is accepted.
+        let real_dir = tmp.path().join("real-bin");
+        std::fs::create_dir_all(&real_dir).unwrap();
+        write_executable_stub(&real_dir.join("tmux"));
+        env.prepend_path(&real_dir);
+        assert!(
+            real_tmux_on_path(),
+            "a tmux resolved ahead of the shim that is not rmux must be \
+             accepted: which_binary(tmux) = {:?}",
+            which_binary("tmux")
+        );
+    }
+
+    // orgasmic:task_JGHNC
+    /// A file `which` will hand back: present, and executable.
+    fn write_executable_stub(path: &FsPath) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     // orgasmic:task_K4G1D
@@ -22011,7 +22149,10 @@ mod tests {
         /// Whether this mode can actually be exercised, and — when it cannot —
         /// why, in the words a reader needs to act on it.
         ///
-        /// The tmux answer is deliberately stricter than [`tmux_on_path`].
+        /// The tmux answer is [`tmux_mode_availability_for`], the same rule
+        /// [`real_tmux_on_path`] gates every other tmux-mode test in this
+        /// binary on (TASK-JGHNC widened it there; when this was written those
+        /// seven still trusted a bare PATH lookup and so ran rmux).
         /// Inside an orgasmic worker `tmux` on PATH is a symlink to `rmux`
         /// (`.orgasmic/gotchas.org`, measured under TASK-0RCRY: `tmux -V` says
         /// 3.4 while the real binary is 3.6a), so a run that trusts PATH would
@@ -22124,7 +22265,7 @@ mod tests {
     /// silently ran rmux would compare rmux against rmux and report the two
     /// modes agreeing, which is the one answer this parameterization exists to
     /// make impossible to manufacture.
-    fn tmux_mode_availability_for(resolved: Option<&FsPath>) -> Result<(), String> {
+    pub(crate) fn tmux_mode_availability_for(resolved: Option<&FsPath>) -> Result<(), String> {
         let Some(resolved) = resolved else {
             return Err("no tmux on PATH".to_string());
         };
@@ -24835,13 +24976,16 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn failed_terminal_with_live_tmux_never_offers_reattach() {
-        let _live_guard = live_session_guard();
-        if skip_test_if_missing(
-            "failed_terminal_with_live_tmux_never_offers_reattach",
-            &[("tmux", tmux_on_path())],
-        ) {
+    // orgasmic:task_JGHNC
+    /// A Failed tombstone never offers reattach — even while a session of
+    /// `mode` for that very runtime is alive. The tombstone is the subject;
+    /// the multiplexer is the temptation, and both multiplexers tempt equally.
+    async fn assert_failed_terminal_with_live_mux_never_offers_reattach(
+        mode: MuxMode,
+        test_name: &str,
+    ) {
+        let live_guard = live_session_guard();
+        if skip_mux_mode_if_unavailable(test_name, mode) {
             return;
         }
         let tmp = tempfile::tempdir().unwrap();
@@ -24850,25 +24994,20 @@ mod tests {
         let project_root = tmp.path().join("proj");
         seed_project(&home, &project_root, "orgasmic");
         let suffix = uuid::Uuid::new_v4().simple().to_string();
-        let run_id = format!("run-failed-live-{suffix}");
+        let run_id = format!("run-failed-live-{}-{suffix}", mode.id());
         let identity = RuntimeIdentity {
             run_id: run_id.clone(),
             runtime_id: format!("rt-{suffix}"),
             boot_id: "boot-test".into(),
         };
-        let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = orgasmic_drivers::modes::tmux::tmux_command()
-            .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
-            .status()
-            .unwrap();
-        assert!(
-            status.success(),
-            "tmux test session should start on {}",
-            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        let session_name = mode.session_name(&identity);
+        let _guard = mode.start_detached_session(&session_name, &live_guard);
+        let session_path = write_nonterminal_session(
+            &project_root,
+            identity,
+            mode.ready_protocol(),
+            "manager-tmux-tui",
         );
-        let _guard = TmuxSessionGuard(session_name);
-        let session_path =
-            write_nonterminal_session(&project_root, identity, "tmux-tui/1", "manager-tmux-tui");
         {
             let mut writer = orgasmic_core::SessionWriter::open(
                 &session_path,
@@ -24906,13 +25045,20 @@ mod tests {
             .iter()
             .find(|run| run.run_id == run_id)
             .expect("failed session classifies");
-        assert_eq!(run.classification, "failed_recoverable");
+        assert_eq!(
+            run.classification,
+            "failed_recoverable",
+            "{test_name} [{}]",
+            mode.diagnostic()
+        );
         assert!(
             !run.recovery_actions
                 .iter()
                 .any(|action| action.kind == "reattach_tmux"),
-            "Failed tombstone must never offer reattach_tmux: {:?}",
-            run.recovery_actions
+            "{test_name}: Failed tombstone must never offer reattach_tmux \
+             (the legacy action id covers both multiplexers): {:?} [{}]",
+            run.recovery_actions,
+            mode.diagnostic()
         );
         assert!(run
             .recovery_actions
@@ -24951,6 +25097,25 @@ mod tests {
 
         let _ = running.shutdown.send(());
         let _ = running.join.await;
+    }
+
+    #[tokio::test]
+    async fn failed_terminal_with_live_tmux_never_offers_reattach() {
+        assert_failed_terminal_with_live_mux_never_offers_reattach(
+            MuxMode::Tmux,
+            "failed_terminal_with_live_tmux_never_offers_reattach",
+        )
+        .await;
+    }
+
+    // orgasmic:task_JGHNC
+    #[tokio::test]
+    async fn failed_terminal_with_live_rmux_never_offers_reattach() {
+        assert_failed_terminal_with_live_mux_never_offers_reattach(
+            MuxMode::Rmux,
+            "failed_terminal_with_live_rmux_never_offers_reattach",
+        )
+        .await;
     }
 
     fn native_runtime_envelope(
@@ -26111,9 +26276,16 @@ mod tests {
         // and repoints process-global `HOME` and `PATH` for its whole body.
         let _live_guard = live_session_guard();
         let mut env = TestEnvGuard::acquire().await;
+        // orgasmic:task_JGHNC — the gate is real, and stays. This test starts
+        // no session itself, so the dependency is easy to doubt; measured
+        // 2026-07-29 by running it with neither tmux nor rmux resolvable, the
+        // recovery run the daemon starts is transport=tmux and its driver came
+        // up `"inert":true,"inert_reason":"tmux_missing"`, so the fork id under
+        // assertion is never proven. The pinned Claude executable is launched
+        // *inside a mux pane*; the mux is a real dependency of the assertion.
         if skip_test_if_missing(
             "production_resume_native_fork_uses_pinned_claude_not_path_shim",
-            &[("tmux", tmux_on_path())],
+            &[("tmux", real_tmux_on_path())],
         ) {
             return;
         }
@@ -26215,9 +26387,13 @@ mod tests {
         // Lock order is flock-then-environment, as above.
         let _live_guard = live_session_guard();
         let mut env = TestEnvGuard::acquire().await;
+        // orgasmic:task_JGHNC — same measured dependency as
+        // `production_resume_native_fork_uses_pinned_claude_not_path_shim`:
+        // with no mux resolvable both recoveries come up inert
+        // (`inert_reason: tmux_missing`) and neither fork id is ever persisted.
         if skip_test_if_missing(
             "two_recovery_chain_second_resume_uses_first_fork_session_id",
-            &[("tmux", tmux_on_path())],
+            &[("tmux", real_tmux_on_path())],
         ) {
             return;
         }
