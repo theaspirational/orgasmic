@@ -226,7 +226,6 @@ pub(crate) struct DispatchResponse {
     pub worker_id: String,
     pub driver: String,
     pub harness: String,
-    #[allow(dead_code)]
     pub dispatch_tx_id: String,
 }
 

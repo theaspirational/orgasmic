@@ -205,13 +205,27 @@ Pair that with `--dry-run` and the check costs nothing.
    (TASK-6AYEJ). The worker's finalize emits =implementer.reported= — "I am
    finished", not "the dispatch is closed" — so the dispatch stays open, listed
    by =dispatch-status= as =[reported]=, until you run =orgasmic manager
-   dispatch-close --task TASK-NNN --status done --merge-sha <your merge sha>
-   --worktree-remove --branch-delete=. That close emits =implementer.done=,
-   records YOUR merge sha, runs worktree/branch cleanup with the salvage path,
-   and flips the lifecycle stage. Re-running it is a clean no-op, so a close
-   interrupted mid-integration is safe to repeat. Note the ordering
-   consequence: dispatching the reviewer for a task before closing its
-   implementer is rejected as an overlapping open dispatch — close first.
+   dispatch-close --task TASK-NNN --started-tx <started_tx> --status done
+   --merge-sha <your merge sha> --worktree-remove --branch-delete=. That close
+   emits =implementer.done=, records YOUR merge sha, runs worktree/branch
+   cleanup with the salvage path, and flips the lifecycle stage.
+
+   *Always pass =--started-tx=* (TASK-6AYEJ.1). It is the =TX_ID= of the
+   =manager.dispatch_started= this close belongs to — the dispatch GENERATION —
+   printed by =manager dispatch= as =started_tx== and by =dispatch-status= as
+   =TX_ID==. Close identity is a generation, not a task: a task outlives its
+   dispatches, so closing the implementer flips the task to IN_REVIEW and a
+   reviewer is then opened for the SAME task. Without =--started-tx= a repeated
+   close is bound only to the task and selects whatever is open for it — at that
+   point the live reviewer, which it would release, clean up and close under the
+   wrong tx type. With =--started-tx= the named generation decides: re-running
+   the same close is a clean no-op even while a successor dispatch is open, so a
+   close interrupted mid-integration is safe to repeat. An unknown
+   =--started-tx= is a hard error, never a fall-back to task matching.
+
+   Note the ordering consequence: dispatching the reviewer for a task before
+   closing its implementer is rejected as an overlapping open dispatch — close
+   first.
 5. *Reviewer pass.* After merge + close, dispatch a reviewer agent over the merged diff via the same CLI with =--kind reviewer=. (There is no =--worker= flag; earlier revisions said =--worker reviewer-codex-acp= and that flag has never existed. =--kind= selects the persona.) Reviewer findings → fix subtasks minted as =TASK-<parent>.N= per the ID rule above, with =:FIX_SUBTASK: t= marking the one-round fix semantics → fresh implementer. Do not set =:FIX_SUBTASK:= on polish or organizational subtasks; those still receive a reviewer pass.
 6. *Brief discipline.* Keep write scope DISJOINT across parallel codex runs and name any OFF-LIMITS regions in each brief. Same file is OK only when workers are split by function or region — workers don't see each other's diffs, so make that boundary explicit in each brief ("do NOT modify =post_daemon_restart= — TASK-XC6RJ territory").
 7. *Lockfile pitfall.* Pre-stage workspace deps before parallel rounds. If multiple codex runs need new =Cargo.toml= deps they will revert =Cargo.lock= to honour their stated write scope, leaving a stale lockfile on main. Add likely deps to the workspace =Cargo.toml= and commit =Cargo.lock= before the dispatch.
