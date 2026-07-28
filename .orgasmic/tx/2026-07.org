@@ -38421,3 +38421,305 @@
 :REASON:       edited task node TASK-5FEN5
 :NODE_ID:      TASK-5FEN5
 :END:
+
+* TX 2026-07-28 Tue 21:05:43 task.state_transitioned TASK-5FEN5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3489
+:TIME:         [2026-07-28 Tue 21:05:43]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5FEN5
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-5FEN5 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 21:05:46 manager.dispatch_started TASK-5FEN5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3490
+:TIME:         [2026-07-28 Tue 21:05:46]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5FEN5
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-5fen5/worktree
+:BRANCH:       task-5fen5-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-5fen5/brief-5fen5.md
+:STARTED_AT:   [2026-07-28 Tue 21:05:46]
+:LIVENESS:     16f814ff285c354f203ac70b3318deda745a8cbd
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: rotation refill after WE0Q7/HQ970 merges: own or fix the load flakes the registry surfaced so loaded runs can go green
+:END:
+
+* TX 2026-07-28 Tue 21:05:46 run.created TASK-5FEN5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3491
+:TIME:         [2026-07-28 Tue 21:05:46]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5FEN5
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-5FEN5-implementer-20260728T210546.jsonl
+:REASON:       rotation refill after WE0Q7/HQ970 merges: own or fix the load flakes the registry surfaced so loaded runs can go green
+:RUN_ID:       run-20260728T210546-7bc23e3436b34474a033046cdad7c85d
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-5fen5/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-5fen5/brief-5fen5.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-5fen5/brief-5fen5-9b0963ef9b8f4893b41e7fab2ea943fa-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-5fen5/brief-5fen5-9b0963ef9b8f4893b41e7fab2ea943fa-stdout.log
+:DISPATCH_ATTEMPT: 9b0963ef9b8f4893b41e7fab2ea943fa
+:DISPATCH_TX:  tx-20260728-orgasmic-3490
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 21:06:08 task.state_transitioned TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3492
+:TIME:         [2026-07-28 Tue 21:06:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-G7E4R to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 21:06:09 manager.dispatch_started TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3493
+:TIME:         [2026-07-28 Tue 21:06:09]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-g7e4r/worktree
+:BRANCH:       task-g7e4r-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-g7e4r/brief-g7e4r.md
+:STARTED_AT:   [2026-07-28 Tue 21:06:09]
+:LIVENESS:     16f814ff285c354f203ac70b3318deda745a8cbd
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: rotation refill: the last literal on the shutdown-budget axis can fail a healthy stop
+:END:
+
+* TX 2026-07-28 Tue 21:06:09 run.created TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3494
+:TIME:         [2026-07-28 Tue 21:06:09]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-G7E4R-implementer-20260728T210609.jsonl
+:REASON:       rotation refill: the last literal on the shutdown-budget axis can fail a healthy stop
+:RUN_ID:       run-20260728T210609-2fcd4bc4a7ac467f993d7678b8cdc2de
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-g7e4r/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-g7e4r/brief-g7e4r.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-g7e4r/brief-g7e4r-8cabd24c70ac4af680621d608f780609-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-g7e4r/brief-g7e4r-8cabd24c70ac4af680621d608f780609-stdout.log
+:DISPATCH_ATTEMPT: 8cabd24c70ac4af680621d608f780609
+:DISPATCH_TX:  tx-20260728-orgasmic-3493
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 21:13:49 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3495
+:TIME:         [2026-07-28 Tue 21:13:49]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-28 Tue 21:14:17 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3496
+:TIME:         [2026-07-28 Tue 21:14:17]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-28 Tue 21:15:04 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3497
+:TIME:         [2026-07-28 Tue 21:15:04]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-28 Tue 21:15:32 task.edited TASK-STWVB
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3498
+:TIME:         [2026-07-28 Tue 21:15:32]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-STWVB
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-STWVB
+:NODE_ID:      TASK-STWVB
+:END:
+
+* TX 2026-07-28 Tue 21:27:16 implementer.reported TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3499
+:TIME:         [2026-07-28 Tue 21:27:16]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:RUN_ID:       run-20260728T210609-2fcd4bc4a7ac467f993d7678b8cdc2de
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-g7e4r/worktree
+:SHA:          c64cd8d2a2475bb8ea40eb617dc0de06a91594a3
+:END:
+
+* TX 2026-07-28 Tue 21:29:21 implementer.done TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3500
+:TIME:         [2026-07-28 Tue 21:29:21]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    53dcce0
+:BRANCH:       task-g7e4r-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3493
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 21:29:24 task.state_transitioned TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3501
+:TIME:         [2026-07-28 Tue 21:29:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-G7E4R to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 21:29:35 task.created TASK-15MJN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3502
+:TIME:         [2026-07-28 Tue 21:29:35]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-15MJN
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       G7E4R axis sweep follow-up: the one near-miss literal, guarded but not composed
+:END:
+
+* TX 2026-07-28 Tue 21:30:05 task.state_transitioned TASK-G7E4R
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3503
+:TIME:         [2026-07-28 Tue 21:30:05]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-G7E4R
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       repair: dispatch-close tx-3500 appended but the lifecycle update timed out under load
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 21:30:46 task.created TASK-A2YEM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3504
+:TIME:         [2026-07-28 Tue 21:30:46]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A2YEM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       G7E4R axis sweep follow-up: the one near-miss literal, guarded but not composed
+:END:
+
+* TX 2026-07-28 Tue 21:32:24 task.created TASK-EP3H1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3505
+:TIME:         [2026-07-28 Tue 21:32:24]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EP3H1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       measured twice on 2026-07-29 closing G7E4R at load 190; repair required manual state surgery plus a no-op retry
+:END:
+
+* TX 2026-07-28 Tue 21:32:32 task.property_updated TASK-A2YEM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3506
+:TIME:         [2026-07-28 Tue 21:32:32]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-A2YEM
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       small, guarded already, composition naming only
+:PRIORITY:     P2
+:END:

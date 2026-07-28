@@ -775,6 +775,10 @@ fixture-process one, a different class.
 
 The 'recover returns 500 under load' signature is now observed on three separate
 tests. Whatever this task finds should explain all three, not one.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once — same family as the 'recover: 500 under load' signature already on this task, observed on the live daemon rather than in a test.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: during a 3-worker compile window, one manager dispatch-status poll reported ALL THREE live runs as [run-gone] simultaneously; the next poll (60s later) and rmux ls showed every session alive and attached, daemon on the same pid/boot throughout. A transient inventory read under load flips run-liveness for every run at once. Two minutes later, a node body append to THIS task failed once with 'daemon request failed: error sending request ... is the daemon reachable?' and succeeded on retry — the HTTP surface itself goes briefly unreachable under load. Same family as the 'recover: 500 under load' signature already recorded here; both observed on the live daemon rather than in a test.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and two manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the inventory read degrades the same way. Relevant to this task because the same mechanism plausibly explains the 'recover: 500 under load' family: not a daemon defect expressing under load, but load starving some request leg. The error text 'is the daemon reachable?' is also a misdiagnosis-generator: the truthful message would be 'request timed out after Ns (system load may be the cause)'.
+PRODUCTION-SIDE OBSERVATION [2026-07-29 00:1x]: with load average 164 (a worker deliberately inducing load per TASK-5FEN5's repro recipe), one dispatch-status poll flipped ALL THREE live runs to [run-gone] at once, and repeated manager CLI calls failed with 'daemon request failed ... is the daemon reachable?'. Direct diagnosis DURING the failures: daemon pid alive, port 4848 LISTEN, raw HTTP answered 401 in 0.4s. So the daemon was healthy throughout — the CLI's client-side request path times out under scheduler starvation and reports it as daemon unreachability, and the run-inventory read degrades the same way. Relevant to this task: the same mechanism plausibly explains the 'recover: 500 under load' family — load starving a request leg rather than a daemon defect. Also: the error text 'is the daemon reachable?' is a misdiagnosis-generator; the truthful message is 'request timed out after Ns (system load may be the cause)'.
 
 * IN_PROGRESS TASK-XPYRR a task title cannot be corrected through any CLI surface, so a retracted claim outlives its correction
 :PROPERTIES:
@@ -845,4 +849,50 @@ operator with a state they can observe and cannot change.
 
 - Do not add a general "edit any org line" escape hatch. The structural guard is
   the reason these surfaces are narrow.
+
+* IN_PROGRESS TASK-5FEN5 Two unowned load flakes found by the registry verification: babysitter flush and index repo_url rebuild :daemon:testing:flake:
+:PROPERTIES:
+:ID: TASK-5FEN5
+:PRIORITY: P1
+:END:
+
+Discovered 2026-07-28 by the TASK-DJ1WV worker while verifying flake-registry
+seed signatures under induced load (8-12 cpu hogs, elevated --test-threads).
+Both fail under load, pass green in isolation, and had never been written down:
+
+1. `supervisor::tests::live_babysitter_summary_flushes_on_event_threshold`
+   (crates/orgasmic-daemon/src/supervisor.rs:9727) — failed 2 of 3 runs at 64
+   test threads.
+2. `index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh`
+   (crates/orgasmic-daemon/src/index.rs:2095) — assertion left "" vs right
+   "ssh://git@example.com/..." — the rebuilt index observed before the repo_url
+   refresh landed.
+
+The flake registry (verify/flake-registry.toml) deliberately refuses entries
+without an owning open task, so both currently classify REAL and a loaded
+full-suite run exits nonzero. This task exists to own them; its number should
+be added to registry entries ONLY once each panic signature is captured
+verbatim from a real failure (the DJ1WV rule: never guess a signature from the
+test body).
+
+=== Ask
+
+1. Reproduce each under load, capture the exact panic text, register both with
+   this task as owner (or fix them outright if the cause is shallow —
+   registering is the fallback, fixing is the goal).
+2. Diagnose: both look like timing assumptions about background work
+   (babysitter flush threshold; post-bind refresh scheduling) observed from a
+   test that does not wait on the completion signal. Fix the synchronization,
+   not the timeout size, per the R74E8/ATAXN standard.
+3. On fix, delete the registry entries (the registry check enforces this once
+   this task is done).
+
+=== Acceptance
+
+- Injection per project standard, shipped as a verify/TASK-<id>/ artifact that
+  `git apply` accepts.
+- Either both tests survive 5 consecutive loaded runs (fixed), or both are
+  registered with measured signatures and this task documents the diagnosis
+  for the eventual fix.
+THIRD CANDIDATE [2026-07-29], from the TASK-HQ970 worker's gate classification: `dispatch_system_only_session_without_finalize_orphans_not_scrapes` — 'timed out waiting for session ready' under full-suite load, passes in isolation and 34/34 when its binary runs alone. Same timeout shape as the others. If you reproduce it under the load recipe, capture its verbatim panic and treat it under this task's ownership too; if not, leave it unregistered per the DJ1WV rule.
 
