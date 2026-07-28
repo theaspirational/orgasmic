@@ -16,21 +16,20 @@
 
 use std::collections::BTreeMap;
 use std::path::Path;
-use std::process::{Command as StdCommand, Stdio};
 
 use async_trait::async_trait;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::modes::tmux::claude_session_path;
-use crate::preflight::{classify_api_key, read_status_output, STATUS_TIMEOUT};
+use crate::preflight::{classify_api_key, read_status_output};
 use crate::r#trait::{
     BabysitterRequest, DriverConfig, DriverContext, DriverError, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight, RunKind, StdioSpawn,
-    TransitionRequest,
+    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight, PreflightOutcome, RunKind,
+    StdioSpawn, TransitionRequest,
 };
 
 const TRANSPORT: &str = "claude-acp";
@@ -52,7 +51,10 @@ const TRANSPORT: &str = "claude-acp";
 ///
 /// Which mode a run gets is *detected*, never inferred from the presence of an
 /// ambient key — see [`resolve_credentials`] for the precedence rule and why.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// It is detected exactly once per dispatch, before the dispatch owns anything,
+/// and carried to the launch in a [`CredentialPlan`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum ClaudeCredentialMode {
     /// `--bare` plus an API key (or an `apiKeyHelper`) for the child.
     BareApiKey,
@@ -197,8 +199,54 @@ struct ClaudeAcpConfig {
     /// have been committed (TASK-S0QRM).
     #[serde(default)]
     credential_mode: Option<String>,
+    /// The credential decision this dispatch was *admitted* on.
+    ///
+    /// Not an operator field. The daemon writes it between the preflight and
+    /// the acquire (see [`crate::PreflightOutcome::pin_into`]); everything below
+    /// that point reads it instead of asking `claude auth status` again. When it
+    /// is present, detection does not run at all — that is the whole point, and
+    /// the reason a dispatch cannot launch with a credential its preflight never
+    /// judged (TASK-KKBTP).
+    ///
+    /// An operator *can* put one here, and it would be honoured. That is no new
+    /// authority: `credential_mode` above already lets them choose the mode
+    /// outright, more legibly, and with `validate_config` checking the value.
+    #[serde(default)]
+    credential_plan: Option<CredentialPlan>,
     #[serde(default)]
     prompt_bundle_text: Option<String>,
+}
+
+/// The immutable credential decision one dispatch launches with.
+///
+/// Resolved once, before the dispatch owns a lease, a session or a worktree, and
+/// then carried verbatim into acquire and composition. Every field is a
+/// *decision* a launch can apply without asking the harness anything, and every
+/// field is non-secret: this plan reaches the persisted `RunMeta`.
+///
+/// The key itself is deliberately absent. `api_key_env` names the variable the
+/// child's key comes from, so the launch re-reads the value from this process's
+/// own environment — a read that cannot disagree with the probe's, because it is
+/// the same environment in the same process. What could disagree, and did, is
+/// the subprocess observation; that is what this pins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct CredentialPlan {
+    mode: ClaudeCredentialMode,
+    /// Name of the environment variable holding the key the child presents.
+    /// `None` in native-login mode and in a helper-backed bare run.
+    #[serde(default)]
+    api_key_env: Option<String>,
+    /// Inline `--settings` JSON declaring an `apiKeyHelper` to `--bare`.
+    #[serde(default)]
+    settings_json: Option<String>,
+    /// Whether the child's inherited `ANTHROPIC_API_KEY` must be blanked.
+    #[serde(default)]
+    neutralize_ambient_key: bool,
+    /// What detection saw. Recorded rather than consulted: a reader of a failed
+    /// run needs to know whether the mode was chosen on evidence or on the
+    /// absence of it.
+    #[serde(default)]
+    native_login: NativeLoginEvidence,
 }
 
 /// Levels `claude --effort` documents (2.1.220: "low, medium, high, xhigh, max").
@@ -330,19 +378,24 @@ impl HarnessEventAdapter for ClaudeAdapter {
     /// the resolver had already picked native mode, which is why an ambient key
     /// could select a tier nothing had checked (TASK-S0QRM).
     ///
+    /// **This is the only place a dispatch asks `claude auth status`.** The
+    /// resolved plan rides out in [`PreflightOutcome::plan`] and the launch
+    /// applies it; asking twice is asking two different questions, because the
+    /// second answer can differ from the first (TASK-KKBTP).
+    ///
     /// What it cannot prove, stated plainly so nobody reads `Ready` as a
     /// guarantee: a login that exists can still be expired or rate-limited
     /// server-side, and an API key that is present can still be rejected.
     /// Establishing either requires submitting a real turn, which was measured
     /// at $0.0994 per dispatch and rejected on that ground.
-    async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+    async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> PreflightOutcome {
         let Ok(cfg) = serde_json::from_value::<ClaudeAcpConfig>(config.0.clone()) else {
-            return Preflight::Unsupported;
+            return Preflight::Unsupported.into();
         };
         if simulate_override() {
             // Nothing will present a credential, so there is nothing to rule on
             // and nothing that could fail at startup.
-            return Preflight::Unsupported;
+            return Preflight::Unsupported.into();
         }
         // Deliberately not the full `simulation_reason` check, for two reasons.
         //
@@ -367,12 +420,15 @@ impl HarnessEventAdapter for ClaudeAdapter {
             .map(|spawn| spawn.command)
             .unwrap_or_else(|| "claude".to_string());
         let probe = ClaudeAuthProbe::observe(&command).await;
-        let Ok(resolved) = resolve_credentials(&cfg, &probe) else {
-            // A misconfigured `api_key_env` is already `validate`'s rejection
-            // and reaches the operator as a config error, not a readiness one.
-            return Preflight::Unsupported;
+        // A misconfigured `api_key_env` is already `validate`'s rejection and
+        // reaches the operator as a config error, not a readiness one.
+        let Ok(plan) = resolve_credentials(&cfg, &probe) else {
+            return Preflight::Unsupported.into();
         };
-        let verdict = match resolved.mode {
+        let Ok(resolved) = plan.apply() else {
+            return Preflight::Unsupported.into();
+        };
+        let verdict = match plan.mode {
             ClaudeCredentialMode::BareApiKey => {
                 if resolved.api_key.is_none() && resolved.settings_json.is_some() {
                     // A helper is a command this probe deliberately does not
@@ -385,11 +441,19 @@ impl HarnessEventAdapter for ClaudeAdapter {
             ClaudeCredentialMode::NativeLogin => classify_native_login_evidence(probe.native_login),
         };
         tracing::debug!(
-            credential_mode = resolved.mode.as_str(),
+            credential_mode = plan.mode.as_str(),
+            native_login = ?plan.native_login,
             rejects = verdict.rejects_dispatch().is_some(),
             "claude preflight: resolved verdict"
         );
-        verdict
+        // Pin it. Whatever this verdict was reached on is what the launch gets,
+        // even if a second `auth status` would now answer differently.
+        match serde_json::to_value(&plan) {
+            Ok(plan) => PreflightOutcome::verdict(verdict).with_plan(json!({
+                "credential_plan": plan,
+            })),
+            Err(_) => PreflightOutcome::verdict(verdict),
+        }
     }
 
     fn compose_request(
@@ -418,12 +482,23 @@ impl HarnessEventAdapter for ClaudeAdapter {
             .stdio_spawn()
             .expect("claude adapter always exposes stdio_spawn");
 
-        // Resolve credentials first: the mode decides which isolation flags are
-        // even available (see `ClaudeCredentialMode`). Detection runs here, not
-        // in the caller, so the argv and the preflight cannot disagree.
-        let resolved =
-            resolve_credentials(&cfg, &ClaudeAuthProbe::observe_blocking(&spawn.command))?;
-        let (mode, env) = (resolved.mode, resolved.env);
+        // Apply the credential plan; never re-detect. The mode decides which
+        // isolation flags are even available (see `ClaudeCredentialMode`), and
+        // it was decided before this dispatch owned anything.
+        //
+        // The fallback is for the paths that have no preflight to pin one —
+        // attach, recovery, a driver used directly — and it deliberately asks
+        // the harness *nothing*: an ambient-only probe reads this process's own
+        // environment and the operator's settings file, both of which answer the
+        // same way every time. `compose_request` is synchronous and is called
+        // from inside async `acquire`, so a subprocess here is a blocking call
+        // on a Tokio worker thread with no bound (TASK-Z3093, TASK-KKBTP).
+        let plan = match cfg.credential_plan.clone() {
+            Some(plan) => plan,
+            None => resolve_credentials(&cfg, &ClaudeAuthProbe::ambient_only())?,
+        };
+        let resolved = plan.apply()?;
+        let (mode, env) = (plan.mode, resolved.env);
 
         let mut args = Vec::with_capacity(spawn.args.len() + 10);
         match mode {
@@ -574,14 +649,53 @@ impl HarnessEventAdapter for ClaudeAdapter {
     }
 }
 
+/// Is there a `claude` to spawn?
+///
+/// A `PATH` walk, deliberately, not `claude --version`. This runs inside
+/// synchronous `compose_request`, which `WorkerDriver::acquire` awaits on a
+/// Tokio worker thread: a `Command::status()` there blocks that thread for as
+/// long as the harness takes to answer — measured at 0.15 s for two calls on
+/// claude 2.1.220, and unbounded if the binary ever wedges, because there is no
+/// timeout to bound it with in a sync function (TASK-KKBTP; the same lesson as
+/// TASK-Z3093). Reading the directory entries costs microseconds and cannot
+/// hang on the harness.
+///
+/// It answers a slightly weaker question — "a `claude` exists and is
+/// executable" rather than "a `claude` ran successfully" — and that is the
+/// question this gate actually asks. A binary that exists but cannot run fails
+/// at spawn, where the error names itself, instead of being silently downgraded
+/// to a simulated run.
 fn claude_available() -> bool {
-    StdCommand::new("claude")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    executable_on_path("claude")
+}
+
+/// Resolve a command on `PATH` without spawning anything.
+pub(crate) fn executable_on_path(command: &str) -> bool {
+    if command.contains(std::path::MAIN_SEPARATOR) {
+        return is_executable_file(Path::new(command));
+    }
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| is_executable_file(&dir.join(command)))
+}
+
+fn is_executable_file(candidate: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(candidate) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
 }
 
 /// Why a run would take the simulated path instead of spawning `claude`.
@@ -645,8 +759,11 @@ fn simulation_reason(_cfg: &ClaudeAcpConfig) -> Option<SimulationReason> {
 }
 
 /// The credential a launched `claude` will actually present.
+///
+/// Derived from a [`CredentialPlan`] by [`CredentialPlan::apply`], never
+/// resolved independently: this is the plan with its secrets filled in, which is
+/// why it carries no mode of its own — the mode is the plan's.
 struct ResolvedCredentials {
-    mode: ClaudeCredentialMode,
     /// Environment overrides for the child, beyond what it inherits.
     env: BTreeMap<String, String>,
     /// The API key the child will present, whether it came from the configured
@@ -673,7 +790,8 @@ struct ResolvedCredentials {
 ///
 /// Three states, not two, because "we could not ask" must never be read as
 /// "no". The probe is the same command an operator would run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 enum NativeLoginEvidence {
     /// `claude auth status` answered `loggedIn: true`.
     Present,
@@ -729,52 +847,19 @@ impl ClaudeAuthProbe {
         }
     }
 
-    /// The blocking path, for `compose_request`, which is a sync trait method.
+    /// Everything that can be read without asking the harness anything.
     ///
-    /// The same command, bounded the same way. `compose_request` already runs
-    /// `claude --version` synchronously (`claude_available`), so this adds a
-    /// second short blocking call rather than a new hazard — but it is bounded
-    /// explicitly, because a wedged `auth status` must cost a dispatch its
-    /// detection, not its startup.
-    fn observe_blocking(command: &str) -> Self {
-        Self {
-            native_login: blocking_native_login_evidence(command),
-            ..Self::ambient(api_key_helper_from_settings_file())
-        }
+    /// The fallback for composition paths that carry no pinned plan (attach,
+    /// recovery, a driver driven directly). It leaves `native_login` at
+    /// `Unknown` on purpose: the only way to improve on that is to spawn
+    /// `claude auth status`, and the caller is a synchronous method running on
+    /// an async worker thread, where spawning is exactly the hazard this task
+    /// removed. There used to be a blocking sibling of [`Self::observe`] here;
+    /// it polled with `std::thread::sleep` and ran twice per acp-stdio dispatch,
+    /// after preflight had already answered the same question (TASK-KKBTP).
+    fn ambient_only() -> Self {
+        Self::ambient(api_key_helper_from_settings_file())
     }
-}
-
-/// Run `claude auth status` with a wall-clock bound and no inherited stdin.
-fn blocking_native_login_evidence(command: &str) -> NativeLoginEvidence {
-    let Ok(mut child) = StdCommand::new(command)
-        .args(["auth", "status"])
-        // A detection probe must never prompt: nobody is there to answer.
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return NativeLoginEvidence::Unknown;
-    };
-    let deadline = std::time::Instant::now() + STATUS_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return NativeLoginEvidence::Unknown;
-            }
-            Err(_) => return NativeLoginEvidence::Unknown,
-        }
-    }
-    let Ok(output) = child.wait_with_output() else {
-        return NativeLoginEvidence::Unknown;
-    };
-    native_login_evidence(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// Read the one field of `claude auth status` this adapter is entitled to.
@@ -851,21 +936,55 @@ fn api_key_helper_from_settings_file() -> Option<String> {
 ///    a working subscription login and the run died after lease, session and
 ///    dispatch ownership had been committed. A subscription login is evidence;
 ///    an inherited variable is a leftover.
-/// 4. With no login detected — answered `false`, or unanswerable — an ambient
-///    key or an `apiKeyHelper` selects bare mode. When detection is impossible
-///    those are the only credentials anyone can point at, so refusing to use
-///    them would break key-only operators to protect a login that may not
-///    exist. Nothing is guessed here that the preflight does not then rule on.
-/// 5. With no login and no key at all, native mode is chosen so the preflight
-///    can reject with the actionable "run /login" reason instead of the
-///    narrower "your key is empty".
+/// 4. With the harness answering `loggedIn: false` — a definitive "no" — an
+///    ambient key or an `apiKeyHelper` selects bare mode. Those are the only
+///    credentials anyone can point at, so refusing to use them would break
+///    key-only operators to protect a login the harness says does not exist.
+/// 5. With detection *inconclusive*, only a credential the operator **declared**
+///    selects bare mode: `credential_mode`, `api_key_env`, or an `apiKeyHelper`
+///    written into their settings file. An unchosen ambient `ANTHROPIC_API_KEY`
+///    does not. See the `Unknown` policy below.
+/// 6. With no login and no declared credential, native mode is chosen so the
+///    preflight can reject with the actionable "run /login" reason instead of
+///    the narrower "your key is empty".
 ///
 /// Native mode additionally *neutralises* an inherited key: the child would
 /// otherwise authenticate with the very credential detection rejected.
+///
+/// # The `Unknown` policy (dec_7P79C, TASK-KKBTP)
+///
+/// `Unknown` used to be folded into `Absent`, so an unchosen ambient key won
+/// whenever the probe could not reach a verdict. It no longer does, and the
+/// reason is not symmetry — it is which operator each choice breaks and how
+/// often `Unknown` actually happens to them.
+///
+/// `Unknown` means `claude auth status` could not be spawned, timed out inside
+/// [`crate::preflight::STATUS_TIMEOUT`], or answered in a shape this adapter
+/// does not recognise. A key-only operator with no login gets a definitive
+/// `loggedIn: false` from a near-instant local read, so rule 4 still serves them
+/// and rule 5 never applies. The operator for whom the status command has real
+/// work to do — a keychain to unlock, a credential to read — is the operator who
+/// *has* a login. Inconclusiveness therefore correlates with a login existing,
+/// not with its absence, and promoting a leftover environment variable on that
+/// evidence is promoting it against the odds.
+///
+/// The cost of being wrong is the same size in both directions — a dispatch that
+/// dies at startup after taking ownership — so the tie is broken on likelihood,
+/// and on the same principle rule 3 rests on: a login is evidence, an inherited
+/// variable is a leftover. Nothing here removes an operator's ability to choose
+/// the key. `credential_mode: bare_api_key`, `api_key_env`, and a declared
+/// `apiKeyHelper` all still select bare mode under `Unknown`, deterministically,
+/// which is what makes an unchosen variable the only thing that loses.
+///
+/// The residual this does not fix: `Unknown` still selects a different tier than
+/// `Present` would. What it can no longer do is select a different tier *within
+/// one dispatch* — the plan is resolved once, before ownership, and applied
+/// verbatim thereafter.
+// orgasmic:dec_7P79C, task_KKBTP
 fn resolve_credentials(
     cfg: &ClaudeAcpConfig,
     probe: &ClaudeAuthProbe,
-) -> Result<ResolvedCredentials, DriverError> {
+) -> Result<CredentialPlan, DriverError> {
     let forced = match cfg.credential_mode.as_deref() {
         Some(raw) => ClaudeCredentialMode::parse_override(raw)?,
         None => None,
@@ -887,8 +1006,17 @@ fn resolve_credentials(
         None if configured_key.is_some() => ClaudeCredentialMode::BareApiKey,
         None => match probe.native_login {
             NativeLoginEvidence::Present => ClaudeCredentialMode::NativeLogin,
-            NativeLoginEvidence::Absent | NativeLoginEvidence::Unknown => {
+            NativeLoginEvidence::Absent => {
                 if probe.ambient_api_key.is_some() || probe.api_key_helper.is_some() {
+                    ClaudeCredentialMode::BareApiKey
+                } else {
+                    ClaudeCredentialMode::NativeLogin
+                }
+            }
+            // Inconclusive: a declared helper still counts, an inherited
+            // variable does not.
+            NativeLoginEvidence::Unknown => {
+                if probe.api_key_helper.is_some() {
                     ClaudeCredentialMode::BareApiKey
                 } else {
                     ClaudeCredentialMode::NativeLogin
@@ -897,17 +1025,19 @@ fn resolve_credentials(
         },
     };
 
-    let mut env = BTreeMap::new();
-    let (api_key, settings_json) = match mode {
+    let (api_key_env, settings_json) = match mode {
         ClaudeCredentialMode::BareApiKey => {
-            let key = configured_key.or_else(|| probe.ambient_api_key.clone());
-            if let Some(key) = key.as_deref() {
-                // Set explicitly rather than left to inheritance so a
-                // configured `api_key_env` reaches the child under the name
-                // claude reads.
-                env.insert("ANTHROPIC_API_KEY".to_string(), key.to_string());
-            }
-            let helper = if key.is_none() {
+            // The *name*, never the value: this plan reaches durable run
+            // metadata. `apply` reads the variable back out of this process's
+            // own environment, which cannot answer differently than it did here.
+            let key_env = if configured_key.is_some() {
+                cfg.api_key_env.clone()
+            } else if probe.ambient_api_key.is_some() {
+                Some(AMBIENT_KEY_ENV.to_string())
+            } else {
+                None
+            };
+            let helper = if key_env.is_none() {
                 probe
                     .api_key_helper
                     .as_ref()
@@ -915,28 +1045,61 @@ fn resolve_credentials(
             } else {
                 None
             };
-            (key, helper)
+            (key_env, helper)
         }
-        ClaudeCredentialMode::NativeLogin => {
+        ClaudeCredentialMode::NativeLogin => (None, None),
+    };
+
+    Ok(CredentialPlan {
+        mode,
+        api_key_env,
+        settings_json,
+        neutralize_ambient_key: mode == ClaudeCredentialMode::NativeLogin
+            && probe.ambient_api_key.is_some(),
+        native_login: probe.native_login,
+    })
+}
+
+/// The environment variable `claude` reads its API key from.
+const AMBIENT_KEY_ENV: &str = "ANTHROPIC_API_KEY";
+
+impl CredentialPlan {
+    /// Turn the pinned decision into the child's launch environment.
+    ///
+    /// The only step that touches a secret, and it is the last one: the key is
+    /// read here, held for the length of one composition, and never written into
+    /// the plan or anything the plan reaches.
+    fn apply(&self) -> Result<ResolvedCredentials, DriverError> {
+        let mut env = BTreeMap::new();
+        let api_key = match self.api_key_env.as_deref() {
+            Some(env_name) => {
+                let key = std::env::var(env_name).map_err(|_| {
+                    DriverError::InvalidConfig(format!(
+                        "api_key_env '{env_name}' not set but endpoint is configured"
+                    ))
+                })?;
+                // Set explicitly rather than left to inheritance so a configured
+                // `api_key_env` reaches the child under the name claude reads.
+                env.insert(AMBIENT_KEY_ENV.to_string(), key.clone());
+                Some(key)
+            }
+            None => None,
+        };
+        if self.neutralize_ambient_key {
             // Blank, not absent: `HarnessRequest::Subprocess` can add child
             // environment but not remove inherited entries, and measured
             // against claude 2.1.220 an empty `ANTHROPIC_API_KEY` reports
             // `apiKeySource: "none"` while a non-empty one reports
             // `ANTHROPIC_API_KEY`. Without this, choosing native mode next to a
             // stale exported key would still authenticate with the stale key.
-            if probe.ambient_api_key.is_some() {
-                env.insert("ANTHROPIC_API_KEY".to_string(), String::new());
-            }
-            (None, None)
+            env.insert(AMBIENT_KEY_ENV.to_string(), String::new());
         }
-    };
-
-    Ok(ResolvedCredentials {
-        mode,
-        env,
-        api_key,
-        settings_json,
-    })
+        Ok(ResolvedCredentials {
+            env,
+            api_key,
+            settings_json: self.settings_json.clone(),
+        })
+    }
 }
 
 /// Turn detected login evidence into a verdict for a native-login worker.
@@ -1419,6 +1582,7 @@ pub fn simulated_config() -> DriverConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::acp_stdio::AcpStdioComposeAdapter;
     use crate::modes::rmux::test_tooling::{skip_test_if_missing, test_environment_lock};
     use crate::{AcpStdioDriver, AcpWsDriver, AttachOutcome, ClaudeAcpDriver, WorkerDriver};
     use orgasmic_core::RuntimeIdentity;
@@ -1597,10 +1761,10 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-stale-and-forgotten".into()),
         };
-        let resolved = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+        let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
 
         assert_eq!(
-            resolved.mode,
+            plan.mode,
             ClaudeCredentialMode::NativeLogin,
             "a detected login must beat a key nobody chose"
         );
@@ -1609,6 +1773,8 @@ mod tests {
         // claude authenticates with (measured: a non-empty ANTHROPIC_API_KEY
         // reports `apiKeySource: ANTHROPIC_API_KEY`, an empty one reports
         // `none`).
+        assert!(plan.neutralize_ambient_key);
+        let resolved = plan.apply().expect("apply");
         assert_eq!(
             resolved.env.get("ANTHROPIC_API_KEY").map(String::as_str),
             Some(""),
@@ -1619,24 +1785,77 @@ mod tests {
     }
 
     /// The other direction, so the fix is a reversal of precedence rather than
-    /// a blanket refusal to use keys.
+    /// a blanket refusal to use keys — but only on a *definitive* "no login".
     #[test]
-    fn without_a_detected_login_a_key_still_selects_the_light_bare_path() {
-        for evidence in [NativeLoginEvidence::Absent, NativeLoginEvidence::Unknown] {
-            let probe = ClaudeAuthProbe {
-                native_login: evidence,
-                api_key_helper: None,
-                ambient_api_key: Some("sk-ant-test-not-real".into()),
-            };
-            let resolved =
-                resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
-            assert_eq!(
-                resolved.mode,
-                ClaudeCredentialMode::BareApiKey,
-                "{evidence:?}: with no login to prefer, the key is the only credential there is"
-            );
-            assert_eq!(resolved.api_key.as_deref(), Some("sk-ant-test-not-real"));
-        }
+    fn a_definitively_logged_out_harness_still_lets_a_key_select_the_light_bare_path() {
+        let probe = ClaudeAuthProbe {
+            native_login: NativeLoginEvidence::Absent,
+            api_key_helper: None,
+            ambient_api_key: Some("sk-ant-test-not-real".into()),
+        };
+        let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+        assert_eq!(
+            plan.mode,
+            ClaudeCredentialMode::BareApiKey,
+            "with the harness saying it has no login, the key is the only credential there is"
+        );
+        assert_eq!(plan.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
+        assert!(!plan.neutralize_ambient_key);
+    }
+
+    /// The `Unknown` policy (TASK-KKBTP ask 4), asserted as the difference it
+    /// makes rather than described.
+    ///
+    /// `Absent` and `Unknown` are no longer the same answer. A harness that says
+    /// `loggedIn: false` has ruled; a harness that could not be asked has not,
+    /// and "could not be asked" must not promote a variable nobody chose for
+    /// this dispatch. The full reasoning — including why inconclusiveness
+    /// correlates with *having* a login — is on [`resolve_credentials`].
+    #[test]
+    fn an_unchosen_ambient_key_does_not_win_on_inconclusive_detection() {
+        let inconclusive = ClaudeAuthProbe {
+            native_login: NativeLoginEvidence::Unknown,
+            api_key_helper: None,
+            ambient_api_key: Some("sk-ant-stale-and-forgotten".into()),
+        };
+        let plan =
+            resolve_credentials(&ClaudeAcpConfig::default(), &inconclusive).expect("resolve");
+        assert_eq!(
+            plan.mode,
+            ClaudeCredentialMode::NativeLogin,
+            "an unanswerable probe is not evidence that the login is missing"
+        );
+        assert!(
+            plan.neutralize_ambient_key,
+            "and the key it declined to use must not authenticate the child anyway"
+        );
+
+        // Every way of *choosing* the key still works under the same
+        // inconclusive answer, which is what keeps this a rule about unchosen
+        // credentials rather than a refusal to use keys.
+        let declared_helper = ClaudeAuthProbe {
+            api_key_helper: Some("/usr/local/bin/mint-key".into()),
+            ..inconclusive.clone()
+        };
+        assert_eq!(
+            resolve_credentials(&ClaudeAcpConfig::default(), &declared_helper)
+                .expect("resolve")
+                .mode,
+            ClaudeCredentialMode::BareApiKey,
+            "a helper written into the operator's settings file is a declaration"
+        );
+
+        let forced = ClaudeAcpConfig {
+            credential_mode: Some("bare_api_key".into()),
+            ..ClaudeAcpConfig::default()
+        };
+        assert_eq!(
+            resolve_credentials(&forced, &inconclusive)
+                .expect("resolve")
+                .mode,
+            ClaudeCredentialMode::BareApiKey,
+            "--credential-mode is the operator saying which credential they want"
+        );
     }
 
     /// What happens when detection is impossible and there is nothing to fall
@@ -1649,13 +1868,10 @@ mod tests {
                 native_login: evidence,
                 ..ClaudeAuthProbe::default()
             };
-            let resolved =
-                resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
-            assert_eq!(
-                resolved.mode,
-                ClaudeCredentialMode::NativeLogin,
-                "{evidence:?}"
-            );
+            let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+            assert_eq!(plan.mode, ClaudeCredentialMode::NativeLogin, "{evidence:?}");
+            assert!(!plan.neutralize_ambient_key);
+            let resolved = plan.apply().expect("apply");
             assert!(
                 resolved.env.is_empty(),
                 "nothing to neutralise when nothing was inherited: {:?}",
@@ -1690,14 +1906,18 @@ mod tests {
             api_key_helper: Some("/usr/local/bin/mint-key".into()),
             ambient_api_key: None,
         };
-        let resolved = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
-        assert_eq!(resolved.mode, ClaudeCredentialMode::BareApiKey);
+        let plan = resolve_credentials(&ClaudeAcpConfig::default(), &probe).expect("resolve");
+        assert_eq!(plan.mode, ClaudeCredentialMode::BareApiKey);
         // `--bare` reads no settings file of its own, so the declaration has to
         // be passed inline — and only the declaration, not the operator's whole
         // settings document with its hooks and MCP servers.
-        let settings = resolved.settings_json.expect("helper must reach --bare");
+        let settings = plan
+            .settings_json
+            .clone()
+            .expect("helper must reach --bare");
         assert_eq!(settings, r#"{"apiKeyHelper":"/usr/local/bin/mint-key"}"#);
-        assert!(resolved.api_key.is_none());
+        assert_eq!(plan.api_key_env, None);
+        assert!(plan.apply().expect("apply").api_key.is_none());
     }
 
     /// The escape hatch, in both directions, at the resolver.
@@ -1714,9 +1934,9 @@ mod tests {
             credential_mode: Some("bare_api_key".into()),
             ..ClaudeAcpConfig::default()
         };
-        let resolved = resolve_credentials(&forced_bare, &logged_in_with_key).expect("resolve");
-        assert_eq!(resolved.mode, ClaudeCredentialMode::BareApiKey);
-        assert_eq!(resolved.api_key.as_deref(), Some("sk-ant-preferred"));
+        let plan = resolve_credentials(&forced_bare, &logged_in_with_key).expect("resolve");
+        assert_eq!(plan.mode, ClaudeCredentialMode::BareApiKey);
+        assert_eq!(plan.api_key_env.as_deref(), Some("ANTHROPIC_API_KEY"));
 
         let forced_native = ClaudeAcpConfig {
             credential_mode: Some("native_login".into()),
@@ -1727,10 +1947,14 @@ mod tests {
             api_key_helper: None,
             ambient_api_key: Some("sk-ant-stale".into()),
         };
-        let resolved = resolve_credentials(&forced_native, &no_login_but_a_key).expect("resolve");
-        assert_eq!(resolved.mode, ClaudeCredentialMode::NativeLogin);
+        let plan = resolve_credentials(&forced_native, &no_login_but_a_key).expect("resolve");
+        assert_eq!(plan.mode, ClaudeCredentialMode::NativeLogin);
         assert_eq!(
-            resolved.env.get("ANTHROPIC_API_KEY").map(String::as_str),
+            plan.apply()
+                .expect("apply")
+                .env
+                .get("ANTHROPIC_API_KEY")
+                .map(String::as_str),
             Some("")
         );
 
@@ -1997,7 +2221,7 @@ mod tests {
             )
             .await;
         std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
-        assert_eq!(verdict, Preflight::Unsupported);
+        assert_eq!(verdict.verdict, Preflight::Unsupported);
     }
 
     /// End to end through the transport the 2026-07-25 incident used: a
@@ -2082,7 +2306,7 @@ mod tests {
             .await;
 
         std::env::set_var("PATH", saved_path);
-        assert_eq!(verdict, Preflight::Ready);
+        assert_eq!(verdict.verdict, Preflight::Ready);
     }
 
     #[tokio::test]
@@ -2593,5 +2817,328 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
             saw_failure,
             "invalid API key should surface as driver failure"
         );
+    }
+
+    // ---- admission-to-launch boundary (TASK-KKBTP) -----------------------
+
+    /// A `claude` stub that logs every invocation and can change its answer.
+    ///
+    /// Two things make it different from [`make_auth_status_stub`], and both
+    /// are the point:
+    ///
+    /// - **Its `auth status` answer changes between calls.** The two tests this
+    ///   task's blocker demanded could not exist against a stub that always
+    ///   answers the same way — which is exactly why neither
+    ///   `the_probe_and_the_launch_resolve_the_same_credential` nor
+    ///   `the_resolved_claude_credential_mode_survives_the_mode_layer` could
+    ///   fail when the observation moved between admission and launch.
+    /// - **It records what it was asked.** "How many times does one dispatch
+    ///   ask `claude auth status`?" is a question about production call counts,
+    ///   and a count is the only honest way to answer it.
+    fn make_recording_stub(dir: &std::path::Path, answers: &[bool]) -> std::path::PathBuf {
+        let log = dir.join("invocations.log");
+        let counter = dir.join("calls.count");
+        let mut arms = String::new();
+        for (index, logged_in) in answers.iter().enumerate() {
+            arms.push_str(&format!(
+                "  if [ \"$n\" = \"{n}\" ]; then printf '%s\\n' '{payload}'; exit {code}; fi\n",
+                n = index + 1,
+                payload = auth_status_payload(*logged_in),
+                code = auth_status_exit_code(*logged_in),
+            ));
+        }
+        // Past the scripted answers the stub hangs, which is what a wedged
+        // `auth status` looks like to a caller and what `Unknown` is made of.
+        let stub = dir.join("claude");
+        std::fs::write(
+            &stub,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$*" >> "{log}"
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  n=$(( $(cat "{counter}" 2>/dev/null || echo 0) + 1 ))
+  printf '%s' "$n" > "{counter}"
+{arms}  sleep 60
+  exit 3
+fi
+if [ "$1" = "--version" ]; then
+  sleep 60
+  exit 0
+fi
+printf '%s\n' '{{"type":"system","subtype":"init","session_id":"stub-session","model":"stub-model","claude_code_version":"stub"}}'
+printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
+"#,
+                log = log.display(),
+                counter = counter.display(),
+                arms = arms,
+            ),
+        )
+        .expect("write recording stub");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&stub, perms).unwrap();
+        }
+        log
+    }
+
+    fn stub_invocations(log: &std::path::Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// The whole admission-to-launch boundary, on the production call graph.
+    ///
+    /// The stub answers `loggedIn: false` the first time and `loggedIn: true`
+    /// the second, so any second observation resolves a *different* mode than
+    /// the one the dispatch was admitted on. With a stale ambient key present,
+    /// the first answer pins bare mode; a re-probe would see the login and flip
+    /// to native, neutralising the key the preflight ruled on and dropping
+    /// `--bare` — after ownership.
+    ///
+    /// Asserted together, because they are one property: the admitted mode, the
+    /// spawned argv, the spawned env and the NativeRuntime record the supervisor
+    /// writes to RunMeta must all describe the same decision. And the count is
+    /// named, not described: **one** `auth status` per dispatch.
+    #[tokio::test]
+    async fn the_launch_uses_the_credential_the_preflight_admitted() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = make_recording_stub(dir.path(), &[false, true]);
+        let settings = tempfile::tempdir().expect("settings dir");
+
+        let _guard = env_lock().lock().await;
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{saved_path}", dir.path().display()));
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        // An empty settings dir, so the operator's real `apiKeyHelper` (if any)
+        // cannot decide this test's outcome.
+        std::env::set_var("CLAUDE_CONFIG_DIR", settings.path());
+        const STALE_KEY: &str = "sk-ant-stale-but-the-only-credential-there-is";
+        std::env::set_var("ANTHROPIC_API_KEY", STALE_KEY);
+
+        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let ctx = ctx("run-pinned-credential", RunKind::Worker);
+        // The shape a real dispatch sends: no endpoint (dec_S18RH).
+        let config = DriverConfig(json!({}));
+
+        // 1. Admission.
+        let outcome = driver.preflight(&ctx, &config).await;
+        assert!(
+            outcome.rejects_dispatch().is_none(),
+            "a present key under bare mode is unchecked, not fatal: {outcome:?}"
+        );
+        let admitted = outcome
+            .plan
+            .as_ref()
+            .and_then(|plan| plan.get("credential_plan"))
+            .and_then(|plan| plan.get("mode"))
+            .and_then(Value::as_str)
+            .expect("the probe must pin the mode it admitted the dispatch on")
+            .to_string();
+        assert_eq!(admitted, "bare_api_key");
+
+        // 2. Ownership. This is the step the daemon takes between admitting the
+        //    dispatch and acquiring it (`spawn_worker_run`).
+        let launch_config = outcome.pin_into(&config);
+
+        // 3. Launch. Composed through the mode wrapper `AcpStdioDriver::acquire`
+        //    delegates to, so this is the request that would be spawned.
+        let mut mode_adapter = AcpStdioComposeAdapter {
+            inner: Box::new(ClaudeAdapter::new()),
+            jsonrpc_session_init: None,
+        };
+        let request = mode_adapter
+            .compose_request(&ctx, &launch_config)
+            .expect("compose");
+        let native = mode_adapter
+            .native_runtime()
+            .expect("NativeRuntime metadata is what reaches RunMeta");
+
+        std::env::set_var("PATH", &saved_path);
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+
+        let HarnessRequest::Subprocess { args, env, .. } = request else {
+            panic!("a detectable claude must compose a subprocess request");
+        };
+
+        // The argv the admitted mode implies…
+        assert!(
+            args.iter().any(|a| a == "--bare"),
+            "the launch must carry the mode the preflight admitted: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "--safe-mode"),
+            "a second observation flipped this run to native mode: {args:?}"
+        );
+        // …the env that mode implies…
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").map(String::as_str),
+            Some(STALE_KEY),
+            "the key the preflight ruled on must be the key the child presents: {env:?}"
+        );
+        // …and the record the supervisor persists.
+        assert_eq!(
+            native.credential_mode.as_deref(),
+            Some(admitted.as_str()),
+            "RunMeta must record the admitted mode, not a later re-detection"
+        );
+
+        // The count, named. One dispatch, one question to the harness.
+        let asked: Vec<String> = stub_invocations(&log)
+            .into_iter()
+            .filter(|line| line.starts_with("auth status"))
+            .collect();
+        assert_eq!(
+            asked.len(),
+            1,
+            "a dispatch must ask `claude auth status` exactly once — before it \
+             owns anything. Observed: {asked:?}"
+        );
+    }
+
+    /// Composition must not spawn the harness, so a wedged `claude` cannot
+    /// stall the runtime thread `acquire` is running on.
+    ///
+    /// The stub hangs for 60s on every probe-shaped invocation. `compose_request`
+    /// is synchronous and is awaited inside async `WorkerDriver::acquire`, so a
+    /// `Command::status()` there holds a Tokio worker thread for as long as the
+    /// harness takes — with no timeout available to bound it, because there is
+    /// no timeout in a sync function (TASK-Z3093's lesson, recurring).
+    ///
+    /// Two assertions, and the second is the stronger one. The deadline proves
+    /// acquisition stays bounded; the empty invocation log proves *why* — the
+    /// composition asked the harness nothing at all, so there is nothing left
+    /// that could hang. This runs the no-plan fallback deliberately: the path
+    /// with the least information available is the one that would be tempted to
+    /// go and ask.
+    #[tokio::test]
+    async fn composition_asks_a_wedged_claude_nothing_and_stays_bounded() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = make_recording_stub(dir.path(), &[]);
+        let settings = tempfile::tempdir().expect("settings dir");
+
+        let _guard = env_lock().lock().await;
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{saved_path}", dir.path().display()));
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::set_var("CLAUDE_CONFIG_DIR", settings.path());
+
+        let ctx = ctx("run-wedged-claude", RunKind::Worker);
+        // No pinned plan: the fallback path, with nothing to go on.
+        let config = DriverConfig(json!({}));
+
+        // Composed on its own thread and joined against a deadline, so a
+        // regression fails this test rather than hanging the suite for a minute
+        // per blocking call.
+        let (done, composed) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let mut adapter = ClaudeAdapter::new();
+            let request = adapter.compose_request(&ctx, &config);
+            let _ = done.send((started.elapsed(), request.is_ok()));
+        });
+        let (elapsed, composed_ok) = composed.recv_timeout(Duration::from_secs(10)).expect(
+            "composition never returned: something in compose_request is waiting on the \
+                 harness, which is a blocked Tokio worker thread in production",
+        );
+        let _ = worker.join();
+
+        std::env::set_var("PATH", &saved_path);
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+
+        assert!(composed_ok, "an executable claude must compose a real run");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "composition took {elapsed:?}; it must not wait on the harness at all"
+        );
+        assert_eq!(
+            stub_invocations(&log),
+            Vec::<String>::new(),
+            "composition must spawn no `claude` at all — not `--version`, not \
+             `auth status`. Anything here is a blocking call on a runtime worker."
+        );
+    }
+
+    /// The mode layer composes once, not twice.
+    ///
+    /// `AcpStdioDriver::acquire` used to hand a fresh adapter clone to
+    /// `SubprocessStreamJsonDriver::acquire`, which composed the request a
+    /// second time — so the argv that got spawned was never the argv acp-stdio
+    /// had built, and every per-run decision was made twice.
+    #[tokio::test]
+    async fn acp_stdio_spawns_the_request_it_composed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let log = make_recording_stub(dir.path(), &[true]);
+        let settings = tempfile::tempdir().expect("settings dir");
+
+        let _guard = env_lock().lock().await;
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{saved_path}", dir.path().display()));
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::set_var("CLAUDE_CONFIG_DIR", settings.path());
+
+        let driver = AcpStdioDriver::new(Box::new(ClaudeAdapter::new()));
+        let ctx = ctx("run-single-composition", RunKind::Worker);
+        let config = DriverConfig(json!({}));
+        let outcome = driver.preflight(&ctx, &config).await;
+        let launch_config = outcome.pin_into(&config);
+
+        let mut session = driver
+            .acquire(ctx.clone(), launch_config)
+            .await
+            .expect("acquire must spawn the stub");
+        // Wait for the stub to speak before reading its log: `acquire` returns
+        // as soon as the child is spawned, which is before the child has run.
+        timeout(Duration::from_secs(10), session.events.recv())
+            .await
+            .expect("timed out waiting for the spawned stub")
+            .expect("event stream closed before the stub spoke");
+
+        std::env::set_var("PATH", &saved_path);
+        std::env::remove_var("CLAUDE_CONFIG_DIR");
+
+        // The spawned process is the composed one: it carries the pinned
+        // session id, which only the adapter's composition mints.
+        let native = session
+            .native_runtime
+            .clone()
+            .expect("the spawned run must report NativeRuntime metadata");
+        assert_eq!(
+            native.session_id.as_deref(),
+            Some(ctx.identity.runtime_id.as_str())
+        );
+
+        let harness_invocations: Vec<String> = stub_invocations(&log)
+            .into_iter()
+            .filter(|line| line.contains("--session-id"))
+            .collect();
+        assert_eq!(
+            harness_invocations.len(),
+            1,
+            "one dispatch spawns one harness: {harness_invocations:?}"
+        );
+        assert!(
+            harness_invocations[0].contains(ctx.identity.runtime_id.as_str()),
+            "the spawned argv must be the composed one: {harness_invocations:?}"
+        );
+        let asked: Vec<String> = stub_invocations(&log)
+            .into_iter()
+            .filter(|line| line.starts_with("auth status") || line.starts_with("--version"))
+            .collect();
+        assert_eq!(
+            asked.len(),
+            1,
+            "one `auth status` at preflight and nothing else; observed {asked:?}"
+        );
+
+        let _ = session.control.release("test cleanup").await;
     }
 }

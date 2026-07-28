@@ -228,8 +228,16 @@ pub trait HarnessEventAdapter: Send + Sync + 'static {
     /// than each reimplementing the same question. The rules that make a probe
     /// worth trusting — and its cost budget — are documented on
     /// [`WorkerDriver::preflight`]; read them before implementing this.
-    async fn preflight(&mut self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
-        Preflight::Unsupported
+    ///
+    /// An adapter that had to *observe* something to reach its verdict must
+    /// return that observation in [`PreflightOutcome::plan`] rather than let the
+    /// launch observe again — see the type's own docs for why.
+    async fn preflight(
+        &mut self,
+        _ctx: &DriverContext,
+        _config: &DriverConfig,
+    ) -> PreflightOutcome {
+        PreflightOutcome::default()
     }
 
     /// Subprocess invocation for the acp-stdio mode pairing.
@@ -464,7 +472,7 @@ pub(crate) async fn preflight_via_adapter(
     adapter: &dyn HarnessEventAdapter,
     ctx: &DriverContext,
     config: &DriverConfig,
-) -> Preflight {
+) -> PreflightOutcome {
     adapter.clone_box().preflight(ctx, config).await
 }
 
@@ -541,8 +549,14 @@ pub trait WorkerDriver: Send + Sync + 'static {
     /// failure to report, not an interactive flow to enter: nobody is attached
     /// to a dispatched worker to answer it. Give any child process a null
     /// stdin so an interactive fallback cannot block instead of answering.
-    async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
-        Preflight::Unsupported
+    ///
+    /// A fourth rule follows from the first: **whatever the probe resolved to
+    /// reach its verdict must come back in [`PreflightOutcome::plan`]**, so the
+    /// launch applies that decision rather than making its own. A probe that
+    /// admits a dispatch on an observation it then discards has ruled on a run
+    /// that no longer exists by the time anything is spawned (TASK-KKBTP).
+    async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> PreflightOutcome {
+        PreflightOutcome::default()
     }
 
     /// Acquire the runtime and start the event stream. The supervisor
@@ -710,7 +724,7 @@ pub struct UserInputAck {
 /// every driver that never implemented a probe report readiness it did not
 /// check; collapsing it into `Fatal` would refuse every dispatch on drivers that
 /// work fine. Callers must treat "we did not look" as its own answer.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Preflight {
     /// The harness answered, using the worker's own execution context, that a
     /// worker could start.
@@ -722,6 +736,7 @@ pub enum Preflight {
     /// This driver has no probe, or the probe could not reach a verdict (a
     /// timeout, a harness that does not answer). Dispatch proceeds as it did
     /// before preflight existed — the pre-existing failure modes still apply.
+    #[default]
     Unsupported,
 }
 
@@ -740,6 +755,89 @@ impl Preflight {
             Self::Fatal { reason } => Some(reason.as_str()),
             Self::Ready | Self::Unsupported => None,
         }
+    }
+}
+
+/// A probe's verdict together with the launch facts it had to resolve to reach
+/// it.
+///
+/// The facts are the point. A probe runs *before* the dispatch owns a lease, a
+/// session or a worktree; the launch runs after. If the probe observes a
+/// credential, admits the dispatch on that observation and then throws it away,
+/// the launch has no choice but to observe again — and a second observation of a
+/// live harness can disagree with the first. Measured on the claude adapter
+/// (TASK-KKBTP): `Present` at the probe and a timed-out `Unknown` at composition
+/// resolved to two different credential modes, so a run launched with a
+/// credential nothing had ruled on, after ownership was committed. Recording the
+/// choice afterwards does not fix that; only pinning it beforehand does.
+///
+/// So a probe hands back a *plan*: a driver-config fragment the daemon merges
+/// into the config it then gives [`WorkerDriver::acquire`], carrying the
+/// decisions the launch must not re-derive. Two rules hold it honest:
+///
+/// - **Non-secret only.** The plan reaches durable run metadata. It may name the
+///   environment variable a key comes from; it must never carry the key.
+/// - **Decisions, not observations to redo.** A plan says "bare mode, key from
+///   `ANTHROPIC_API_KEY`, neutralise nothing" — facts a launch can apply without
+///   asking the harness anything.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PreflightOutcome {
+    /// Whether the dispatch may proceed.
+    pub verdict: Preflight,
+    /// Driver-config fragment pinning what the probe resolved, or `None` when
+    /// the probe resolved nothing a launch would otherwise re-derive.
+    pub plan: Option<Value>,
+}
+
+impl PreflightOutcome {
+    /// A verdict that pins nothing — the right answer for a probe that only
+    /// classified, and for every driver that has no probe at all.
+    pub fn verdict(verdict: Preflight) -> Self {
+        Self {
+            verdict,
+            plan: None,
+        }
+    }
+
+    /// Attach the launch facts this verdict was reached on.
+    pub fn with_plan(mut self, plan: Value) -> Self {
+        self.plan = Some(plan);
+        self
+    }
+
+    /// Only a definitive `Fatal` may reject a dispatch (see [`Preflight`]).
+    pub fn rejects_dispatch(&self) -> Option<&str> {
+        self.verdict.rejects_dispatch()
+    }
+
+    /// Merge the pinned plan into the config the launch will receive.
+    ///
+    /// The daemon calls this between admitting the dispatch and acquiring, so
+    /// `acquire` and every composition below it read the plan instead of
+    /// re-observing. Merging into the driver config rather than into a
+    /// side-channel is deliberate: the config is the one value that already
+    /// travels the whole way — through `AcquireRequest`, through the mode
+    /// driver's delegation, and into the persisted `RunMeta`, where the pinned
+    /// plan becomes the diagnosable record of what the run was launched with.
+    ///
+    /// A plan overwrites any same-named key already present, so a stale or
+    /// operator-supplied fragment cannot outrank the probe's own answer.
+    pub fn pin_into(&self, config: &DriverConfig) -> DriverConfig {
+        let (Some(Value::Object(plan)), Value::Object(base)) = (self.plan.as_ref(), &config.0)
+        else {
+            return config.clone();
+        };
+        let mut merged = base.clone();
+        for (key, value) in plan {
+            merged.insert(key.clone(), value.clone());
+        }
+        DriverConfig(Value::Object(merged))
+    }
+}
+
+impl From<Preflight> for PreflightOutcome {
+    fn from(verdict: Preflight) -> Self {
+        Self::verdict(verdict)
     }
 }
 

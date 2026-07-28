@@ -7,7 +7,7 @@
 //! with a dedicated runtime (`run_acp_stdio`) that mirrors `acp_ws`.
 
 use std::collections::BTreeMap;
-use std::process::{Command as StdCommand, Stdio};
+use std::process::Stdio;
 
 use async_trait::async_trait;
 use serde_json::Value;
@@ -28,7 +28,7 @@ use crate::modes::subprocess_stream_json::{
 use crate::r#trait::{
     preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
     DriverContext, DriverControl, DriverError, DriverSession, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, Preflight, RunKind, StdioSpawn,
+    HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta, PreflightOutcome, RunKind, StdioSpawn,
     TransitionAck, TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 use crate::runtime_options::{
@@ -87,9 +87,12 @@ impl AcpStdioDriver {
     }
 }
 
-struct AcpStdioComposeAdapter {
-    inner: Box<dyn HarnessEventAdapter>,
-    jsonrpc_session_init: Option<Value>,
+/// Crate-visible so the claude adapter's own tests can compose through the
+/// exact wrapper `AcpStdioDriver::acquire` uses, rather than through a
+/// stand-in that cannot prove what the mode layer does to the request.
+pub(crate) struct AcpStdioComposeAdapter {
+    pub(crate) inner: Box<dyn HarnessEventAdapter>,
+    pub(crate) jsonrpc_session_init: Option<Value>,
 }
 
 #[async_trait]
@@ -387,14 +390,14 @@ fn subprocess_from_stdio_spawn(
     }
 }
 
+/// Is there a binary to spawn?
+///
+/// A `PATH` walk, not `which`. This is reached from synchronous
+/// `compose_request`, which `acquire` awaits on a Tokio worker thread, so
+/// spawning here blocks that thread for as long as the child takes and has no
+/// timeout to bound it (TASK-KKBTP, TASK-Z3093).
 fn command_available(command: &str) -> bool {
-    StdCommand::new("which")
-        .arg(command)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|status| status.success())
-        .unwrap_or(false)
+    crate::adapters::claude::executable_on_path(command)
 }
 
 #[async_trait]
@@ -418,7 +421,7 @@ impl WorkerDriver for AcpStdioDriver {
 
     /// Readiness is the harness's question, not the transport's (see
     /// [`preflight_via_adapter`]).
-    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> PreflightOutcome {
         preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 
@@ -436,9 +439,23 @@ impl WorkerDriver for AcpStdioDriver {
         // Read straight after composing: the adapter pins the native session id
         // while it builds the argv, and `compose.inner` is moved below.
         let native_runtime = compose.native_runtime();
+        let jsonrpc_init = compose.jsonrpc_session_init.take();
+
+        // The plain-subprocess shape belongs to subprocess-stream-json, and it
+        // gets the request *this* composition produced. Composing again there
+        // meant every acp-stdio claude dispatch built its argv twice and probed
+        // its credentials twice, after the lease was held (TASK-KKBTP).
+        if jsonrpc_init.is_none() && matches!(request, HarnessRequest::Subprocess { .. }) {
+            return SubprocessStreamJsonDriver::acquire_composed(
+                Box::new(compose),
+                ctx,
+                request,
+                native_runtime,
+            )
+            .await;
+        }
 
         let (tx, rx) = mpsc::channel(64);
-        let jsonrpc_init = compose.jsonrpc_session_init;
         let allowlist = allowlist_from_driver_config(&config)
             .map_err(|e| crate::DriverError::InvalidConfig(format!("sandbox_permissions: {e}")))?;
         let heartbeat_interval = heartbeat_interval(&config);
@@ -521,14 +538,8 @@ impl WorkerDriver for AcpStdioDriver {
                     Some(producer),
                 )
             }
-            HarnessRequest::Subprocess { .. } => {
-                return SubprocessStreamJsonDriver::new(Box::new(AcpStdioComposeAdapter {
-                    inner: self.adapter.clone_box(),
-                    jsonrpc_session_init: None,
-                }))
-                .acquire(ctx, config)
-                .await;
-            }
+            // Handled above, before this match, so the composed request is the
+            // one that gets spawned.
             _ => return Err(DriverError::Unsupported("acp-stdio request shape")),
         };
 

@@ -21,8 +21,8 @@ use orgasmic_core::{BabysitterTool, DriverEvent, SandboxAllowlist, TextStream};
 use crate::preflight::{classify_api_key, classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
     implementer_tool_is_allowed, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, RunKind, StdioSpawn,
-    TransitionRequest, UserInputRequest, WireMessage,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome,
+    RunKind, StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
 };
 use crate::runtime_options::{
     RuntimeModelOption, RuntimeOptionsCatalog, RuntimeOptionsRequest, RuntimeOptionsState,
@@ -171,15 +171,16 @@ impl HarnessEventAdapter for CursorAcpAdapter {
     /// first, then ask about *that* credential. `cursor-agent status` reports
     /// the ambient login and knows nothing about a `CURSOR_API_KEY` supplied
     /// through config, so a run carrying its own key must not be judged by it.
-    async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+    async fn preflight(&mut self, _ctx: &DriverContext, config: &DriverConfig) -> PreflightOutcome {
         let Ok(cfg) = serde_json::from_value::<CursorAcpConfig>(config.0.clone()) else {
-            return Preflight::Unsupported;
+            return Preflight::Unsupported.into();
         };
         if let Some(env_name) = cfg.api_key_env.as_deref() {
             return classify_api_key(
                 std::env::var(env_name).ok().as_deref(),
                 "the CURSOR_API_KEY this worker would present is empty",
-            );
+            )
+            .into();
         }
         let command = self
             .stdio_spawn()
@@ -194,6 +195,9 @@ impl HarnessEventAdapter for CursorAcpAdapter {
             ),
             None => Preflight::Unsupported,
         }
+        // Nothing to pin: which credential a cursor run presents is decided by
+        // `api_key_env` in the config, not by an observation that could change.
+        .into()
     }
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {

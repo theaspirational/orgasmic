@@ -4336,11 +4336,8 @@ async fn spawn_worker_run(
         worktree: Some(req.worktree_path.to_path_buf()),
         babysitter_target: None,
     };
-    if let Some(reason) = driver
-        .preflight(&preflight_ctx, &driver_config)
-        .await
-        .rejects_dispatch()
-    {
+    let preflight = driver.preflight(&preflight_ctx, &driver_config).await;
+    if let Some(reason) = preflight.rejects_dispatch() {
         return Err(SpawnWorkerFailure {
             error: ApiError::bad_request(format!(
                 "{}/{} cannot start a worker: {reason}",
@@ -4348,6 +4345,13 @@ async fn spawn_worker_run(
             )),
         });
     }
+    // Pin what the probe resolved onto the config the launch receives. Admitting
+    // a dispatch on an observation and then letting `acquire` observe again is
+    // how a run launched with a credential the preflight never judged, after the
+    // lease was held (TASK-KKBTP). The plan is non-secret and rides into RunMeta
+    // with the rest of the driver config, so a failed run says what it was
+    // admitted on.
+    let driver_config = preflight.pin_into(&driver_config);
 
     let now = Utc::now();
     let fragment = safe_session_fragment(req.task_id);

@@ -12,8 +12,8 @@ use orgasmic_drivers::{
     driver_for, driver_for_mode_harness, AcpStdioDriver, AcpWsDriver, AcpWsProtocol, ClaudeAdapter,
     CodexAdapter, CodexAppserverDriver, CursorAdapter, DriverConfig, DriverContext, DriverError,
     DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, HermesAdapter,
-    Preflight, RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver, WorkerDriver,
-    HARNESSES, MODES, SUPPORTED,
+    Preflight, PreflightOutcome, RunKind, StdioSpawn, SubprocessStreamJsonDriver, TmuxDriver,
+    WorkerDriver, HARNESSES, MODES, SUPPORTED,
 };
 use serde_json::{json, Value};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -1786,8 +1786,8 @@ impl WorkerDriver for PreflightDriver {
         "preflight-fake"
     }
 
-    async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
-        self.0.clone()
+    async fn preflight(&self, _ctx: &DriverContext, _config: &DriverConfig) -> PreflightOutcome {
+        self.0.clone().into()
     }
 
     async fn acquire(
@@ -1822,7 +1822,7 @@ impl WorkerDriver for SilentDriver {
 async fn a_driver_without_a_probe_reports_unsupported_not_ready() {
     let verdict = SilentDriver.preflight(&ctx(), &DriverConfig::empty()).await;
     assert_eq!(
-        verdict,
+        verdict.verdict,
         Preflight::Unsupported,
         "the default must not claim a readiness the driver never checked"
     );
@@ -1867,7 +1867,7 @@ async fn an_instruction_to_log_in_is_fatal_rather_than_something_to_wait_on() {
     ))
     .preflight(&ctx(), &DriverConfig::empty())
     .await;
-    assert!(matches!(verdict, Preflight::Fatal { .. }));
+    assert!(matches!(verdict.verdict, Preflight::Fatal { .. }));
 }
 
 /// The probes must reach a verdict against the harnesses actually installed
@@ -1928,7 +1928,7 @@ async fn installed_harnesses_answer_their_own_readiness_probe() {
             .await;
         eprintln!("{} -> {verdict:?}", case.binary);
         assert_ne!(
-            verdict,
+            verdict.verdict,
             Preflight::Unsupported,
             "{} is installed and answering, so its probe must reach a verdict; \
              `Unsupported` here means the harness's reply no longer matches what \
