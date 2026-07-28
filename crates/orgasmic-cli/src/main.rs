@@ -682,7 +682,16 @@ enum GraphCmd {
 #[derive(Subcommand, Debug)]
 #[allow(clippy::large_enum_variant)]
 enum TxCmd {
+    // orgasmic:task_HQ970
     /// Append a tx entry through the daemon.
+    ///
+    /// A tx entry is an Org property drawer and nothing else — there is no
+    /// body region. Every value must therefore be a SINGLE LINE: a value
+    /// containing a newline is refused (nothing is written), because writing
+    /// it would end the drawer early and leave the append-only ledger
+    /// unparseable for every later read. Put long or multi-paragraph prose in
+    /// the node body with `orgasmic node body set` and keep `--reason` to one
+    /// summary line.
     Record {
         /// Tx type (e.g. `manager.action`, `task.state_transitioned`).
         #[arg(long = "type", value_name = "TYPE")]
@@ -693,6 +702,9 @@ enum TxCmd {
         task: Option<String>,
         #[arg(long)]
         target: Option<String>,
+        /// Why this entry exists. Single line only — a newline is refused and
+        /// nothing is written. Long prose belongs in the node body
+        /// (`orgasmic node body set`).
         #[arg(long)]
         reason: Option<String>,
         #[arg(long)]
@@ -703,7 +715,8 @@ enum TxCmd {
         /// daemon returns the original result without double-appending.
         #[arg(long = "request-id")]
         request_id: Option<String>,
-        /// Additional `KEY=VALUE` properties; repeatable.
+        /// Additional `KEY=VALUE` properties; repeatable. Values are
+        /// single-line only, same as `--reason`.
         #[arg(long = "extra", value_name = "KEY=VALUE")]
         extra: Vec<String>,
         /// Override the tx file path (defaults to `$ORGASMIC_HOME/state/tx/YYYY-MM.org`).
@@ -3162,6 +3175,70 @@ fn parse_key_values(items: Vec<String>) -> Result<Vec<(String, String)>> {
             Ok((k.to_string(), v.to_string()))
         })
         .collect::<Result<_>>()
+}
+
+// orgasmic:task_HQ970
+#[cfg(test)]
+mod tx_record_help_tests {
+    use super::Cli;
+    use clap::CommandFactory;
+
+    fn tx_record_help() -> String {
+        let mut cmd = Cli::command();
+        let record = cmd
+            .find_subcommand_mut("tx")
+            .expect("tx subcommand")
+            .find_subcommand_mut("record")
+            .expect("tx record subcommand");
+        record.render_long_help().to_string()
+    }
+
+    /// TASK-HQ970 acceptance: the single-line constraint is stated in
+    /// `tx record --help`, not only enforced at the daemon. An operator who
+    /// reads the help before pasting prose must find the rule there.
+    #[test]
+    fn help_states_the_single_line_constraint_and_where_prose_goes() {
+        let help = tx_record_help();
+        assert!(
+            help.contains("SINGLE LINE"),
+            "tx record --help must state the single-line constraint: {help}"
+        );
+        assert!(
+            help.contains("no body region"),
+            "tx record --help must say a tx entry has no body region: {help}"
+        );
+        assert!(
+            help.contains("node body set"),
+            "tx record --help must name where long prose goes: {help}"
+        );
+    }
+
+    #[test]
+    fn reason_and_extra_flags_repeat_the_constraint_at_the_flag() {
+        let help = tx_record_help();
+        let reason = help
+            .split("--reason <REASON>")
+            .nth(1)
+            .expect("--reason section")
+            .split("--actor")
+            .next()
+            .expect("text before --actor");
+        assert!(
+            reason.contains("Single line only"),
+            "--reason help must state the constraint: {reason}"
+        );
+        let extra = help
+            .split("--extra <KEY=VALUE>")
+            .nth(1)
+            .expect("--extra section")
+            .split("--tx-path")
+            .next()
+            .expect("text before --tx-path");
+        assert!(
+            extra.contains("single-line only"),
+            "--extra help must state the constraint: {extra}"
+        );
+    }
 }
 
 #[cfg(test)]

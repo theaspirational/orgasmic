@@ -1,0 +1,28 @@
+# Pinned from the real red run of 2026-07-28 with the injection applied.
+#
+# The injection removes both halves of the fix — boundary validation (defect 1)
+# and the writer's compose->re-parse guard (defect 2) — which is exactly the
+# state the ledger was bricked from on 2026-07-26.
+exit: 101
+
+# The write is ACCEPTED. That acceptance is the defect: the operator gets a
+# tx_id back and has no signal until the next read.
+contains: test multi_line_reason_is_refused_and_project_ledger_still_parses ... FAILED
+contains: test multi_line_reason_is_refused_and_home_ledger_still_parses ... FAILED
+contains: a multi-line reason must be refused, never appended
+
+# The production symptom itself, logged by the daemon's own index refresh
+# immediately after the accepted append: the append-only ledger no longer
+# parses, so every subsequent verb fails. Reproduced on BOTH destinations —
+# the project ledger and the $ORGASMIC_HOME/state/tx home file.
+contains: malformed property drawer entry: blank line inside property drawer
+
+# `--extra KEY=VALUE` is the same hole: the injected prose pushes the later
+# properties out of the drawer, so a plain prose line is read as a property.
+contains: test multi_line_extra_value_is_refused_and_nothing_is_written ... FAILED
+
+# The supported single-line shapes must keep passing even on the injected
+# tree: this defect is about what the writer ACCEPTS, not about breaking
+# ordinary writes. A red run where this also fails means the injection
+# widened past the defect.
+contains: test ledger_still_parses_after_every_supported_write ... ok

@@ -1,0 +1,26 @@
+diff --git a/crates/orgasmic-core/src/tx.rs b/crates/orgasmic-core/src/tx.rs
+index ec2c7b9..f63979d 100644
+--- a/crates/orgasmic-core/src/tx.rs
++++ b/crates/orgasmic-core/src/tx.rs
+@@ -148,6 +148,10 @@ impl TxEntry {
+     /// operator would use to repair it. That is TASK-HQ970's reproduced brick,
+     /// and this is the check that makes it unreachable.
+     pub fn validate(&self) -> Result<(), TxError> {
++        // TASK-HQ970 injection (defect 1): no validation at the API boundary.
++        // A value carrying a newline is accepted and written verbatim.
++        return Ok(());
++        #[allow(unreachable_code)]
+         for (key, value) in self.ordered_properties() {
+             validate_property_key(&key)?;
+             validate_property_value(&key, &value)?;
+@@ -173,6 +177,10 @@ impl TxEntry {
+     /// Shares its shape with `OrgRewriter::assert_body_round_trip`
+     /// (TASK-ZYWZD) — the same guarantee on a surface that has a body.
+     pub fn assert_round_trip(&self) -> Result<(), TxError> {
++        // TASK-HQ970 injection (defect 2): the writer reports success without
++        // re-parsing what it produced, so it can brick its own ledger.
++        return Ok(());
++        #[allow(unreachable_code)]
+         let rendered = self.render();
+         // Path-free display: this error reaches an API client.
+         let parsed = parse_tx_file(&rendered, TX_ENTRY_DISPLAY)?;

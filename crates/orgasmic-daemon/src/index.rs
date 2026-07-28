@@ -1445,7 +1445,13 @@ fn tx_parse_error_line(err: &TxError, contents: &str) -> Option<usize> {
 fn tx_error_line(err: &TxError) -> Option<usize> {
     match err {
         TxError::Parse(err) => org_error_line(err),
-        TxError::Io(_) | TxError::MissingField(_) | TxError::NonPropertyOnly { .. } => None,
+        // `InvalidValue` / `RoundTripLoss` are write-side refusals (TASK-HQ970)
+        // and never describe a line of an existing file.
+        TxError::Io(_)
+        | TxError::MissingField(_)
+        | TxError::NonPropertyOnly { .. }
+        | TxError::InvalidValue { .. }
+        | TxError::RoundTripLoss { .. } => None,
     }
 }
 
