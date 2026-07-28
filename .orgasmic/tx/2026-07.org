@@ -33452,3 +33452,58 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       created task TASK-BCYMM
 :END:
+
+* TX 2026-07-28 Tue 11:41:27 implementer.done TASK-Q07Y5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3185
+:TIME:         [2026-07-28 Tue 11:41:27]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q07Y5
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: bfb53ae
+:MERGE_SHA:    0829c34
+:BRANCH:       task-q07y5-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3150
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 11:41:28 task.state_transitioned TASK-Q07Y5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3186
+:TIME:         [2026-07-28 Tue 11:41:28]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q07Y5
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-Q07Y5 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 11:41:28 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3187
+:TIME:         [2026-07-28 Tue 11:41:28]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Independent classification of the two TASK-QSSQH post-merge gate failures, matching the worker's: api::tests::post_artifact_regenerate_hot_path_reuses_live_run_id (409 harness busy) and supervisor::tests::poll_direct_child_pid_prefers_worker_server_over_generic_sibling (fake cursor-agent did not start children) both PASSED when rerun alone with --test-threads=1 (2 passed, 0 failed, 1.30s). Full-suite run was 526 passed / 2 failed in 378.73s against a normal ~106s, because the LiveSessionGuard flock is shared across every test binary in the workspace, so three concurrent worker suites serialize their live sections against this one. Both are TASK-STWVB family, not QSSQH regressions.
+:END:
+
+* TX 2026-07-28 Tue 11:41:50 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3188
+:TIME:         [2026-07-28 Tue 11:41:50]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Evidence for TASK-RRVX0 and TASK-870YX from the TASK-Q07Y5 worker's residual-risk analysis, merged as 0829c34: the daemon holds its home instance lock until graceful_shutdown returns, and when the writer task is blocked in a syscall the process can outlive its 40s budget because dropping the tokio runtime waits for that worker thread. DAEMON_LOCK_RETRY_BUDGET is 125ms, so a daemon restart whose predecessor is stuck past the budget fails its replacement start with 'instance lock is held'. That is visible and retryable rather than a loss, but it means the 870YX transient-hold retry window is sized for a CLI probe, not for a stuck predecessor - the two hold the same lock for wildly different durations. Worth deciding explicitly whether the retry budget should derive from the shutdown budget the way ExitTimeOut now does.
+:END:
