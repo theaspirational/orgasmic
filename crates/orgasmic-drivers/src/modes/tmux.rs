@@ -670,6 +670,11 @@ struct TmuxSpawnPlan {
     /// environment so a manager session recognises "I am already supervised"
     /// (`orgasmic manager register`, dec_3Y2E1).
     run_id: String,
+    /// Harness-specific environment exported into the spawned pane. Carried on
+    /// the plan (not applied at the tmux call site) so the stamp a transcript
+    /// finder depends on is provable without spawning tmux.
+    // orgasmic:TASK-GT91X
+    harness_env: Vec<(String, String)>,
     native_resume_mode: bool,
     trusted_provider_identity: Option<String>,
     pinned_executable: Option<PinnedExecutableIdentity>,
@@ -823,10 +828,31 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
         paste_prompt,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
+        harness_env: harness_launch_env(harness),
         native_resume_mode: cfg.native_resume_mode,
         trusted_provider_identity: cfg.trusted_provider_identity.clone(),
         pinned_executable: cfg.pinned_executable.clone(),
         provider_home: cfg.provider_home.clone(),
+    }
+}
+
+/// Environment a mux launch must export for `harness` so that run's transcript
+/// stays reachable afterwards. Shared by the tmux and rmux modes.
+///
+/// codex derives `session_meta.originator` from its frontend, so a TUI launch
+/// records `codex-tui` unless [`crate::CODEX_ORIGINATOR_ENV`] overrides it. The
+/// finder's cwd scan is the *only* correlator available for a codex run — codex
+/// emits no `NativeRuntime`, so there is no session id to fall back on
+/// (TASK-F9VEZ). Without this stamp the scan matches nothing and every codex
+/// transcript is unreachable (TASK-GT91X).
+// orgasmic:TASK-GT91X
+pub(crate) fn harness_launch_env(harness: &str) -> Vec<(String, String)> {
+    match harness {
+        "codex" => vec![(
+            crate::CODEX_ORIGINATOR_ENV.to_string(),
+            crate::CODEX_ORIGINATOR.to_string(),
+        )],
+        _ => Vec::new(),
     }
 }
 
@@ -1523,11 +1549,15 @@ async fn spawn_tmux_session(
         TMUX_SESSION_ROWS,
         "-e",
     ])
-    .arg(format!("ORGASMIC_RUN_ID={}", plan.run_id))
-    .arg("-c")
-    .arg(&plan.cwd)
-    .arg("--")
-    .arg(&execution_command);
+    .arg(format!("ORGASMIC_RUN_ID={}", plan.run_id));
+    // orgasmic:TASK-GT91X
+    for (key, value) in &plan.harness_env {
+        tmux.arg("-e").arg(format!("{key}={value}"));
+    }
+    tmux.arg("-c")
+        .arg(&plan.cwd)
+        .arg("--")
+        .arg(&execution_command);
     for a in &execution_args {
         tmux.arg(a);
     }
@@ -3013,6 +3043,7 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-fork-gap".into(),
+            harness_env: Vec::new(),
             native_resume_mode: true,
             trusted_provider_identity: Some("claude".into()),
             pinned_executable: None,
@@ -3119,6 +3150,37 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--model", "claude-sonnet-4-6"]));
+    }
+
+    /// Same stamp as rmux: the tmux mode launches the identical codex TUI, so
+    /// it must record the identical originator (TASK-GT91X).
+    // orgasmic:TASK-GT91X
+    #[test]
+    fn codex_tmux_pane_exports_transcript_finder_originator() {
+        let cfg = TmuxTuiConfig {
+            harness: Some("codex".into()),
+            ..TmuxTuiConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-codex-originator", RunKind::Worker), "codex");
+        assert!(
+            plan.harness_env
+                .iter()
+                .any(|(key, value)| key == crate::CODEX_ORIGINATOR_ENV
+                    && value == crate::CODEX_ORIGINATOR),
+            "codex tmux pane must export {}={} or its transcript is unreachable; got {:?}",
+            crate::CODEX_ORIGINATOR_ENV,
+            crate::CODEX_ORIGINATOR,
+            plan.harness_env
+        );
+
+        for harness in ["claude", "cursor-agent"] {
+            let cfg = TmuxTuiConfig {
+                harness: Some(harness.into()),
+                ..TmuxTuiConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-other", RunKind::Worker), harness);
+            assert!(plan.harness_env.is_empty(), "{harness} needs no stamp");
+        }
     }
 
     #[test]
@@ -4074,6 +4136,7 @@ mod tests {
             paste_prompt: None,
             native_runtime: None,
             run_id: "run-input-ready".into(),
+            harness_env: Vec::new(),
             native_resume_mode: false,
             trusted_provider_identity: None,
             pinned_executable: None,
