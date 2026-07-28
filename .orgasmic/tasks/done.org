@@ -14136,3 +14136,191 @@ RESIDUAL RISK (manager review of the diff)
    stranded, but its summary event is lost.
 These three are for the reviewer to rule on; none blocked the merge.
 
+* DONE TASK-6AYEJ.1 6AYEJ fix round: bind dispatch-close to a generation, not a task, and fail closed on unmatched RUN_ID :cli:dispatch:fix:
+:PROPERTIES:
+:ID: TASK-6AYEJ.1
+:PRIORITY: P0
+:END:
+
+FIX ROUND for TASK-6AYEJ reviewer findings (BLOCK SHIP). One-round fix semantics.
+
+FINDING 2 (HIGH, the ship blocker) — crates/orgasmic-cli/src/manager.rs:593. Repeated close is TASK-bound, not dispatch-generation-bound, so a stale retry can close and clean up a SUCCESSOR dispatch instead of no-oping. cmd_dispatch_close selects any currently open dispatch covering the task before it consults closed records (593-602). The normal workflow closes the implementer, moves the task to IN_REVIEW (manager.rs:2958-2966), then opens a reviewer for the SAME task. Replaying the implementer close at that point selects the reviewer record: the extra --merge-sha is accepted, done_tx_type becomes reviewer.done, lines 677-714 release the live reviewer and enter worktree/branch cleanup, and 735-767 append the wrong close and apply reviewer lifecycle. The existing test at crates/orgasmic-cli/tests/dispatch.rs:3164 only replays IMMEDIATELY, before any successor exists, so it misses the acceptance-breaking edge. FIX: bind close/retry identity to the intended manager.dispatch_started tx (preferred --started-tx, or an equally stable generation token), derive a deterministic request id from it, and make a retry a no-op against that exact closed generation even when another dispatch for the task is open. CLOSED_TX already names the stable generation in terminal records, so exposing the corresponding started tx as a close precondition is the clearest identity. ADD TESTS: implementer-close -> reviewer-open -> stale implementer-retry; and abort -> redispatch -> stale retry.
+
+MANAGER NOTE: this is a live hazard, not theoretical. I ran a deliberate double-close on TASK-RWCRN this session to verify the no-op; it was safe only because no successor dispatch existed at that moment. Had the reviewer already been dispatched it would have terminated it.
+
+FINDING 3 (LOW) — crates/orgasmic-cli/src/manager.rs:3601. A PRESENT but unmatched RUN_ID falls through to task overlap and can mark the wrong generation [reported]. After run A is aborted and run B dispatched for the same task, a late *.reported for A cannot match A (3603 excludes closed records), then 3609-3621 mark B reported. The flag gates no cleanup so it is not independently ship-blocking, but it tells the manager the wrong worker finished. FIX: if RUN_ID is present, return after the exact-match attempt whether or not it succeeded; use the overlap fallback only for an entry that genuinely lacks RUN_ID, or remove the fallback since the new schema requires it. Add the three adversarial cases from the review.
+
+FINDING 1 (HIGH) is ALREADY FIXED by the manager, do not redo the prose: shipped/prompt-studio/conventions/manager-dispatch.org step 4 no longer instructs `git worktree remove --force && git branch -D`; it now states that success-path cleanup belongs to dispatch-close --worktree-remove --branch-delete and only to it, because that path salvages to refs/orgasmic/salvage/<sha> first and removes without --force, and because finalize --commit is optional so a worker may legitimately leave uncommitted output. WHAT REMAINS IN SCOPE: the reviewer asked for a shipped-content assertion so the force-removal instruction cannot silently return. Add it.
+
+RESIDUAL TEST GAP the reviewer accepted but named: the stage-architect path has no direct test proving a stage run creates no manager.dispatch_started record and that its finalize tombstone, rather than the architector.reported tx type, drives stage completion. Add it if cheap; say so if not.
+
+NOT IN SCOPE: TASK-WGXKD (the finalize terminal-tx race). The reviewer confirmed it is orthogonal to 6AYEJ — the merge changed the tx type, not the commit -> report -> release -> tx ordering. BUT the reviewer also found that the ordering comment at manager.rs:1213-1218 is now factually WRONG: it claims a death before the tx leaves the run flagged orphan and rescuable, and production evidence shows it leaves durable commit + report + released lease with no tx and NO orphan flag. Correcting that comment IS in scope here since you are editing this file; fixing the race is not.
+
+GATES: env -u ORGASMIC_RUN_ID cargo test -p orgasmic-cli (ORGASMIC_RUN_ID leaks into test subprocesses inside a dispatch, TASK-K5NDR); cargo clippy --workspace --all-targets -- -D warnings; cargo fmt --all --check. Do NOT run legacy_drivers_and_explicit_pairs_emit_equivalent_start_events (TASK-099T6, bills real money); if you run the drivers suite pass -- --skip for it.
+
+* DONE TASK-6AYEJ.2 make generation-bound close mandatory when a live dispatch exists; fix recovery-run [unreported] :dispatch:cli:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ.2
+:PRIORITY: P0
+:END:
+
+Fix round for the TASK-6AYEJ.1 reviewer BLOCK SHIP (run-20260728T045554-7e845a232c4a4ce4a4a576c5ba0ae9be, merge 19264a7). Findings verbatim below.
+
+** Finding 1 - HIGH correctness
+manager.rs:103-111, 1856-1867, 3446-3496. dispatch-close is still task-bound unless the caller volunteers --started-tx, so the acceptance-breaking successor-close hazard remains reachable. The exact-generation branch is sound, but the option is not required: without it, resolve_close_target still chooses the newest open dispatch covering the task. The --merge-sha fence at manager.rs:660-679 catches only a done retry landing on a non-implementer/non-architector; it does not protect an aborted retry or a same-kind successor.
+
+NOT HYPOTHETICAL - the reviewer found it in the real ledger: .orgasmic/tx/2026-07.org:26280-26290,26524-26550,26662-26673 records reviewer A for TASK-KWSTJ being aborted, reviewer B opening for the same task, and B later being aborted. A stale tokenless abort for A during B's lifetime selects B.
+
+The repo also still teaches the unsafe form: the copyable recovery hint at manager.rs:1863-1867 omits --started-tx, and the ordinary finalize->close integration at tests/dispatch.rs:3104-3122 exercises a tokenless close. The new boundary test at manager.rs:4581-4613 explicitly preserves task-bound selection.
+
+FIX DIRECTION: require --started-tx whenever an open matching dispatch exists. Preserve tokenless compatibility only as a no-op when there is no open record and a historical closed record exists - historical records never need to act on a LIVE record by task. Add the token to the manager-generated close hint and to the ordinary finalize->close integration; retain the stale implementer->reviewer and abort->redispatch adversarial tests.
+
+** Finding 2 - LOW correctness
+manager.rs:3701-3720 and daemon/src/api.rs:7543-7909. The fail-closed RUN_ID rule leaves a legitimate fresh recovery run permanently [unreported]. Initial CLI dispatches write a run.created association carrying RUN_ID and DISPATCH_TX (api.rs:5109-5200), and attach_run_created_to_dispatch stores that original run id (manager.rs:3655-3697). But resume_native_fork and start_recovery_run acquire a REPLACEMENT run and return a new id while preserving the task and terminal contract - and never call the sole record_dispatch_created site, so no replacement association is emitted. dispatch finalize then reports the live replacement id (manager.rs:1218-1221), which cannot equal the open generation's original id, and mark_matching_dispatch_reported now returns without task fallback. Reattach-in-place is unaffected because it preserves the id.
+
+So the answer to the brief's adversarial probe is YES: fresh recovery/resume is a valid mismatch shape, and its manager status never becomes [reported]. The wrong-marking bug was traded for a never-marking bug in this one shape.
+
+FIX DIRECTION: persist a replacement-run-to-manager.dispatch_started generation association for fresh recovery/resume, and match *.reported by that generation rather than by task overlap. Add an end-to-end dispatched-run -> interruption -> recovery -> finalize status test.
+
+** Finding 3 - LOW test
+daemon/src/api.rs:21416-21485. The added architect-stage test does not prove a stage run creates no manager.dispatch_started record. It opens a synthetic session, appends a Lifecycle::Release and calls spawn_stage_completion_watcher directly. The tombstone-driven architect.completed assertion is useful, but the negative dispatch assertion is TAUTOLOGICAL because the production stage launch/recording path never ran.
+
+FIX DIRECTION: drive the assertion through the real stage launch endpoint / shared production spawn path, then finalize-tombstone it and inspect both project and home ledgers.
+
+** Finding 4 - LOW test
+tests/shipped_conventions.rs:49-71. The forced-cleanup guard is both syntax-brittle and blind to realistic dangerous variants. It matches only the adjacent substring 'worktree remove --force', while the ORIGINAL dangerous instruction read 'git worktree remove <path> --force' - which would evade the needle entirely, alone or paired with a generalized 'git branch -D <branch>'. Conversely it requires exactly one occurrence and the exact phrase 'destroys exactly that', so innocent rewording fails it. The convention at manager-dispatch.org:205-227 is currently safe; the guard is the problem. A brittle guard gets deleted the first time it fails spuriously, and then protects nothing.
+
+FIX DIRECTION: replace exact prose matching with a semantic guard that rejects 'git worktree remove' combined with '--force' regardless of intervening arguments, and rejects 'git branch -D' regardless of branch spelling. Permit zero warning literals, or anchor any allowed warning to an explicit structured marker rather than a sentence.
+
+** Reviewer notes that are NOT findings (do not re-litigate)
+- The --merge-sha behaviour change is ACCEPTED: no production, convention or daemon path supplies it for a reviewer close, and manager.rs:672-678 names both remedies.
+- Deterministic request ids are belt-and-braces, not the restart fence. Terminal records persist CLOSED_TX (manager.rs:2150-2163) and ledger replay resolves that exact generation as closed (manager.rs:3434-3480,3739-3753), so an exact-token replay after a daemon restart still no-ops.
+- The corrected TASK-WGXKD ordering comment at manager.rs:1230-1245 was verified accurate. NOTE: TASK-WGXKD has since landed (merge 80dc4ec) and moved terminal-tx emission into the daemon release call, so re-read that comment against current code before touching it.
+
+* DONE TASK-6AYEJ manager dispatch-close is unreachable after a worker finalize, so success-path cleanup never runs :dispatch:lifecycle:defect:
+:PROPERTIES:
+:ID: TASK-6AYEJ
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-cli
+:END:
+
+The worker's own success signal closes the dispatch record, so the manager's
+`dispatch-close` can never run on a successful dispatch. Found while trying to
+close TASK-D0GA3 after merging it.
+
+REPRODUCED, not inferred:
+- TASK-D0GA3 merged at 0daa77c. `orgasmic manager dispatch-close --task
+  TASK-D0GA3 --status done --merge-sha 0daa77c ... --worktree-remove
+  --branch-delete` fails with "no open manager.dispatch_started tx for
+  TASK-D0GA3".
+- `orgasmic manager dispatch-status` prints nothing — zero open dispatches —
+  while `git worktree list` shows 17 live dispatch worktrees and their branches.
+
+MECHANISM, read from code: scan_open_dispatches (crates/orgasmic-cli/src/manager.rs:3316)
+pairs each manager.dispatch_started with the first terminal tx it sees, and
+manager.rs:3338-3341 counts `implementer.done` / `reviewer.done` /
+`architector.done` / `manager.dispatch_aborted` as terminal. Per dec_3M7M0 the
+worker's `orgasmic dispatch finalize --commit` is the SOLE success signal and it
+emits `implementer.done` itself. So the dispatch is closed by the worker before
+the manager has even read the report.
+
+The tx history shows the switchover cleanly. Every terminal tx up to 2026-07-23
+carries ACTOR theaspirational@users.noreply.github.com (the manager, via
+dispatch-close). Every one from 2026-07-26 carries ACTOR agent.implementer or
+agent.reviewer (the worker, via finalize). Not one manager-recorded close since.
+
+WHAT IS LOST, per successful dispatch:
+1. Worktree and branch cleanup never runs. cleanup_dispatch — and with it the
+   whole salvage path just hardened by TASK-2BPWM and TASK-D0GA3 — is dead on
+   the success path. 17 stale worktrees is the accumulated evidence.
+2. MERGE_SHA in the close tx is the WORKER's commit, not the manager's merge.
+   TASK-D0GA3's implementer.done (tx-20260726-orgasmic-2967) records
+   SHA = MERGE_SHA = e7837f1; the actual merge is 0daa77c. Any later audit that
+   trusts MERGE_SHA is looking at a commit that was never on main as such.
+3. REVIEWED_DIFF, worker-session, tokens and wall are never recorded, because
+   only dispatch-close accepts them.
+4. The manager's verdict is not the closing record. The worker's self-report is.
+   That inverts the "treat worker summaries as claims" rule at the tx layer.
+
+NOT AFFECTED, so scope this correctly: the salvage machinery still runs on the
+failure paths, which is where it matters most — cleanup_created_resources
+(dispatch rollback), the daemon POST cleanup endpoint, and dispatch-close on an
+orphan dispatch that never finalized. TASK-2BPWM and TASK-D0GA3 are not wasted
+work.
+
+DIRECTION, to be argued rather than assumed:
+- The likely fix is that `finalize` should record worker completion WITHOUT
+  closing the dispatch — a distinct tx type (implementer.reported?) that
+  scan_open_dispatches does not treat as terminal — leaving implementer.done to
+  the manager. That preserves dec_3M7M0's "finalize is the sole success signal"
+  for the WATCHER while restoring the manager's close.
+- Whatever shape is chosen, closing must stay idempotent and must not strand a
+  dispatch open forever when the manager dies mid-integration.
+- Backfill is out of scope, but the fix must not choke on the ~10 dispatches
+  already closed this way.
+
+Acceptance:
+- after a worker runs `dispatch finalize --commit`, `manager dispatch-status`
+  still lists the dispatch as open
+- `manager dispatch-close --status done --merge-sha <real merge>` succeeds and
+  records the manager's merge sha, and removes the worktree and branch
+- a dispatch that is never finalized still closes via dispatch-close, unchanged
+- double-close is a clean no-op, not an error
+
+MANAGER VERDICT [2026-07-26] — MERGED at a41934a3d12d6a28c36eef75bfeffaefc7428d34 (worker commit ff902ee on top of
+the salvaged b40163f; implementer-claude-rmux, rmux / claude / claude-opus-5 /
+high, run run-20260726T195450-ca46c33862b7462fb515be5eef7c4da9, 21 min).
+
+This was round 2. Round 1 (run-20260726T193954) was killed at exactly 600s by
+the rmux stall-detector defect, TASK-RWCRN, with the worker mid-edit; its tree
+was salvaged to b40163f and round 2 resumed from it with the detector disabled.
+
+VERIFIED BY THE MANAGER:
+- cargo test -p orgasmic-cli — exit 0, all binaries green. Both headline tests
+  ran and passed: dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up
+  and dispatch_finalize_reports_without_closing_and_releases_lease.
+- cargo clippy --workspace --all-targets -- -D warnings — clean.
+- cargo fmt --all --check — clean.
+- The no-migration invariant, against real data rather than a fixture: built the
+  new binary and ran manager dispatch-status against this repo's live ledger,
+  which holds 141 historical *.done entries. Zero open dispatches, exit 0, no
+  crash. The old binary prints the same. Historical closes stay closed.
+
+TEST NOTE. cargo test -p orgasmic-daemon --lib gave 505 passed / 3 failed — the
+same three TASK-STWVB in-suite flakes as the D0GA3 merge, no new ones. The
+worker reported 508 / 0 for that command. That is now the third worker daemon-lib
+number this session that does not reproduce on the manager's machine. The
+failures are pre-existing and this change touches no daemon source, so the merge
+stands, but do not accept a daemon-lib count from a worker without re-running it.
+
+THE FIX IS MERGED BUT DORMANT. Workers resolve  from the daemon's
+launchd PATH, where both ~/.local/bin/orgasmic and ~/.orgasmic/bin/orgasmic are
+the INSTALLED runtime (0.0.15-dev.1, built 2026-07-25), not this build. Proof:
+this very dispatch's worker emitted implementer.done at 20:15:58, the old shape,
+so TASK-6AYEJ's own dispatch closed itself and dispatch-close was again
+unreachable — its worktree and branch were removed by hand for the second time.
+Nothing changes for live dispatches until the runtime is rebuilt. Until then the
+manager must keep removing worktrees by hand, and the 17 stale ones remain.
+
+MANAGER FINDINGS:
+1. The report's strongest evidence is understated. It frames the enumeration as
+   cheaper than the brief predicted, which is true, but the reason matters more
+   than the count: the daemon keys completion off the finalize TOMBSTONE
+   (requires_worker_finalize / finalized_by_worker), never the tx type. That is
+   why dec_3M7M0 survives a tx-type change at all. Worth carrying into
+   architecture notes rather than leaving in a dispatch report.
+2. The architector call is argued well and I accept it, but it rests on "a stage
+   run on main has no manager.dispatch_started, so a report-only tx leaves
+   nothing open". That invariant is load-bearing and is asserted in prose, not by
+   a test. If stage runs ever gain a dispatch record, this breaks silently.
+3. New ordering constraint, correctly flagged as a consequence rather than a
+   regression: a reviewer cannot be dispatched for a task whose implementer
+   dispatch is still open. That is the forcing function that makes cleanup
+   happen, and the error names the remedy — but it changes the manager's
+   habitual sequence and will surprise the first manager who hits it.
+4. mark_matching_dispatch_reported's task-overlap fallback can paint [reported]
+   on the wrong record for legacy entries with no RUN_ID. Cosmetic; it gates
+   nothing. Accepted as written.
+
+Reviewer pass still owed on the merged diff.
+

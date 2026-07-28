@@ -34955,3 +34955,107 @@
 :REASON:       edited handoff node handoff-current
 :NODE_ID:      handoff-current
 :END:
+
+* TX 2026-07-28 Tue 14:39:07 task.state_transitioned TASK-6AYEJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3274
+:TIME:         [2026-07-28 Tue 14:39:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       merged; chain terminated at TASK-6AYEJ.3
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 14:39:08 task.state_transitioned TASK-6AYEJ.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3275
+:TIME:         [2026-07-28 Tue 14:39:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged and reviewed; the chain 6AYEJ -> .1 -> .2 -> .3 terminated with TASK-1T3FZ (5db8600), which moved the liveness verdict into the daemon behind a worktree reservation and was verified by injection
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 14:39:08 task.state_transitioned TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3276
+:TIME:         [2026-07-28 Tue 14:39:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       merged; chain terminated at TASK-6AYEJ.3
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 14:39:09 task.state_transitioned TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3277
+:TIME:         [2026-07-28 Tue 14:39:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged and reviewed; the chain 6AYEJ -> .1 -> .2 -> .3 terminated with TASK-1T3FZ (5db8600), which moved the liveness verdict into the daemon behind a worktree reservation and was verified by injection
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 14:39:09 task.state_transitioned TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3278
+:TIME:         [2026-07-28 Tue 14:39:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       merged; chain terminated at TASK-6AYEJ.3
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 14:39:10 task.state_transitioned TASK-6AYEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3279
+:TIME:         [2026-07-28 Tue 14:39:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       merged and reviewed; the chain 6AYEJ -> .1 -> .2 -> .3 terminated with TASK-1T3FZ (5db8600), which moved the liveness verdict into the daemon behind a worktree reservation and was verified by injection
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 14:39:17 task.property_updated TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3280
+:TIME:         [2026-07-28 Tue 14:39:17]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       chain incomplete: WGXKD.1 merged, but WGXKD.2's fix round TASK-Q07Y5 was reverted 0ac88d7 after it killed the daemon every 10s; stays open until TASK-R74E8 lands
+:BLOCKED_BY:   TASK-R74E8
+:END:
