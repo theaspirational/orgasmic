@@ -5220,14 +5220,31 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
         "the stage's report-only tx must leave no dispatch open: {status_stdout}"
     );
 
-    // The other half — that stage completion comes off the finalize TOMBSTONE
-    // and not the tx type — stays in `api.rs`'s
-    // `architect_stage_completes_off_the_finalize_tombstone_not_the_tx_type`,
-    // which drives `spawn_stage_completion_watcher` over a clean
-    // worker-finalize release. It cannot be asserted here: the stub harness is
-    // SIGTERMed as the release tears the driver down, so the watcher sees a
-    // driver error and records `architect.failed` — a property of the stub, not
-    // of the stage contract.
+    // TASK-C0XMR: the other half — that stage completion comes off the finalize
+    // TOMBSTONE — is asserted HERE too, on the production path. This used to be
+    // declined as "a property of the stub": the harness is reaped as the release
+    // tears the driver down, so the session carries a teardown-induced fatal
+    // driver error BEFORE the authoritative worker-finalize release. That is not
+    // a stub artifact — `orgasmic dispatch finalize` always finalizes from the
+    // worker's still-active turn, so a real worker produces the same ordering.
+    // The stage must be recorded completed, never failed.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let ledger = tx_log(&project_root);
+        assert!(
+            !ledger.contains(":TYPE:         architect.failed"),
+            "a worker finalize from its active turn must not be recorded as \
+             architect.failed: {ledger}"
+        );
+        if ledger.contains(":TYPE:         architect.completed") {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for architect.completed: {ledger}"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;

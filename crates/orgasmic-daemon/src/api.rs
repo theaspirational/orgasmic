@@ -5894,13 +5894,27 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
             return StageOutcome::Failed { reason: None };
         }
     };
+    // orgasmic:TASK-C0XMR — parse the COMPLETE session instead of returning on
+    // the first failure signal. `orgasmic dispatch finalize` finalizes from the
+    // worker's still-ACTIVE turn: the release interrupts the turn and teardown
+    // reaps the harness process group, so the driver synthesizes a fatal
+    // "exited with signal" error which the supervisor drains BEFORE it appends
+    // the authoritative `finalized_by_worker` release. Short-circuiting on that
+    // error recorded a normal, successful stage as `<stage>.failed`.
+    //
+    // The rule is ORDERING, not presence: an authoritative worker finalize
+    // dominates only the failure signals that PRECEDE it in session order.
+    // Anything failing with no worker finalize after it — the ordinary case
+    // where the driver dies before the worker can finalize, and the supervisor
+    // releases the run non-authoritatively — still fails the stage.
     let mut completed = false;
+    let mut pending_failure: Option<Option<String>> = None;
     let mut driver_error_reason = None;
     for envelope in envelopes {
         match envelope.kind {
             SessionEventKind::DriverEvent => {
                 match envelope.event.get("type").and_then(Value::as_str) {
-                    Some("run_fail") => return StageOutcome::Failed { reason: None },
+                    Some("run_fail") => pending_failure = Some(None),
                     Some("driver_error") => {
                         if driver_error_reason.is_none() {
                             driver_error_reason = envelope
@@ -5916,12 +5930,11 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
                             .and_then(Value::as_bool)
                             .unwrap_or(false)
                         {
-                            return StageOutcome::Failed {
-                                reason: Some(
-                                    driver_error_reason
-                                        .unwrap_or_else(|| "fatal driver error".to_string()),
-                                ),
-                            };
+                            pending_failure = Some(Some(
+                                driver_error_reason
+                                    .clone()
+                                    .unwrap_or_else(|| "fatal driver error".to_string()),
+                            ));
                         }
                     }
                     // Protocol RunComplete alone is not stage success for
@@ -5945,22 +5958,26 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
                         .and_then(Value::as_bool)
                         .unwrap_or(false);
                     if finalized {
+                        // orgasmic:TASK-C0XMR — the authoritative worker
+                        // finalize dominates every failure signal recorded
+                        // before it, including the teardown-induced fatal
+                        // driver error its own release causes.
                         completed = true;
+                        pending_failure = None;
+                        driver_error_reason = None;
                         continue;
                     }
                     match envelope.event.get("outcome").and_then(Value::as_str) {
                         Some("completed") => completed = true,
                         Some("failed") | Some("interrupted") | Some("cancelled") => {
-                            return StageOutcome::Failed {
-                                reason: driver_error_reason.or_else(|| {
-                                    envelope
-                                        .event
-                                        .get("reason")
-                                        .and_then(Value::as_str)
-                                        .filter(|r| *r == "protocol_end_without_finalize")
-                                        .map(|r| r.to_string())
-                                }),
-                            };
+                            pending_failure = Some(driver_error_reason.clone().or_else(|| {
+                                envelope
+                                    .event
+                                    .get("reason")
+                                    .and_then(Value::as_str)
+                                    .filter(|r| *r == "protocol_end_without_finalize")
+                                    .map(|r| r.to_string())
+                            }));
                         }
                         _ => {}
                     }
@@ -5968,6 +5985,9 @@ fn stage_outcome_from_session(session_path: &FsPath) -> StageOutcome {
             }
             SessionEventKind::BabysitterSummary | SessionEventKind::Note => {}
         }
+    }
+    if let Some(reason) = pending_failure {
+        return StageOutcome::Failed { reason };
     }
     if completed {
         StageOutcome::Completed
@@ -19126,6 +19146,138 @@ mod tests {
             stage_outcome_from_session(&session_path),
             StageOutcome::Failed { .. }
         ));
+    }
+
+    /// TASK-C0XMR: the production ordering. `orgasmic dispatch finalize`
+    /// finalizes from the worker's still-active turn, so the release tears the
+    /// driver down and the driver synthesizes a fatal "exited with signal"
+    /// error which the supervisor drains BEFORE appending the authoritative
+    /// worker-finalize release. The stage must complete.
+    #[test]
+    fn stage_outcome_worker_finalize_dominates_a_teardown_driver_error() {
+        // orgasmic:TASK-C0XMR
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("teardown-then-finalize.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-teardown");
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::DriverError {
+                    fatal: true,
+                    message: "codex exited with status signal: 15 (SIGTERM)".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-STAGE-ARCH".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(matches!(
+            stage_outcome_from_session(&session_path),
+            StageOutcome::Completed
+        ));
+    }
+
+    /// TASK-C0XMR: the precision the dominance rule must not lose. When the
+    /// driver dies BEFORE the worker can finalize, the supervisor releases the
+    /// run non-authoritatively — no `finalized_by_worker` release follows the
+    /// error — and the stage must still fail, carrying the driver's message.
+    #[test]
+    fn stage_outcome_fails_when_a_fatal_driver_error_has_no_worker_finalize_after_it() {
+        // orgasmic:TASK-C0XMR
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("fatal-then-nonauthoritative.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-fatal");
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::DriverError {
+                    fatal: true,
+                    message: "codex exited with status exit status: 1".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "driver_failed".into(),
+                    outcome: ReleaseOutcome::Failed,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        match stage_outcome_from_session(&session_path) {
+            StageOutcome::Failed { reason } => assert_eq!(
+                reason.as_deref(),
+                Some("driver error: codex exited with status exit status: 1")
+            ),
+            StageOutcome::Completed => panic!("a pre-finalize fatal driver error must fail"),
+        }
+    }
+
+    /// TASK-C0XMR: dominance is ordered, not global. A failure recorded AFTER
+    /// the worker finalize is not something the finalize could have caused, so
+    /// it still fails the stage.
+    #[test]
+    fn stage_outcome_fails_when_a_fatal_driver_error_follows_the_worker_finalize() {
+        // orgasmic:TASK-C0XMR
+        let tmp = tempfile::tempdir().unwrap();
+        let session_path = tmp.path().join("finalize-then-fatal.jsonl");
+        let mut writer = stage_outcome_session_writer(&session_path, "run-after");
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "worker finalize for TASK-STAGE-ARCH".into(),
+                    outcome: ReleaseOutcome::Completed,
+                    finalized_by_worker: true,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(DriverEvent::DriverError {
+                    fatal: true,
+                    message: "post-finalize collapse".into(),
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        assert!(matches!(
+            stage_outcome_from_session(&session_path),
+            StageOutcome::Failed { .. }
+        ));
+    }
+
+    fn stage_outcome_session_writer(
+        session_path: &std::path::Path,
+        run_id: &str,
+    ) -> orgasmic_core::SessionWriter {
+        let identity = RuntimeIdentity {
+            run_id: run_id.into(),
+            runtime_id: "rt-stage-outcome".into(),
+            boot_id: "boot-stage-outcome".into(),
+        };
+        orgasmic_core::SessionWriter::open(session_path, identity).unwrap()
     }
 
     #[test]
