@@ -8,6 +8,7 @@
 use async_trait::async_trait;
 
 pub mod adapters;
+pub mod catalog;
 pub mod modes;
 /// Shared readiness-probe machinery. Internal: adapters implement
 /// `preflight`, callers consume [`r#trait::Preflight`].
@@ -19,6 +20,10 @@ pub mod transcript_finder;
 
 pub use adapters::{
     ClaudeAdapter, CodexAdapter, CursorAcpAdapter, CursorAdapter, HermesAdapter, ShellAdapter,
+};
+pub use catalog::{
+    harness_runtime_options, runtime_options_by_harness, transport_profile, transport_profiles,
+    HarnessRuntimeOptions, RuntimeOptionsSource, TransportInteraction, TransportProfile,
 };
 pub use modes::rmux::{probe_rmux_binary, RmuxBinaryProbe};
 pub use modes::{AcpStdioDriver, AcpWsDriver, RmuxDriver, SubprocessStreamJsonDriver, TmuxDriver};
@@ -134,15 +139,25 @@ pub fn driver_for(transport: &str) -> Option<Box<dyn WorkerDriver>> {
     }
 }
 
+/// The harness adapter a supported `(mode, harness)` pair runs on.
+///
+/// Some harnesses speak a different dialect under a different mode, so the
+/// adapter is a property of the pair, not of the harness alone. Both the driver
+/// registry and the manager-facing catalog resolve it here so they cannot
+/// disagree about which adapter a pair actually uses.
+pub fn adapter_for_pair(mode: &str, harness: &str) -> Option<Box<dyn HarnessEventAdapter>> {
+    match (mode, harness) {
+        ("acp-stdio", "cursor-agent") => Some(Box::new(CursorAcpAdapter::new())),
+        _ => adapter_for(harness),
+    }
+}
+
 /// Build a mode driver from explicit `(mode, harness)` ids.
 pub fn driver_for_mode_harness(mode: &str, harness: &str) -> Option<Box<dyn WorkerDriver>> {
     if !SUPPORTED.contains(&(mode, harness)) {
         return None;
     }
-    let adapter: Box<dyn HarnessEventAdapter> = match (mode, harness) {
-        ("acp-stdio", "cursor-agent") => Box::new(CursorAcpAdapter::new()),
-        _ => adapter_for(harness)?,
-    };
+    let adapter: Box<dyn HarnessEventAdapter> = adapter_for_pair(mode, harness)?;
     match mode {
         "subprocess-stream-json" => Some(Box::new(SubprocessStreamJsonDriver::new(adapter))),
         "acp-stdio" => Some(Box::new(AcpStdioDriver::new(adapter))),
@@ -174,6 +189,12 @@ macro_rules! legacy_driver {
 
             fn harness(&self) -> Option<&'static str> {
                 Some($harness)
+            }
+
+            fn interaction(&self) -> catalog::TransportInteraction {
+                driver_for_mode_harness($mode, $harness)
+                    .expect("legacy mode/harness is registered")
+                    .interaction()
             }
 
             fn validate(&self, config: &DriverConfig) -> Result<(), DriverError> {
@@ -228,8 +249,34 @@ mod tests {
         for t in TRANSPORTS {
             let d = driver_for(t).expect("known transport");
             assert_eq!(d.transport(), *t);
+            // A legacy id is an alias for a first-class pair, so it must give
+            // that pair's answer rather than fall through to `Undeclared`.
+            assert_ne!(
+                d.interaction(),
+                catalog::TransportInteraction::Undeclared,
+                "legacy transport {t} does not declare its interaction"
+            );
         }
         assert!(driver_for("unknown").is_none());
+    }
+
+    /// The pair adapter both the driver registry and the manager catalog build
+    /// from. `acp-stdio/cursor-agent` is the pair whose adapter is not simply
+    /// `adapter_for(harness)`.
+    #[test]
+    fn pair_adapter_matches_the_registry_special_case() {
+        assert_eq!(
+            adapter_for_pair("acp-stdio", "cursor-agent")
+                .expect("cursor ACP adapter")
+                .harness(),
+            "cursor-agent"
+        );
+        for &(mode, harness) in SUPPORTED {
+            assert!(
+                adapter_for_pair(mode, harness).is_some(),
+                "no adapter for supported pair {mode}/{harness}"
+            );
+        }
     }
 
     #[test]

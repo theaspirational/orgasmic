@@ -48,6 +48,7 @@ use tokio::task::JoinHandle;
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
+use crate::catalog::TransportInteraction;
 use crate::modes::tmux::{
     accept_cursor_workspace_trust_with_capture, argv_prompt_delivery_applies,
     cancel_and_join_driver_task, claude_native_runtime, claude_session_id,
@@ -1346,6 +1347,12 @@ impl WorkerDriver for RmuxDriver {
 
     fn harness(&self) -> Option<&'static str> {
         Some(self.adapter.harness())
+    }
+
+    /// The harness runs as its own TUI inside an rmux pane an operator can
+    /// attach to; the pane runtime must exist for the run to start at all.
+    fn interaction(&self) -> TransportInteraction {
+        TransportInteraction::TerminalPane
     }
 
     fn validate(&self, config: &DriverConfig) -> Result<(), DriverError> {

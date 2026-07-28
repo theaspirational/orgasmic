@@ -16,6 +16,7 @@ use tracing::info;
 use orgasmic_core::{DriverEvent, TextStream};
 
 use crate::adapters::cursor::distill_subprocess_exit_summary;
+use crate::catalog::TransportInteraction;
 use crate::r#trait::{
     preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
     DriverContext, DriverControl, DriverError, DriverSession, HarnessControlOutcome,
@@ -45,6 +46,11 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
 
     fn harness(&self) -> Option<&'static str> {
         Some(self.adapter.harness())
+    }
+
+    /// A subprocess speaking stream-json over pipes: no terminal, no operator.
+    fn interaction(&self) -> TransportInteraction {
+        TransportInteraction::Unattended
     }
 
     fn validate(&self, config: &DriverConfig) -> Result<(), DriverError> {

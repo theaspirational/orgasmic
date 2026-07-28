@@ -3050,93 +3050,25 @@ pub struct ManagerDriversResponse {
     pub drivers: Vec<ManagerDriverProfile>,
 }
 
-/// CLI binary expected on PATH for a given harness.
-fn harness_binary(harness: &str) -> &str {
-    match harness {
-        "claude" => "claude",
-        "codex" => "codex",
-        "cursor-agent" => "cursor-agent",
-        "hermes" => "hermes",
-        // Bare terminal pseudo-harness: the shell is always present.
-        "custom" => "sh",
-        other => other,
-    }
-}
-
-/// Standalone provider label for a harness, e.g. "Claude". The leaf choice once
-/// a transport mode is picked.
-fn harness_label(harness: &str) -> &str {
-    match harness {
-        "claude" => "Claude",
-        "codex" => "Codex",
-        "cursor-agent" => "Cursor",
-        "hermes" => "Hermes",
-        "custom" => "Custom",
-        other => other,
-    }
-}
-
-/// Standalone transport label for a mode, e.g. "tmux" / "acp". The first choice
-/// the UI groups drivers by.
-fn mode_label(mode: &str) -> &str {
-    match mode {
-        "tmux" => "tmux",
-        "rmux" => "rmux",
-        "acp-stdio" => "acp",
-        "acp-ws" => "acp-ws",
-        "subprocess-stream-json" => "stream-json",
-        other => other,
-    }
-}
-
-/// Human-facing label for a `(mode, harness)` driver, e.g. "Claude (tmux)".
-fn driver_display_name(mode: &str, harness: &str) -> String {
-    format!("{} ({})", harness_label(harness), mode_label(mode))
-}
-
-/// True when `binary` resolves to a file on the current PATH.
-fn binary_on_path(binary: &str) -> bool {
-    std::env::var_os("PATH")
-        .map(|paths| std::env::split_paths(&paths).any(|dir| dir.join(binary).is_file()))
-        .unwrap_or(false)
-}
-
-/// Mode-level binary a driver needs *in addition to* its harness CLI, plus
-/// whether it currently resolves. Returns `None` for modes with no extra
-/// binary requirement. `rmux` (TASK-104) needs a separately provisioned `rmux`
-/// daemon binary, discovered via `RMUX_SDK_DAEMON_BINARY` or PATH — checked
-/// independently of the harness binary so a missing prerequisite is honest.
-fn mode_binary_status(mode: &str) -> Option<(String, bool)> {
-    match mode {
-        "rmux" => {
-            let probe = orgasmic_drivers::probe_rmux_binary();
-            let display = probe.path.clone().unwrap_or_else(|| "rmux".to_string());
-            Some((display, probe.usable()))
-        }
-        _ => None,
-    }
-}
-
 /// Driver-adaptive launcher catalog (dec_029): every supported `(mode, harness)`
 /// pair plus whether its CLI binary is installed, so the UI can offer the same
 /// "choose driver, then start" affordance HAR exposes in its board-manager drawer.
+///
+/// The profiles come from `orgasmic_drivers::catalog`, so this route and
+/// `orgasmic manager drivers` cannot disagree about the matrix.
 async fn get_manager_drivers() -> Json<ManagerDriversResponse> {
-    let drivers = orgasmic_drivers::SUPPORTED
-        .iter()
-        .map(|&(mode, harness)| {
-            let binary = harness_binary(harness);
-            let mode_status = mode_binary_status(mode);
-            ManagerDriverProfile {
-                mode: mode.to_string(),
-                harness: harness.to_string(),
-                binary: binary.to_string(),
-                display_name: driver_display_name(mode, harness),
-                mode_label: mode_label(mode).to_string(),
-                harness_label: harness_label(harness).to_string(),
-                installed: binary_on_path(binary),
-                mode_binary: mode_status.as_ref().map(|(b, _)| b.clone()),
-                mode_installed: mode_status.as_ref().map(|(_, ok)| *ok),
-            }
+    let drivers = orgasmic_drivers::transport_profiles()
+        .into_iter()
+        .map(|profile| ManagerDriverProfile {
+            mode: profile.mode,
+            harness: profile.harness,
+            binary: profile.binary,
+            display_name: profile.display_name,
+            mode_label: profile.mode_label,
+            harness_label: profile.harness_label,
+            installed: profile.installed,
+            mode_binary: profile.mode_binary,
+            mode_installed: profile.mode_installed,
         })
         .collect();
     Json(ManagerDriversResponse { drivers })
@@ -25571,12 +25503,9 @@ mod tests {
         assert!(tmux.mode_installed.is_none());
     }
 
-    #[test]
-    fn mode_binary_status_only_tracks_rmux() {
-        assert!(mode_binary_status("rmux").is_some());
-        assert!(mode_binary_status("tmux").is_none());
-        assert!(mode_binary_status("acp-stdio").is_none());
-    }
+    // `mode_binary_status_only_tracks_rmux` moved with the function it covers,
+    // to `orgasmic_drivers::catalog::tests` (TASK-JQARS). The two route tests
+    // above still assert what this endpoint reports.
 
     // ── artifact round-trip (TASK-ZEFEY acceptance) ───────────────────────────
 
