@@ -1452,6 +1452,7 @@ pub fn plan_pending_recovery_claim(
                 session_id: Some(replacement_runtime_id.clone()),
                 session_path,
                 launch_argv,
+                credential_mode: None,
                 resume_argv: vec![
                     command,
                     "--resume".into(),
@@ -1726,6 +1727,7 @@ fn claim_immutable_plan_matches_session(
                 session_id,
                 session_path,
                 launch_argv,
+                credential_mode: None,
                 resume_argv,
             }),
             _ => None,
@@ -2038,6 +2040,7 @@ pub fn pending_session_prefix_matches_claim(
                     session_id,
                     session_path,
                     launch_argv: launch_argv.clone(),
+                    credential_mode: None,
                     resume_argv,
                 };
                 if claim.action.as_deref() == Some("start_recovery_run")
@@ -2323,6 +2326,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: claim.role.clone(),
                     requires_worker_finalize: claim.requires_worker_finalize,
+                    credential_mode: None,
                     driver_config: claim.driver_config.clone().unwrap(),
                 })
                 .unwrap(),
@@ -2452,6 +2456,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
+                    credential_mode: None,
                     driver_config: serde_json::json!({}),
                 })
                 .unwrap(),
@@ -2625,6 +2630,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
+                    credential_mode: None,
                     driver_config: spec.driver_config.clone(),
                 })
                 .unwrap(),
@@ -2856,6 +2862,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
+                    credential_mode: None,
                     driver_config: serde_json::json!({}),
                 })
                 .unwrap(),
@@ -2885,6 +2892,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
+                    credential_mode: None,
                     driver_config: spec.driver_config.clone(),
                 })
                 .unwrap(),

@@ -14324,3 +14324,100 @@ MANAGER FINDINGS:
 
 Reviewer pass still owed on the merged diff.
 
+* DONE TASK-R74E8 Q07Y5 redo: bound the drain after the shutdown signal, not the server's whole lifetime :daemon:lifecycle:regression:fix:
+:PROPERTIES:
+:ID: TASK-R74E8
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
+:END:
+
+TASK-Q07Y5 was merged as `0829c34` and **reverted the same day** as `0ac88d7`
+after it took the operator's daemon down. This task redoes it correctly.
+
+=== The defect
+
+`crates/orgasmic-daemon/src/lib.rs:666` (in the reverted merge):
+
+```rust
+match tokio::time::timeout(budgets.connection_drain, serve).await {
+```
+
+`serve` is `axum::serve(listener, app).with_graceful_shutdown(...)`. That future
+does not represent the drain — it represents **the entire life of the server**,
+and completes only after shutdown has been requested and connections have
+drained. Wrapping it in a 10 s timeout therefore kills a healthy, serving daemon
+exactly 10 seconds after it starts listening, on every boot.
+
+The intent was right and the acceptance criterion was right: the connection
+drain must be bounded, or the derived `ExitTimeOut` has an unbounded term. Only
+the placement was wrong. Bound the drain that happens **after** the shutdown
+signal, not the server's whole lifetime.
+
+=== How it presented, so the next round can recognise it
+
+- Daemon boots, binds, serves normally.
+- Exactly 10.00 s later:
+  `connection drain did not finish within its budget; aborting remaining
+  connections and continuing shutdown budget_secs=10`.
+- `graceful_shutdown` runs, process exits, launchd `KeepAlive` restarts it.
+- Each restart cycles the rmux LaunchAgent, destroying every live rmux session,
+  so **every dispatched worker died 15–35 s after being created**. Three did.
+- Replacement daemons then hit the *other* symptom: the predecessor still held
+  the home instance lock while its HTTP listener was already closed, so the
+  health probe got a connect error and the replacement refused to start with
+  "daemon instance lock is held, but the incumbent is not healthy". That is
+  TASK-ATAXN's window, and this bug made it fire continuously.
+
+=== Evidence that it was the binary, not launchd
+
+- Booted the LaunchAgent out entirely and ran `orgasmic serve` in the
+  foreground: listening at 13:11:19.125, drain-budget error at 13:11:29.128.
+  Same 10 s, no launchd involved.
+- `curl http://127.0.0.1:4848/api/daemon/status` returned **401** during that
+  window — the server was alive and serving, so shutdown had not been signalled.
+  The timeout killed a healthy server.
+- After the revert, the daemon held one pid and one boot_id across four samples
+  over 60 s.
+
+=== Why every gate was green
+
+**No test anywhere runs a daemon for longer than ten seconds.** Daemon tests
+spawn an isolated daemon, exercise it in well under a second, and tear it down.
+The manager's own full CLI and daemon suites passed on this binary. A defect
+that only manifests at t+10 s of uptime was invisible to the entire suite.
+
+That is the acceptance criterion this round must satisfy first.
+
+=== Ask
+
+1. Bound the connection drain **after** the shutdown signal fires, not the
+   server future. Keep the derived-`ExitTimeOut` work from the reverted round —
+   it was correct and its reviewer-facing rationale still stands.
+2. Add a test that would have caught this: a daemon that stays up materially
+   longer than `CONNECTION_DRAIN_TIMEOUT` and is still serving afterwards.
+   It does not need to be slow — inject a short budget and assert the daemon
+   outlives several multiples of it while answering requests.
+3. Re-examine every other budget introduced by the reverted round for the same
+   category error: is the thing being timed out the thing that is supposed to
+   finish, or a future that only completes at shutdown? Say which you checked.
+
+=== Acceptance
+
+- Reintroducing the `timeout(connection_drain, serve)` shape makes the new
+  uptime test fail. Prove it by injection, with output.
+- The daemon serves continuously for at least several drain budgets, verified
+  against a real listener rather than a unit-level mock.
+- `ExitTimeOut` is derived again and the plist test still asserts the derived
+  value, never a literal.
+- A SIGTERM'd daemon with a stuck long-lived connection (ws/PTY/SSE) still
+  completes shutdown within the derived budget — the original acceptance, which
+  must not be lost in fixing the placement.
+
+=== Non-goals
+
+- Do not solve TASK-ATAXN here. That the lock is held while the listener is down
+  is a real and separate defect; this round must simply stop manufacturing that
+  window every ten seconds.
+- Do not weaken the durable shutdown-loss record (`state/shutdown-loss/<boot_id>.json`,
+  fsynced outside the writer). That part of the reverted round was sound.
+

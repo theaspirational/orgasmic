@@ -896,103 +896,6 @@ Two acceptance criteria are also still unmet, independently of verification:
 Closing this needs: the live dispatch, item 4, and item 6. Not a reviewer.
 LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
 
-* IN_PROGRESS TASK-R74E8 Q07Y5 redo: bound the drain after the shutdown signal, not the server's whole lifetime :daemon:lifecycle:regression:fix:
-:PROPERTIES:
-:ID: TASK-R74E8
-:PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
-:END:
-
-TASK-Q07Y5 was merged as `0829c34` and **reverted the same day** as `0ac88d7`
-after it took the operator's daemon down. This task redoes it correctly.
-
-=== The defect
-
-`crates/orgasmic-daemon/src/lib.rs:666` (in the reverted merge):
-
-```rust
-match tokio::time::timeout(budgets.connection_drain, serve).await {
-```
-
-`serve` is `axum::serve(listener, app).with_graceful_shutdown(...)`. That future
-does not represent the drain — it represents **the entire life of the server**,
-and completes only after shutdown has been requested and connections have
-drained. Wrapping it in a 10 s timeout therefore kills a healthy, serving daemon
-exactly 10 seconds after it starts listening, on every boot.
-
-The intent was right and the acceptance criterion was right: the connection
-drain must be bounded, or the derived `ExitTimeOut` has an unbounded term. Only
-the placement was wrong. Bound the drain that happens **after** the shutdown
-signal, not the server's whole lifetime.
-
-=== How it presented, so the next round can recognise it
-
-- Daemon boots, binds, serves normally.
-- Exactly 10.00 s later:
-  `connection drain did not finish within its budget; aborting remaining
-  connections and continuing shutdown budget_secs=10`.
-- `graceful_shutdown` runs, process exits, launchd `KeepAlive` restarts it.
-- Each restart cycles the rmux LaunchAgent, destroying every live rmux session,
-  so **every dispatched worker died 15–35 s after being created**. Three did.
-- Replacement daemons then hit the *other* symptom: the predecessor still held
-  the home instance lock while its HTTP listener was already closed, so the
-  health probe got a connect error and the replacement refused to start with
-  "daemon instance lock is held, but the incumbent is not healthy". That is
-  TASK-ATAXN's window, and this bug made it fire continuously.
-
-=== Evidence that it was the binary, not launchd
-
-- Booted the LaunchAgent out entirely and ran `orgasmic serve` in the
-  foreground: listening at 13:11:19.125, drain-budget error at 13:11:29.128.
-  Same 10 s, no launchd involved.
-- `curl http://127.0.0.1:4848/api/daemon/status` returned **401** during that
-  window — the server was alive and serving, so shutdown had not been signalled.
-  The timeout killed a healthy server.
-- After the revert, the daemon held one pid and one boot_id across four samples
-  over 60 s.
-
-=== Why every gate was green
-
-**No test anywhere runs a daemon for longer than ten seconds.** Daemon tests
-spawn an isolated daemon, exercise it in well under a second, and tear it down.
-The manager's own full CLI and daemon suites passed on this binary. A defect
-that only manifests at t+10 s of uptime was invisible to the entire suite.
-
-That is the acceptance criterion this round must satisfy first.
-
-=== Ask
-
-1. Bound the connection drain **after** the shutdown signal fires, not the
-   server future. Keep the derived-`ExitTimeOut` work from the reverted round —
-   it was correct and its reviewer-facing rationale still stands.
-2. Add a test that would have caught this: a daemon that stays up materially
-   longer than `CONNECTION_DRAIN_TIMEOUT` and is still serving afterwards.
-   It does not need to be slow — inject a short budget and assert the daemon
-   outlives several multiples of it while answering requests.
-3. Re-examine every other budget introduced by the reverted round for the same
-   category error: is the thing being timed out the thing that is supposed to
-   finish, or a future that only completes at shutdown? Say which you checked.
-
-=== Acceptance
-
-- Reintroducing the `timeout(connection_drain, serve)` shape makes the new
-  uptime test fail. Prove it by injection, with output.
-- The daemon serves continuously for at least several drain budgets, verified
-  against a real listener rather than a unit-level mock.
-- `ExitTimeOut` is derived again and the plist test still asserts the derived
-  value, never a literal.
-- A SIGTERM'd daemon with a stuck long-lived connection (ws/PTY/SSE) still
-  completes shutdown within the derived budget — the original acceptance, which
-  must not be lost in fixing the placement.
-
-=== Non-goals
-
-- Do not solve TASK-ATAXN here. That the lock is held while the listener is down
-  is a real and separate defect; this round must simply stop manufacturing that
-  window every ten seconds.
-- Do not weaken the durable shutdown-loss record (`state/shutdown-loss/<boot_id>.json`,
-  fsynced outside the writer). That part of the reverted round was sound.
-
 * IN_PROGRESS TASK-S0QRM Z8WEJ fix round: detect the claude credential tier instead of guessing it from an ambient key :drivers:claude:credentials:fix:
 :PROPERTIES:
 :ID: TASK-S0QRM
@@ -1334,3 +1237,36 @@ with itself. Prove the fix by injection — change what is passed to
 - Do not restore `--no-session-persistence`; its removal is what makes the
   native transcript exist.
 - Do not redesign the cross-harness session contract here (`dec_S18RH`).
+** Evidence
+IMPLEMENTED 2026-07-28 on branch `task-h0tyv-impl`, worktree `.orgasmic/tmp/dispatch/task-h0tyv/worktree`, from HEAD 5a8ebc6.
+
+ITEM 1 (HIGH) — dec_Y5MPK item 6 added via `orgasmic node body append dec_Y5MPK --section Decision` (tx-20260728-orgasmic-3281). Never hand-edited. The ruling: the distinction IS required, and it is minted rather than inferred — a vendor transcript is orgasmic-attributed exactly when its native session id appears in a `NativeRuntime` lifecycle record in orgasmic own session JSONL. Path shape, file age and launch-time proximity are explicitly excluded as the discovery heuristics item 3 forbids. Owner named: `doctor` presents the split; the operator still owns deletion, item 5 unchanged. The open question is answered directly — a matching NativeRuntime record is the *definition* of the distinction and does not on its own satisfy it, because a computable split that nothing displays is not an observable one. Consequence stated: the split is computable only for claude today, which is what makes item 2 load-bearing rather than informational.
+
+ITEM 2 (MEDIUM) — matrix recorded on TASK-VB9DQ Evidence (tx-20260728-orgasmic-3287), where item 5 was owed. Every reviewer claim was re-verified against the tree rather than inherited: `native_runtime` is overridden in exactly two places (`adapters/claude.rs:168`, delegating `modes/acp_stdio.rs:111`), so codex/cursor_acp/hermes take the `None` default at `trait.rs:248`; all three read their id from a protocol response post-launch (`codex.rs:198-206`, `cursor_acp.rs:288-292`, `hermes.rs:287-292`); none of their start calls has an id slot. Vendor stores measured on the operator machine 2026-07-28: 652 claude, 1457 codex, 909 cursor, 82 hermes JSONL.
+
+One reviewer claim did NOT survive verification as stated. "None of the three passes an explicit persistence-suppression flag" is true of the `--no-session-persistence` family, but codex sends `persistExtendedHistory: false` on every `thread/start` (`adapters/codex.rs:883`), uncommented and untested. Codex still writes rollouts with it set, so it is not equivalent to the claude flag, but nothing records what it suppresses and dec_Y5MPK item 4 makes that a question worth answering. Filed rather than resolved here.
+
+Follow-ups filed through `orgasmic task create`: TASK-F9VEZ (codex NativeRuntime), TASK-B6D8W (cursor-agent NativeRuntime), TASK-2B215 (hermes NativeRuntime), TASK-ZY259 (codex persistExtendedHistory), TASK-E3K1B (doctor vendor inventory with the item 6 split, which dec_Y5MPK items 5 and 6 both name and nothing implemented). The cross-harness contract question — post-launch handshake capture versus mandatory pre-launch pinning — is recorded against TASK-SGRTX, which already owns the shared dec_S18RH redesign, and is deliberately not answered by a claude-specific patch.
+
+ITEM 3 (LOW) — the regression can now see the property.
+
+Changed files, all edits confined to `#[cfg(test)]` modules:
+- `crates/orgasmic-drivers/src/adapters/claude.rs` — new `composed_args_with_ctx` returns the `DriverContext` the request was composed for; `composed_args` delegates to it, so the other six call sites are untouched. `every_mode_persists_a_locatable_native_session` now compares the launched `--session-id`, `NativeRuntime.session_id`, `resume_argv` and `launch_argv` against `ctx.identity.runtime_id` rather than against each other, plus an `assert_ne!` against `run_id` (the 32-hex attempt token is the near-miss most likely to be pinned by accident).
+- `crates/orgasmic-drivers/src/modes/acp_stdio.rs` — new `the_spawned_session_id_is_the_runs_runtime_id` drives the real `ClaudeAdapter` through `compose_stdio_request` with the production config shape (no endpoint, dec_S18RH) and asserts the spawned argv session id equals `ctx.identity.runtime_id`. The pre-existing pass-through test keeps its role but its hard-coded `"pinned-session-id"` is replaced by `ctx.identity.runtime_id`, so no free-floating literal remains at this layer.
+- `crates/orgasmic-drivers/src/modes/tmux.rs` — claude gated-test count 7 to 8 in the binary-level tooling sentinel, for the one new claude-gated test.
+
+INJECTION PROOF. Replaced `let session_id = ctx.identity.runtime_id.clone()` (`adapters/claude.rs:374`) with `uuid::Uuid::new_v4().to_string()` — a still-valid UUID that keeps NativeRuntime internally consistent with the argv, i.e. exactly the drift the old assertions could not see. Both layers went red:
+- `adapters::claude::tests::every_mode_persists_a_locatable_native_session` FAILED at claude.rs:1554, left c2067370-... right 3757a68e-...
+- `modes::acp_stdio::tests::the_spawned_session_id_is_the_runs_runtime_id` FAILED at acp_stdio.rs:1298, left 77f48537-... right 2a22051b-...
+Source restored; both green again. The third test (`composed_argv_survives_...`) stayed green throughout, which is correct — it is a pass-through check and is not the guard for this property.
+
+GATES.
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets`: clean, no warnings.
+- `cargo test -p orgasmic-drivers --no-fail-fast`: 242+4+4 pass, 1 pre-existing failure — `legacy_drivers_and_explicit_pairs_emit_equivalent_start_events` (TASK-099T6, two real claude spawns colliding on one session id). Proven pre-existing by `git stash` and rerunning at the merge base: identical assertion, identical shape.
+- `cargo test --workspace --no-fail-fast`: 18 failures, none a regression. 16 are ENVIRONMENT-BLOCKED by this dispatch itself — the worker shell exports `ORGASMIC_RUN_ID=run-20260728T143635-...`, which the CLI tests inherit, so `manager register` reports "already supervised as run-20260728T143635-..." and `dispatch finalize` targets this worker run instead of the fixture. Rerunning the same two suites as `env -u ORGASMIC_RUN_ID cargo test -p orgasmic-cli --test manager_register --test dispatch` gives exit 0, 49 + 3 passed. The 17th is `api::tests::recovery_reattaches_tmux_session_when_handle_exists` (orgasmic-daemon lib), which passes alone and fails only under full-suite load — the TASK-STWVB / TASK-Z3093 flake family. The 18th is TASK-099T6 above.
+- rmux leak check: 3 sessions before, 2 after, all attributable to real dispatches. No test-fixture orphans created.
+
+WORTH RECORDING AS A GOTCHA: running the full workspace suite from inside a dispatched worker fails 16 CLI tests for a reason that has nothing to do with the change under test. `ORGASMIC_RUN_ID` must be unset for those suites to mean anything from a worker shell.
+
+NOT DONE, deliberately: no production code changed. The reviewer verified the claude native-session path end to end against real evidence and found no code defect; this round only makes the regression able to fail. No live dispatch was run, because nothing in the runtime behaviour changed and the vendor-transcript evidence already exists at run-20260727T131952.

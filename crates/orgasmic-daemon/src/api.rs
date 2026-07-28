@@ -3319,6 +3319,7 @@ async fn post_stage(
     let overrides = DriverOverrides {
         provider: None,
         model: verbatim_optional(req.model.clone()),
+        credential_mode: None,
         effort: verbatim_optional(req.effort.clone()),
     };
     let driver_config = stage_driver_config_with_overrides(
@@ -3483,6 +3484,11 @@ struct DriverOverrides {
     provider: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    /// Per-dispatch credential-mode override for harnesses that resolve one
+    /// (claude: `auto`, `bare_api_key`, `native_login`). The operator's escape
+    /// hatch when credential detection is wrong (TASK-S0QRM); the driver
+    /// rejects an unknown value at `validate`.
+    credential_mode: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -3980,6 +3986,7 @@ fn stage_driver_config_with_overrides(
     let model = overrides.model;
     let effort = overrides.effort;
     let reasoning_effort = effort.clone();
+    let credential_mode = overrides.credential_mode;
     let resolved_sandbox = SandboxAllowlist::resolve(
         task_sandbox_permissions,
         worker.sandbox_permissions.as_ref(),
@@ -3992,6 +3999,7 @@ fn stage_driver_config_with_overrides(
         "model": model,
         "effort": effort,
         "reasoning_effort": reasoning_effort,
+        "credential_mode": credential_mode,
         "harness_args": worker.harness_args,
         "command": "sh",
         "args": ["-lc", "echo orgasmic pipeline stage acquired; exec sh"],
@@ -4181,6 +4189,7 @@ fn build_babysitter_auto_spawn(
         DriverOverrides {
             provider: None,
             model: address.model.clone(),
+            credential_mode: None,
             effort: address.effort.clone(),
         },
         task_sandbox_permissions,
@@ -4225,6 +4234,11 @@ struct DispatchRequest {
     pub effort_override: Option<String>,
     #[serde(default)]
     pub provider_override: Option<String>,
+    /// `auto` | `bare_api_key` | `native_login`, forwarded verbatim to the
+    /// driver config so an operator can force the credential tier for one
+    /// dispatch when detection is wrong (TASK-S0QRM).
+    #[serde(default)]
+    pub credential_mode_override: Option<String>,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -4580,6 +4594,7 @@ async fn post_task_dispatch(
         provider: verbatim_optional(req.provider_override.clone()),
         model: verbatim_optional(req.model_override.clone()),
         effort: verbatim_optional(req.effort_override.clone()),
+        credential_mode: verbatim_optional(req.credential_mode_override.clone()),
     };
     let spawn = spawn_worker_run(
         &state,
@@ -8178,6 +8193,7 @@ async fn post_run_recover(
                 session_id: n.session_id,
                 session_path: None,
                 launch_argv: vec![],
+                credential_mode: None,
                 resume_argv: n.resume_argv,
             }),
             run_options: RecoveryRunOptions {
@@ -9001,6 +9017,7 @@ fn boot_reattach_candidate(
                 dispatch_attempt_token,
                 role,
                 requires_worker_finalize,
+                credential_mode: None,
                 driver_config,
                 ..
             }) => {
@@ -15038,6 +15055,7 @@ async fn launch_artifact_generation(
             overrides: DriverOverrides {
                 provider: None,
                 model: launch_model.clone(),
+                credential_mode: None,
                 effort: launch_effort.clone(),
             },
             project_root_path: &entry.path,
@@ -16975,6 +16993,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(false),
+                    credential_mode: None,
                     driver_config: json!({"force_inert": false}),
                 })
                 .unwrap(),
@@ -18812,6 +18831,7 @@ mod tests {
                 dispatch_attempt_token: None,
                 role: None,
                 requires_worker_finalize: None,
+                credential_mode: None,
                 driver_config: json!({"system_wide": true}),
             })
             .unwrap(),
@@ -18852,6 +18872,7 @@ mod tests {
                 dispatch_attempt_token: None,
                 role: Some("terminal".into()),
                 requires_worker_finalize: Some(false),
+                credential_mode: None,
                 driver_config: json!({"harness_args": ["--smuggle"]}),
             })
             .unwrap(),
@@ -18907,6 +18928,7 @@ mod tests {
                             dispatch_attempt_token: None,
                             role: None,
                             requires_worker_finalize: None,
+                            credential_mode: None,
                             driver_config: json!({}),
                         })
                         .unwrap(),
@@ -19062,6 +19084,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
+                    credential_mode: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -19317,6 +19340,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: None,
                     requires_worker_finalize: None,
+                    credential_mode: None,
                     driver_config: json!({}),
                 })
                 .unwrap(),
@@ -20670,6 +20694,70 @@ mod tests {
         assert_eq!(verbatim_optional(None), None);
     }
 
+    /// The daemon half of the credential-mode escape hatch: a dispatch's
+    /// override must land in the driver config the harness adapter reads, in
+    /// the shape that adapter accepts (TASK-S0QRM).
+    #[test]
+    fn dispatch_driver_config_forwards_the_credential_mode_override() {
+        let worker = StageWorker {
+            id: "implementer-claude-acp".to_string(),
+            kind: WorkerKind::Implementer,
+            driver: "acp-stdio".to_string(),
+            harness: "claude".to_string(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let config_for = |credential_mode: Option<&str>| {
+            stage_driver_config_with_overrides(
+                &worker,
+                FsPath::new("/tmp/project"),
+                FsPath::new("/tmp/worktree"),
+                "brief",
+                DriverOverrides {
+                    provider: None,
+                    model: None,
+                    effort: None,
+                    credential_mode: credential_mode.map(str::to_string),
+                },
+                None,
+                &DriverDefaults::default(),
+                None,
+            )
+        };
+
+        let cfg = config_for(Some("native_login"));
+        assert_eq!(cfg.0["credential_mode"], "native_login");
+        // And the driver it is aimed at must accept that exact config, so the
+        // override cannot be a key nothing reads.
+        let driver = driver_for_mode_harness("acp-stdio", "claude").expect("claude acp-stdio");
+        driver
+            .validate(&cfg)
+            .expect("claude must accept the override");
+
+        // No override is a null field, not an invalid one.
+        let cfg = config_for(None);
+        assert!(cfg.0["credential_mode"].is_null());
+        driver
+            .validate(&cfg)
+            .expect("absent override must validate");
+
+        // A value the harness does not know is rejected before a dispatch
+        // takes ownership of anything.
+        let cfg = config_for(Some("bare-ish"));
+        let err = driver
+            .validate(&cfg)
+            .expect_err("an unknown mode must not validate");
+        assert!(format!("{err:?}").contains("bare-ish"), "{err:?}");
+    }
+
     #[test]
     fn dispatch_driver_config_forwards_verbatim_model_and_effort() {
         let worker = StageWorker {
@@ -20696,6 +20784,7 @@ mod tests {
             DriverOverrides {
                 provider: None,
                 model: Some("  Composer-2.5-FAST  ".to_string()),
+                credential_mode: None,
                 effort: Some(" XHIGH ".to_string()),
             },
             None,
@@ -20933,6 +21022,7 @@ mod tests {
             DriverOverrides {
                 provider: None,
                 model: Some("gpt-99".to_string()),
+                credential_mode: None,
                 effort: None,
             },
             None,
@@ -20969,6 +21059,7 @@ mod tests {
             DriverOverrides {
                 provider: Some("openai".to_string()),
                 model: Some("gpt-5.5".to_string()),
+                credential_mode: None,
                 effort: Some("xhigh".to_string()),
             },
             None,
@@ -23586,6 +23677,7 @@ mod tests {
                     dispatch_attempt_token: None,
                     role: Some("implementer".into()),
                     requires_worker_finalize: Some(true),
+                    credential_mode: None,
                     driver_config: serde_json::json!({"harness": "claude"}),
                 })
                 .unwrap(),

@@ -102,6 +102,7 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
                 dispatch_attempt_token: None,
                 role: Some("implementer".into()),
                 requires_worker_finalize: Some(true),
+                credential_mode: None,
                 driver_config: json!({"harness": "claude"}),
             })
             .unwrap(),

@@ -580,6 +580,16 @@ pub struct NativeRuntimeMeta {
     /// Exact argv to resume/fork this native session. Empty when the harness
     /// has no known resume semantics yet.
     pub resume_argv: Vec<String>,
+    /// How this run authenticated, as a bare mode string (`bare_api_key` /
+    /// `native_login`) and never any credential material. `None` for harnesses
+    /// that do not resolve a credential mode.
+    ///
+    /// It travels here because this is the only per-run channel an adapter has
+    /// to the supervisor, but its durable home is `Lifecycle::RunMeta`: the
+    /// mode is reattach material, and a boot that rehydrates a run reads
+    /// RunMeta, not the NativeRuntime event (TASK-S0QRM).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_mode: Option<String>,
 }
 
 /// What `acquire`/`attach` hands back to the supervisor.

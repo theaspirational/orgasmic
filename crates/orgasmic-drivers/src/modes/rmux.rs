@@ -1239,6 +1239,9 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
             session_path: None,
             launch_argv,
             resume_argv: Vec::new(),
+            // Interactive mux launches build their own argv and resolve no
+            // credential mode (TASK-S0QRM).
+            credential_mode: None,
         })
     };
     RmuxSpawnPlan {

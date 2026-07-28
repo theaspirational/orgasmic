@@ -805,6 +805,7 @@ fn build_spawn_plan(cfg: &TmuxTuiConfig, ctx: &DriverContext, harness: &str) -> 
             session_path: None,
             launch_argv,
             resume_argv: Vec::new(),
+            credential_mode: None,
         })
     };
 
@@ -1294,6 +1295,7 @@ fn claude_native_runtime_pending_fork(
         session_path: None,
         launch_argv,
         resume_argv,
+        credential_mode: None,
     }
 }
 
@@ -1352,6 +1354,7 @@ fn claude_native_runtime_with_home(
             .or_else(|| claude_session_path(session_id, cwd)),
         launch_argv,
         resume_argv,
+        credential_mode: None,
     }
 }
 
