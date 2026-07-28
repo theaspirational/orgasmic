@@ -2003,3 +2003,90 @@ whitespace reformat would have buried the reviewable lane diff.
   mechanically, e.g. `git diff -w` is empty).
 - Timing note: coordinate with the manager for a no-live-worker window; a
   reformat under an active worker's feet is the collision S2KM0 avoided.
+
+* BACKLOG TASK-SJNNA Daemon should scrub TMUX from its environment before spawning tmux (latent: $TMUX selects the socket)
+:PROPERTIES:
+:ID: TASK-SJNNA
+:PRIORITY: P2
+:END:
+
+From TASK-0RCRY (2026-07-29), latent-exposure hardening, NOT a live bug report.
+
+Measured mechanism (gotchas.org has the entry): tmux takes its socket path from
+$TMUX (up to the first comma) whenever neither -L nor -S is given — $TMUX is
+not merely a nesting marker. A daemon that ever inherited TMUX would therefore
+aim every unpinned tmux call at the enclosing server; inside a worker's
+environment that is an rmux socket, which does not speak tmux's protocol and
+fails deterministically with `server exited unexpectedly`:
+
+  TMUX=/private/tmp/rmux-501/default,… tmux new-session -d -s x -- sleep 5
+  → exit 1, "server exited unexpectedly" (100% of attempts)
+
+Not live today: the daemon carries no TMUX (measured on the real daemon,
+recorded in TASK-0RCRY's premise history). 0RCRY also decided — deliberately,
+stated at TMUX_SOCKET_ENV in tmux.rs — that production must NOT pin -L, because
+a daemon-created session must remain reachable by the operator's own tmux
+client. So the correct hardening is scrubbing, not pinning.
+
+=== Ask
+
+The daemon scrubs TMUX from its own environment (and from child environments
+it constructs for tmux invocations) before spawning tmux, so an operator
+launching the daemon from inside a tmux/rmux session cannot aim daemon tmux
+calls at the enclosing server. Keep the operator-visibility property: no -L/-S
+pinning in production.
+
+=== Acceptance
+
+- A daemon started with TMUX set behaves identically to one started without:
+  proven by test (spawn path receives a scrubbed env).
+- Sessions the daemon creates remain reachable by an unpinned operator client.
+- Injection per TCTTD standard, git apply-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+
+* BACKLOG TASK-5CCZM Empty-git-remote-under-load flake class: three observers of refresh_repo_url's give-up path, no owner
+:PROPERTIES:
+:ID: TASK-5CCZM
+:PRIORITY: P2
+:END:
+
+The empty-git-remote-under-load flake class: three test names, one shape, no
+owner. An unowned flake cannot be registered (registry rule), so the class
+stays invisible and any recurrence classifies REAL in a loaded gate.
+
+Sightings, all green in isolation:
+
+1. `post_projects_registers_existing_orgasmic_project_and_refreshes_index`
+   (crates/orgasmic-daemon/tests/integration.rs:357) — `assertion left == right
+   failed, left: String(""), right: "git@example.com:org/existing.git"` —
+   TASK-0RCRY full-workspace run, 2026-07-29.
+2. `post_projects_scaffolds_and_registers_uninitialized_project`
+   (integration.rs:437) — same shape, right: "git@example.com:org/fresh.git" —
+   same run.
+3. `index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh`
+   — the already-documented candidate in verify/flake-registry.toml's notes;
+   TASK-5FEN5 fixed its test-side wait (drive the probe until the URL lands),
+   so THIS sighting class is about the remaining callers of the same
+   under-load-git-probe behaviour, not that fixed test.
+
+Shape: `refresh_repo_url` bounds its `git config --get remote.origin.url`
+probe (3s) and returns WITHOUT WRITING when the bound is spent — deliberate
+production behaviour with its own test. Under load the probe loses the race and
+observers see "". 5FEN5 measured a passing probe at 2.24s against the 3s bound
+on a loaded machine — the failures are that distribution's tail.
+
+=== Ask
+
+Per the 5FEN5 standard: reproduce under load, then fix each observer at the
+synchronization (wait on the probe's completion, or drive until present with a
+hang-guard bound), not the budget size. integration.rs tests are out-of-process
+observers — check what completion signal they CAN see before designing.
+Registering with this task as owner is the fallback; fixing is the goal.
+
+=== Acceptance
+
+- Either the named tests survive >=5 consecutive loaded runs post-fix (pre-fix
+  counts pinned), or they are registered with measured signatures and the
+  diagnosis documented.
+- Injection per TCTTD standard where patch-expressible (the 5FEN5 artifact's
+  first-probe-returns-empty injection is the template).
