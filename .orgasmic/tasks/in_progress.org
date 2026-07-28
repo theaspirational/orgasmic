@@ -745,79 +745,34 @@ passes `-L`/`-S`, so every probe, test session and production call shares a
 single tmux server. If isolating that server does not fix these, the result
 belongs back here.
 
-* IN_PROGRESS TASK-5HBST Daemon tests mutate process PATH outside any shared lock, so a probe can resolve a stub :daemon:testing:hardening:
-:PROPERTIES:
-:ID: TASK-5HBST
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-daemon/**
-:END:
 
-The inverted twin of TASK-R2HDN item 3, in a crate that task could not write to.
+=== MANAGER MEASUREMENT 2026-07-28: production_resume_native_fork has TWO failure modes
 
-R2HDN moved every availability probe in `orgasmic-drivers` behind
-`test_environment_lock`, because
-`gate_simulates_for_empty_endpoint_stdio_when_claude_missing` sets process-global
-`PATH=""` and a probe running outside the lock read that synthetic PATH, skipped
-itself, and left the suite green with its assertions never run. Reproduced
-deterministically and closed (merged 2026-07-28).
+Recorded after TASK-5HBST merged, because the manager had been mislabelling this
+test as purely 5HBST's.
 
-`orgasmic-daemon` has the same shape and no such lock.
+`api::tests::production_resume_native_fork_uses_pinned_claude_not_path_shim`
+fails in two distinct ways:
 
-** Measured sites
+1. **Env race (5HBST's, now fixed).** A concurrent test clobbers process-global
+   `HOME`, so `pin_trusted_claude_binary` (api.rs:9906) resolves the wrong
+   `~/.local/bin/claude`. Presents as a wrong path or found/not_found mismatch.
+2. **Recovery 500 (this task's, still open).** `resume_native_fork recover:
+   500 Internal Server Error` at api.rs:25171. Nothing to do with the
+   environment.
 
-- `crates/orgasmic-daemon/src/api.rs:24751`
-- `crates/orgasmic-daemon/tests/dispatch_endpoint.rs:2406`
-- `crates/orgasmic-daemon/tests/run_inventory_wire.rs:220`
+Measured on the merged 5HBST tree, full `cargo test -p orgasmic-daemon --lib`
+at load ~10: it still failed, with **mode 2**. So 5HBST removed one mode and the
+test remains on the known-flake list until this task lands.
 
-Each mutates process-global `PATH` with no shared environment lock held.
+That makes the recovery cluster on this axis larger than previously recorded.
+In the same run: `production_resume_native_fork...` (500 on recover),
+`recovery_inventory_waits_for_atomic_claim_commit`, and
+`recovery_reattaches_tmux_session_when_handle_exists` — three of the four
+failures were recovery-path, and the fourth
+(`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`) is the
+fixture-process one, a different class.
 
-** Why the failure mode is worse, not milder
-
-These **prepend** a stub directory rather than clearing PATH. So a concurrent
-probe does not fail to find a binary — it finds the *wrong* one and proceeds. A
-test that means to exercise real `rmux` can silently run against a stub and pass,
-which reads as a green live test. The drivers case at least produced a visible
-`skipping …` line; this class produces no diagnostic at all.
-
-Note these three are per-process in **different test binaries**
-(`api.rs` is the lib, the other two are integration binaries), so the race is
-only within each binary — but `api.rs`'s lib tests and the daemon's own probe
-helpers share one process, which is where to look first.
-
-** Ask
-
-- Establish one shared process-environment lock for `orgasmic-daemon` tests, or
-  reuse `orgasmic_drivers::modes::rmux::test_tooling::test_environment_lock`
-  (already a normal-library export since TASK-Z3093, so the daemon can depend on
-  it — say which you chose and why).
-- Every PATH mutation and every availability probe in the crate acquires it
-  before reading or writing `PATH`, and holds it through the guarded test.
-- Prefer per-command absolute paths over PATH mutation where the stub is only
-  needed by one spawn; a mutation that does not need to be process-global should
-  not be.
-
-** Acceptance
-
-- Reproduce first: inject a delay in one PATH-prepending test's window and show
-  a concurrent probe resolving the stub, then show the fix closing it. A green
-  suite proves nothing here — R2HDN's own proof needed injected sleeps because
-  the natural interleaving did not reproduce on this machine.
-- No `PATH` read or write in `orgasmic-daemon` tests occurs outside the lock.
-- State whether any currently-passing test was found to have been running
-  against a stub.
-
-** Related, deliberately not folded in
-
-TASK-R2HDN residual risk 4: the ordering invariant it established in
-`orgasmic-drivers` is now correct but **unguarded** — a future test could
-reintroduce a probe before the lock and nothing would catch it. If a mechanical
-guard is cheap (a `shipped_conventions`-style source check for a probe call
-without a preceding lock acquisition), add it for both crates and say so. If it
-is not cheap, say that instead of shipping a weak one.
-
-TASK-R2HDN residual risk 2: `tmux.rs`'s `HomeGuard` mutates `HOME` under its own
-`FORK_DISCOVERY_TEST_LOCK` rather than the shared lock. No probe reads `HOME`
-today, so this is latent, not broken. Two independent process-environment locks
-in one binary is the trap; fold it in only if the answer above makes it a
-one-line change.
+The 'recover returns 500 under load' signature is now observed on three separate
+tests. Whatever this task finds should explain all three, not one.
 
