@@ -52,7 +52,7 @@ use crate::modes::tmux::{
     accept_cursor_workspace_trust_with_capture, argv_prompt_delivery_applies,
     cancel_and_join_driver_task, claude_native_runtime, claude_session_id,
     cursor_argv_needs_startup_trust, default_input_ready_timeout, deserialize_duration_secs,
-    is_dispatch_placeholder, pane_has_input_prompt, pane_requests_folder_trust,
+    harness_launch_env, is_dispatch_placeholder, pane_has_input_prompt, pane_requests_folder_trust,
     push_initial_prompt_argv, SendChildOwner,
 };
 
@@ -1134,6 +1134,11 @@ struct RmuxSpawnPlan {
     /// environment so a manager session recognises "I am already supervised"
     /// (`orgasmic manager register`, dec_3Y2E1).
     run_id: String,
+    /// Harness-specific environment exported into the spawned pane. Carried on
+    /// the plan (not applied at the rmux call site) so the stamp a transcript
+    /// finder depends on is provable without a live rmux daemon.
+    // orgasmic:TASK-GT91X
+    harness_env: Vec<(String, String)>,
 }
 
 fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> RmuxSpawnPlan {
@@ -1251,6 +1256,7 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         paste_prompt,
         native_runtime,
         run_id: ctx.identity.run_id.clone(),
+        harness_env: harness_launch_env(harness),
     }
 }
 
@@ -1724,9 +1730,15 @@ async fn run_live_session(
         .map_err(|e| DriverError::Transport(format!("rmux ensure_session: {e}")))?;
 
     let pane = session.pane(0, 0);
-    pane.spawn(std::iter::once(plan.command.clone()).chain(plan.args.iter().cloned()))
+    let mut spawn = pane
+        .spawn(std::iter::once(plan.command.clone()).chain(plan.args.iter().cloned()))
         .cwd(plan.cwd.clone())
-        .env("ORGASMIC_RUN_ID", &plan.run_id)
+        .env("ORGASMIC_RUN_ID", &plan.run_id);
+    // orgasmic:TASK-GT91X
+    for (key, value) in &plan.harness_env {
+        spawn = spawn.env(key, value);
+    }
+    spawn
         .kill_existing(true)
         .keep_alive_on_exit(true)
         .await
@@ -3137,6 +3149,39 @@ mod tests {
             inert_reason(&cfg, &probe, "codex"),
             Some("force_inert".to_string())
         );
+    }
+
+    /// A codex pane must carry the originator override, because the transcript
+    /// finder's cwd scan gates on it and codex offers no session id to fall
+    /// back on. Reviewers run through this path (TASK-GT91X).
+    // orgasmic:TASK-GT91X
+    #[test]
+    fn codex_rmux_pane_exports_transcript_finder_originator() {
+        let cfg = RmuxConfig {
+            harness: Some("codex".into()),
+            ..RmuxConfig::default()
+        };
+        let plan = build_spawn_plan(&cfg, &ctx("run-codex-originator", RunKind::Worker), "codex");
+        assert!(
+            plan.harness_env
+                .iter()
+                .any(|(key, value)| key == crate::CODEX_ORIGINATOR_ENV
+                    && value == crate::CODEX_ORIGINATOR),
+            "codex rmux pane must export {}={} or its transcript is unreachable; got {:?}",
+            crate::CODEX_ORIGINATOR_ENV,
+            crate::CODEX_ORIGINATOR,
+            plan.harness_env
+        );
+
+        // Scoped to codex: the claude and cursor-agent finders are untouched.
+        for harness in ["claude", "cursor-agent"] {
+            let cfg = RmuxConfig {
+                harness: Some(harness.into()),
+                ..RmuxConfig::default()
+            };
+            let plan = build_spawn_plan(&cfg, &ctx("run-other", RunKind::Worker), harness);
+            assert!(plan.harness_env.is_empty(), "{harness} needs no stamp");
+        }
     }
 
     #[test]

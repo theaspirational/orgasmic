@@ -684,7 +684,12 @@ fn collect_codex_cwd_matches(
         if meta.cwd.as_deref() != Some(cwd_str) {
             continue;
         }
-        if meta.originator.as_deref() != Some("orgasmic") {
+        // The correlator is only as good as the stamp: every codex launch path
+        // orgasmic owns exports `CODEX_ORIGINATOR_ENV=CODEX_ORIGINATOR`, which
+        // is what keeps an operator's own `codex` in this worktree (originator
+        // `codex-tui`) out of the match set. See `crate::CODEX_ORIGINATOR`.
+        // orgasmic:TASK-GT91X
+        if meta.originator.as_deref() != Some(crate::CODEX_ORIGINATOR) {
             continue;
         }
         let Some(ts) = meta.timestamp else {
@@ -885,6 +890,23 @@ mod tests {
     use serde_json::json;
     use std::io::Write;
 
+    /// The originator a real codex launch stamps, read back out of the launch
+    /// path's own environment plan instead of hard-coded here.
+    ///
+    /// The fixtures below used to spell `"orgasmic"` literally while no launch
+    /// path exported it, so the finder's gate passed every unit test and
+    /// matched nothing in production (TASK-GT91X). Sourcing the fixture from
+    /// [`harness_launch_env`] makes that divergence impossible: if the launch
+    /// path stops stamping, these tests stop being satisfiable.
+    // orgasmic:TASK-GT91X
+    fn launched_codex_originator() -> String {
+        crate::modes::tmux::harness_launch_env("codex")
+            .into_iter()
+            .find(|(key, _)| key == crate::CODEX_ORIGINATOR_ENV)
+            .map(|(_, value)| value)
+            .expect("codex launch path must export an originator override")
+    }
+
     fn roots_under(tmp: &Path) -> TranscriptRoots {
         let roots = TranscriptRoots::from_home(tmp);
         fs::create_dir_all(&roots.claude_projects).unwrap();
@@ -1049,7 +1071,7 @@ mod tests {
                 "payload": {
                     "session_id": sid,
                     "cwd": "/tmp/proj",
-                    "originator": "orgasmic"
+                    "originator": launched_codex_originator()
                 }
             })
         )
@@ -1098,7 +1120,7 @@ mod tests {
                 "payload": {
                     "session_id": sid,
                     "cwd": cwd,
-                    "originator": "orgasmic",
+                    "originator": launched_codex_originator(),
                     "timestamp": "2026-07-16T10:00:06Z"
                 }
             })
@@ -1144,7 +1166,7 @@ mod tests {
                 "payload": {
                     "session_id": sid,
                     "cwd": cwd,
-                    "originator": "orgasmic",
+                    "originator": launched_codex_originator(),
                     "timestamp": "2026-07-09T13:04:24Z"
                 }
             })
@@ -1192,6 +1214,99 @@ mod tests {
             }
             other => panic!("expected Found for later run, got {other:?}"),
         }
+    }
+
+    /// Write one codex rollout under `roots` whose `session_meta` carries
+    /// `originator`, no session id, and a start one second after the run.
+    fn write_codex_rollout(roots: &TranscriptRoots, cwd: &str, originator: &str) -> PathBuf {
+        let dir = roots.codex_home.join("sessions/2026/07/28");
+        fs::create_dir_all(&dir).unwrap();
+        let path =
+            dir.join("rollout-2026-07-28T18-36-59-019fa95f-0000-4000-8000-000000000001.jsonl");
+        let mut f = fs::File::create(&path).unwrap();
+        writeln!(
+            f,
+            "{}",
+            json!({
+                "type": "session_meta",
+                "payload": {
+                    "cwd": cwd,
+                    "originator": originator,
+                    "timestamp": "2026-07-28T15:36:59.192Z"
+                }
+            })
+        )
+        .unwrap();
+        path
+    }
+
+    fn codex_cwd_lookup(cwd: &str) -> TranscriptLookup {
+        TranscriptLookup {
+            run_id: "run-20260728T153658-0de705fc34fb42e4bd717517768638fe".into(),
+            harness: "codex".into(),
+            cwd: Some(PathBuf::from(cwd)),
+            // Codex emits no NativeRuntime (TASK-F9VEZ), so the high-confidence
+            // session-id path is unavailable and the cwd scan is all there is.
+            session_id: None,
+            recorded_session_path: None,
+            run_started_at: Some(
+                DateTime::parse_from_rfc3339("2026-07-28T15:36:58Z")
+                    .unwrap()
+                    .with_timezone(&Utc),
+            ),
+        }
+    }
+
+    /// The regression: the finder's originator gate must be satisfied by what
+    /// the codex launch paths actually stamp.
+    ///
+    /// Before TASK-GT91X the gate required a value no launch path exported, so
+    /// a reviewer's rollout with an exactly matching cwd, one second after run
+    /// start, resolved `not_found` — the shape hit live retrieving TASK-Z8WEJ's
+    /// BLOCK verdict. Breaking the stamp in `harness_launch_env` fails here.
+    // orgasmic:TASK-GT91X
+    #[test]
+    fn codex_cwd_scan_resolves_a_rollout_stamped_by_the_launch_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let cwd = "/tmp/dispatch/task-z8wej-review/worktree";
+        let path = write_codex_rollout(&roots, cwd, &launched_codex_originator());
+
+        match find_native_transcript(&codex_cwd_lookup(cwd), &roots) {
+            TranscriptFindResult::Found(hit) => {
+                assert_eq!(hit.path, path);
+                assert_eq!(hit.confidence, TranscriptConfidence::Medium);
+                assert_eq!(
+                    hit.correlation,
+                    "codex_session_meta_cwd_originator_launch_time"
+                );
+            }
+            other => panic!(
+                "codex reviewer transcript for run {} is unreachable: {other:?}",
+                codex_cwd_lookup(cwd).run_id
+            ),
+        }
+    }
+
+    /// The stamp is what keeps the widened cwd scan honest: an operator's own
+    /// `codex` started in the same worktree inside the same window records the
+    /// frontend default (`codex-tui`, measured on codex-cli 0.144.5) and must
+    /// not be attributed to the run.
+    // orgasmic:TASK-GT91X
+    #[test]
+    fn codex_cwd_scan_ignores_an_operators_own_tui_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let roots = roots_under(tmp.path());
+        let cwd = "/tmp/dispatch/task-z8wej-review/worktree";
+        write_codex_rollout(&roots, cwd, "codex-tui");
+
+        assert!(
+            matches!(
+                find_native_transcript(&codex_cwd_lookup(cwd), &roots),
+                TranscriptFindResult::NotFound { .. }
+            ),
+            "an unstamped codex session in the same cwd must not be attributed to the run"
+        );
     }
 
     #[test]

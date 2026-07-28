@@ -66,6 +66,28 @@ pub const MODES: &[&str] = &[
 /// terminal session (no agent CLI — the operator runs any tool by hand).
 pub const HARNESSES: &[&str] = &["codex", "claude", "cursor-agent", "hermes", "custom"];
 
+/// The originator orgasmic stamps onto every codex launch it owns, and the
+/// codex environment variable that sets it.
+///
+/// Codex derives `session_meta.originator` from whichever frontend started the
+/// session — `codex-tui` for the interactive TUI, `codex_exec` for `codex
+/// exec` — unless [`CODEX_ORIGINATOR_ENV`] overrides it. The app-server driver
+/// gets there by a second route: codex adopts the validated `clientInfo.name`
+/// from `initialize`, which is why acp-ws sessions have always recorded
+/// `orgasmic` while mux-launched TUI sessions recorded `codex-tui`.
+///
+/// [`transcript_finder`] uses this value as the correlator for its codex
+/// cwd scan, so the launch paths that stamp it and the finder that requires it
+/// must agree on exactly one constant — a finder gating on a value no launch
+/// path produces makes every codex transcript unreachable (TASK-GT91X).
+// orgasmic:TASK-GT91X
+pub const CODEX_ORIGINATOR_ENV: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
+
+/// Value stamped into [`CODEX_ORIGINATOR_ENV`] and required by the codex
+/// transcript finder's cwd scan.
+// orgasmic:TASK-GT91X
+pub const CODEX_ORIGINATOR: &str = "orgasmic";
+
 /// Explicitly supported first-class `(mode, harness)` pairs.
 ///
 /// rmux attaches through the same daemon PTY bridge as tmux (`rmux
