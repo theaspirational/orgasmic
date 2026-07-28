@@ -1031,6 +1031,14 @@ impl Supervisor {
             req.dispatch_attempt_token.clone(),
             req.role.clone(),
             run_requires_worker_finalize(&req.last_path, &req.role),
+            // The mode the driver resolved for this very launch, lifted out of
+            // the only per-run channel an adapter has (TASK-S0QRM). Read from
+            // the session it just returned, so what is persisted is what was
+            // spawned rather than what a second detection would say now.
+            session
+                .native_runtime
+                .as_ref()
+                .and_then(|native| native.credential_mode.clone()),
             req.driver_config.clone(),
         )
         .await?;
@@ -1467,6 +1475,9 @@ impl Supervisor {
                 dispatch_attempt_token,
                 role.to_string(),
                 requires_worker_finalize,
+                native_runtime
+                    .as_ref()
+                    .and_then(|native| native.credential_mode.clone()),
                 driver_config,
             )
             .await?;
@@ -1534,6 +1545,7 @@ impl Supervisor {
         dispatch_attempt_token: Option<String>,
         role: String,
         requires_worker_finalize: bool,
+        credential_mode: Option<String>,
         driver_config: DriverConfig,
     ) -> Result<(), SupervisorError> {
         let evt = Lifecycle::RunMeta {
@@ -1546,6 +1558,7 @@ impl Supervisor {
             dispatch_attempt_token,
             role: Some(role),
             requires_worker_finalize: Some(requires_worker_finalize),
+            credential_mode,
             driver_config: driver_config.0,
         };
         self.writer
@@ -5837,6 +5850,92 @@ mod tests {
                 producer: None,
             })
         }
+    }
+
+    /// A driver that reports a resolved credential mode, the way the claude
+    /// adapter does once it has chosen a tier (TASK-S0QRM).
+    struct CredentialModeDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for CredentialModeDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        fn harness(&self) -> Option<&'static str> {
+            Some("claude")
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(1);
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(AcceptingInputControl { _events: tx }),
+                producer: None,
+                native_runtime: Some(NativeRuntimeMeta {
+                    provider: "claude".into(),
+                    session_id: Some("pinned-session".into()),
+                    session_path: None,
+                    launch_argv: vec!["claude".into(), "--safe-mode".into()],
+                    resume_argv: Vec::new(),
+                    credential_mode: Some("native_login".into()),
+                }),
+            })
+        }
+    }
+
+    /// The mode a run authenticated with must be readable from the session
+    /// JSONL afterwards, not merely inferable from an argv recorded by a
+    /// different lifecycle event.
+    ///
+    /// Read back through `Lifecycle`'s own deserializer rather than by string
+    /// matching, so this also pins the wire name and the backward-compatible
+    /// shape: the field is optional, and JSONL written before it existed still
+    /// reconciles.
+    #[tokio::test]
+    async fn the_resolved_credential_mode_round_trips_through_run_meta() {
+        let (sup, dir, _writer) = make_supervisor();
+        let req = impl_req("TASK-CREDENTIAL-MODE", dir.path());
+        let session_path = req.session_path.clone();
+        let _resp = sup.acquire(&CredentialModeDriver, req).await.unwrap();
+
+        let run_meta = session_events(&session_path)
+            .into_iter()
+            .filter(|envelope| envelope.kind == SessionEventKind::Lifecycle)
+            .find_map(|envelope| match serde_json::from_value(envelope.event) {
+                Ok(Lifecycle::RunMeta {
+                    credential_mode, ..
+                }) => Some(credential_mode),
+                _ => None,
+            })
+            .expect("acquire must write a RunMeta event");
+        assert_eq!(run_meta.as_deref(), Some("native_login"));
+
+        // A mode string, never credential material: this file is committable
+        // evidence.
+        let raw = std::fs::read_to_string(&session_path).expect("session jsonl");
+        assert!(!raw.contains("sk-ant"), "session JSONL must carry no key");
+
+        // Pre-upgrade JSONL, and every harness that resolves no mode, stay
+        // readable and simply report nothing.
+        let legacy = json!({
+            "phase": "run_meta",
+            "transport": "acp-stdio",
+            "driver_config": {},
+        });
+        let Ok(Lifecycle::RunMeta {
+            credential_mode, ..
+        }) = serde_json::from_value::<Lifecycle>(legacy)
+        else {
+            panic!("RunMeta written before this field existed must still parse");
+        };
+        assert_eq!(credential_mode, None);
     }
 
     fn test_babysitter_auto_spawn() -> BabysitterAutoSpawn {

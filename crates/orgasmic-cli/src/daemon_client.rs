@@ -178,6 +178,7 @@ pub(crate) struct DispatchRequest {
     model_override: Option<String>,
     effort_override: Option<String>,
     provider_override: Option<String>,
+    credential_mode_override: Option<String>,
     reason: Option<String>,
     branch: String,
     liveness: String,
@@ -199,6 +200,7 @@ pub(crate) fn build_dispatch_request(plan: &DispatchPlan) -> DispatchRequest {
         model_override: plan.model_override.clone(),
         effort_override: plan.effort_override.clone(),
         provider_override: None,
+        credential_mode_override: plan.credential_mode_override.clone(),
         reason: plan.reason.clone(),
         branch: plan.branch.clone(),
         liveness: plan.from_sha.clone(),
@@ -390,6 +392,7 @@ mod tests {
             branch: "task-1-impl".into(),
             model_override: None,
             effort_override: None,
+            credential_mode_override: None,
             last_path: PathBuf::from("/tmp/last.txt"),
             stdout_path: PathBuf::from("/tmp/stdout.log"),
             dispatch_attempt_token: "aaaa1111bbbb2222cccc3333dddd4444".into(),
@@ -411,6 +414,27 @@ mod tests {
         );
         assert_eq!(request.branch, "task-1-impl");
         assert_eq!(request.liveness, "abc123");
+    }
+
+    /// `--credential-mode` is the operator's escape hatch when claude's
+    /// credential detection is wrong, so it has to survive the whole way to the
+    /// daemon — as the field name the daemon deserializes, with the operator's
+    /// bytes intact for the driver to accept or reject by name (TASK-S0QRM).
+    #[test]
+    fn dispatch_request_carries_the_credential_mode_override() {
+        let mut plan = sample_plan();
+        plan.credential_mode_override = Some("native_login".into());
+        let request = build_dispatch_request(&plan);
+        assert_eq!(
+            request.credential_mode_override.as_deref(),
+            Some("native_login")
+        );
+        let wire = serde_json::to_value(&request).expect("serialize");
+        assert_eq!(wire["credential_mode_override"], "native_login");
+
+        // Absent by default: an unset flag must not force a mode.
+        let request = build_dispatch_request(&sample_plan());
+        assert_eq!(request.credential_mode_override, None);
     }
 
     #[test]

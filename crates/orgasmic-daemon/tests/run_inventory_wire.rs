@@ -155,6 +155,7 @@ impl SessionFixture {
                 dispatch_attempt_token: None,
                 role: Some("implementer".into()),
                 requires_worker_finalize: Some(false),
+                credential_mode: None,
                 driver_config: json!({"force_inert": false}),
             })
             .unwrap(),

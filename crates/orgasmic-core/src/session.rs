@@ -347,6 +347,18 @@ pub enum Lifecycle {
         /// artifact paths alone (TASK-99W9C).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         requires_worker_finalize: Option<bool>,
+        /// How the harness authenticated this run, as a mode string only —
+        /// `bare_api_key` or `native_login` for claude, `None` for every
+        /// harness that resolves no credential mode and for session JSONL
+        /// written before this field existed.
+        ///
+        /// Never credential material: this file is durable evidence and may be
+        /// committed. The mode is recorded because it is the one input that
+        /// decides whether a run could authenticate at all, and reading it back
+        /// is how an operator learns which tier a finished run actually used
+        /// (TASK-S0QRM).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        credential_mode: Option<String>,
         driver_config: Value,
     },
     Attach,

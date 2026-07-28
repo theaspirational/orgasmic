@@ -80,6 +80,11 @@ pub struct DispatchArgs {
     pub model: Option<String>,
     #[arg(long)]
     pub effort: Option<String>,
+    /// Force the harness credential tier for this dispatch: `auto` (default,
+    /// detect), `bare_api_key` or `native_login`. Claude only; the daemon
+    /// rejects an unknown value.
+    #[arg(long = "credential-mode")]
+    pub credential_mode: Option<String>,
     #[arg(long)]
     pub worktree: Option<PathBuf>,
     #[arg(long)]
@@ -251,6 +256,7 @@ pub(crate) struct DispatchPlan {
     pub(crate) branch: String,
     pub(crate) model_override: Option<String>,
     pub(crate) effort_override: Option<String>,
+    pub(crate) credential_mode_override: Option<String>,
     pub(crate) last_path: PathBuf,
     pub(crate) stdout_path: PathBuf,
     pub(crate) dispatch_attempt_token: String,
@@ -2052,6 +2058,9 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         // through the HTTP boundary; provider adapters decide how to use them.
         model_override: args.model,
         effort_override: args.effort,
+        // Same treatment: an opaque driver-owned value, preserved verbatim so
+        // the driver can reject an unknown one by name.
+        credential_mode_override: args.credential_mode,
         last_path: PathBuf::new(),
         stdout_path: PathBuf::new(),
         dispatch_attempt_token: String::new(),
@@ -2087,6 +2096,9 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     }
     if let Some(effort) = plan.effort_override.as_deref() {
         println!("  effort:   {effort}");
+    }
+    if let Some(credential_mode) = plan.credential_mode_override.as_deref() {
+        println!("  cred:     {credential_mode}");
     }
 }
 

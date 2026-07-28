@@ -1250,4 +1250,81 @@ mod tests {
         assert_eq!(env.get("FROM_SPAWN").map(String::as_str), Some("spawn"));
         assert_eq!(env.get("FROM_ADAPTER").map(String::as_str), Some("adapter"));
     }
+
+    /// The same assertion, on the real claude argv, through the compose wrapper
+    /// `AcpStdioDriver::acquire` actually delegates to.
+    ///
+    /// The test above uses a stand-in adapter and hand-written argv, so it can
+    /// prove the mode preserves what it is handed but not that the credential
+    /// mode claude resolves survives to the spawned process. Nothing is spawned
+    /// here and no turn is submitted: composition stops one call short of
+    /// `Command::spawn` (TASK-S0QRM).
+    #[tokio::test]
+    async fn the_resolved_claude_credential_mode_survives_the_mode_layer() {
+        use crate::adapters::claude::ClaudeAdapter;
+        use crate::modes::rmux::test_tooling::test_environment_lock;
+
+        let _guard = test_environment_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        // A `claude` that answers `--version` and `auth status`, so detection
+        // and the simulate gate both have a real binary to talk to without the
+        // machine's own login deciding the outcome.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let stub = dir.path().join("claude");
+        std::fs::write(
+            &stub,
+            r#"#!/bin/sh
+if [ "$1" = "--version" ]; then exit 0; fi
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  printf '%s\n' '{"loggedIn":true,"authMethod":"claude.ai"}'
+  exit 0
+fi
+exit 3
+"#,
+        )
+        .expect("write stub");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&stub, perms).unwrap();
+        }
+        let saved_path = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{saved_path}", dir.path().display()));
+
+        let mut mode_adapter = AcpStdioComposeAdapter {
+            inner: Box::new(ClaudeAdapter::new()),
+            jsonrpc_session_init: None,
+        };
+        // Exactly what the daemon sends for a dispatched claude worker.
+        let request = mode_adapter.compose_request(
+            &ctx(),
+            &DriverConfig(serde_json::json!({
+                "endpoint": "",
+                "harness": "claude",
+            })),
+        );
+        std::env::set_var("PATH", &saved_path);
+
+        let HarnessRequest::Subprocess { binary, args, .. } = request.expect("compose") else {
+            panic!("a detectable claude must compose a subprocess request");
+        };
+        assert_eq!(binary, "claude");
+        // A stale key must not be what decides this, and the isolation flags
+        // the credential mode chose must reach the spawned process rather than
+        // being rebuilt from the bare `stdio_spawn` base (TASK-SGRTX).
+        assert!(
+            !args.iter().any(|a| a == "--bare"),
+            "a detected login must not spawn bare mode: {args:?}"
+        );
+        assert!(args.iter().any(|a| a == "--safe-mode"), "{args:?}");
+        assert!(args.iter().any(|a| a == "--strict-mcp-config"), "{args:?}");
+        assert!(
+            args.windows(2).any(|w| w[0] == "--session-id"),
+            "the pinned session id must survive too: {args:?}"
+        );
+    }
 }
