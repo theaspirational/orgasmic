@@ -967,3 +967,219 @@ these six tests.
   is not a missing tool, and papering over it with the waiver would recreate the
   silent skip this task exists to end.
 
+* IN_PROGRESS TASK-GEZHQ Preflight accepts an unusable credential under parallel load: 200 where 400 is required, and a worktree is left behind
+:PROPERTIES:
+:ID: TASK-GEZHQ
+:PRIORITY: P1
+:END:
+
+From TASK-EP3H1's gate run (2026-07-29), full-suite under parallel load:
+`an_unusable_credential_leaves_no_lease_no_session_and_no_run`
+(crates/orgasmic-daemon/tests/dispatch_preflight.rs:211) failed with the daemon
+ACCEPTING a dispatch whose claude credential the test intends to be unusable:
+
+  assertion `left == right` failed: preflight rejection must be a 400 so the
+  CLI treats it as an unambiguous refusal and rolls back the worktree it
+  created: {"run_id":"run-20260728T221637-…","driver":"acp-stdio",
+  "harness":"claude",…}
+    left: 200
+   right: 400
+
+The `left: 200` body shows a REAL RUN was created. The assertion text names the
+stake: the CLI relies on the 400 to roll back the worktree it created, so a 200
+here leaves a worktree behind for a dispatch that should never have started.
+
+This is deliberately NOT filed into the load-flake class: the EP3H1 worker's
+read is that it is environment-dependent rather than timing-dependent — a
+usable claude credential exists on the dev machine, and parallelism changes
+which credential the preflight probe observes. A preflight that PASSES when it
+should refuse is a product defect surface, not a test-timing defect. Green in
+isolation, so the gate does not catch it.
+
+=== Ask
+
+1. Diagnose how the probe found a usable credential when the test constructs an
+   unusable one — fixture bleed (real ~/.claude reachable from the test env?),
+   probe fallback order, or a race in credential selection.
+2. Fix so the test's intent holds under parallel load: an unusable credential
+   yields 400, no lease, no session, no run, no leftover worktree — regardless
+   of what else is on the machine.
+3. If the root cause is the test env leaking the operator's real credentials
+   into the probe, treat that as the defect (isolation), not the assertion.
+
+=== Acceptance
+
+- The test survives >=5 consecutive full-suite loaded runs (pre-fix red count
+  pinned for A/B if reproducible).
+- Injection per TCTTD standard, `git apply`-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+
+* IN_PROGRESS TASK-HXSW0 Make the CLI self-documenting for agents: real help per verb and flag, no silent no-ops, a drivers listing verb :cli:agent-ergonomics:docs:
+:PROPERTIES:
+:ID: TASK-HXSW0
+:priority: P1
+:write_scope: crates/orgasmic-cli/src/
+:PRIORITY:    P1
+:END:
+
+Filed 2026-07-26 after a session in which the manager guessed wrong CLI verbs
+four times, and one shipped convention was found instructing a hallucination.
+
+The operator framing, which sets the constraint: fix this with better CLI help
+that agents are told to consult, NOT by pasting a command cheat sheet into every
+prompt. Prompt space is scarce and a stale cheat sheet is worse than none.
+
+MEASURED FAILURES, all from one session
+
+1. `orgasmic manager drivers` does not exist in any command group — and
+   `shipped/prompt-studio/conventions/manager-dispatch.org` instructed the
+   manager to run it to choose `--mode`/`--harness`. The valid pairs live only in
+   `orgasmic_drivers::SUPPORTED` (crates/orgasmic-drivers/src/lib.rs:74) with no
+   CLI surface at all. The convention was corrected the same day, but the
+   underlying gap stands: the one fact needed on EVERY dispatch has no listing
+   verb. The only discovery path is to submit a bogus pair and read the
+   rejection, which does helpfully name all sixteen.
+2. `orgasmic task show` — guessed repeatedly. The real verb is `task get`, and
+   listing lives in a SEPARATE top-level group, `tasks list`. A singular/plural
+   split where both exist and neither mentions the other is a hallucination
+   generator.
+3. `orgasmic run release` — a prior manager asserted it existed, corrected
+   itself in the handoff, and the correction itself was then wrong. Two wrong
+   records about one nonexistent verb.
+4. `orgasmic worker list` — guessed, does not exist.
+
+5. WORST CLASS — a silent no-op on a write verb.
+   `orgasmic task update TASK-X --property "WRITE_SCOPE=..." --property
+   "TEST_CMD=..."` returned `{"changed":{"STATE":"in_progress"}}` and dropped
+   both properties without a word. The same call with lowercase `write_scope`
+   and `test_cmd` worked. An unrecognised property key must be an error: a write
+   verb that reports success while discarding two of three arguments is worse
+   than a missing feature, because the caller has no reason to re-check.
+
+6. Flags on the primary agent verb have NO help text. `orgasmic manager dispatch
+   --help` renders `--task <TASK>`, `--kind <KIND>`, `--brief <BRIEF>`,
+   `--from <FROM>`, `--model <MODEL>`, `--effort <EFFORT>`, `--worktree`,
+   `--branch`, `--reason` with blank descriptions. An agent cannot learn from
+   that whether `--from` is a git ref or a path, or that `--worktree-remove`
+   on `dispatch-close` defaults to TRUE and force-deletes uncommitted work
+   (TASK-2BPWM).
+
+WHAT ALREADY WORKS, and should be the template
+
+Two errors in the same session were excellent and cost zero follow-up:
+- `manager dispatch` from the wrong lifecycle: "task TASK-X is in lifecycle
+  stage in_progress; implementer dispatch is allowed only from BACKLOG or TODO"
+  — names the rule and the allowed set.
+- `node body append --section Evidence` on a node lacking it: "no section
+  \"Evidence\"; sections: [] (use `set --section` to create one via add)" —
+  names the fix verb.
+Contrast `node body append gotchas ...` → "glossary file not found", which names
+the wrong file entirely (already a recorded gotcha).
+
+WORK
+
+1. Give every command and every flag a one-line description that says what it
+   does and what it returns. Blank `#[arg]` descriptions on agent-facing verbs
+   should be treated as a bug, not a style nit.
+2. State destructive defaults in the help text where the operator reads them,
+   not only in the code.
+3. Make unrecognised `--property` keys a hard error listing accepted keys.
+   Audit for other silent-drop paths in the same shape.
+4. Add a real listing verb for mode/harness pairs, sourced from
+   `orgasmic_drivers::SUPPORTED` so it cannot drift.
+5. Make near-miss verbs self-correcting: an unknown subcommand should suggest
+   the real one (`task show` -> `task get`; `worker list` -> ?) and cross-
+   reference the singular/plural split between `task` and `tasks`.
+6. Audit shipped prompts and conventions for commands that do not exist. One was
+   found by accident; nobody has checked the rest. A test asserting that every
+   `orgasmic ...` invocation appearing in `shipped/**` parses against the real
+   clap surface would make this class permanently impossible.
+
+Item 6 is the highest-leverage item here — it converts "an agent hallucinated"
+into a build failure.
+
+Acceptance:
+- an agent can discover any verb and flag it needs from `--help` alone, in at
+  most three calls, without reading Rust source
+- no write verb silently ignores an argument
+- every command string in shipped prompts/conventions is checked against the
+  real CLI surface by a test
+- mode/harness pairs are listable
+CONFIRMED INSTANCE, found while filing these very tasks [2026-07-26].
+
+`orgasmic task create` has no `--priority` flag at all. Every task filed this
+session used `--property "priority=P1"` on create, which was accepted silently
+and discarded. ALL SEVEN tasks created today came out with priority None:
+TASK-099T6, TASK-A55J7, TASK-VSWZT, TASK-S2KM0, TASK-6FNAY, TASK-2BPWM,
+TASK-HXSW0. They were repaired afterwards with `task update --priority`, which
+does have a real flag and works.
+
+This sharpens item 3 beyond "unknown property keys should error". Two distinct
+defects compose here:
+
+1. The property allowlist differs between `create` and `update`. `update`
+   accepts `--priority` as a first-class flag; `create` accepts neither the flag
+   nor the property. The same field is settable, unsettable, or silently ignored
+   depending on which verb you reach for.
+2. The silent drop makes the divergence invisible. `create` returned a normal
+   success object with `id` and `tx_id` and no indication that an argument had
+   been thrown away.
+
+The result is a whole session of P1 work filed as unprioritised, which is exactly
+the kind of state error that later reads as "nobody triaged this" rather than
+"the CLI dropped it".
+
+Note the failure is silent in BOTH directions worth testing: an unknown key
+(`WRITE_SCOPE` uppercase, dropped) and a known-but-unsupported-on-this-verb key
+(`priority` on create, dropped). Fixing only the first would leave this case
+intact.
+
+TWO MORE CONFIRMED INSTANCES [2026-07-26], both found while filing a fix subtask.
+
+4. `task create` accepts and silently discards property keys that `task update`
+   accepts and persists. Reproduced on TASK-D0GA3: the same
+   `--property "PARENT_TASK=TASK-2BPWM" --property "FIX_SUBTASK=t"` pair was
+   dropped by `create` (drawer contained only ID, PRIORITY, TEST_CMD,
+   WRITE_SCOPE) and then written verbatim by `update`, whose response echoed both
+   keys under "changed". PRIORITY, TEST_CMD and WRITE_SCOPE survived `create` in
+   the same invocation, so this is a per-key filter on create, not a general
+   restriction. The user-visible effect is that the same command produces
+   different state depending on which verb you happen to use.
+
+5. `:PARENT_TASK:` is never read by anything. `parent_task` is derived purely
+   from the id grammar — `derive_task_parent_id` (crates/orgasmic-core/src/id.rs:319)
+   splits `TASK-<stem>.<digits>` and returns `TASK-<stem>`. So the property is
+   accepted by `update`, stored in the drawer, echoed as changed, and ignored by
+   every reader. `orgasmic task get TASK-D0GA3` still reports
+   `parent_task: null` with `:PARENT_TASK: TASK-2BPWM` sitting in the file.
+
+   This one had a downstream cost: the shipped `manager-dispatch` convention
+   instructed managers to file fix subtasks with a `:PARENT_TASK:` back-edge, so
+   the documented mechanism produced no edge at all. Corrected in the convention
+   the same day — parentage must be minted into the id as `TASK-<parent>.N`.
+
+The pattern across all five instances is one defect: `--property` is an untyped
+passthrough with no schema, so every layer is free to accept, store, filter or
+ignore a key independently, and every combination reports success. The fix is not
+five special cases. It is (a) validate keys against the schema at write time and
+reject unknown or miscased ones with a message naming the correct key, and
+(b) make `create` and `update` accept the same set, or say why they differ.
+
+INSTANCE 6 [2026-07-26]. `orgasmic tx record` is the only mutation verb that is
+NOT project-scoped by default. Without `--project`, it writes to
+$ORGASMIC_HOME/state/tx/YYYY-MM.org — the global home file — and reports success
+with a differently-shaped tx id (tx-20260726192932-05e34dce) rather than the
+project's tx-20260726-orgasmic-NNNN. Every sibling verb (`task update`, `node
+body append`, `task create`) resolves the project from the cwd and needs no
+flag. The help text for --tx-path says "defaults to $ORGASMIC_HOME/state/tx/
+YYYY-MM.org", which is accurate and is the only warning you get; nothing in
+`tx record --help` suggests --project is load-bearing.
+
+Cost: one manager.action for TASK-D0GA3 was written to the home tx file and had
+to be re-recorded with --project. The stray entry is still there. A manager
+following the obvious invocation silently loses every tx it records off the
+project ledger and cannot tell from the exit code.
+
+Fix direction: default `tx record` to the cwd project like its siblings, and
+keep --project / --tx-path as explicit overrides.
+
