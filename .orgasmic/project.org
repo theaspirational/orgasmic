@@ -20,7 +20,8 @@ orgasmic coordinates AI-agent work through repo-local plain-text state. This rep
 
 ** Verification
 - Default branch: =main=.
-- Build: =cargo build=. Test: =cargo test=. Lint: =cargo clippy --workspace --all-targets=. All three must be green before a change is called done; run the UI checks (=npm run typecheck= / tests under =ui/=) when the change touches =ui/=.
+- Build: =cargo build=. Test: =scripts/run-tests.sh= (wraps =cargo test=, reruns failures in isolation, classifies REAL vs registered FLAKE against =verify/flake-registry.toml=, and always skips the billed harness test; plain =cargo test= remains valid but its red needs manual classification). Lint: =cargo clippy --workspace --all-targets=. All three must be green before a change is called done; run the UI checks (=npm run typecheck= / tests under =ui/=) when the change touches =ui/=.
+- Injection proofs ship as =verify/TASK-<id>/= artifacts replayed by =orgasmic verify TASK-<id>= (TASK-TCTTD): red must match the pinned signature, then green, tree byte-identical.
 - Agent write scope for durable state is =.orgasmic/**=, mediated by the daemon (dec_S0CPP retired the standalone =config.org=; these facts live here as prose).
 
 ** Product Baseline

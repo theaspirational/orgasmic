@@ -38098,3 +38098,154 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-07-28 Tue 20:27:09 task.state_transitioned TASK-HQ970
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3470
+:TIME:         [2026-07-28 Tue 20:27:09]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQ970
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-HQ970 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 20:27:10 manager.dispatch_started TASK-HQ970
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3471
+:TIME:         [2026-07-28 Tue 20:27:10]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQ970
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-hq970/worktree
+:BRANCH:       task-hq970-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-hq970/brief-hq970.md
+:STARTED_AT:   [2026-07-28 Tue 20:27:10]
+:LIVENESS:     c0243f6b1eb5a4d1b7e0bffbb1ba2530233afa5a
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: rotation refill after ZYWZD merge: tx record must not brick the ledger; round-trip machinery now merged prior art
+:END:
+
+* TX 2026-07-28 Tue 20:27:10 run.created TASK-HQ970
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3472
+:TIME:         [2026-07-28 Tue 20:27:10]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQ970
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-HQ970-implementer-20260728T202710.jsonl
+:REASON:       rotation refill after ZYWZD merge: tx record must not brick the ledger; round-trip machinery now merged prior art
+:RUN_ID:       run-20260728T202710-949938d273084ce79b6d8975238156e2
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-hq970/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-hq970/brief-hq970.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-hq970/brief-hq970-606458feb629459fb71e77a423ad5732-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-hq970/brief-hq970-606458feb629459fb71e77a423ad5732-stdout.log
+:DISPATCH_ATTEMPT: 606458feb629459fb71e77a423ad5732
+:DISPATCH_TX:  tx-20260728-orgasmic-3471
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 20:40:09 implementer.reported TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3473
+:TIME:         [2026-07-28 Tue 20:40:09]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:RUN_ID:       run-20260728T200944-4ecac781923d4066bd67580aec4f7265
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-dj1wv/worktree
+:END:
+
+* TX 2026-07-28 Tue 20:41:49 task.created TASK-5FEN5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3474
+:TIME:         [2026-07-28 Tue 20:41:49]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5FEN5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       DJ1WV verification surfaced two unfiled load flakes; the registry refuses unowned entries so they classify REAL until owned
+:END:
+
+* TX 2026-07-28 Tue 20:42:14 implementer.done TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3475
+:TIME:         [2026-07-28 Tue 20:42:14]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    59c8e74
+:BRANCH:       task-dj1wv-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3457
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 20:42:15 task.state_transitioned TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3476
+:TIME:         [2026-07-28 Tue 20:42:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-DJ1WV to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 20:42:15 task.property_updated TASK-5FEN5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3477
+:TIME:         [2026-07-28 Tue 20:42:15]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5FEN5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       loaded full-suite runs exit nonzero until these two are owned or fixed
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 20:42:36 graph.project.edited orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3478
+:TIME:         [2026-07-28 Tue 20:42:36]
+:TYPE:         graph.project.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/project.org
+:REASON:       edited project node orgasmic
+:NODE_ID:      orgasmic
+:END:

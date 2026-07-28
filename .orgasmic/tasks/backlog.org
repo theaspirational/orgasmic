@@ -1161,63 +1161,6 @@ Worth filing separately if it happens again: a run that reaches `ready` and neve
 starts a turn, with no explanation in its session events.
 HARD COMPATIBILITY GATE added 2026-07-27 by the TASK-RWCRN reviewer (finding 2, MEDIUM). TASK-RWCRN landed DriverEvent::PaneActivity, a content-free per-30s event emitted while an rmux pane writes; it is the ONLY driver event an rmux worker produces after ready, and the rmux stall clock now depends on it. This task's recorded fix direction — move stall onto a progress-only clock advanced by tool/text/turn events — will kill every rmux dispatch at 600s again if implemented literally, because a pane produces none of those. The RWCRN author deliberately did NOT reuse DriverEvent::Heartbeat precisely so this task can classify the two independently: Heartbeat means the harness produced no substantive output, PaneActivity means the pane demonstrably wrote. That reasoning is sound, but the only warning it left was a doc comment in orgasmic-core/src/session.rs, which is outside this task's declared supervisor.rs write scope and outside this task record — so an implementer routed here would never see it. Hence this note. REQUIRED ACCEPTANCE, both regressions, cross-transport: (a) an acp-stdio run emitting only heartbeats and no substantive progress MUST time out, which is this task's whole point; and (b) a working rmux run emitting only pane_activity MUST continue to reset its stall deadline and MUST NOT be released. Treat (b) as a gate, not a note. Related: TASK-RWCRN's own reviewer also filed a HIGH that pane_activity is line-based and misses a redrawing TUI; if that lands as a raw-byte observation the event may change shape, so re-read the variant before building on it.
 
-* BACKLOG TASK-HQ970 tx record accepts a multi-line --reason and bricks the append-only ledger    :tx:data-integrity:defect:
-:PROPERTIES:
-:ID: TASK-HQ970
-:PRIORITY: P1
-:TEST_CMD: cargo test -p orgasmic-core
-:END:
-
-`orgasmic tx record --reason "<multi-line text>"` writes the newlines verbatim
-into the org property drawer, returns success with a tx_id, and leaves the
-append-only ledger unparseable. Every subsequent CLI read fails, so no verb —
-including the ones you would use to repair it — can run. The only way out is a
-hand-edit of the file the manager is forbidden to hand-edit.
-
-REPRODUCED [2026-07-26], not inferred. `orgasmic tx record --type manager.action
---project orgasmic --task TASK-D0GA3 --reason "$(cat multi-line-file)"` returned
-
-    {"tx_id": "tx-20260726-orgasmic-2973", "tx_path": ".orgasmic/tx/2026-07.org"}
-
-and the next command failed with
-
-    Error: parse .orgasmic/tx/2026-07.org
-    Caused by: ...:29850: malformed property drawer entry: blank line inside
-    property drawer
-
-The remaining `--extra KEY=VALUE` properties were appended AFTER the injected
-prose, so they landed outside the drawer too. A second, subtler failure mode:
-once the blank lines were removed the parser then rejected the entry with "tx
-entry has trailing content after property drawer" — tx entries are drawer-only
-and carry no body at all, which is not stated anywhere in `tx record --help`.
-
-BLAST RADIUS. The write is accepted, so a manager has no signal until the next
-read. Both ledgers were hit in one session: the project ledger and, because
-`tx record` is not project-scoped by default (TASK-HXSW0 instance 6),
-`$ORGASMIC_HOME/state/tx/2026-07.org` as well. A daemon that cannot parse its
-tx file cannot dispatch, cannot close, cannot update a task.
-
-THREE SEPARATE DEFECTS, all in this one path:
-1. No validation. A value containing a newline must be rejected at the API
-   boundary with a clear error, before anything is written.
-2. No atomicity or verification. The writer should re-parse what it produced
-   before reporting success — a ledger that only accepts what it can read back
-   cannot be bricked by its own writer.
-3. No documented body support. If long prose belongs in a tx (and
-   `tx-scannable-bodies` implies it does), the entry format needs a body region
-   the parser accepts, or `--reason` needs to be documented as single-line and
-   the convention corrected.
-
-Acceptance:
-- `tx record --reason` with an embedded newline fails with a clear message and
-  writes nothing
-- a tx write that would not round-trip through the parser is rejected rather
-  than committed
-- `tx record --help` states the single-line constraint, or a body region exists
-  and is tested with multi-paragraph prose
-- a regression test asserts the ledger still parses after each supported write
-SIBLING FILED [2026-07-28]: TASK-ZYWZD applies this task's defect-2 principle (a writer must not commit what it cannot read back) to the node body surface, where `node body set` silently truncated TASK-ATAXN to 300 of 3959 chars. If either fix grows shared compose->re-parse->refuse machinery, use it for both.
-
 * BACKLOG TASK-NYF7Z rmux TUI workers are not MCP-isolated the way acp-stdio workers are    :drivers:isolation:rmux:
 :PROPERTIES:
 :ID: TASK-NYF7Z
@@ -2345,3 +2288,48 @@ control, but a single-lock one, and the wording invites exactly the mistake.
 - A `verify/TASK-<this>/` artifact per the TASK-TCTTD standard — with a patch
   that `git apply` ACCEPTS (MFJZ7's shipped patch was a documentation diff that
   git apply rejects; do not repeat that).
+
+* BACKLOG TASK-5FEN5 Two unowned load flakes found by the registry verification: babysitter flush and index repo_url rebuild    :daemon:testing:flake:
+:PROPERTIES:
+:ID: TASK-5FEN5
+:PRIORITY: P1
+:END:
+
+Discovered 2026-07-28 by the TASK-DJ1WV worker while verifying flake-registry
+seed signatures under induced load (8-12 cpu hogs, elevated --test-threads).
+Both fail under load, pass green in isolation, and had never been written down:
+
+1. `supervisor::tests::live_babysitter_summary_flushes_on_event_threshold`
+   (crates/orgasmic-daemon/src/supervisor.rs:9727) — failed 2 of 3 runs at 64
+   test threads.
+2. `index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh`
+   (crates/orgasmic-daemon/src/index.rs:2095) — assertion left "" vs right
+   "ssh://git@example.com/..." — the rebuilt index observed before the repo_url
+   refresh landed.
+
+The flake registry (verify/flake-registry.toml) deliberately refuses entries
+without an owning open task, so both currently classify REAL and a loaded
+full-suite run exits nonzero. This task exists to own them; its number should
+be added to registry entries ONLY once each panic signature is captured
+verbatim from a real failure (the DJ1WV rule: never guess a signature from the
+test body).
+
+=== Ask
+
+1. Reproduce each under load, capture the exact panic text, register both with
+   this task as owner (or fix them outright if the cause is shallow —
+   registering is the fallback, fixing is the goal).
+2. Diagnose: both look like timing assumptions about background work
+   (babysitter flush threshold; post-bind refresh scheduling) observed from a
+   test that does not wait on the completion signal. Fix the synchronization,
+   not the timeout size, per the R74E8/ATAXN standard.
+3. On fix, delete the registry entries (the registry check enforces this once
+   this task is done).
+
+=== Acceptance
+
+- Injection per project standard, shipped as a verify/TASK-<id>/ artifact that
+  `git apply` accepts.
+- Either both tests survive 5 consecutive loaded runs (fixed), or both are
+  registered with measured signatures and this task documents the diagnosis
+  for the eventual fix.
