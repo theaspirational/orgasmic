@@ -361,7 +361,10 @@ async fn find_orphan_mux_session(run_id: &str) -> Option<(MuxKind, String, Strin
     }
 
     // tmux: list-sessions by name; an absent server exits non-zero → no match.
-    if let Ok(output) = tokio::process::Command::new("tmux")
+    // orgasmic:TASK-0RCRY
+    // Through the drivers' constructor, so this probe and the spawner that
+    // created the session always agree on which tmux server they mean.
+    if let Ok(output) = tokio::process::Command::from(orgasmic_drivers::modes::tmux::tmux_command())
         .args(["list-sessions", "-F", "#{session_name}"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())

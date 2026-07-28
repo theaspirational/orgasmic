@@ -483,3 +483,51 @@ node before concluding content was lost.
 Note also that =manager dispatch --brief= takes a *path* while =node body set
 --body= takes *content*, with no =--file= alternative. Two adjacent surfaces with
 opposite conventions for the same kind of argument (TASK-JQARS).
+
+** =$TMUX= selects tmux's socket, so a worker's env points tmux at the rmux server
+When neither =-L= nor =-S= is given, tmux takes its socket path from =$TMUX=
+(everything before the first comma) — =$TMUX= is not merely a nesting marker.
+An orgasmic worker runs with =TMUX=/private/tmp/rmux-501/default,...=, so any
+unpinned call that reaches the *real* tmux binary is aimed at an *rmux* socket,
+which does not speak tmux's protocol. Measured 2026-07-29 under TASK-0RCRY,
+deterministic, 100% of attempts:
+
+: $ TMUX=/private/tmp/rmux-501/default,24122,3280 /opt/homebrew/bin/tmux new-session -d -s x -- sleep 5
+: server exited unexpectedly          # exit 1
+: $ TMUX=/private/tmp/rmux-501/default,24122,3280 /opt/homebrew/bin/tmux -L owned new-session -d -s x -- sleep 5
+:                                     # exit 0
+
+That is the exact string the TASK-1T3FZ dispatch reported, and =-L= suppresses
+it because tmux consults =$TMUX= only when no socket flag is present. Note what
+this does and does not revive of the diagnosis tx-20260728-orgasmic-3226 called
+false: the daemon really does not carry =TMUX= (that sub-claim stays dead), but
+the mechanism it rested on — =$TMUX= choosing the socket — is real. Whether a
+given worker hits it depends on whether the rmux PATH shim below shadows the
+real binary. Durable invariant.
+
+** Inside a worker, =tmux= on PATH is a symlink to =rmux=
+rmux prepends a shim directory to a worker's PATH in which =tmux= is a symlink
+to =rmux=, so =Command::new("tmux")= from a test running in a dispatch worktree
+does *not* reach tmux — it reaches the rmux server at
+=/private/tmp/rmux-501/default=, which is hosting live worker panes. Measured
+2026-07-29 under TASK-0RCRY: =tmux -V= reports =tmux 3.4= while the real binary
+is =/opt/homebrew/bin/tmux= 3.6a, and =tmux list-sessions= lists the
+=orgasmic-rmux-run-*= sessions of the workers running right now. Both binaries
+honour =-L=, so pinning a socket is what makes the difference. In the manager
+environment there is no shim and the same unpinned call reaches the operator's
+own default tmux server instead. Either way an unpinned call reaches a server
+the caller did not create. Durable environment trap.
+
+** A tmux server exits when its last session goes away, and the socket outlives it
+Symptom: =tmux new-session failed (exit 1): server exited unexpectedly= on a
+host where tmux is installed, on PATH, and working — the message names neither
+the server nor how it was selected, so it reads as "tmux is broken". Cause: the
+live-mux tests are serialized by the TASK-Z3093 flock, so a *shared* server
+repeatedly drains to zero sessions between tests; tmux then tears the server
+down, but its socket lingers a moment, and the next test's client connects to a
+server already on its way out. Measured 2026-07-29 under TASK-0RCRY: 11 hits in
+120 rounds of that handoff on a shared server, 0 in 120 against a server the run
+owns and holds open with a keepalive session. =-L= alone does not fix this —
+isolation stops a run reaching *someone else's* server, but only the keepalive
+stops the run racing *itself*. Test binaries now claim both via
+=orgasmic_drivers::modes::tmux::own_tmux_server_for_tests()=. Durable invariant.

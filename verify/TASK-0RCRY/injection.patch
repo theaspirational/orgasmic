@@ -1,0 +1,22 @@
+diff --git a/crates/orgasmic-drivers/src/modes/tmux.rs b/crates/orgasmic-drivers/src/modes/tmux.rs
+index 4e3539e..6725b05 100644
+--- a/crates/orgasmic-drivers/src/modes/tmux.rs
++++ b/crates/orgasmic-drivers/src/modes/tmux.rs
+@@ -670,10 +670,13 @@ pub fn tmux_server_selection() -> String {
+ /// the command line" is provable without mutating process-global environment
+ /// while other tests are spawning real tmux clients.
+ fn tmux_socket_args_for(socket: Option<&str>) -> Vec<String> {
+-    match socket {
+-        Some(socket) => vec!["-L".to_string(), socket.to_string()],
+-        None => Vec::new(),
+-    }
++    // TASK-0RCRY injection: the pre-fix state. No tmux call site passes -L/-S,
++    // so every probe, every fixture session and every production call shares
++    // one server -- whichever the environment selects, which on a dev box is
++    // the operator's own and inside an orgasmic worker is the rmux server
++    // hosting live worker panes.
++    let _ = socket;
++    Vec::new()
+ }
+ 
+ fn tmux_socket_args() -> Vec<String> {

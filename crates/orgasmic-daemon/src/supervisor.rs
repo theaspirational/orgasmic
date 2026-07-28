@@ -8011,11 +8011,15 @@ mod tests {
         if !command_available_for_test("tmux") {
             return false;
         }
+        // orgasmic:TASK-0RCRY
+        // The one probe every tmux-gated test in this binary passes through:
+        // claim the owned server before any session is created on it.
+        tmux::own_tmux_server_for_tests();
         let session = format!(
             "orgasmic-supervisor-probe-{}",
             Utc::now().timestamp_nanos_opt().unwrap_or(0)
         );
-        let status = tokio::process::Command::new("tmux")
+        let status = tokio::process::Command::from(tmux::tmux_command())
             .args(["new-session", "-d", "-s", &session, "--", "sleep", "1"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -8023,7 +8027,7 @@ mod tests {
             .await;
         let ok = status.map(|status| status.success()).unwrap_or(false);
         if ok {
-            let _ = tokio::process::Command::new("tmux")
+            let _ = tokio::process::Command::from(tmux::tmux_command())
                 .args(["kill-session", "-t", &session])
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -8045,7 +8049,7 @@ mod tests {
     }
 
     async fn tmux_has_session_for_test(session: &str) -> bool {
-        tokio::process::Command::new("tmux")
+        tokio::process::Command::from(tmux::tmux_command())
             .args(["has-session", "-t", session])
             .stdout(Stdio::null())
             .stderr(Stdio::null())

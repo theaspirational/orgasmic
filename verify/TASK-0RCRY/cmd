@@ -1,0 +1,10 @@
+# One line. Run from the repo root by `orgasmic verify TASK-0RCRY`.
+#
+# Deliberately ONE test, and deliberately the one that contacts no tmux server.
+# Under the injection every tmux invocation loses its `-L`, so any probe this
+# replay ran would create its sessions on whichever server the environment
+# selects: the operator's own on a developer box, and inside an orgasmic worker
+# (where `tmux` on PATH is a symlink to `rmux`) the rmux server hosting live
+# worker panes. A proof that has to touch the thing it is proving is unsafe to
+# replay; this one is a pure argv assertion.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib tmux_socket_args_pin_the_server_on_the_command_line -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events

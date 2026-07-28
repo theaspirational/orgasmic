@@ -1,0 +1,36 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# WHY THIS RED AND NOT THE CONTENTION FAILURE ITSELF
+#
+# The defect's runtime symptom is `tmux new-session failed (exit 1): server
+# exited unexpectedly`, and it WAS reproduced before the fix — 11 hits in 120
+# rounds of the shared-server handoff race (a tmux server exits when its last
+# session goes away, its socket outlives that decision by a moment, and the next
+# client to arrive in that window is told the server vanished). The same 120
+# rounds against a server the run owns and holds open produced 0.
+#
+# That signature is real but probabilistic — ~9% of rounds, load-dependent, and
+# 0/250 on an idle machine. A proof that flakes is not a proof. So this artifact
+# pins the deterministic half the task body asks for: the assertion that the
+# spawned tmux command line carries no `-L`. It is the *cause*, one layer above
+# the symptom, and it fails the same way on every host and every run.
+#
+# The behavioural half lives in the suite as
+# `tmux_sessions_land_on_a_server_the_test_run_owns`, which asserts a real
+# session is reachable on the owned server and NOT on the shared one. It is
+# deliberately NOT in `cmd`: under the injection it would create its sessions on
+# whichever server the environment selects — the operator's own, or the rmux
+# server holding live worker panes — and a proof must not damage what it proves.
+
+exit: 101
+
+# The cause, named exactly: the socket a run pinned did not reach the argv, so
+# every call site is back to sharing one server.
+contains: a pinned socket must reach the tmux command line as -L <socket>
+contains:   left: []
+contains:  right: ["-L", "orgasmic-test-42"]
+
+# One test, and it is this one. If a future edit makes the whole binary
+# collapse, that is a different failure and this proof has not reproduced the
+# defect it claims to.
+contains: test result: FAILED. 0 passed; 1 failed
