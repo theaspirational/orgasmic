@@ -34,9 +34,28 @@ const DANGEROUS_EXAMPLE_MARKER: &str = "[DANGEROUS-EXAMPLE]";
 /// not license it.
 const MARKER_LOOKBEHIND: usize = 200;
 
-/// How far past `git worktree remove` a `--force` still counts as belonging to
-/// that command. Generous enough to span a path argument.
+/// How much of the offending text to quote back in a failure. Display only —
+/// detection is tokenized, not windowed (TASK-6AYEJ.3).
 const COMMAND_WINDOW: usize = 160;
+
+/// Punctuation that wraps a command in Org or Markdown prose (`=verbatim=`,
+/// `~code~`, `` `code` ``, `*bold*`) or in ordinary sentence flow. Stripped from
+/// both ends of every token, so `-f=` and `--force,` read as the flags they are.
+const TOKEN_EDGE_PUNCTUATION: &[char] = &[
+    '=', '~', '`', '*', '"', '\'', '(', ')', '[', ']', '{', '}', '<', '>', ',', '.', ':', '?', '!',
+];
+
+/// Git global options that consume the NEXT token as their value, so the
+/// subcommand is two tokens further on (`git -C /repo worktree remove …`).
+const GIT_GLOBAL_OPTIONS_WITH_VALUE: &[&str] = &[
+    "-C",
+    "-c",
+    "--git-dir",
+    "--work-tree",
+    "--namespace",
+    "--exec-path",
+    "--super-prefix",
+];
 
 /// Largest byte index <= `at` that is a char boundary. The convention is UTF-8
 /// prose full of em dashes, so fixed-width windows must be clamped.
@@ -48,29 +67,136 @@ fn floor_boundary(text: &str, at: usize) -> usize {
     at
 }
 
-/// Every offset at which the convention spells out a destructive git command,
-/// regardless of how its arguments are spelled or ordered.
+/// Byte ranges of the individual shell commands in `text`.
 ///
-/// Two shapes matter (TASK-6AYEJ.2):
-/// - `git worktree remove` anywhere on the same command as `--force`/`-f`, so
-///   `git worktree remove <path> --force` is caught as well as the adjacent
-///   form the old substring guard looked for;
-/// - a forced branch delete under any spelling (`-D`, `--delete --force`),
-///   whatever the branch is called.
-fn dangerous_command_offsets(text: &str) -> Vec<(usize, &'static str)> {
-    let mut hits = Vec::new();
-    for (index, _) in text.match_indices("git worktree remove") {
-        // Stop at the end of the line so a later, unrelated `--force` mention
-        // cannot be blamed on this command.
-        let window = &text[index..floor_boundary(text, index + COMMAND_WINDOW)];
-        let window = window.split('\n').next().unwrap_or(window);
-        if window.contains("--force") || window.contains(" -f ") {
-            hits.push((index, "forced worktree removal"));
+/// A command ends at `;`, `&`, `|` (so `&&`/`||`/pipelines split), or a newline
+/// that is not a backslash continuation. Splitting first is what makes the rest
+/// of the detector safe: a `--force` mentioned in the next clause can never be
+/// blamed on this command, and one spelled on the continuation line still can.
+fn command_segments(text: &str) -> Vec<(usize, usize)> {
+    let mut segments = Vec::new();
+    let mut start = 0usize;
+    for (index, ch) in text.char_indices() {
+        let ends_command = match ch {
+            ';' | '&' | '|' => true,
+            '\n' => !text[start..index]
+                .trim_end_matches([' ', '\t'])
+                .ends_with('\\'),
+            _ => false,
+        };
+        if ends_command {
+            if index > start {
+                segments.push((start, index));
+            }
+            start = index + ch.len_utf8();
         }
     }
-    for needle in ["git branch -D", "git branch --delete --force"] {
-        for (index, _) in text.match_indices(needle) {
-            hits.push((index, "forced branch deletion"));
+    if start < text.len() {
+        segments.push((start, text.len()));
+    }
+    segments
+}
+
+/// Whitespace-separated tokens of one command, each stripped of surrounding
+/// prose punctuation, paired with its byte offset in the original text.
+fn command_tokens(text: &str, (from, to): (usize, usize)) -> Vec<(usize, &str)> {
+    let segment = &text[from..to];
+    let mut words = Vec::new();
+    let mut word_start: Option<usize> = None;
+    for (index, ch) in segment.char_indices() {
+        if ch.is_whitespace() {
+            if let Some(start) = word_start.take() {
+                words.push((start, index));
+            }
+        } else if word_start.is_none() {
+            word_start = Some(index);
+        }
+    }
+    if let Some(start) = word_start {
+        words.push((start, segment.len()));
+    }
+    words
+        .into_iter()
+        .map(|(start, end)| {
+            (
+                from + start,
+                segment[start..end].trim_matches(TOKEN_EDGE_PUNCTUATION),
+            )
+        })
+        .filter(|(_, token)| !token.is_empty())
+        .collect()
+}
+
+/// Index of the git SUBCOMMAND within the tokens that follow `git`, skipping
+/// any global options in between.
+fn git_subcommand_index(words: &[&str]) -> usize {
+    let mut index = 0;
+    while let Some(word) = words.get(index) {
+        if !word.starts_with('-') {
+            break;
+        }
+        index += 1;
+        if GIT_GLOBAL_OPTIONS_WITH_VALUE.contains(word) {
+            index += 1;
+        }
+    }
+    index
+}
+
+/// A short flag bundle carrying `letter` (`-f`, `-fq`, `-Dq`), never a long one.
+fn short_flag_carries(word: &str, letter: char) -> bool {
+    word.starts_with('-') && !word.starts_with("--") && word[1..].contains(letter)
+}
+
+fn is_force_flag(word: &str) -> bool {
+    word == "--force" || short_flag_carries(word, 'f')
+}
+
+/// Every offset at which the convention spells out a destructive git command,
+/// regardless of how its arguments are spelled, ordered, punctuated, or wrapped.
+///
+/// TASK-6AYEJ.3: this used to match fixed substrings inside fixed byte windows,
+/// and every realistic variant walked past it — Org markup fused to the flag
+/// (`-f=`), a git global option splitting the phrase (`git -C /repo worktree
+/// remove`), a `--force` on a continuation line. Fixed windows cannot be patched
+/// into correctness one special case at a time, so the text is now split into
+/// commands and tokenized, and the shapes are asserted over TOKENS:
+/// - `git … worktree remove` with a force flag anywhere later in the same
+///   command;
+/// - a forced branch delete under any spelling (`-D`, `-d --force`,
+///   `--delete --force`), whatever the branch is called.
+fn dangerous_command_offsets(text: &str) -> Vec<(usize, &'static str)> {
+    let mut hits = Vec::new();
+    for segment in command_segments(text) {
+        let tokens = command_tokens(text, segment);
+        let Some(git_at) = tokens.iter().position(|(_, token)| *token == "git") else {
+            continue;
+        };
+        let offset = tokens[git_at].0;
+        let words: Vec<&str> = tokens[git_at + 1..].iter().map(|(_, word)| *word).collect();
+        let rest = &words[git_subcommand_index(&words).min(words.len())..];
+        match rest.first().copied() {
+            Some("worktree") => {
+                // Only a force flag AFTER `remove` counts: prose such as "never
+                // pass --force to git worktree remove" is advice, not a command.
+                if rest.get(1) == Some(&"remove")
+                    && rest[2..].iter().any(|word| is_force_flag(word))
+                {
+                    hits.push((offset, "forced worktree removal"));
+                }
+            }
+            Some("branch") => {
+                let flags = &rest[1..];
+                let capital_d = flags.iter().any(|word| short_flag_carries(word, 'D'));
+                let forced_lowercase = flags
+                    .iter()
+                    .any(|word| *word == "--delete" || short_flag_carries(word, 'd'))
+                    && flags.iter().any(|word| is_force_flag(word));
+                if capital_d || forced_lowercase {
+                    hits.push((offset, "forced branch deletion"));
+                }
+            }
+            _ => {}
         }
     }
     hits
@@ -100,8 +226,21 @@ fn manager_convention_never_instructs_forced_worktree_removal_by_hand() {
         "the salvage rationale must survive; without it the instruction reads as arbitrary"
     );
 
+    // TASK-6AYEJ.3: the previous detector found NOTHING in this file — the
+    // marked example included — so the loop below was vacuous and would have
+    // stayed green through any rewording. The marker is the convention's own
+    // admission that a dangerous command is spelled out nearby; if it is
+    // present, the detector must see that command. (A file with no marker at
+    // all is still fine: the guard never demands the warning exist.)
+    if text.contains(DANGEROUS_EXAMPLE_MARKER) {
+        assert!(
+            !dangerous_command_offsets(&text).is_empty(),
+            "the convention carries a `{DANGEROUS_EXAMPLE_MARKER}` marker but the detector \
+             found no dangerous command — the guard below is asserting nothing"
+        );
+    }
+
     // A destructive command may appear only as an explicitly marked example.
-    // Zero occurrences is fine — the guard never demands the warning exist.
     for (offset, what) in dangerous_command_offsets(&text) {
         let start = floor_boundary(&text, offset.saturating_sub(MARKER_LOOKBEHIND));
         let end = floor_boundary(&text, offset + COMMAND_WINDOW);
@@ -114,10 +253,13 @@ fn manager_convention_never_instructs_forced_worktree_removal_by_hand() {
     }
 }
 
-/// The guard's own regression test (TASK-6AYEJ.2). The previous guard matched
-/// the adjacent substring `worktree remove --force`, so the realistic variants
-/// below — the ORIGINAL dangerous instruction among them — walked straight
-/// past it. Each of these must be detected; the safe prose must not be.
+/// The guard's own regression test (TASK-6AYEJ.2, extended by TASK-6AYEJ.3).
+/// Each generation of this detector has been defeated by ordinary spelling
+/// variation: first by `worktree remove --force` not being adjacent, then by
+/// markup punctuation, git global options, and line continuations. The list
+/// below is therefore the floor, not the target — the three inputs a reviewer's
+/// exact-logic probe drove through the byte-window version are in it, together
+/// with the wrappings the convention itself actually uses.
 #[test]
 fn dangerous_command_detector_catches_reworded_variants() {
     for dangerous in [
@@ -126,6 +268,25 @@ fn dangerous_command_detector_catches_reworded_variants() {
         "run git worktree remove \"$WT\" -f then move on",
         "then git branch -D whatever-the-branch-is",
         "then git branch --delete --force whatever-the-branch-is",
+        // TASK-6AYEJ.3, reviewer probe: all three returned ZERO hits before.
+        "=git worktree remove \"$WT\" -f=",
+        "git -C /repo worktree remove \"$WT\" --force",
+        "git worktree remove \"$WT\" \\\n  --force\n",
+        // And the wrappings this convention is written in, plus argument
+        // orders and flag bundles no fixed window would have survived.
+        "~git worktree remove $WT --force~",
+        "`git worktree remove $WT --force`",
+        "*git worktree remove $WT --force*",
+        "git worktree remove -f \"$WT\"",
+        "git worktree remove \"$WT\" -fq",
+        "git --git-dir=/repo/.git worktree remove \"$WT\" --force",
+        "git -c core.hooksPath=/dev/null worktree remove \"$WT\" --force",
+        "git worktree remove \"$WT\" --force; git branch -D task-NNN-impl",
+        "git worktree remove \"$WT\" --force &&\n  git branch --force --delete task-NNN-impl",
+        "cd /repo | git worktree remove $WT --force",
+        "git branch \\\n  -D \\\n  task-NNN-impl",
+        "git branch -d task-NNN-impl --force",
+        "(git worktree remove \"$WT\" --force)",
     ] {
         assert!(
             !dangerous_command_offsets(dangerous).is_empty(),
@@ -139,6 +300,16 @@ fn dangerous_command_detector_catches_reworded_variants() {
         "the close path removes without =--force=, so git's clean check gates it",
         "use git worktree remove only through dispatch-close\nnever pass --force",
         "delete the branch with the --branch-delete flag",
+        // TASK-6AYEJ.3: the tokenizer must not turn advice into an instruction.
+        "never pass --force to git worktree remove",
+        // The safe commands themselves: unforced removal is what the close path
+        // does, and an unforced delete is not the hazard.
+        "git worktree remove \"$WT\"",
+        "git -C /repo worktree remove \"$WT\"",
+        "git branch -d already-merged-branch",
+        "git worktree list --porcelain",
+        // A force flag in the NEXT command must not be blamed on this one.
+        "git worktree remove \"$WT\"\ngit push --force-with-lease",
     ] {
         assert!(
             dangerous_command_offsets(safe).is_empty(),

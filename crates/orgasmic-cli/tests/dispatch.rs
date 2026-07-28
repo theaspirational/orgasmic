@@ -2857,6 +2857,257 @@ async fn recovery_replacement_run_finalize_still_marks_the_dispatch_reported() {
     let _ = running.join.await;
 }
 
+/// Live run ids the daemon currently holds a lease for.
+fn live_run_ids(
+    home: &Home,
+    running: &RunningDaemon,
+    cwd: &Path,
+    path_env: &std::ffi::OsString,
+) -> Vec<String> {
+    let raw = run_orgasmic(home, running, cwd, path_env, &["run", "list"]);
+    let parsed: serde_json::Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|e| panic!("run list output is not json ({e}): {raw}"));
+    parsed["live"]
+        .as_array()
+        .unwrap_or_else(|| panic!("run list has no live array: {raw}"))
+        .iter()
+        .map(|run| run["run_id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+/// TASK-6AYEJ.3: the OTHER half of the recovery-replacement contract. Once a
+/// recovery has replaced the dispatched run, the generation-bound close must
+/// address the REPLACEMENT — the run that is actually live — and not the origin
+/// id the manager still has in hand. Releasing the origin would 404 and, before
+/// this task, that 404 was accepted straight through to worktree removal and
+/// branch deletion while the replacement was still running: the exact
+/// successor-teardown the TASK-6AYEJ line exists to prevent, reached through
+/// recovery instead of through a stale token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exact_close_after_recovery_releases_the_replacement_run() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    let started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let origin_run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+
+    // Interrupt the origin, then replace it through recovery.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    let running = boot(home.clone()).await;
+    let recover_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "run",
+            "recover",
+            &origin_run_id,
+            "--project",
+            "orgasmic",
+            "--action",
+            "start_recovery_run",
+            "--force-inert",
+        ],
+    );
+    let recovered: serde_json::Value = serde_json::from_str(&recover_stdout)
+        .unwrap_or_else(|e| panic!("recover output is not json ({e}): {recover_stdout}"));
+    let replacement_run_id = recovered["run_id"].as_str().unwrap().to_string();
+    assert_ne!(
+        replacement_run_id, origin_run_id,
+        "recovery must acquire a REPLACEMENT run, or this test proves nothing"
+    );
+    assert!(
+        live_run_ids(&home, &running, &project_root, &path_env).contains(&replacement_run_id),
+        "the replacement must be live before the close, or the close has nothing to release"
+    );
+
+    let close_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--worktree-remove",
+            "--reason",
+            "close after recovery",
+        ],
+    );
+    assert!(
+        close_stdout.contains("implementer.done"),
+        "unexpected close output: {close_stdout}"
+    );
+    let live = live_run_ids(&home, &running, &project_root, &path_env);
+    assert!(
+        !live.contains(&replacement_run_id),
+        "the close must release the REPLACEMENT run, not just the origin id: {live:?}"
+    );
+    assert!(
+        !worktree.exists(),
+        "cleanup should have run once nothing was live in the worktree"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-6AYEJ.3: defence in depth for the same hazard when the ledger link is
+/// MISSING rather than present — a recovery whose association never landed
+/// (every pre-fix crash-reconciled recovery, and any future write that fails
+/// after the replacement is live). The record then names a run the daemon has
+/// never heard of, the release 404s, and the worktree the close is about to
+/// remove is occupied by a live worker.
+///
+/// The stale-id record is written by hand here because the production generator
+/// of it is now fixed at the source; the guard must still hold for records that
+/// already exist. A 404 says "I cannot confirm this run is gone", which is not
+/// "it is gone" — so before anything destructive it must be corroborated.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exact_close_refuses_destructive_cleanup_beneath_an_unassociated_live_run() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let live_run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+    assert!(worktree.is_dir());
+
+    // A second generation over the SAME worktree whose recorded run id the
+    // daemon does not know — the shape a lost recovery association leaves. It
+    // carries the live dispatch's artifact paths so cleanup would genuinely
+    // reach `git worktree remove`; without them the removal bails for an
+    // unrelated reason and the test would pass on a technicality.
+    let last_path = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "LAST_PATH",
+    );
+    let stdout_path = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "STDOUT_PATH",
+    );
+    let path = tx_file_path(&project_root);
+    let mut raw = std::fs::read_to_string(&path).unwrap();
+    raw.push_str(&format!(
+        "\n\n* TX 2026-05-23 Sat 10:00:00 manager.dispatch_started TASK-CLEANUP\n:PROPERTIES:\n:TX_ID:        tx-start-ghost\n:TIME:         [2026-05-23 Sat 10:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-CLEANUP\n:KIND:         implementer\n:WORKTREE:     {}\n:BRANCH:       task-dispatch-test-impl\n:CODEX_BRIEF_PATH: {}\n:STARTED_AT:   [2026-05-23 Sat 10:00:00]\n:END:\n\n* TX 2026-05-23 Sat 10:00:01 run.created TASK-CLEANUP\n:PROPERTIES:\n:TX_ID:        tx-ghost-run\n:TIME:         [2026-05-23 Sat 10:00:01]\n:TYPE:         run.created\n:ACTOR:        daemon\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-CLEANUP\n:RUN_ID:       run-ghost-never-existed\n:ORIGIN:       cli_dispatch\n:KIND:         implementer\n:LAST_PATH:    {}\n:STDOUT_PATH:  {}\n:DISPATCH_TX:  tx-start-ghost\n:END:\n",
+        worktree.display(),
+        brief.display(),
+        last_path,
+        stdout_path
+    ));
+    write(&path, raw);
+
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-CLEANUP",
+            "--started-tx",
+            "tx-start-ghost",
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--worktree-remove",
+            "--reason",
+            "close against a stale run id",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "close must refuse destructive cleanup it cannot prove is safe\nstdout={}\nstderr={stderr}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.contains("refusing to clean up dispatch") && stderr.contains(&live_run_id),
+        "the refusal must name the live run that blocked it: {stderr}"
+    );
+    assert!(
+        worktree.is_dir(),
+        "the live worker's worktree must survive the refused close"
+    );
+    assert!(
+        live_run_ids(&home, &running, &project_root, &path_env).contains(&live_run_id),
+        "the refused close must not have released the live run either"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// The `manager.dispatch_started` tx id printed by `manager dispatch`, i.e. the
 /// generation token `dispatch-close --started-tx` takes (TASK-6AYEJ.1).
 fn started_tx_from_dispatch_stdout(stdout: &str) -> String {

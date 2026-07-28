@@ -125,6 +125,36 @@ fn seed_home_and_project(root: &Path) -> (Home, PathBuf) {
     (home, project_root)
 }
 
+/// How many `run.created ORIGIN=recovery` entries in the project tx ledger link
+/// the origin run to `replacement_run_id` (TASK-6AYEJ.3).
+///
+/// This is the manager-visible half of a recovery: `dispatch-status` resolves a
+/// worker's `*.reported` through this entry and nothing else, and
+/// `dispatch-close` addresses the generation by the run id it carries. The rest
+/// of this file asserts runtime identity and pane preservation, which stay green
+/// whether or not the link is ever written.
+fn recovery_association_count(project_root: &Path, replacement_run_id: &str) -> usize {
+    let dir = project_root.join(".orgasmic/tx");
+    let mut ledger = String::new();
+    if let Ok(read) = std::fs::read_dir(&dir) {
+        for entry in read.flatten() {
+            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("org") {
+                ledger.push_str(&std::fs::read_to_string(entry.path()).unwrap());
+            }
+        }
+    }
+    ledger
+        .split("\n* TX ")
+        .filter(|block| {
+            block.contains(":TYPE:         run.created")
+                && block.contains(&format!(":ORIGIN_RUN_ID: {ORIGIN_RUN_ID}"))
+                && block.contains(":ORIGIN:")
+                && block.contains("recovery")
+                && block.contains(replacement_run_id)
+        })
+        .count()
+}
+
 fn daemon_options() -> DaemonOptions {
     DaemonOptions {
         bind_override: Some("127.0.0.1".parse().unwrap()),
@@ -502,6 +532,24 @@ async fn replay_live_original_pane(point: &str, runtime_launched: bool) {
             "{point}: restart must retain the original pane, not recreate it"
         );
     }
+
+    // TASK-6AYEJ.3: the replay returns a run id DIFFERENT from the origin at
+    // every one of these boundaries, so the origin→replacement association is
+    // the only thing keeping the dispatch generation resolvable. At and after
+    // `acquire_append` the retry takes the reattach path, and that path used to
+    // suppress the association — leaving the dispatch `[unreported]` forever and
+    // its recorded id resolving to a 404 while the replacement ran on.
+    assert_ne!(
+        committed.replacement_run_id, ORIGIN_RUN_ID,
+        "{point}: replacement must not reuse the origin id, or this asserts nothing"
+    );
+    assert_eq!(
+        recovery_association_count(&project_root, &committed.replacement_run_id),
+        1,
+        "{point}: the ledger must carry exactly one origin→replacement \
+         `run.created ORIGIN=recovery` for {}",
+        committed.replacement_run_id
+    );
     restarted.terminate();
 }
 

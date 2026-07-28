@@ -358,6 +358,13 @@ struct RunsResponse {
 #[derive(Debug, Deserialize)]
 struct RunSummary {
     run_id: String,
+    /// `"worker"` / `"babysitter"` (`RunKind`). A babysitter may legitimately
+    /// still be attached to a dispatch's worktree, so only a live *worker*
+    /// blocks destructive cleanup (TASK-6AYEJ.3).
+    #[serde(default)]
+    run_kind: Option<String>,
+    #[serde(default)]
+    worktree: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -707,11 +714,12 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
 
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let client = DaemonClient::from_home_autostart(home)?;
+    let remove_worktree = args.worktree_remove && !args.no_worktree_remove;
     if let Some(run_id) = open.run_id.as_deref() {
         // Modern dispatch records carry the exact run id. Release it directly
-        // so unrelated stale recovery records cannot block close. A 404 is
-        // authoritative "already absent"; transport and other failures still
-        // fail before cleanup, preserving the live-worker fencing invariant.
+        // so unrelated stale recovery records cannot block close. Transport and
+        // other failures still fail before cleanup, preserving the live-worker
+        // fencing invariant.
         if let Err(error) = runtime.block_on(release_dispatch_run(
             &client,
             run_id,
@@ -719,6 +727,44 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
         )) {
             if !is_release_run_not_found_error(&error) {
                 return Err(error).context("release recorded run before dispatch-close cleanup");
+            }
+            // TASK-6AYEJ.3: a 404 used to be read as authoritative "already
+            // absent" and accepted straight through to cleanup. It is not that.
+            // It says only "the id I am holding is not live" — and the id a
+            // record holds can be stale, e.g. a crash-reconciled recovery whose
+            // origin→replacement association never reached the ledger. The
+            // replacement is then live in this very worktree while the close
+            // targets the origin, so the close removes the worktree and deletes
+            // the branch out from under a running worker: the exact
+            // successor-teardown hazard the generation-bound close exists to
+            // prevent.
+            //
+            // Now that generation identity is the contract, corroborate the 404
+            // before doing anything destructive. Non-destructive closes keep
+            // accepting it — they mutate the ledger only, and paying an extra
+            // enumeration there would undo the direct-release fast path.
+            if remove_worktree {
+                let live = runtime
+                    .block_on(fetch_live_runs(&client))
+                    .context("liveness check before dispatch-close cleanup")?;
+                if let Some(blocking) = live_run_blocking_cleanup(&live, &open) {
+                    bail!(
+                        "refusing to clean up dispatch {}: recorded run {} is not live, but run {} \
+                         still is{}. A 404 on the recorded id does not prove this generation is \
+                         gone — its origin→replacement association may never have reached the \
+                         ledger. Inspect the live run (`orgasmic run show {}`) and let it \
+                         finalize, or re-run this close without --worktree-remove.",
+                        open.tx_id,
+                        run_id,
+                        blocking.run_id,
+                        blocking
+                            .worktree
+                            .as_deref()
+                            .map(|path| format!(" in worktree {}", path.display()))
+                            .unwrap_or_default(),
+                        blocking.run_id,
+                    );
+                }
             }
         }
     } else {
@@ -742,7 +788,6 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
             salvage: None,
         }
     } else {
-        let remove_worktree = args.worktree_remove && !args.no_worktree_remove;
         cleanup_dispatch(&project_root, &open, remove_worktree, args.branch_delete)
     };
     if cleanup_status_reports_warning(cleanup.status) {
@@ -4016,6 +4061,37 @@ fn extra<'a>(entry: &'a TxEntry, key: &str) -> Option<&'a str> {
 /// records written before the de-codex rename (dual-read back-compat).
 fn extra_compat<'a>(entry: &'a TxEntry, key: &str, legacy_key: &str) -> Option<&'a str> {
     extra(entry, key).or_else(|| extra(entry, legacy_key))
+}
+
+/// The live worker run that destructive `dispatch-close` cleanup must not run
+/// beneath (TASK-6AYEJ.3), if there is one.
+///
+/// Two ways a live run belongs to the generation about to be torn down:
+/// - it is one of the run ids the generation has owned (origin or a recovery
+///   replacement the ledger did record), or
+/// - it occupies the worktree this close is about to remove, whatever id it
+///   carries. That second rule is the one that matters here, because the defect
+///   this guards is precisely a replacement the ledger never learned about.
+///
+/// Babysitters are excluded: one may legitimately still be attached, and it is
+/// not the worker whose output cleanup would destroy.
+fn live_run_blocking_cleanup<'a>(
+    live: &'a [RunSummary],
+    open: &DispatchRecord,
+) -> Option<&'a RunSummary> {
+    let worktree = open.worktree.as_deref().map(normalize_path);
+    live.iter().find(|run| {
+        if run.run_kind.as_deref().is_some_and(|kind| kind != "worker") {
+            return false;
+        }
+        if open.run_ids.iter().any(|owned| owned == &run.run_id) {
+            return true;
+        }
+        match (worktree.as_deref(), run.worktree.as_deref()) {
+            (Some(want), Some(got)) => normalize_path(got) == want,
+            _ => false,
+        }
+    })
 }
 
 fn dispatch_health(record: &DispatchRecord, live_runs: &[RunSummary]) -> DispatchHealth {

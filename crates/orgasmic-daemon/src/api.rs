@@ -5987,6 +5987,123 @@ struct ApiTxRequest {
     extra: Vec<(String, String)>,
 }
 
+/// Is the origin→replacement association for `run_id` already durable in the tx
+/// ledger (TASK-6AYEJ.3)? The whole tx directory is indexed, so a hit here means
+/// the entry is on disk, not merely cached.
+async fn recovery_association_is_durable(
+    state: &ApiState,
+    project: Option<&str>,
+    run_id: &str,
+) -> bool {
+    let snap = state.index.snapshot().await;
+    snap.tx.iter().any(|record| {
+        if record.entry.ty != "run.created" {
+            return false;
+        }
+        if let (Some(want), Some(got)) = (project, record.project_id.as_deref()) {
+            if want != got {
+                return false;
+            }
+        }
+        let has = |key: &str, value: &str| {
+            record
+                .entry
+                .extra
+                .iter()
+                .any(|(k, v)| k == key && v == value)
+        };
+        has("ORIGIN", "recovery") && has("RUN_ID", run_id)
+    })
+}
+
+/// Bind a recovery REPLACEMENT run to the dispatch generation that owns its
+/// origin (TASK-6AYEJ.2, widened by TASK-6AYEJ.3).
+///
+/// A recovery keeps the task and the terminal contract but acquires a new run
+/// id, so the worker's eventual `*.reported` carries an id the dispatch
+/// generation has never seen. Only `run.created ORIGIN=cli_dispatch` binds a run
+/// to a `manager.dispatch_started`, and recovery never emits one — without this
+/// link `dispatch-status` stays `[unreported]` forever and `dispatch-close`
+/// addresses a run id that no longer exists.
+///
+/// TASK-6AYEJ.3: every return path that hands back a replacement id must call
+/// this, not just the freshly-acquired one. The crash paths were all missing it:
+/// a reattach (the replacement session already carried its Acquire) was assumed
+/// to imply an unchanged id, and the two crash-reconciled fast returns hand back
+/// a committed claim without running the recovery action at all. Each of those
+/// left the replacement live with no ledger link — and a close aimed at the
+/// origin id then tears the worktree down beneath it.
+#[allow(clippy::too_many_arguments)]
+async fn record_recovery_replacement_association(
+    state: &ApiState,
+    project: Option<&str>,
+    origin_run_id: &str,
+    replacement_run_id: &str,
+    task_id: &str,
+    role: &str,
+    action: &str,
+    requires_worker_finalize: bool,
+) -> Result<(), ApiError> {
+    // Reattach-in-place preserves the id, so there is nothing to link; a run
+    // with no worker-finalize contract reports nothing to associate; and a
+    // synthesized `recover:<id>` task never belonged to a dispatch.
+    if replacement_run_id == origin_run_id
+        || !requires_worker_finalize
+        || task_id.starts_with("recover:")
+    {
+        return Ok(());
+    }
+    // The writer's `request_id` idempotence cache is in-memory, and a crash
+    // retry by definition arrives on a daemon that has just restarted — so on
+    // exactly the paths this exists for, that cache is always cold. Consult the
+    // durable ledger instead. The manager side is set-based and would tolerate a
+    // duplicate; the ledger a human reads should not carry one.
+    if recovery_association_is_durable(state, project, replacement_run_id).await {
+        return Ok(());
+    }
+    record_api_tx(
+        state,
+        ApiTxRequest {
+            ty: "run.created".to_string(),
+            actor: None,
+            project: project.map(str::to_string),
+            task: Some(task_id.to_string()),
+            target: None,
+            reason: format!("{action} replacing run {origin_run_id}"),
+            request_id: Some(format!("recovery-run-created-{replacement_run_id}")),
+            extra: vec![
+                ("RUN_ID".to_string(), replacement_run_id.to_string()),
+                ("ORIGIN".to_string(), "recovery".to_string()),
+                ("ORIGIN_RUN_ID".to_string(), origin_run_id.to_string()),
+                ("ACTION".to_string(), action.to_string()),
+                ("KIND".to_string(), role.to_string()),
+            ],
+        },
+    )
+    .await?;
+    Ok(())
+}
+
+/// [`record_recovery_replacement_association`] for the crash-reconciled returns,
+/// which answer from a committed claim rather than from an executed action.
+async fn record_recovery_replacement_association_from_claim(
+    state: &ApiState,
+    project: Option<&str>,
+    claim: &RecoveryClaim,
+) -> Result<(), ApiError> {
+    record_recovery_replacement_association(
+        state,
+        project,
+        &claim.origin_run_id,
+        &claim.replacement_run_id,
+        claim.task_id.as_deref().unwrap_or("recover:"),
+        claim.role.as_deref().unwrap_or("worker"),
+        claim.action.as_deref().unwrap_or("start_recovery_run"),
+        claim.requires_worker_finalize.unwrap_or(false),
+    )
+    .await
+}
+
 async fn record_api_tx(state: &ApiState, req: ApiTxRequest) -> Result<String, ApiError> {
     let prepared = prepare_api_tx(state, req).await?;
     let res = state
@@ -7315,6 +7432,16 @@ async fn post_run_recover(
                         &claim,
                     ) {
                         if claim.request_id == request_id {
+                            // TASK-6AYEJ.3: this answers with a REPLACEMENT run
+                            // id without running the recovery action, so it is
+                            // one of the paths that used to hand the caller a
+                            // live replacement with no ledger link at all.
+                            record_recovery_replacement_association_from_claim(
+                                &state,
+                                req.project.as_deref(),
+                                &claim,
+                            )
+                            .await?;
                             return recovery_response_from_claim(&claim);
                         }
                         return Err(recovery_claim_conflict(&id, &claim));
@@ -7343,6 +7470,14 @@ async fn post_run_recover(
                                 &plan.claim,
                             )
                         {
+                            // Same as above, reached one crash earlier: the
+                            // pending claim reconciled straight to Committed.
+                            record_recovery_replacement_association_from_claim(
+                                &state,
+                                req.project.as_deref(),
+                                &plan.claim,
+                            )
+                            .await?;
                             return recovery_response_from_claim(&plan.claim);
                         }
                         pending_plan = Some(plan);
@@ -8130,40 +8265,17 @@ async fn execute_run_recover_action(
                     .map_err(supervisor_recover_error)?;
             }
 
-            // TASK-6AYEJ.2: a fresh recovery acquires a REPLACEMENT run id
-            // while keeping the task and the terminal contract, so the worker's
-            // eventual `*.reported` carries an id the dispatch generation has
-            // never seen. Only `run.created ORIGIN=cli_dispatch` binds a run to
-            // a `manager.dispatch_started`, and recovery never emits one — so
-            // the manager's `dispatch-status` stayed `[unreported]` forever.
-            // Record the origin→replacement link so the generation can still be
-            // resolved. Reattach-in-place is exempt: it preserves the id.
-            if !reattach_existing
-                && acquire.run_id != id
-                && terminal_contract.requires_worker_finalize
-                && !association_task_id.starts_with("recover:")
-            {
-                record_api_tx(
-                    state,
-                    ApiTxRequest {
-                        ty: "run.created".to_string(),
-                        actor: None,
-                        project: req.project.clone(),
-                        task: Some(association_task_id.clone()),
-                        target: None,
-                        reason: format!("{action} replacing run {id}"),
-                        request_id: Some(format!("recovery-run-created-{}", acquire.run_id)),
-                        extra: vec![
-                            ("RUN_ID".to_string(), acquire.run_id.clone()),
-                            ("ORIGIN".to_string(), "recovery".to_string()),
-                            ("ORIGIN_RUN_ID".to_string(), id.to_string()),
-                            ("ACTION".to_string(), action.to_string()),
-                            ("KIND".to_string(), association_role.clone()),
-                        ],
-                    },
-                )
-                .await?;
-            }
+            record_recovery_replacement_association(
+                state,
+                req.project.as_deref(),
+                id,
+                &acquire.run_id,
+                &association_task_id,
+                &association_role,
+                action,
+                terminal_contract.requires_worker_finalize,
+            )
+            .await?;
 
             Ok(RunRecoverResponse {
                 run_id: acquire.run_id,
