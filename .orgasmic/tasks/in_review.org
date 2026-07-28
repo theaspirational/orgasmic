@@ -336,266 +336,6 @@ Claude Opus review of b18808c..bd3d7bd found a narrow new boot race: starting_fr
 ** Notes
 Implemented by Codex gpt-5.6-terra/high in 4c0a151 and merged to main as e4b6b7b. Manager independently reran the two daemon-lock regressions, CLI boot-owner regression, and double-serve regression; all passed. git diff --check only reported trailing blank lines in daemon-managed task files, not source changes from this fix.
 
-* IN_REVIEW TASK-RRT4T Eight rmux-dependent daemon tests silently pass when rmux is missing, which is why worker green claims keep not reproducing :testing:daemon:dispatch:trust:
-:PROPERTIES:
-:ID: TASK-RRT4T
-:PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs crates/orgasmic-daemon/tests/dispatch_endpoint.rs crates/orgasmic-daemon/tests/boot_resilience.rs crates/orgasmic-daemon/tests/recovery_fault_restart.rs crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/src/modes/tmux.rs crates/orgasmic-drivers/src/adapters/claude.rs crates/orgasmic-drivers/src/adapters/codex.rs crates/orgasmic-drivers/tests/driver_modes.rs crates/orgasmic-drivers/tests/cursor_agent.rs crates/orgasmic-cli/tests/dispatch.rs
-:TEST_CMD:    cargo test -p orgasmic-daemon --lib
-:END:
-
-Eight rmux-dependent tests in `crates/orgasmic-daemon/src/api.rs` silently
-return (and therefore PASS) when `rmux` is not on PATH:
-
-    if !rmux_available_for_test() {
-        eprintln!("skipping <name>: rmux binary not found");
-        return;
-    }
-
-`rmux_available_for_test()` is `probe_rmux_binary().found`, which resolves
-`rmux` from PATH only (crates/orgasmic-drivers/src/modes/rmux.rs:197-210). The
-skip prints to stderr, which `cargo test` swallows without `--nocapture`. The
-run then reports `504 passed; 0 failed` — literally true, and completely
-misleading.
-
-MEASURED 2026-07-26, manager-direct, on main at the TASK-STWVB merge, same
-machine, same commit, one variable changed:
-
-| PATH                             | result          | wall   | syspolicyd CPU |
-|----------------------------------|-----------------|--------|----------------|
-| normal (rmux on ~/.local/bin)    | 502 passed, 2 failed | 106.5 s | +281 s |
-| /usr/bin:/bin:/usr/sbin:/sbin... | 504 passed, 0 failed |  22.3 s | + 32 s |
-
-The second row reproduces, to the second, what the TASK-STWVB round-2
-implementer reported as proof its fix worked: 504/0 at 24.9 / 27.5 / 26.1 s.
-Its fix did not green those tests; its environment skipped them.
-
-WHY THIS IS P0
-
-This is the mechanism behind three consecutive over-reports today:
-- TASK-8W30B: worker measured +5 leaked sessions/run, manager measured +1
-- TASK-6FNAY: worker reported 504/0, manager measured 502/2 three times
-- TASK-STWVB r2: worker reported 504/0 x3, manager measured 502/2 four times
-
-Every one is the same shape, and the shape is not worker dishonesty — each
-phrased its claim carefully. A dispatched worker inherits the daemon's PATH.
-The daemon runs under launchd, which does not carry `~/.local/bin`, so `rmux`
-is absent for workers and present for the operator. Worker green on this crate
-therefore does not mean what it says, and no amount of brief discipline fixes
-it.
-
-Corroborating evidence in the round-2 report itself: it recorded
-`orgasmic-rmux-run-*` sessions as 7 before / 7 after three runs. A real run of
-`post_artifact_regenerate_hot_path_reuses_live_run_id` creates rmux sessions,
-and the manager's runs grew 7 -> 10 (+1 per run, the known panic-abandon).
-Zero growth was the tell that the test never ran.
-
-FIX
-
-1. A skipped test must be visible in the default `cargo test` summary. Options,
-   in preference order: (a) make the guard `panic!` unless an explicit
-   `ORGASMIC_ALLOW_SKIP_RMUX_TESTS=1` opt-out is set, so the default is loud;
-   (b) mark them `#[ignore]` and run them via an explicit filtered gate, so the
-   summary counts them as ignored rather than passed.
-2. Whatever the mechanism, `cargo test -p orgasmic-daemon --lib` must not be
-   able to print `504 passed; 0 failed` while eight tests did nothing.
-3. Give dispatched workers a PATH that finds the tools their gates need, OR
-   make the worker persona report the skip count with every test claim. Prefer
-   the first; the second is a documentation fix for an environment defect.
-4. Audit for the same pattern elsewhere: any `if !X_available() { return }` in
-   a test is the same trap. tmux and cursor-agent guards are the likely
-   siblings.
-
-Acceptance:
-- with rmux absent, the daemon suite cannot report a clean all-passed summary
-- the count of skipped-for-missing-tooling tests is visible without --nocapture
-- a manager reading a worker's test claim can tell whether the scoped test ran
-
-FOOTPRINT CORRECTED [2026-07-26], before dispatch. Two changes to the numbers
-above; neither weakens the finding and one widens it considerably.
-
-1. The count is SEVEN `if !rmux_available_for_test()` call sites in api.rs, not
-   eight. The eighth match in the original grep was the helper's own definition.
-   Every measurement in this task stands; only the count was wrong, and it was
-   repeated into gotchas.org and three commit messages.
-
-2. The pattern is not confined to api.rs. Fourteen files across three crates
-   carry a tooling skip:
-   - crates/orgasmic-daemon/src/api.rs (7 rmux guards), supervisor.rs
-     (command_available_for_test("tmux")), watcher.rs
-   - crates/orgasmic-drivers/src/modes/rmux.rs, modes/tmux.rs,
-     adapters/claude.rs, adapters/codex.rs
-   - crates/orgasmic-daemon/tests/{dispatch_endpoint,boot_resilience,
-     recovery_fault_restart}.rs
-   - crates/orgasmic-drivers/tests/{driver_modes,cursor_agent}.rs
-   - crates/orgasmic-cli/tests/dispatch.rs, crates/orgasmic-cli/src/manager.rs
-
-   So `cargo test -p orgasmic-drivers` reporting "236 passed / 0 failed" has the
-   same hole, and that figure was already quoted as evidence in a worker report
-   today.
-
-3. Four of the skips are worse than tool-absent — they read
-   "skipping ...: SDK degraded to inert". A test that skips because the driver
-   degraded skips exactly when there is something to find. Those deserve to be
-   errors, not skips, and are worth calling out separately from the PATH problem.
-
-DESIGN DIRECTION chosen for the dispatch: one sentinel test per test binary that
-fails when tooling its gated tests need is absent, plus a per-tool environment
-opt-out, plus routing the existing guards through one shared helper so the gated
-set is discoverable in one place. Converting 63 call sites into 63 hard failures
-was rejected: it would stop anyone without claude on PATH from running the suite
-at all, which is how an escape hatch becomes permanent.
-LANDED [2026-07-26]. Merged f894a7a. Second attempt — the first reached `ready`
-and never began a turn (see TASK-VZMZE). Implementer implementer-codex-acp-stdio
-(acp-stdio / codex / gpt-5.6-sol / xhigh), run
-run-20260726T154818-c0acbe719bd141879e00d3d3d3a483be, 42 minutes, +579/-214
-across 13 files.
-
-MANAGER VERIFICATION — the acceptance criterion, run directly, not read from the
-report.
-
-A. Hidden PATH, `cargo test -p orgasmic-daemon --lib`. Before this change that
-   printed `504 passed; 0 failed` in 22 s while seven tests did nothing. Now:
-
-     exit 101
-     test supervisor::tests::required_test_tooling_is_present ... FAILED
-     required test tooling is missing: rmux (gates 7 tests); gated tests did not
-     run. Install the tooling or explicitly acknowledge only these skips with
-     ORGASMIC_ALLOW_MISSING_TOOLS=rmux
-
-   That is exactly the scenario that produced three false green reports today,
-   and it can no longer happen silently. The message names the tool, the count,
-   and the remedy.
-
-B. Hidden PATH with ORGASMIC_ALLOW_MISSING_TOOLS=rmux: the sentinel passes, so
-   the per-tool opt-out works. The run was not clean for an unrelated reason —
-   `api::tests::recovery_reattaches_tmux_session_when_handle_exists` failed with
-   "interrupted" instead of "reattached". That test is on the original TASK-STWVB
-   list of four and has a history of intermittency, but note it FAILED rather
-   than skipped under a restricted PATH, which suggests it may be sensitive to
-   PATH in production code rather than in the test. Worth its own look; not
-   attributed to this change.
-
-C. Normal PATH: 504 passed / 2 failed of 506. The two are exactly the
-   pre-existing STWVB pair. Test count rose by one for the sentinel. No
-   regression.
-
-WHAT SHIPPED
-- `orgasmic_drivers::modes::rmux::test_tooling` — per-tool probes, the sentinel
-  API, per-test skip diagnostics, a shared environment lock, and
-  `assert_not_degraded`.
-- `required_test_tooling_is_present` in every affected default-running test
-  binary, with explicit gated-test counts: daemon lib rmux 7 / tmux 6 / bash 1;
-  drivers lib rmux 9 / tmux 8 / claude 7 / codex 1 / sleep 1 / bash 1; and
-  smaller counts for the four integration binaries.
-- The four "SDK degraded to inert" exits became assertion failures. Those were
-  the worst of the set — a test that skips because the driver degraded skips
-  exactly when there is something to find.
-- Paid live smokes moved to `#[ignore]`, so default output counts them instead
-  of hiding them, and an explicit invocation fails loudly if its tool is absent.
-
-FINDINGS FOR THE REVIEWER PASS
-1. `test_tooling` is a `pub mod` in the production drivers crate, not test-gated.
-   The comment gives a real reason — integration-test crates cannot import
-   `#[cfg(test)]` modules — but the idiomatic answer is a `test-support` cargo
-   feature or a separate dev-dependency crate. As shipped, test scaffolding is
-   public API of a production library and cannot be removed without a breaking
-   change.
-2. The sentinel is slow: `has been running for over 60 seconds` in-suite, while
-   `command_available` is only a PATH lookup. Either `command_succeeds` spawns
-   are paying the macOS exec cost, or the sentinel is queued behind live tests on
-   the shared `test_environment_lock`. Either way its duration is a function of
-   unrelated tests, which is a poor property for the one test that reports
-   environment health.
-3. Suite wall time went from ~106 s to 152 s on the same machine. Some of that is
-   variance — 140 s was observed earlier today — but it should be measured
-   deliberately rather than assumed.
-
-* IN_REVIEW TASK-6FNAY TASK-8W30B fix round: make the rmux reap cancellation-safe, visible, and endpoint-exact :drivers:rmux:bug:production:
-:PROPERTIES:
-:ID: TASK-6FNAY
-:priority: P1
-:test_cmd: cargo test -p orgasmic-drivers
-:write_scope: crates/orgasmic-drivers/src/modes/rmux.rs crates/orgasmic-drivers/tests/ crates/orgasmic-daemon/src/supervisor.rs
-:PRIORITY:    P1
-:END:
-
-Fix round for the reviewer BLOCK on TASK-8W30B (merged d60c4ed / d3fae4d).
-Reviewer: reviewer-codex-acp-stdio (acp-stdio / codex / unknown / unknown),
-run-20260726T110214. Findings are also in tx as reviewer.finding
-tx-20260726-orgasmic-2872..2876. The merged change is NOT reverted: measured
-release growth did go from +8 to 0 on the happy path. What follows is the
-failure path it did not make reliable.
-
-1. HIGH — the reaper can be cancelled before its fallback ever runs.
-`run_live_session` builds the SDK facade with a 5s default timeout;
-`reap_rmux_session` awaits `Session::kill()` before starting a separately
-bounded 5s CLI fallback; and `stop_and_join_driver_producer`
-(supervisor.rs:3983-3989) wraps the whole `release` in a third 5s timeout. A
-transport that is gone but does not fail fast eats the entire outer budget in
-the SDK attempt, and the fallback gets no guaranteed opportunity to start.
-
-The severe part is what cancellation costs. `release` sets `released = true` and
-does `self.session.take()` BEFORE the await, so when the outer timeout drops the
-future the only `Session` handle drops with it. The following `drop(control)`
-sees `session == None` and the Drop backstop cannot retry. That reproduces the
-original production symptom exactly: session, pty and harness survive release.
-Fix: one authoritative release budget with the SDK attempt strictly shorter than
-the total and time reserved for the CLI fallback, or a caller budget large enough
-for both. Do not `take()` the only handle before a cancellable await without a
-durable retry owner.
-
-2. MEDIUM — the reap error is still invisible. `release` returns `reap_result`,
-but supervisor.rs:3988 assigns the nested timeout result to `_`, discarding both
-`Ok(Err(DriverError::Transport(..)))` and `Err(Elapsed)`. `release_one` then
-removes the record, writes `Lifecycle::Release` and returns success. The
-invisible warn became an invisible Result. Fix: inspect both layers; keep
-producer/drain/lifecycle cleanup unconditional so an error can never strand a
-run, but emit an error with run and transport context after cleanup.
-
-3. MEDIUM — the CLI fallback can address the wrong daemon. It shells out to bare
-`rmux kill-session -t <stored string>`, but rmux-sdk 0.9.0 stores the resolved
-endpoint AND the sanitized protocol-owned name on `Session`, and its builder
-honours `RMUX_SDK_ENDPOINT`, while the CLI resolves `-S`/`-L`/`$RMUX`/default
-instead. A session acquired via a custom endpoint falls back against a different
-daemon: usually it just leaks, but if that daemon holds the same target name it
-kills the wrong session. The name happens to match today only because
-`make_run_id`/`RuntimeIdentity::new` emit safe components —
-`RuntimeIdentity::planned` accepts arbitrary strings and `run_live_session`
-copies `session_target` before `SessionName::new` sanitizes `.` and `:`. Fix:
-capture `session.name()` and `session.endpoint()` from the handle before the
-primary kill and pass the endpoint explicitly. Do not maintain a second, weaker
-identity.
-
-4. MEDIUM — a cancelled release loses its `RunComplete`. Confirmed, with the
-manager s no-strand reasoning upheld: explicit release keeps the RunRecord until
-the drain joins, then removes it and writes `Lifecycle::Release`, and a
-terminal-event-driven release already persisted its terminal event first. So no
-run is stranded — but the latch is set before the reap, Drop aborts the competing
-watcher, and the driver summary is simply lost. Fix: publish the release-owned
-`RunComplete` claim before the fallible reap, or make terminal publication
-cancellation-safe.
-
-5. MEDIUM — the regression test cannot gate anything. It returns success when the
-binary is missing/incompatible and again when acquire reports inert, and it calls
-`control.release` directly, so it cannot reach any of the four failures above.
-Keep it as a live smoke and add deterministic coverage for SDK failure, CLI
-fallback, cancellation, and endpoint/target propagation — including a
-supervisor-path regression that stalls the SDK request and proves the fallback
-runs and the session is gone after `Supervisor::release`.
-
-Out of scope: the known-red trio, and TASK-099T6.
-
-Acceptance:
-- a stalled SDK kill still results in a reaped session via the CLI fallback,
-  proven by a supervisor-path test that goes through the real 5s caller timeout
-- a reap failure appears in the daemon log with run and transport context, and
-  cleanup still happens unconditionally
-- the fallback targets the endpoint and name owned by the SDK handle
-- a cancelled release does not silently drop its RunComplete
-- at least one test fails, rather than skips, when rmux is absent in a lane
-  designated as a gate
-
 * IN_REVIEW TASK-Z3093 LiveSessionGuard serializes but never reaps, so every failing live-session test leaks an rmux session :testing:rmux:leak:production:
 :PROPERTIES:
 :ID: TASK-Z3093
@@ -697,4 +437,141 @@ One shared guard that owns cleanup, not nine that own a file lock.
   bounded, not zero.
 - Do not run `legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
   (TASK-099T6) — it bills real money. Skip it explicitly on the drivers suite.
+
+* IN_REVIEW TASK-QSSQH C0XMR fix round: a genuine RunFail must survive a later worker finalize :daemon:stage:fix:
+:PROPERTIES:
+:ID: TASK-QSSQH
+:PRIORITY: P0
+:test_cmd: cargo test -p orgasmic-daemon
+:write_scope: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+Fix round for the reviewer BLOCK SHIP on TASK-C0XMR (merged `0533735`).
+Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
+run-20260728T103249, closed tx-20260728-orgasmic-3139.
+
+The merged change is NOT reverted. What it got right, confirmed by review:
+session ordering on the normal path is persisted JSONL order and the
+implementation does **not** compare wall-clock timestamps; the same outcome
+function serves grill, architect and plan, so the fix is not architect-specific
+and does not depend on `architector.done`; duplicate CLI finalize is already
+convergent at the release/tx boundary (release removes the live run, retries
+verify the durable worker-finalize tombstone, the terminal tx has a deterministic
+request id) — no idempotence defect exists. All gates passed, including the real
+production-path test `stage_architect_finalize_from_orgasmic_run_id_on_main`.
+
+The defect is the one the brief named as worse than the original bug, and it is
+in this diff.
+
+** HIGH — a genuine terminal failure followed by a worker finalize is turned green
+
+`crates/orgasmic-daemon/src/api.rs:6098,6141-6149`.
+
+`DriverEvent::RunFail` is a real failure: the production drain maps it to
+`ReleaseOutcome::Failed` and stores it on the run
+(`supervisor.rs:3429-3463`). Explicit release deliberately waits for that drain
+and persists the stored terminal outcome, so a finalize racing a queued `RunFail`
+produces the authoritative shape
+`Release { outcome: Failed, finalized_by_worker: true }`
+(`supervisor.rs:2181-2228`).
+
+The new scan sets `pending_failure` and then clears it **unconditionally** on
+`finalized_by_worker`, inspecting neither the failure kind nor the release
+outcome, and returns `StageOutcome::Completed`. The stage watcher then writes
+`<stage>.completed` for a run the supervisor classified as failed.
+
+The added negative test does not cover the claimed case:
+`stage_outcome_fails_when_a_fatal_driver_error_has_no_worker_finalize_after_it`
+uses `finalized_by_worker: false`, while the adversarial case is failure **plus**
+finalize.
+
+Required (reviewer's direction 1): make semantic failure sticky across worker
+finalize. At minimum `RunFail` must survive a later finalize. For fatal driver
+errors, persist enough release-boundary or classification data to suppress only
+the errors *caused by* the finalize teardown, rather than clearing every earlier
+failure. Add a regression for
+`RunFail -> Release { outcome: Failed, finalized_by_worker: true }`, plus a
+production-path race test.
+
+** Open question the reviewer raised, and it is the crux
+
+What durable session event should identify the finalize-admission boundary? The
+trailing release cannot distinguish a queued genuine `RunFail` from a fatal error
+caused by teardown, because **both are drained before that release**. Answer this
+explicitly before writing the fix; a suppression rule that cannot name its
+boundary will get one of the two cases wrong. Record the answer in the task or a
+decision, not only in a code comment.
+The reviewer is right that the trailing release cannot carry the boundary, and
+the evidence is stronger than "cannot distinguish": the two cases produce a
+byte-identical release. `terminal_outcome_for_event` maps `RunFail` and fatal
+`DriverError` to the same `ReleaseOutcome::Failed`
+(`supervisor.rs:3429-3436`), both are drained before `release_one` freezes
+`rec.terminal_outcome.unwrap_or(outcome)`, so a genuine queued `RunFail` and a
+teardown-induced fatal error both write
+`Release { outcome: Failed, finalized_by_worker: true }`. The release is not a
+weak discriminator; it is not a discriminator at all. Asserted directly by the
+production-path test pair
+`worker_finalize_does_not_clear_a_run_fail_drained_during_teardown` and
+`worker_finalize_still_suppresses_the_error_its_own_teardown_caused`, which
+assert the identical release shape and opposite stage outcomes.
+
+The boundary is two rules, not one, because no single durable event answers
+both halves.
+
+1. KIND, for semantic failure. `RunFail` is only ever emitted from a harness
+   protocol result — Claude `is_error`, a failed codex turn, a cursor stop
+   reason. Teardown reaps the process group, and every transport classifies
+   that as a fatal `DriverError` (`classify_pane_exit`,
+   `orgasmic-drivers/src/modes/rmux.rs:1901-1959`); nothing synthesizes a
+   `RunFail`. So `RunFail` is sticky across a later worker finalize,
+   unconditionally and regardless of position. Position must not matter: a
+   `RunFail` still queued when the finalize is admitted is drained AFTER the
+   admission marker, so a marker-only rule would clear exactly the case this
+   task exists to fix.
+
+2. A durable ADMISSION MARKER, for driver errors. The supervisor appends a
+   `SessionEventKind::Note` carrying `{"note": "worker_finalize_admitted"}` at
+   the instant it grants finalize admission — after
+   `explicit_release_in_progress = true`, before
+   `stop_and_join_driver_producer`, awaited so it is on disk first
+   (`supervisor.rs`, `release_one`). Teardown cannot produce anything before
+   it. A fatal driver error after the marker is one this finalize caused and
+   stays suppressed; one before it was already there and is sticky.
+
+Why a new event rather than an existing one: the release is the only other
+durable session event on this path, and it is appended after the drain, so
+every candidate discriminator is already behind it. This is a session-schema
+addition, but not a `Lifecycle` variant change — `Note` is the existing
+free-form supervisor channel, so `orgasmic-core` is untouched and every reader
+that filters by kind ignores it.
+
+Backward compatibility: sessions with no marker (written before this change, or
+where the append failed and logged) keep the TASK-C0XMR reading for driver
+errors — dominance by the following finalize. Rule 1 still applies to them, so
+the reported HIGH is fixed for old sessions too.
+
+If a third case appears later, the question to ask is which of the two rules it
+belongs to: is the failure semantically declared by the harness (rule 1, sticky
+by kind), or is it a transport/process artifact whose blame depends on whether
+this finalize caused it (rule 2, sticky unless after the marker)? A signal that
+fits neither means a new durable event is needed, not a new heuristic on the
+existing ones.
+
+** Acceptance
+
+- A run with a queued `RunFail` that is then finalized by its worker is recorded
+  as failed, not completed.
+- A teardown-induced error after a clean finalize is still suppressed — the
+  original C0XMR symptom must not regress.
+- Both cases have regressions, and the failure case exercises
+  `finalized_by_worker: true`.
+- The finalize-admission boundary is named and durable, not inferred from
+  ordering alone.
+
+** Non-goals
+
+- Do not revert `0533735`.
+- Reviewer finding 2 (a live stage loses its completion watcher across daemon
+  restart) is **out of scope** and filed separately. It is pre-existing and
+  outside this diff.
 

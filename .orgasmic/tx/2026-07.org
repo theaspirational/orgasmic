@@ -33096,3 +33096,189 @@
 :MODEL_OVERRIDE: gpt-5.6-sol
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-28 Tue 11:14:47 task.edited TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3163
+:TIME:         [2026-07-28 Tue 11:14:47]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/in_progress.org
+:REASON:       edited task node TASK-QSSQH
+:NODE_ID:      TASK-QSSQH
+:END:
+
+* TX 2026-07-28 Tue 11:21:07 implementer.reported TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3164
+:TIME:         [2026-07-28 Tue 11:21:07]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:RUN_ID:       run-20260728T105237-4d969e6bf4b449f8997ebc8a205cd7e2
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-qssqh/worktree
+:SHA:          ea16470f2b5bc338b52f969dbd5288de5b014cde
+:END:
+
+* TX 2026-07-28 Tue 11:22:45 reviewer.reported TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3165
+:TIME:         [2026-07-28 Tue 11:22:45]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:RUN_ID:       run-20260728T110839-e79450cbfd234d59b3fae25f7de634be
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 11:22:52 implementer.done TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3166
+:TIME:         [2026-07-28 Tue 11:22:52]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: ea16470
+:MERGE_SHA:    4c3fd00
+:BRANCH:       task-qssqh-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3153
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 11:22:52 task.state_transitioned TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3167
+:TIME:         [2026-07-28 Tue 11:22:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-QSSQH to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 11:23:34 reviewer.done TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3168
+:TIME:         [2026-07-28 Tue 11:23:34]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 83ea420
+:CLOSED_TX:    tx-20260728-orgasmic-3159
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 11:23:37 task.state_transitioned TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3169
+:TIME:         [2026-07-28 Tue 11:23:37]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-6FNAY to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 11:25:36 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3170
+:TIME:         [2026-07-28 Tue 11:25:36]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Half-applied dispatch-close observed live 2026-07-28 11:2x under load: 'manager dispatch-close --task TASK-6FNAY' printed 'close tx appended but lifecycle update failed: daemon request failed ... is the daemon reachable?' and then 'closed: reviewer.done tx-20260728-orgasmic-3168'. The daemon did NOT die - pid 32814 unchanged, launchd reports last exit code = never exited, parse_errors 0 - so this was a transient request failure while a full cargo test -p orgasmic-daemon and two rmux workers were running, not a crash. The ledger therefore records a reviewer.done whose task-heading lifecycle transition never happened, which is the same non-atomic close/lifecycle boundary the TASK-WGXKD and TASK-6AYEJ family is about, reproduced here in the manager path rather than the worker path. Evidence for TASK-1T3FZ (destructive close must hold a daemon-owned reservation) and for whichever task owns close atomicity: a close that appends its tx before completing its lifecycle write can leave the board disagreeing with the ledger, and the CLI reports success on the same line it reports the failure.
+:END:
+
+* TX 2026-07-28 Tue 11:26:04 reviewer.reported TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3171
+:TIME:         [2026-07-28 Tue 11:26:04]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:RUN_ID:       run-20260728T110841-294c03fb6256426aaceb0991bfa7f993
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrt4t-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 11:28:44 task.created TASK-69CW6
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3172
+:TIME:         [2026-07-28 Tue 11:28:44]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-69CW6
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-69CW6
+:END:
+
+* TX 2026-07-28 Tue 11:29:40 reviewer.done TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3173
+:TIME:         [2026-07-28 Tue 11:29:40]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: f894a7a
+:CLOSED_TX:    tx-20260728-orgasmic-3161
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 11:29:41 task.state_transitioned TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3174
+:TIME:         [2026-07-28 Tue 11:29:41]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RRT4T to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 11:30:19 task.created TASK-R2HDN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3175
+:TIME:         [2026-07-28 Tue 11:30:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R2HDN
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-R2HDN
+:END:
