@@ -53,14 +53,21 @@ pub enum NodeCmd {
     },
     /// Delete one node through the daemon org-node surface (OCC + tx).
     Delete {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Node layer to address (task, decision, architecture, glossary,
+        /// artifact); omitted → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
         /// Optimistic-concurrency token from `org node get` / prior edit; fetched when omitted.
         #[arg(long = "base-version")]
         base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Print `{id, deleted: true}` instead of the default compact
@@ -74,7 +81,10 @@ pub enum NodeCmd {
 pub enum NodeBodyCmd {
     /// Replace a node's free prose body (between drawer and first nested heading).
     Set {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
         /// Explicit layer selector; see daemon registry for the accepted set.
@@ -83,6 +93,7 @@ pub enum NodeBodyCmd {
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
+        /// Body text in Org markup, written verbatim.
         #[arg(long, allow_hyphen_values = true)]
         body: String,
         /// Pass body through the raw escape wrapper (TASK-RCP69).
@@ -91,6 +102,8 @@ pub enum NodeBodyCmd {
         /// Optimistic-concurrency token from `org node get` / prior edit; fetched when omitted.
         #[arg(long = "base-version")]
         base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Print the full node document instead of the default compact
@@ -100,21 +113,31 @@ pub enum NodeBodyCmd {
     },
     /// Append to a node's free prose body.
     Append {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Node layer to address (task, decision, architecture, glossary,
+        /// artifact); omitted → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
         /// Target a named `**` section instead of the free prose body.
         #[arg(long)]
         section: Option<String>,
+        /// Body text in Org markup, written verbatim.
         #[arg(long, allow_hyphen_values = true)]
         body: String,
         /// Not supported on append (the existing prose would be re-wrapped); use `set --raw`.
         #[arg(long)]
         raw: bool,
+        /// Optimistic-concurrency token from a prior read/edit; fetched when
+        /// omitted. The write is refused if the node moved underneath it.
         #[arg(long = "base-version")]
         base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Print the full node document instead of the default compact
@@ -131,15 +154,27 @@ pub enum NodePropCmd {
     /// PARENT) take space-separated node ids, not prose — an unresolvable
     /// token is rejected at write time (use --force to skip the check).
     Set {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Drawer property key. UPPERCASE org drawer spelling — the reader
+        /// compares keys byte for byte.
         key: String,
+        /// New value for the property, written verbatim.
         value: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Node layer to address (task, decision, architecture, glossary,
+        /// artifact); omitted → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
+        /// Optimistic-concurrency token from a prior read/edit; fetched when
+        /// omitted. The write is refused if the node moved underneath it.
         #[arg(long = "base-version")]
         base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Skip the write-time check that a reference-valued property
@@ -153,14 +188,25 @@ pub enum NodePropCmd {
     },
     /// Remove one drawer property.
     Unset {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Drawer property key. UPPERCASE org drawer spelling — the reader
+        /// compares keys byte for byte.
         key: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Node layer to address (task, decision, architecture, glossary,
+        /// artifact); omitted → inferred from the id prefix.
         #[arg(long, value_enum)]
         kind: Option<NodeKindArg>,
+        /// Optimistic-concurrency token from a prior read/edit; fetched when
+        /// omitted. The write is refused if the node moved underneath it.
         #[arg(long = "base-version")]
         base_version: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Print the full node document instead of the default compact

@@ -121,8 +121,10 @@ Examples:
     },
     /// Update the installed runtime or contributor source checkout.
     Update {
+        /// Git branch to update the contributor source checkout from.
         #[arg(long, default_value = "main")]
         branch: String,
+        /// Fetch and check out only; skip the cargo build that follows.
         #[arg(long)]
         no_build: bool,
         /// Switch the runtime release channel (e.g. stable, nightly) and install
@@ -315,14 +317,21 @@ Examples:
     },
     /// Manager grilling stage.
     Grill {
+        /// Project id this stage runs for.
         #[arg(long, default_value = "orgasmic")]
         project: String,
+        /// Transport mode for the stage worker; see `orgasmic manager drivers`
+        /// for the supported `(mode, harness)` pairs.
         #[arg(long)]
         mode: String,
+        /// Harness for the stage worker; see `orgasmic manager drivers`.
         #[arg(long)]
         harness: String,
+        /// Why this write is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Block until the launched run reaches a terminal state instead of
+        /// returning as soon as it starts.
         #[arg(long)]
         wait: bool,
         /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
@@ -331,14 +340,21 @@ Examples:
     },
     /// Manager architecture stage.
     Architect {
+        /// Project id this stage runs for.
         #[arg(long, default_value = "orgasmic")]
         project: String,
+        /// Transport mode for the stage worker; see `orgasmic manager drivers`
+        /// for the supported `(mode, harness)` pairs.
         #[arg(long)]
         mode: String,
+        /// Harness for the stage worker; see `orgasmic manager drivers`.
         #[arg(long)]
         harness: String,
+        /// Why this write is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Block until the launched run reaches a terminal state instead of
+        /// returning as soon as it starts.
         #[arg(long)]
         wait: bool,
         /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
@@ -347,14 +363,21 @@ Examples:
     },
     /// Manager planning stage.
     Plan {
+        /// Project id this stage runs for.
         #[arg(long, default_value = "orgasmic")]
         project: String,
+        /// Transport mode for the stage worker; see `orgasmic manager drivers`
+        /// for the supported `(mode, harness)` pairs.
         #[arg(long)]
         mode: String,
+        /// Harness for the stage worker; see `orgasmic manager drivers`.
         #[arg(long)]
         harness: String,
+        /// Why this write is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Block until the launched run reaches a terminal state instead of
+        /// returning as soon as it starts.
         #[arg(long)]
         wait: bool,
         /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
@@ -383,19 +406,29 @@ enum ProjectCmd {
   orgasmic project init --path ~/myrepo --name myrepo \\
     --default-branch trunk")]
     Init {
+        /// Repo root to scaffold `.orgasmic/` in; omitted → the current
+        /// directory.
         #[arg(long)]
         path: Option<PathBuf>,
+        /// Project id to register under; omitted → the directory name.
         #[arg(long)]
         name: Option<String>,
+        /// Default git branch recorded in `.orgasmic/project.org`; omitted →
+        /// the repo's current branch.
         #[arg(long)]
         default_branch: Option<String>,
+        /// Scaffold over an existing `.orgasmic/`, overwriting shipped files.
         #[arg(long)]
         force: bool,
+        /// Scaffold the files but do not register the project on the global
+        /// board.
         #[arg(long)]
         no_register: bool,
     },
     /// Register an existing `.orgasmic/` project on the global board.
     Add {
+        /// Root of the existing `.orgasmic/` project to register; omitted →
+        /// the current directory.
         #[arg(long)]
         path: Option<PathBuf>,
     },
@@ -409,8 +442,13 @@ enum ProjectCmd {
 
 #[derive(Subcommand, Debug)]
 enum TasksCmd {
-    /// List tasks for a project.
+    /// List every task in a project (id, title, stage, priority) as JSON.
+    ///
+    /// The plural group is the LISTING surface; single-task reads and writes
+    /// live under `orgasmic task` (`task get`, `task create`, `task update`).
     List {
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
         /// Print only task ids, one per line, nothing else.
@@ -420,26 +458,57 @@ enum TasksCmd {
 }
 
 #[derive(Subcommand, Debug)]
+#[command(after_help = "\
+Listing lives in the PLURAL group: `orgasmic tasks list [--ids]`.
+
+`--property KEY=VALUE` keys are org drawer keys and are matched byte for byte,
+so they must be UPPERCASE: `--property PRIORITY=P1`, not `priority=P1`. A
+miscased or unwritable key is refused by name rather than dropped (TASK-HXSW0).
+
+Examples:
+  orgasmic task create --title \"…\" --priority P1 --property TEST_CMD=\"cargo test\"
+  orgasmic task get TASK-XXXXX
+  orgasmic task update TASK-XXXXX --state in_progress
+  orgasmic task update TASK-XXXXX --property WRITE_SCOPE=\"crates/**\"")]
 enum TaskCmd {
-    /// File a new task heading through the daemon.
+    /// File a new task heading through the daemon. Prints `{id, tx_id}`.
     Create {
-        /// Task id; omitted → daemon mints `TASK-XXXXX`.
+        /// Task id; omitted → daemon mints `TASK-XXXXX`. Pass
+        /// `TASK-<parent>.<n>` to file a subtask: parentage is derived from the
+        /// id grammar and from nothing else.
         #[arg(long)]
         id: Option<String>,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Heading title prose, without the id token or the lifecycle keyword.
         #[arg(long)]
         title: String,
         /// Org tags on the title line; repeatable.
         #[arg(long)]
         tag: Vec<String>,
+        /// Task body in Org markup, spliced under the heading. Use `**`
+        /// sections (`** Description`); a column-0 `* ` heading is refused.
         #[arg(long, allow_hyphen_values = true)]
         body: Option<String>,
+        /// Task priority (e.g. `P1`), written as the `:PRIORITY:` drawer
+        /// property. Same field `task update --priority` writes — before
+        /// TASK-HXSW0 this flag did not exist and `--property priority=P1` was
+        /// silently discarded.
+        #[arg(long)]
+        priority: Option<String>,
+        /// Why this task is being filed; recorded on the `task.created` tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of filing a second task.
         #[arg(long = "request-id")]
         request_id: Option<String>,
-        /// Additional `KEY=VALUE` properties; repeatable.
+        /// Additional drawer properties; repeatable. Keys are UPPERCASE org
+        /// drawer keys (`WRITE_SCOPE`, `READ_SCOPE`, `TEST_CMD`, `IMPLEMENTS`,
+        /// `DEPENDS_ON`, `PRODUCES`, …); a miscased or unwritable key is
+        /// refused by name, never dropped.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
         /// Skip the write-time check that every reference-valued property
@@ -447,17 +516,28 @@ enum TaskCmd {
         #[arg(long)]
         force: bool,
     },
-    /// Show one task.
+    /// Show one task as JSON (drawer, body sections, lifecycle stage).
     Get {
+        /// Task id, e.g. `TASK-XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
     },
-    /// Update one task heading through the daemon.
+    /// Update one task heading through the daemon. Prints `{id, changed, tx_id}`.
     Update {
+        /// Task id, e.g. `TASK-XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Move the task to another lifecycle stage (`backlog`, `todo`,
+        /// `in_progress`, `in_review`, `done`, `cancelled`). Rewrites the
+        /// heading keyword, relocates the subtree to that stage's file and
+        /// records a `task.state_transitioned` tx — so it runs as its own call
+        /// and cannot be combined with `--priority`/`--property`.
         #[arg(long)]
         state: Option<String>,
         /// Rewrite the heading's title prose (TASK-XPYRR). The lifecycle
@@ -470,13 +550,21 @@ enum TaskCmd {
         /// `orgasmic node`/the org-node editor; fetched when omitted.
         #[arg(long = "base-version")]
         base_version: Option<String>,
+        /// Task priority (e.g. `P1`), written as the `:PRIORITY:` drawer
+        /// property.
         #[arg(long)]
         priority: Option<String>,
+        /// Why this edit is being made; recorded on the resulting tx.
         #[arg(long)]
         reason: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
-        /// Additional `KEY=VALUE` properties; repeatable.
+        /// Additional drawer properties; repeatable. Keys are UPPERCASE org
+        /// drawer keys (`WRITE_SCOPE`, `READ_SCOPE`, `TEST_CMD`, `IMPLEMENTS`,
+        /// `DEPENDS_ON`, `PRODUCES`, …); a miscased or unwritable key is
+        /// refused by name, never dropped.
         #[arg(long = "property", value_name = "KEY=VALUE")]
         properties: Vec<String>,
         /// Print the full task detail instead of the default compact
@@ -490,6 +578,8 @@ enum TaskCmd {
 enum IdCmd {
     /// Print one minted node id to stdout (no daemon required).
     Mint {
+        /// Node class the id is minted for; fixes the id prefix
+        /// (`task` → `TASK-…`, `decision` → `dec_…`, `architecture` → `arch_…`).
         #[arg(long, value_enum)]
         class: MintClassArg,
     },
@@ -520,6 +610,8 @@ impl From<MintClassArg> for orgasmic_core::NodeIdClass {
 enum GlossaryCmd {
     /// List glossary terms for a project.
     List {
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
         /// Print only glossary term ids, one per line, nothing else — unlike
@@ -530,7 +622,10 @@ enum GlossaryCmd {
     },
     /// Show one glossary term.
     Get {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
     },
@@ -539,14 +634,20 @@ enum GlossaryCmd {
         /// Term id; omitted → daemon mints `term_XXXXX`.
         #[arg(long)]
         id: Option<String>,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Heading title prose, without the id token.
         #[arg(long)]
         title: Option<String>,
+        /// One-sentence definition, written as the `:DEFINITION:` property.
         #[arg(long)]
         definition: Option<String>,
+        /// The spelling to use for this term, written as `:CANONICAL:`.
         #[arg(long)]
         canonical: Option<String>,
+        /// Spellings to avoid for this term, written as `:AVOID:`.
         #[arg(long)]
         avoid: Option<String>,
         /// Node ids this term relates to, space/repeat-separated (e.g.
@@ -554,8 +655,12 @@ enum GlossaryCmd {
         /// id must already exist or the write is rejected (see --force).
         #[arg(long = "relates-to")]
         relates_to: Vec<String>,
+        /// Node body in Org markup, spliced under the heading. Use `**`
+        /// sections; a column-0 `* ` heading is refused.
         #[arg(long, allow_hyphen_values = true)]
         body: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
@@ -582,6 +687,8 @@ enum GlossaryCmd {
 enum DecisionCmd {
     /// List decision nodes for a project.
     List {
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
         /// Print only decision ids, one per line, nothing else.
@@ -590,20 +697,31 @@ enum DecisionCmd {
     },
     /// Show one decision node.
     Get {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
     },
     /// Create a decision node through the daemon.
     Create {
+        /// Decision id to pin; omitted → daemon mints `dec_XXXXX`.
         #[arg(long)]
         id: Option<String>,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Heading title prose, without the id token.
         #[arg(long)]
         title: Option<String>,
+        /// Node body in Org markup, spliced under the heading. Use `**`
+        /// sections; a column-0 `* ` heading is refused.
         #[arg(long, allow_hyphen_values = true)]
         body: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
@@ -626,6 +744,8 @@ enum DecisionCmd {
 enum ArchitectureCmd {
     /// List architecture nodes for a project.
     List {
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
         /// Print only architecture node ids, one per line, nothing else.
@@ -634,7 +754,10 @@ enum ArchitectureCmd {
     },
     /// Show one architecture node.
     Get {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
     },
@@ -646,14 +769,22 @@ enum ArchitectureCmd {
     },
     /// Create an architecture node through the daemon.
     Create {
+        /// Architecture node id to pin; omitted → daemon mints `arch_XXXXX`.
         #[arg(long)]
         id: Option<String>,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Heading title prose, without the id token.
         #[arg(long)]
         title: Option<String>,
+        /// Node body in Org markup, spliced under the heading. Use `**`
+        /// sections; a column-0 `* ` heading is refused.
         #[arg(long, allow_hyphen_values = true)]
         body: Option<String>,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
         /// Additional `KEY=VALUE` properties; repeatable. Reference-valued
@@ -676,14 +807,23 @@ enum ArchitectureCmd {
 enum GraphCmd {
     /// List graph edges, optionally filtered by node, direction, kind, or relation alias.
     Edges {
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Only edges touching this node id.
         #[arg(long)]
         node: Option<String>,
+        /// With --node, which side to match: `out` (edges from the node),
+        /// `in` (edges to it), or `both`.
         #[arg(long)]
         dir: Option<String>,
+        /// Only edges whose other endpoint is of this node layer (task,
+        /// decision, architecture, glossary, artifact).
         #[arg(long)]
         kind: Option<String>,
+        /// Only edges of this relation (the drawer key that produced them,
+        /// e.g. `IMPLEMENTS`, `DEPENDS_ON`, `RELATES_TO`).
         #[arg(long)]
         relation: Option<String>,
     },
@@ -706,10 +846,17 @@ enum TxCmd {
         /// Tx type (e.g. `manager.action`, `task.state_transitioned`).
         #[arg(long = "type", value_name = "TYPE")]
         ty: String,
+        /// Project id whose ledger receives the entry; omitted → resolved from
+        /// the `.orgasmic/project.org` above the current directory, like every
+        /// sibling mutation verb. Only when there is no such project (and no
+        /// `--tx-path`) does the entry fall back to the global home ledger.
         #[arg(long)]
         project: Option<String>,
+        /// Task id this entry is about, recorded as `:TASK:`.
         #[arg(long)]
         task: Option<String>,
+        /// Non-task subject of the entry (a node id or path), recorded as
+        /// `:TARGET:`.
         #[arg(long)]
         target: Option<String>,
         /// Why this entry exists. Single line only — a newline is refused and
@@ -717,8 +864,12 @@ enum TxCmd {
         /// (`orgasmic node body set`).
         #[arg(long)]
         reason: Option<String>,
+        /// Who is recording this; omitted → the git identity of the project
+        /// repo. Recorded as `:ACTOR:`.
         #[arg(long)]
         actor: Option<String>,
+        /// Host this entry was recorded on; omitted → this machine. Recorded
+        /// as `:MACHINE:`.
         #[arg(long)]
         machine: Option<String>,
         /// Stable idempotency key. If the same value is replayed, the
@@ -729,14 +880,19 @@ enum TxCmd {
         /// single-line only, same as `--reason`.
         #[arg(long = "extra", value_name = "KEY=VALUE")]
         extra: Vec<String>,
-        /// Override the tx file path (defaults to `$ORGASMIC_HOME/state/tx/YYYY-MM.org`).
+        /// Write to an explicit tx file instead of a project ledger. Suppresses
+        /// the cwd-project default above, so an entry written this way is NOT
+        /// on the project ledger `orgasmic tx list --project <id>` reads.
         #[arg(long = "tx-path")]
         tx_path: Option<PathBuf>,
     },
-    /// List tx entries known to the daemon.
+    /// List tx entries known to the daemon, newest first.
     List {
+        /// Project id whose ledger to read; omitted → every ledger the daemon
+        /// knows, including the global home file.
         #[arg(long)]
         project: Option<String>,
+        /// Maximum number of entries to print.
         #[arg(long, default_value_t = 20)]
         limit: usize,
     },
@@ -753,12 +909,20 @@ enum PromptCmd {
     /// List prompt specs.
     List,
     /// Show one prompt spec.
-    Show { id: String },
+    Show {
+        /// Prompt spec id, as printed by `orgasmic prompt list`.
+        id: String,
+    },
     /// Compile a prompt spec.
     Compile {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Renderer to use instead of the project default
+        /// (`:DEFAULT_RENDERER:` in `.orgasmic/project.org`).
         #[arg(long)]
         renderer: Option<String>,
         /// Additional slot value as KEY=VALUE; repeatable.
@@ -767,9 +931,14 @@ enum PromptCmd {
     },
     /// Lint a prompt spec.
     Lint {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Project id; omitted → resolved from the `.orgasmic/project.org`
+        /// above the current directory.
         #[arg(long)]
         project: Option<String>,
+        /// Renderer to use instead of the project default
+        /// (`:DEFAULT_RENDERER:` in `.orgasmic/project.org`).
         #[arg(long)]
         renderer: Option<String>,
         /// Additional slot value as KEY=VALUE; repeatable.
@@ -777,7 +946,10 @@ enum PromptCmd {
         values: Vec<String>,
     },
     /// Fork a shipped prompt spec into the user override layer.
-    Fork { id: String },
+    Fork {
+        /// Prompt spec id to fork, as printed by `orgasmic prompt list`.
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -785,7 +957,10 @@ enum SkillsCmd {
     /// List skills known to the daemon.
     List,
     /// Show one skill definition.
-    Show { id: String },
+    Show {
+        /// Skill id, as printed by `orgasmic skills list`.
+        id: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -793,23 +968,34 @@ enum OptionalCmd {
     /// List optional shipped content packs.
     List,
     /// Enable an optional content pack.
-    Enable { name: String },
+    Enable {
+        /// Pack name, as printed by `orgasmic optional list`.
+        name: String,
+    },
     /// Disable an optional content pack.
-    Disable { name: String },
+    Disable {
+        /// Pack name, as printed by `orgasmic optional list`.
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
 enum HubCmd {
     /// Install a hub content pack from a URL.
     Install {
+        /// URL of the hub content pack archive to install.
         url: String,
+        /// Content family the pack installs into.
         #[arg(long, default_value = "skills")]
         family: String,
     },
     /// List installed hub content packs.
     List,
     /// Remove a hub content pack.
-    Remove { name: String },
+    Remove {
+        /// Pack name, as printed by `orgasmic hub list`.
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -849,12 +1035,15 @@ enum DispatchCmd {
 enum QuestionCmd {
     /// Ask a blocking question through the daemon.
     Ask {
+        /// The question text an operator will answer.
         #[arg(long)]
         text: String,
     },
     /// Answer a pending question.
     Answer {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// The answer text.
         #[arg(long)]
         text: String,
     },
@@ -865,26 +1054,40 @@ enum RunCmd {
     /// List worker runs.
     List,
     /// Show one worker run.
-    Show { id: String },
+    Show {
+        /// Run id, e.g. `run-20260707T211315-…`, as printed by `orgasmic run list`.
+        id: String,
+    },
     /// Locate the harness-native session transcript for a run (TASK-0SADP).
     ///
     /// Resolves claude/codex/cursor-agent/hermes on-disk JSONL via per-harness
     /// adapters. Custom harnesses return unsupported.
-    NativeTranscript { id: String },
+    NativeTranscript {
+        /// Run id whose native transcript to locate, as printed by `orgasmic run list`.
+        id: String,
+    },
     /// Recover an interrupted worker run with an explicit recovery action.
     ///
     /// `--action` is one of `reattach_tmux`, `resume_native_fork`, or
     /// `start_recovery_run`. Omit it to let the daemon execute the sole valid
     /// action or report the available choices.
     Recover {
+        /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
         id: String,
+        /// Recovery action to take: `reattach_tmux`, `resume_native_fork` or
+        /// `start_recovery_run`. Omitted → the daemon runs the sole valid
+        /// action or reports the available choices.
         #[arg(long)]
         action: Option<String>,
         /// Registered project containing the origin run.
         #[arg(long)]
         project: String,
+        /// Stable idempotency key. Replaying the same value returns the
+        /// original result instead of writing twice.
         #[arg(long = "request-id")]
         request_id: Option<String>,
+        /// Proceed even when the daemon still believes the origin run is live;
+        /// use only after confirming the process is gone.
         #[arg(long)]
         force_inert: bool,
     },
@@ -940,8 +1143,197 @@ const ENTRY_DEFAULT_WORKFLOW: &str = "default";
 const ENTRY_DEFAULT_WORKFLOW_SECTION: &str = "** Default workflow";
 const ENTRY_SCAFFOLD_VERSION: &str = "1";
 
+// orgasmic:task_HXSW0
+/// Verbs that were actually guessed in one manager session, and the real thing
+/// they meant. clap's built-in suggester is edit-distance-based, so it is
+/// silent for all four: `show`/`get` and `list`/`get` are not near-misses as
+/// STRINGS, they are near-misses as INTENTIONS.
+///
+/// Keyed by the full guessed path so `task list` and `tasks list` can answer
+/// differently. Kept sorted; `cli_parity` asserts every RHS still parses.
+const GUESSED_VERBS: &[(&str, &str)] = &[
+    (
+        "run release",
+        "there is no release verb: a dispatch is closed with `orgasmic manager \
+         dispatch-close --task <ID> --status done`",
+    ),
+    (
+        "task list",
+        "listing lives in the PLURAL group: `orgasmic tasks list [--ids]`",
+    ),
+    ("task show", "`orgasmic task get <ID>`"),
+    (
+        "tasks create",
+        "writes live in the SINGULAR group: `orgasmic task create --title \"…\"`",
+    ),
+    (
+        "tasks get",
+        "single-task reads live in the SINGULAR group: `orgasmic task get <ID>`",
+    ),
+    (
+        "tasks update",
+        "writes live in the SINGULAR group: `orgasmic task update <ID> …`",
+    ),
+    (
+        "worker list",
+        "worker runs are `orgasmic run list`; open dispatches are `orgasmic manager \
+         dispatch-status`",
+    ),
+];
+
+/// Levenshtein distance, for the generic "closest sibling" fallback.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut current = vec![0usize; b_chars.len() + 1];
+    for (i, a_ch) in a.chars().enumerate() {
+        current[0] = i + 1;
+        for (j, b_ch) in b_chars.iter().enumerate() {
+            let cost = usize::from(a_ch != *b_ch);
+            current[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(current[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut current);
+    }
+    prev[b_chars.len()]
+}
+
+/// The hint appended to clap's own "unrecognized subcommand" refusal: the real
+/// verb where one is known, otherwise the closest sibling, and always the one
+/// `--help` call that lists the truth.
+fn unknown_subcommand_hint(
+    path: &[String],
+    guessed: &str,
+    trailing: &[String],
+    parent: &clap::Command,
+) -> String {
+    let full = if path.is_empty() {
+        guessed.to_string()
+    } else {
+        format!("{} {guessed}", path.join(" "))
+    };
+    // `worker list` is only recognisable as a guess at two words: the table is
+    // keyed on intent, so match the longest prefix of what was actually typed.
+    let mut candidates = vec![full.clone()];
+    let mut widened = full.clone();
+    for word in trailing {
+        widened.push(' ');
+        widened.push_str(word);
+        candidates.push(widened.clone());
+    }
+    let mut lines = Vec::new();
+    if let Some((_, answer)) = candidates
+        .iter()
+        .rev()
+        .find_map(|key| GUESSED_VERBS.iter().find(|(name, _)| name == key))
+    {
+        lines.push(format!(
+            "`orgasmic {}` does not exist — {answer}.",
+            candidates
+                .iter()
+                .rev()
+                .find(|key| GUESSED_VERBS.iter().any(|(name, _)| name == *key))
+                .unwrap_or(&full)
+        ));
+    } else {
+        let closest = parent
+            .get_subcommands()
+            .filter(|sub| sub.get_name() != "help" && !sub.is_hide_set())
+            .map(|sub| (edit_distance(guessed, sub.get_name()), sub.get_name()))
+            // A typo, not a different word: `dispath`/`dispatch` qualifies,
+            // `worker`/`doctor` (distance 4) must not, or the hint invents an
+            // answer where "this verb does not exist" is the honest one.
+            .filter(|(distance, _)| *distance <= 2)
+            .min();
+        match closest {
+            Some((_, name)) => lines.push(format!(
+                "`orgasmic {full}` does not exist — did you mean `orgasmic {}`?",
+                if path.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{} {name}", path.join(" "))
+                }
+            )),
+            None => lines.push(format!("`orgasmic {full}` does not exist.")),
+        }
+    }
+    // The singular/plural split is a hallucination generator on its own: both
+    // groups exist and neither used to mention the other.
+    if matches!(path.first().map(String::as_str), Some("task") | Some("tasks"))
+        || matches!(guessed, "task" | "tasks")
+    {
+        lines.push(
+            "`orgasmic tasks` is the LISTING group (`tasks list`); `orgasmic task` is the \
+             single-task group (`task get`/`create`/`update`)."
+                .to_string(),
+        );
+    }
+    lines.push(format!(
+        "Run `orgasmic{}{} --help` for the real verbs.",
+        if path.is_empty() { "" } else { " " },
+        path.join(" ")
+    ));
+    lines.join("\n")
+}
+
+/// Walk argv down the real clap tree and stop at the first word that is not a
+/// subcommand of where we are.
+fn locate_unknown_subcommand(
+    args: &[String],
+) -> Option<(Vec<String>, String, Vec<String>, clap::Command)> {
+    use clap::CommandFactory;
+    let mut command = Cli::command();
+    let mut path: Vec<String> = Vec::new();
+    for (index, arg) in args.iter().enumerate() {
+        if !command.has_subcommands() || arg.starts_with('-') {
+            return None;
+        }
+        match command.find_subcommand(arg).cloned() {
+            Some(sub) => {
+                path.push(arg.clone());
+                command = sub;
+            }
+            None => {
+                let trailing = args[index + 1..]
+                    .iter()
+                    .take_while(|word| {
+                        !word.is_empty()
+                            && word
+                                .chars()
+                                .all(|c| c.is_ascii_lowercase() || c == '-' || c.is_ascii_digit())
+                    })
+                    .cloned()
+                    .collect();
+                return Some((path, arg.clone(), trailing, command));
+            }
+        }
+    }
+    None
+}
+
+/// `Cli::parse()` plus the near-miss hint. Everything else about the failure —
+/// clap's message, its usage line, its exit code — is left exactly as it was.
+fn parse_cli() -> Cli {
+    match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => {
+            if err.kind() == clap::error::ErrorKind::InvalidSubcommand {
+                let args: Vec<String> = std::env::args().skip(1).collect();
+                if let Some((path, guessed, trailing, parent)) = locate_unknown_subcommand(&args) {
+                    let _ = err.print();
+                    eprintln!(
+                        "{}",
+                        unknown_subcommand_hint(&path, &guessed, &trailing, &parent)
+                    );
+                    std::process::exit(err.exit_code());
+                }
+            }
+            err.exit()
+        }
+    }
+}
+
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     if let Cmd::ExecPinned {
         target,
         dev,
@@ -1499,6 +1891,7 @@ fn ensure_source_project_registered(home: &Home) -> Result<SourceProjectRegistra
 }
 
 struct ProjectRegistration {
+    /// Node id, e.g. `TASK-XXXXX` / `dec_XXXXX` / `arch_XXXXX` / `term_XXXXX`.
     id: String,
 }
 
@@ -2245,14 +2638,33 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                 title,
                 tag,
                 body,
+                priority,
                 reason,
                 request_id,
                 properties,
                 force,
             } => {
                 let project = manager::resolve_project(project)?;
-                let properties: std::collections::BTreeMap<_, _> =
+                let mut properties: std::collections::BTreeMap<_, _> =
                     parse_key_values(properties)?.into_iter().collect();
+                // orgasmic:task_HXSW0
+                // `--priority` is the same drawer field `task update --priority`
+                // writes; it exists on create because its absence is what made
+                // seven P1 tasks land unprioritised on 2026-07-26. Spelling it
+                // both ways in one call is a contradiction, not a merge.
+                if let Some(priority) = priority
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    if let Some(existing) = properties.get("PRIORITY") {
+                        anyhow::bail!(
+                            "--priority {priority} and --property PRIORITY={existing} set the \
+                             same drawer field; pass one of them"
+                        );
+                    }
+                    properties.insert("PRIORITY".to_string(), priority.to_string());
+                }
                 let id = id.filter(|id| !id.trim().is_empty());
                 let mut body = serde_json::json!({
                     "id": id,
@@ -3201,6 +3613,20 @@ fn cmd_tx(home: &Home, cmd: TxCmd) -> Result<()> {
                 tx_path,
             } => {
                 let extra_pairs = parse_key_values(extra)?;
+                // orgasmic:task_HXSW0
+                // `tx record` was the only mutation verb that was not
+                // project-scoped by default: without --project it appended to
+                // $ORGASMIC_HOME/state/tx/YYYY-MM.org and reported success with
+                // a home-shaped tx id, so a manager following the obvious
+                // invocation lost the entry off the project ledger and could
+                // not tell from the exit code. Resolve the cwd project like
+                // every sibling; --tx-path stays the explicit opt-out, and a
+                // cwd outside any project still falls back to the home ledger.
+                let project = match (project, tx_path.is_some()) {
+                    (Some(project), _) => Some(project),
+                    (None, true) => None,
+                    (None, false) => manager::resolve_project(None).ok(),
+                };
                 let body = serde_json::json!({
                     "request_id": request_id,
                     "type": ty,

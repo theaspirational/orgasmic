@@ -1,0 +1,25 @@
+# Pinned from the real red run of 2026-07-28, authored before the fix existed.
+#
+# The injection writes two verbs that do not exist into the manager dispatch
+# convention: `orgasmic task show` (the guess that was made repeatedly, whose
+# real name is `task get`) and `orgasmic manager list-drivers` (a plausible
+# rename of a verb that does exist under another name). Neither is in
+# `shipped/entry/`, which is the entire point — that directory was the only one
+# ever checked, and the one hallucinated convention found before TASK-HXSW0 was
+# found by accident.
+#
+# Nothing about the CODE changes under this injection. A build is green, the
+# CLI is correct, and the only thing wrong is what the shipped text tells an
+# agent to type.
+exit: 101
+
+contains: shipped entry text names commands the CLI does not have
+
+# Both, by file and by verb — the failure has to name the prose that has to be
+# edited, not merely that something somewhere disagreed.
+contains: shipped/prompt-studio/conventions/manager-dispatch.org
+contains: `orgasmic task show` does not resolve (error: unrecognized subcommand 'show')
+contains: `orgasmic manager list-drivers` does not resolve (error: unrecognized subcommand 'list-drivers')
+
+# The help-text guard in the same file is untouched by a prose edit.
+contains: test result: FAILED. 2 passed; 1 failed

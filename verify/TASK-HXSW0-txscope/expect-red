@@ -1,0 +1,16 @@
+# Pinned from the real red run of 2026-07-28, authored before the fix existed.
+#
+# The injection restores `tx record`'s home-ledger default: without --project
+# the entry goes to $ORGASMIC_HOME/state/tx/YYYY-MM.org while every sibling
+# mutation verb resolves the project from the cwd. This is instance 6 in the
+# task body, and the reason it cost a real re-record is that the call SUCCEEDS:
+# exit 0, a tx id, a tx_path — just not on the ledger anyone will read.
+exit: 101
+
+# The whole tell, and it is one path. `.../home/state/tx/` where the project's
+# own `.orgasmic/tx/` was meant.
+contains: tx record without --project must land on the PROJECT ledger, not
+contains: /home/state/tx/
+
+# One test falls; the property-key guards are untouched by this injection.
+contains: test result: FAILED. 5 passed; 1 failed

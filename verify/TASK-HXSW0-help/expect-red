@@ -1,0 +1,33 @@
+# Pinned from the real red run of 2026-07-28, authored before the fix existed.
+#
+# The injection deletes the flag descriptions from `manager dispatch` and from
+# `dispatch-close --worktree-remove`, restoring the exact `--help` an agent got
+# on the primary agent verb: nine flags rendered with blank descriptions, and no
+# way to learn from them whether `--from` is a git ref or a path, or that
+# `--worktree-remove` defaults to TRUE and takes the worktree with it
+# (TASK-2BPWM).
+#
+# The binary still builds, dispatches still work, and `--help` still prints. The
+# only thing missing is the sentence that makes the flag usable without reading
+# Rust source — which is precisely why this had survived as a style nit.
+exit: 101
+
+contains: flag(s)/argument(s) render with no description in --help
+
+# The list from the task body, verbatim, in help order.
+contains: orgasmic manager dispatch: --task
+contains: orgasmic manager dispatch: --kind
+contains: orgasmic manager dispatch: --brief
+contains: orgasmic manager dispatch: --from
+contains: orgasmic manager dispatch: --model
+contains: orgasmic manager dispatch: --effort
+contains: orgasmic manager dispatch: --worktree
+contains: orgasmic manager dispatch: --branch
+contains: orgasmic manager dispatch: --reason
+
+# The destructive default, which TASK-HXSW0 item 2 asks to be stated where the
+# operator reads it rather than only in the code.
+contains: orgasmic manager dispatch-close: --worktree-remove
+
+# The shipped-prose guard in the same file is untouched by a doc-comment edit.
+contains: test result: FAILED. 2 passed; 1 failed

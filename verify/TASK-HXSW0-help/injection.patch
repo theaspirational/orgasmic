@@ -1,0 +1,72 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 0f849df..00a29a1 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -59,16 +59,10 @@ Examples:
+     --brief /path/to/brief.md --mode rmux --harness custom \\
+     --harness-arg opencode --harness-arg --print-logs --dry-run")]
+ pub struct DispatchArgs {
+-    /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
+-    /// at several tasks. The task must be in BACKLOG or TODO — a dispatch from
+-    /// any other lifecycle stage is refused by name.
+     #[arg(long = "task", action = ArgAction::Append, required = true)]
+     pub task: Vec<String>,
+-    /// Worker persona, which fixes the prompt spec the worker is compiled from.
+     #[arg(long, value_enum)]
+     pub kind: DispatchKind,
+-    /// PATH to a file holding the manager's handoff brief (not the brief text
+-    /// itself). Read at dispatch time and compiled into the worker prompt.
+     #[arg(long)]
+     pub brief: PathBuf,
+     /// Transport mode from `orgasmic_drivers::SUPPORTED`.
+@@ -83,16 +77,10 @@ pub struct DispatchArgs {
+     /// Optional JSON array of argv tokens (alternative to repeated --harness-arg).
+     #[arg(long = "harness-args-json")]
+     pub harness_args_json: Option<String>,
+-    /// GIT REF the worker's worktree branches from (a branch name, tag or sha)
+-    /// — not a path. Omitted → the current branch HEAD.
+     #[arg(long = "from")]
+     pub from: Option<String>,
+-    /// Model id passed to the harness; the accepted values are the harness's
+-    /// own, listed per harness by `orgasmic manager drivers`.
+     #[arg(long)]
+     pub model: Option<String>,
+-    /// Reasoning-effort level passed to the harness; accepted values are the
+-    /// harness's own, listed by `orgasmic manager drivers`.
+     #[arg(long)]
+     pub effort: Option<String>,
+     /// Force the harness credential tier for this dispatch: `auto` (default,
+@@ -100,20 +88,12 @@ pub struct DispatchArgs {
+     /// rejects an unknown value.
+     #[arg(long = "credential-mode")]
+     pub credential_mode: Option<String>,
+-    /// PATH for the worker's git worktree; omitted → a managed path under
+-    /// `.orgasmic/tmp/dispatch/`.
+     #[arg(long)]
+     pub worktree: Option<PathBuf>,
+-    /// Branch name to create for the worker; omitted → derived from the task
+-    /// id (e.g. `task-xxxxx-impl`).
+     #[arg(long)]
+     pub branch: Option<String>,
+-    /// Why this dispatch is happening; recorded on the
+-    /// `manager.dispatch_started` tx.
+     #[arg(long)]
+     pub reason: Option<String>,
+-    /// Plan the dispatch and print it without creating a worktree, writing a
+-    /// tx, or launching a worker.
+     #[arg(long)]
+     pub dry_run: bool,
+     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
+@@ -168,12 +148,6 @@ pub struct DispatchCloseArgs {
+     /// Why the dispatch is being closed this way; recorded on the close tx.
+     #[arg(long)]
+     pub reason: Option<String>,
+-    /// Remove the worker's git worktree as part of the close. DEFAULTS TO
+-    /// TRUE (TASK-2BPWM): closing without saying anything removes it. The
+-    /// removal salvages uncommitted worker output to
+-    /// `refs/orgasmic/salvage/<sha>` first and then removes WITHOUT `--force`,
+-    /// so git's own clean check gates it — pass `--no-worktree-remove` to keep
+-    /// the worktree in place.
+     #[arg(long = "worktree-remove", default_value_t = true)]
+     pub worktree_remove: bool,
+     /// Keep the worker's worktree on disk, overriding the default removal.

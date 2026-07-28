@@ -59,10 +59,16 @@ Examples:
     --brief /path/to/brief.md --mode rmux --harness custom \\
     --harness-arg opencode --harness-arg --print-logs --dry-run")]
 pub struct DispatchArgs {
+    /// Task id to dispatch, e.g. `TASK-XXXXX`; repeatable to send one worker
+    /// at several tasks. The task must be in BACKLOG or TODO — a dispatch from
+    /// any other lifecycle stage is refused by name.
     #[arg(long = "task", action = ArgAction::Append, required = true)]
     pub task: Vec<String>,
+    /// Worker persona, which fixes the prompt spec the worker is compiled from.
     #[arg(long, value_enum)]
     pub kind: DispatchKind,
+    /// PATH to a file holding the manager's handoff brief (not the brief text
+    /// itself). Read at dispatch time and compiled into the worker prompt.
     #[arg(long)]
     pub brief: PathBuf,
     /// Transport mode from `orgasmic_drivers::SUPPORTED`.
@@ -77,10 +83,16 @@ pub struct DispatchArgs {
     /// Optional JSON array of argv tokens (alternative to repeated --harness-arg).
     #[arg(long = "harness-args-json")]
     pub harness_args_json: Option<String>,
+    /// GIT REF the worker's worktree branches from (a branch name, tag or sha)
+    /// — not a path. Omitted → the current branch HEAD.
     #[arg(long = "from")]
     pub from: Option<String>,
+    /// Model id passed to the harness; the accepted values are the harness's
+    /// own, listed per harness by `orgasmic manager drivers`.
     #[arg(long)]
     pub model: Option<String>,
+    /// Reasoning-effort level passed to the harness; accepted values are the
+    /// harness's own, listed by `orgasmic manager drivers`.
     #[arg(long)]
     pub effort: Option<String>,
     /// Force the harness credential tier for this dispatch: `auto` (default,
@@ -88,12 +100,20 @@ pub struct DispatchArgs {
     /// rejects an unknown value.
     #[arg(long = "credential-mode")]
     pub credential_mode: Option<String>,
+    /// PATH for the worker's git worktree; omitted → a managed path under
+    /// `.orgasmic/tmp/dispatch/`.
     #[arg(long)]
     pub worktree: Option<PathBuf>,
+    /// Branch name to create for the worker; omitted → derived from the task
+    /// id (e.g. `task-xxxxx-impl`).
     #[arg(long)]
     pub branch: Option<String>,
+    /// Why this dispatch is happening; recorded on the
+    /// `manager.dispatch_started` tx.
     #[arg(long)]
     pub reason: Option<String>,
+    /// Plan the dispatch and print it without creating a worktree, writing a
+    /// tx, or launching a worker.
     #[arg(long)]
     pub dry_run: bool,
     /// Sparse governance override as JSON (same shape as daemon GovernancePatch).
@@ -109,6 +129,8 @@ pub enum DispatchCloseStatus {
 
 #[derive(Args, Debug, Clone)]
 pub struct DispatchCloseArgs {
+    /// Task id whose dispatch is being closed; repeatable for a multi-task
+    /// dispatch. All of them must belong to the same dispatch generation.
     #[arg(long = "task", action = ArgAction::Append, required = true)]
     pub task: Vec<String>,
     /// TX_ID of the `manager.dispatch_started` this close belongs to — the
@@ -117,40 +139,75 @@ pub struct DispatchCloseArgs {
     /// rather than a generation can select a SUCCESSOR dispatch (TASK-6AYEJ.1).
     #[arg(long = "started-tx")]
     pub started_tx: Option<String>,
+    /// How the dispatch ended. `done` records `implementer.done`; `aborted`
+    /// records the abort and leaves the task where it is.
     #[arg(long, value_enum)]
     pub status: DispatchCloseStatus,
+    /// Sha of the merge commit that landed the worker's branch, recorded on
+    /// the close tx as evidence.
     #[arg(long = "merge-sha")]
     pub merge_sha: Option<String>,
+    /// Sha of the worker's own last commit on its branch.
     #[arg(long = "worker-commit", alias = "codex-commit")]
     pub worker_commit: Option<String>,
+    /// Harness session id for the worker run, for later transcript lookup.
     #[arg(long = "worker-session", alias = "codex-session")]
     pub worker_session: Option<String>,
+    /// The diff range a reviewer actually read (e.g. `main..task-x-impl`).
     #[arg(long = "reviewed-diff")]
     pub reviewed_diff: Option<String>,
+    /// Additional `KEY=VALUE` properties recorded on the close tx; repeatable.
     #[arg(long = "property", value_parser = parse_close_property)]
     pub properties: Vec<(String, String)>,
+    /// Tokens the worker run consumed, recorded on the close tx.
     #[arg(long)]
     pub tokens: Option<u64>,
+    /// Wall-clock duration of the worker run (free-form, e.g. `41m`).
     #[arg(long)]
     pub wall: Option<String>,
+    /// Why the dispatch is being closed this way; recorded on the close tx.
     #[arg(long)]
     pub reason: Option<String>,
+    /// Remove the worker's git worktree as part of the close. DEFAULTS TO
+    /// TRUE (TASK-2BPWM): closing without saying anything removes it. The
+    /// removal salvages uncommitted worker output to
+    /// `refs/orgasmic/salvage/<sha>` first and then removes WITHOUT `--force`,
+    /// so git's own clean check gates it — pass `--no-worktree-remove` to keep
+    /// the worktree in place.
     #[arg(long = "worktree-remove", default_value_t = true)]
     pub worktree_remove: bool,
+    /// Keep the worker's worktree on disk, overriding the default removal.
     #[arg(long = "no-worktree-remove")]
     pub no_worktree_remove: bool,
+    /// Also delete the worker's branch. Defaults to FALSE: the branch survives
+    /// the close unless this is passed.
     #[arg(long = "branch-delete", default_value_t = false)]
     pub branch_delete: bool,
 }
 
+/// Read-only dispatch inventory. Deliberately has NO `--project`: it reads
+/// `.orgasmic/` as files, and a dispatch worktree's `.orgasmic/` is a frozen
+/// snapshot, so it resolves the project from the cwd and refuses a frozen one
+/// by name rather than accepting an id that could point anywhere (TASK-GQPGR).
 #[derive(Args, Debug, Clone)]
+#[command(after_help = "\
+No --project: run this from the PRIMARY project root. A dispatch worktree
+carries a frozen .orgasmic/ snapshot, and reading dispatch state from it
+printed EMPTY with three dispatches open (TASK-GQPGR), so the refusal names
+the primary root instead.")]
 pub struct DispatchStatusArgs {
+    /// Show only the dispatch for this task id.
     #[arg(long)]
     pub task: Option<String>,
+    /// List only dispatches whose worker run is gone (no live process).
     #[arg(long = "orphans-only")]
     pub orphans_only: bool,
+    /// Record the orphan close tx for dispatches whose worker died, clearing
+    /// their leases. A WRITE, unlike the rest of this verb.
     #[arg(long = "cleanup-failed")]
     pub cleanup_failed: bool,
+    /// List only multi-task dispatches that are closed for some tasks and
+    /// still open for others.
     #[arg(long = "partial-closed")]
     pub partial_closed: bool,
 }
@@ -232,6 +289,9 @@ pub struct DispatchFinalizeArgs {
     /// structurally impossible (acceptance #2).
     #[arg(long)]
     pub commit: bool,
+    /// How this worker is finishing: `done` (the assignment was carried out)
+    /// or `blocked` (it could not be, and `--reason` says why). Defaults to
+    /// `done`.
     #[arg(long, value_enum, default_value = "done")]
     pub status: FinalizeStatus,
     /// Commit sha to record. Defaults to the sha `--commit` produces (or, if

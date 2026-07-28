@@ -1,0 +1,6 @@
+# One line. Run from the repo root by
+#   orgasmic verify TASK-HXSW0 --artifact verify/TASK-HXSW0-priority
+#
+# Same production-path suite as the main artifact; this one isolates the defect
+# mode where the field was not settable on the verb at all.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test task_property_silent_drop_cli

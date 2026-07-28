@@ -1,0 +1,23 @@
+# Pinned from the real red run of 2026-07-28, authored before the fix existed.
+#
+# The injection removes `--priority` from `task create`, restoring the state in
+# which `update` had a first-class flag for the field and `create` had neither
+# the flag nor a property that survived. This is the SECOND half of the
+# 2026-07-26 incident and it does not need the silent drop to hurt: with no
+# flag, the obvious workaround is `--property priority=P1`, which is exactly
+# what filed seven P1 tasks as unprioritised.
+exit: 101
+
+# clap's own refusal, verbatim — including the tip that points at the very
+# workaround the incident took. Read it as the transcript of the wrong turn.
+contains: unexpected argument '--priority' found
+contains: tip: a similar argument exists: '--property'
+
+# The remaining surface `task create` offers, so a future edit that adds the
+# field back under a different spelling stops matching here rather than
+# silently passing.
+contains: Usage: orgasmic task create --title <TITLE> --project <PROJECT> --property <KEY=VALUE>
+
+# Exactly one test falls: the key-validation guards are a separate defect mode
+# with their own artifact (verify/TASK-HXSW0), and they still hold here.
+contains: test result: FAILED. 5 passed; 1 failed

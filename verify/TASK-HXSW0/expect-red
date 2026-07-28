@@ -1,0 +1,30 @@
+# Pinned from the real red run of 2026-07-28, authored before the fix existed.
+#
+# The injection removes the write-time property-key check from `task create`
+# and `task update`, and the guard that stops `--state` from sharing a call
+# with the drawer fields. Nothing else changes; the daemon still accepts every
+# call, still writes, still returns 200. That is the whole character of this
+# defect class and the reason it survived a full session: the caller has no
+# reason to re-check.
+exit: 101
+
+# The shape of the failure, in the test's own words. Four of six tests fall,
+# each on a write verb that reported success while discarding an argument.
+contains: must be refused, not silently accepted
+
+# The exact success object TASK-HXSW0 was filed against, byte for byte: a
+# `task update --state … --property WRITE_SCOPE=… --property TEST_CMD=…` that
+# answers with the state change alone and says nothing about the two arguments
+# it threw away.
+contains: "STATE": "in_progress"
+
+# …and its create-side twin: `{id, tx_id}` with no indication that
+# `--property priority=P1` was dropped. Seven P1 tasks were filed unprioritised
+# this way on 2026-07-26.
+contains: "tx_id": "tx-20260728-prop-
+
+# Exactly four fall. `--priority` on create and the `tx record` project default
+# are separate defect modes with their own artifacts, replayed with
+#   orgasmic verify TASK-HXSW0 --artifact verify/TASK-HXSW0-priority
+#   orgasmic verify TASK-HXSW0 --artifact verify/TASK-HXSW0-txscope
+contains: test result: FAILED. 2 passed; 4 failed
