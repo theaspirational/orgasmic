@@ -1,0 +1,17 @@
+diff --git a/crates/orgasmic-cli/src/verify.rs b/crates/orgasmic-cli/src/verify.rs
+index 5193513..03cd4de 100644
+--- a/crates/orgasmic-cli/src/verify.rs
++++ b/crates/orgasmic-cli/src/verify.rs
+@@ -183,7 +183,11 @@ fn replay(repo: &Path, task: &str, dir: &Path, quiet: bool) -> Result<Report> {
+     say.line("  [inject]  injection.patch applied");
+ 
+     let red = run_command(repo, &artifact.cmd, task, "red")?;
+-    let mismatches = artifact.signature.mismatches(red.exit, &red.output);
++    // TASK-TCTTD injection: the false-green hole this verb exists to close. The
++    // signature is still parsed and still evaluated, and the result is then
++    // thrown away, so every red run is accepted — including one that is green.
++    let _ = artifact.signature.mismatches(red.exit, &red.output);
++    let mismatches: Vec<String> = Vec::new();
+     if !mismatches.is_empty() {
+         // Restore before reporting: a failed replay must not leave the defect
+         // in the tree, and the operator reads the reason afterwards either way.
