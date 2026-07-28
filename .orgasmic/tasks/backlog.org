@@ -2197,99 +2197,112 @@ design.
   TASK-1T3FZ considered that and recorded it as the larger follow-on if the
   daemon-state-only boundary is ever rejected; it is not this task.
 
-* BACKLOG TASK-R74E8 Q07Y5 redo: bound the drain after the shutdown signal, not the server's whole lifetime    :daemon:lifecycle:regression:fix:
+* BACKLOG TASK-H0TYV VB9DQ fix round: decide the retention distinction, record the harness matrix, and make the session-id regression able to fail    :drivers:claude:sessions:fix:
 :PROPERTIES:
-:ID: TASK-R74E8
-:PRIORITY: P0
-:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
+:ID: TASK-H0TYV
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/**,.orgasmic/**
 :END:
 
-TASK-Q07Y5 was merged as `0829c34` and **reverted the same day** as `0ac88d7`
-after it took the operator's daemon down. This task redoes it correctly.
+Fix round for the reviewer BLOCK SHIP on TASK-VB9DQ (implementation `61b9b7f`,
+reviewed at HEAD `35b08d4` including `b43fc70` and `f5c6913`).
+Reviewer: reviewer-codex-rmux, run-20260728T142217, closed tx-20260728-orgasmic-3267.
 
-=== The defect
+**No code defect was found.** The reviewer independently verified the Claude
+native-session path end to end against real production evidence: the
+`native_runtime` event in
+`.orgasmic/tmp/sessions/dispatch-TASK-RWCRN-implementer-20260727T131952.jsonl`
+records runtime ID `df92384b-fd23-423c-ab2c-131beb03db82`, the same
+`--session-id`, provider, launch/resume argv and computed path — and the vendor
+transcript with that exact UUID exists under `~/.claude/projects` at 1,409,836
+bytes. Do not rewrite working code.
 
-`crates/orgasmic-daemon/src/lib.rs:666` (in the reverted merge):
+What blocks is that two task-owned questions were never answered and one
+regression cannot see the property it exists to protect.
 
-```rust
-match tokio::time::timeout(budgets.connection_drain, serve).await {
-```
+=== 1. HIGH — dec_Y5MPK answers one retention question, not both
 
-`serve` is `axum::serve(listener, app).with_graceful_shutdown(...)`. That future
-does not represent the drain — it represents **the entire life of the server**,
-and completes only after shutdown has been requested and connections have
-drained. Wrapping it in a 10 s timeout therefore kills a healthy, serving daemon
-exactly 10 seconds after it starts listening, on every boot.
+`.orgasmic/decisions.org:2114`. The decision accepts unbounded vendor-store
+growth and assigns retention to the operator (`:2121-2124`). It never answers
+TASK-VB9DQ's *second* required question: **should worker sessions be
+distinguishable from operator sessions?** Item 3 records deterministic
+correlation and item 5 promises per-harness counts, total size and age
+distribution — neither is a yes/no policy.
 
-The intent was right and the acceptance criterion was right: the connection
-drain must be bounded, or the derived `ExitTimeOut` has an unbounded term. Only
-the placement was wrong. Bound the drain that happens **after** the shutdown
-signal, not the server's whole lifetime.
+The consequence is concrete: an unbounded shared vendor store with no decided
+attribution boundary, owned by the operator who has to clean it up.
 
-=== How it presented, so the next round can recognise it
+Amend `dec_Y5MPK` through the daemon-authoritative node surface (`orgasmic
+decision` / `orgasmic node`), never by hand-editing `decisions.org`. Choose one
+interpretation explicitly:
 
-- Daemon boots, binds, serves normally.
-- Exactly 10.00 s later:
-  `connection drain did not finish within its budget; aborting remaining
-  connections and continuing shutdown budget_secs=10`.
-- `graceful_shutdown` runs, process exits, launchd `KeepAlive` restarts it.
-- Each restart cycles the rmux LaunchAgent, destroying every live rmux session,
-  so **every dispatched worker died 15–35 s after being created**. Three did.
-- Replacement daemons then hit the *other* symptom: the predecessor still held
-  the home instance lock while its HTTP listener was already closed, so the
-  health probe got a connect error and the replacement refused to start with
-  "daemon instance lock is held, but the incumbent is not healthy". That is
-  TASK-ATAXN's window, and this bug made it fire continuously.
+- distinction required → name the observable mechanism and its owner (a `doctor`
+  split, a recognizable vendor-session namespace, or something better); or
+- distinction deliberately unnecessary → state that the blended store is
+  accepted, and why.
 
-=== Evidence that it was the binary, not launchd
+Either answer closes this. Silence does not.
 
-- Booted the LaunchAgent out entirely and ran `orgasmic serve` in the
-  foreground: listening at 13:11:19.125, drain-budget error at 13:11:29.128.
-  Same 10 s, no launchd involved.
-- `curl http://127.0.0.1:4848/api/daemon/status` returned **401** during that
-  window — the server was alive and serving, so shutdown had not been signalled.
-  The timeout killed a healthy server.
-- After the revert, the daemon held one pid and one boot_id across four samples
-  over 60 s.
+=== 2. MEDIUM — the cross-harness check was promised and never recorded
 
-=== Why every gate was green
+`.orgasmic/tasks/in_review.org:40` requires a codex / cursor-agent / hermes
+check; the task's own transition text admits "item 5 still open".
 
-**No test anywhere runs a daemon for longer than ten seconds.** Daemon tests
-spawn an isolated daemon, exercise it in well under a second, and tear it down.
-The manager's own full CLI and daemon suites passed on this binary. A defect
-that only manifests at t+10 s of uptime was invisible to the entire suite.
+The reviewer did the inspection and it should be recorded rather than repeated:
+none of the three passes an explicit persistence-suppression flag, and none
+overrides `HarnessEventAdapter::native_runtime`
+(`crates/orgasmic-drivers/src/trait.rs:248`). All three learn their identity
+*after* launch, from protocol responses — codex `thread.id`
+(`adapters/codex.rs:198-225`), cursor-agent `sessionId`
+(`adapters/cursor_acp.rs:288-320`), hermes `sessionId`
+(`adapters/hermes.rs:287-300`). So they do not satisfy the pre-minted-ID +
+`NativeRuntime` shape that Claude now does.
 
-That is the acceptance criterion this round must satisfy first.
+Record a per-harness matrix — native persistence, session-ID ownership,
+lifecycle evidence — and file provider-specific follow-ups where the protocol
+cannot accept an orgasmic-minted ID.
 
-=== Ask
+**Do not fold the shared `dec_S18RH` redesign into this task.** The reviewer was
+explicit that the shared redesign is out of scope; only the missing recorded
+check is in scope.
 
-1. Bound the connection drain **after** the shutdown signal fires, not the
-   server future. Keep the derived-`ExitTimeOut` work from the reverted round —
-   it was correct and its reviewer-facing rationale still stands.
-2. Add a test that would have caught this: a daemon that stays up materially
-   longer than `CONNECTION_DRAIN_TIMEOUT` and is still serving afterwards.
-   It does not need to be slow — inject a short budget and assert the daemon
-   outlives several multiples of it while answering requests.
-3. Re-examine every other budget introduced by the reverted round for the same
-   category error: is the thing being timed out the thing that is supposed to
-   finish, or a future that only completes at shutdown? Say which you checked.
+=== 3. LOW — the regression cannot see the property it guards
+
+`crates/orgasmic-drivers/src/adapters/claude.rs:1507` extracts the value after
+`--session-id` and proves `NativeRuntime.session_id` and `resume_argv` repeat
+it — but never that the value **equals `ctx.identity.runtime_id`**. The
+mode-layer test at `modes/acp_stdio.rs:1195` uses a hard-coded
+`pinned-session-id`.
+
+So a change to the 32-hex attempt-token suffix of `run_id` could keep both green
+while breaking the exact requirement the task states. Assert equality with
+`ctx.identity.runtime_id`, and carry that assertion through the mode-layer
+request rather than only the adapter.
+
+This is the same defect class as TASK-6FNAY and TASK-C0XMR: a test that agrees
+with itself. Prove the fix by injection — change what is passed to
+`--session-id`, watch both tests go red, restore, watch them pass.
+
+=== Open questions to answer, not to inherit
+
+- Does "distinguishable" mean a matching `NativeRuntime` record suffices, or does
+  the operator need an explicit worker/operator split? `dec_Y5MPK` must pick one.
+- When a provider mints the session ID server-side, should the cross-harness
+  contract permit immediate handshake capture followed by a `NativeRuntime`
+  event, or is pre-launch pinning mandatory? Record the question against the
+  shared design work; do not answer it with a Claude-specific patch.
 
 === Acceptance
 
-- Reintroducing the `timeout(connection_drain, serve)` shape makes the new
-  uptime test fail. Prove it by injection, with output.
-- The daemon serves continuously for at least several drain budgets, verified
-  against a real listener rather than a unit-level mock.
-- `ExitTimeOut` is derived again and the plist test still asserts the derived
-  value, never a literal.
-- A SIGTERM'd daemon with a stuck long-lived connection (ws/PTY/SSE) still
-  completes shutdown within the derived budget — the original acceptance, which
-  must not be lost in fixing the placement.
+- `dec_Y5MPK` states a worker/operator distinction decision, with mechanism and
+  owner if distinction is required.
+- A recorded codex/cursor-agent/hermes matrix exists, with follow-ups filed.
+- The regression fails if the launched session ID stops being
+  `ctx.identity.runtime_id`, proved by injection at both the adapter and mode
+  layers.
 
 === Non-goals
 
-- Do not solve TASK-ATAXN here. That the lock is held while the listener is down
-  is a real and separate defect; this round must simply stop manufacturing that
-  window every ten seconds.
-- Do not weaken the durable shutdown-loss record (`state/shutdown-loss/<boot_id>.json`,
-  fsynced outside the writer). That part of the reverted round was sound.
+- Do not restore `--no-session-persistence`; its removal is what makes the
+  native transcript exist.
+- Do not redesign the cross-harness session contract here (`dec_S18RH`).

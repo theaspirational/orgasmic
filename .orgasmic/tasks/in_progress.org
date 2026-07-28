@@ -1083,6 +1083,103 @@ Two acceptance criteria are also still unmet, independently of verification:
 Closing this needs: the live dispatch, item 4, and item 6. Not a reviewer.
 LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
 
+* IN_PROGRESS TASK-R74E8 Q07Y5 redo: bound the drain after the shutdown signal, not the server's whole lifetime :daemon:lifecycle:regression:fix:
+:PROPERTIES:
+:ID: TASK-R74E8
+:PRIORITY: P0
+:WRITE_SCOPE: crates/orgasmic-daemon/**,crates/orgasmic-cli/**
+:END:
+
+TASK-Q07Y5 was merged as `0829c34` and **reverted the same day** as `0ac88d7`
+after it took the operator's daemon down. This task redoes it correctly.
+
+=== The defect
+
+`crates/orgasmic-daemon/src/lib.rs:666` (in the reverted merge):
+
+```rust
+match tokio::time::timeout(budgets.connection_drain, serve).await {
+```
+
+`serve` is `axum::serve(listener, app).with_graceful_shutdown(...)`. That future
+does not represent the drain — it represents **the entire life of the server**,
+and completes only after shutdown has been requested and connections have
+drained. Wrapping it in a 10 s timeout therefore kills a healthy, serving daemon
+exactly 10 seconds after it starts listening, on every boot.
+
+The intent was right and the acceptance criterion was right: the connection
+drain must be bounded, or the derived `ExitTimeOut` has an unbounded term. Only
+the placement was wrong. Bound the drain that happens **after** the shutdown
+signal, not the server's whole lifetime.
+
+=== How it presented, so the next round can recognise it
+
+- Daemon boots, binds, serves normally.
+- Exactly 10.00 s later:
+  `connection drain did not finish within its budget; aborting remaining
+  connections and continuing shutdown budget_secs=10`.
+- `graceful_shutdown` runs, process exits, launchd `KeepAlive` restarts it.
+- Each restart cycles the rmux LaunchAgent, destroying every live rmux session,
+  so **every dispatched worker died 15–35 s after being created**. Three did.
+- Replacement daemons then hit the *other* symptom: the predecessor still held
+  the home instance lock while its HTTP listener was already closed, so the
+  health probe got a connect error and the replacement refused to start with
+  "daemon instance lock is held, but the incumbent is not healthy". That is
+  TASK-ATAXN's window, and this bug made it fire continuously.
+
+=== Evidence that it was the binary, not launchd
+
+- Booted the LaunchAgent out entirely and ran `orgasmic serve` in the
+  foreground: listening at 13:11:19.125, drain-budget error at 13:11:29.128.
+  Same 10 s, no launchd involved.
+- `curl http://127.0.0.1:4848/api/daemon/status` returned **401** during that
+  window — the server was alive and serving, so shutdown had not been signalled.
+  The timeout killed a healthy server.
+- After the revert, the daemon held one pid and one boot_id across four samples
+  over 60 s.
+
+=== Why every gate was green
+
+**No test anywhere runs a daemon for longer than ten seconds.** Daemon tests
+spawn an isolated daemon, exercise it in well under a second, and tear it down.
+The manager's own full CLI and daemon suites passed on this binary. A defect
+that only manifests at t+10 s of uptime was invisible to the entire suite.
+
+That is the acceptance criterion this round must satisfy first.
+
+=== Ask
+
+1. Bound the connection drain **after** the shutdown signal fires, not the
+   server future. Keep the derived-`ExitTimeOut` work from the reverted round —
+   it was correct and its reviewer-facing rationale still stands.
+2. Add a test that would have caught this: a daemon that stays up materially
+   longer than `CONNECTION_DRAIN_TIMEOUT` and is still serving afterwards.
+   It does not need to be slow — inject a short budget and assert the daemon
+   outlives several multiples of it while answering requests.
+3. Re-examine every other budget introduced by the reverted round for the same
+   category error: is the thing being timed out the thing that is supposed to
+   finish, or a future that only completes at shutdown? Say which you checked.
+
+=== Acceptance
+
+- Reintroducing the `timeout(connection_drain, serve)` shape makes the new
+  uptime test fail. Prove it by injection, with output.
+- The daemon serves continuously for at least several drain budgets, verified
+  against a real listener rather than a unit-level mock.
+- `ExitTimeOut` is derived again and the plist test still asserts the derived
+  value, never a literal.
+- A SIGTERM'd daemon with a stuck long-lived connection (ws/PTY/SSE) still
+  completes shutdown within the derived budget — the original acceptance, which
+  must not be lost in fixing the placement.
+
+=== Non-goals
+
+- Do not solve TASK-ATAXN here. That the lock is held while the listener is down
+  is a real and separate defect; this round must simply stop manufacturing that
+  window every ten seconds.
+- Do not weaken the durable shutdown-loss record (`state/shutdown-loss/<boot_id>.json`,
+  fsynced outside the writer). That part of the reverted round was sound.
+
 * IN_PROGRESS TASK-S0QRM Z8WEJ fix round: detect the claude credential tier instead of guessing it from an ambient key :drivers:claude:credentials:fix:
 :PROPERTIES:
 :ID: TASK-S0QRM
@@ -1199,26 +1296,92 @@ they do not, say so explicitly. Do not infer coverage from
 - Do not submit a real Claude turn. `legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
   (TASK-099T6) bills real money and must stay skipped.
 
-* IN_PROGRESS TASK-JQARS Implement the documented orgasmic manager drivers command :cli:runtime:docs:
+* IN_PROGRESS TASK-VB9DQ Persist native session evidence for acp-stdio claude runs :drivers:recovery:evidence:
 :PROPERTIES:
-:ID: TASK-JQARS
+:ID: TASK-VB9DQ
 :PRIORITY: P1
 :END:
 
-Problem: `shipped/entry/router.org` tells every manager "Use `orgasmic --help` and `orgasmic manager drivers` to discover installed transport pairs (`mode` + `harness`)". That subcommand does not exist; it exits with `unrecognized subcommand 'drivers'`.
+Problem: `crates/orgasmic-drivers/src/adapters/claude.rs:144` passes `--no-session-persistence` on every acp-stdio claude run, and the adapter never passes `--session-id` or emits a `NativeRuntime` lifecycle event. The consequence is that acp-stdio claude runs leave no harness-native evidence of any kind.
 
-This is not cosmetic. dec_WDR5K item 1 makes the `SUPPORTED` (mode, harness) matrix in `orgasmic-drivers` "the sole authority" for transport selection, and item 9 assigns per-dispatch model and effort choice to manager judgment rather than configuration. The runtime therefore depends on a manager reading that matrix — and gives it no way to.
+Measured 2026-07-25 (claude 2.1.220, counting files under `~/.claude/projects`):
+- run with `--no-session-persistence`: 0 new native transcripts
+- identical run without it: 1 new native transcript
 
-Observed consequence 2026-07-25: a manager needing a reviewer transport ran the documented command, got the error, fell back to grepping `pub const SUPPORTED` out of `crates/orgasmic-drivers/src/lib.rs`, and picked the first entry of the array. The dispatch was decided by source-order, not judgement. A missing discovery surface does not produce a careful manager; it produces an arbitrary one.
+Confirmed by inspection:
+- `NativeRuntimeMeta` appears only in `modes/rmux.rs` and `modes/tmux.rs`; `adapters/claude.rs` never emits it
+- the acp-stdio reviewer run `run-20260725T073841` recorded lifecycle phases `acquire, run_meta, release` only — no `native_runtime`
+
+Contrast the TUI path, which already does this correctly. A real rmux run recorded:
+- `launch_argv: [claude, --dangerously-skip-permissions, --model, claude-sonnet-5, --session-id, a9fe25ff-...]`
+- `resume_argv: [claude, --resume, a9fe25ff-..., --fork-session, --dangerously-skip-permissions]`
+- `session_id: a9fe25ff-...`
+
+It passes an orgasmic-minted session id up front, so correlation is deterministic rather than discovered. acp-stdio should follow that pattern.
+
+Three consequences, all currently live:
+
+1. TASK-VBSG2 is impossible for this transport. Its slice A resolves "verified NativeRuntime provider/session/path metadata" and parses "Claude native JSONL". Neither exists for acp-stdio runs, so retro over an arbitrary past claude run cannot work no matter how good the materializer is.
+
+2. dec_WDR5K item 7 is violated in effect. TUI screen capture was removed on the premise that "session transcripts come from harness-native JSONL located by per-harness transcript finder adapters". For acp-stdio claude the finder adapter has nothing to find, so those runs have no transcript at all — not a lossy one, none. The decision's own sequencing constraint (finders must land before capture removal, or runs lose their session inputs) is satisfied in letter and broken in substance here.
+
+3. Recovery is degraded. `resolve_recovery_actions` offers `resume_native_fork` only when `session_native_runtime` yields a validated claude session id. acp-stdio records none, so that action can never be offered for this transport; recovery falls through to a fresh run even when resuming was possible.
 
 Work:
-1. Implement `orgasmic manager drivers`: list the `SUPPORTED` (mode, harness) pairs from the drivers crate, so the documented command matches reality.
-2. Include what a manager actually needs to choose between them, not just the pair list — at minimum which pairs are non-interactive versus which spawn an interactive TUI pane, since that distinction decides whether a dispatch can run unattended.
-3. Surface per-harness runtime options where a protocol catalog exists (dec_WDR5K item 9 permits structured protocol adapters only; never CLI text parsing). Where no catalog exists, say so explicitly rather than omitting the harness.
-4. Add a router/CLI consistency check so a command named in shipped entry text cannot silently not exist. The general defect is that shipped prose and the CLI surface drifted with nothing to catch it.
+1. Drop `--no-session-persistence` from the acp-stdio claude argv, or make it a deliberate per-dispatch option rather than a hardcoded default.
+2. Mint and pass an explicit `--session-id`, matching the TUI path, so correlation never depends on discovery heuristics.
+3. Emit a `NativeRuntime` lifecycle event from the acp-stdio path with provider, session id, launch argv, and resume argv, so recovery and retro read one shape regardless of transport.
+4. Weigh and record the retention tradeoff rather than assuming it away. Persisting worker sessions grows `~/.claude/projects` without bound (446 transcripts already present on this machine), and the retro contract holds vendor JSONL to be vendor-owned and immutable — so orgasmic may not prune it. Decide explicitly whether that is acceptable, whether worker sessions should be distinguishable from operator sessions, and record the answer.
+5. Check the same three properties for codex, cursor-agent, and hermes under acp-stdio. Do not assume this is claude-specific.
+
+Coordinates with TASK-Z8WEJ: both change `stdio_spawn` in the same adapter and should land together.
 
 Acceptance:
-- every command named in `shipped/entry/router.org` resolves
-- a manager can choose a transport without reading Rust source
-- the output distinguishes unattended-capable transports from interactive ones
+- an acp-stdio claude run leaves a native transcript that the existing transcript finder resolves
+- its session id is recorded in a NativeRuntime lifecycle event, not discovered after the fact
+- `resume_native_fork` is offered for a recoverable acp-stdio claude run
+- the retention tradeoff is a recorded decision, not an implicit one
+** Notes
+Item 4's retention tradeoff is now settled by dec_Y5MPK: retention of vendor transcripts belongs to the operator. Orgasmic never prunes, moves, rewrites or expires a vendor file; its obligation is visibility (per-harness counts, total size, age distribution through `doctor`). So this task does not need to solve growth — it needs to stop suppressing persistence, mint the session id, and emit NativeRuntime. The doctor reporting is separate work.
+** Evidence
+Implemented 2026-07-25 in commit 61b9b7f on `task-kwstj-bounded-run-inventory`.
+
+- `--no-session-persistence` removed from the claude stdio argv. Verified beforehand that it was the sole cause: an otherwise identical run wrote one new file under `~/.claude/projects` without it and zero with it. Also verified that `--bare` does not suppress persistence, so both credential modes keep evidence.
+- `--session-id` is now pinned to the run's `runtime_id`, matching `modes/tmux.rs`. Verified that `-p` mode honours it and that the vendor transcript lands at exactly `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl`, the path `claude_session_path` computes. Correlation is minted, not discovered (dec_Y5MPK item 3).
+- `HarnessEventAdapter::native_runtime` added, defaulting to `None`. The claude adapter populates it while composing the request; `AcpStdioComposeAdapter` delegates it; `modes/acp_stdio.rs` reads it immediately after composing and carries it onto the `DriverSession` in place of the previous hardcoded `native_runtime: None`.
+- `claude_session_path` promoted to `pub(crate)` in `modes/tmux.rs` rather than duplicating the cwd-encoding rule in a second place.
+
+`resume_argv` is recorded as `[claude, --resume, <session-id>, --fork-session]`. Note it deliberately omits `--dangerously-skip-permissions`, which the TUI path includes: the stdio path never passed that flag at launch, and a resume argv should reproduce the original run's permission posture rather than widen it.
+
+Regression `every_mode_persists_a_locatable_native_session` asserts no `--no-session-persistence`, a pinned session id, and NativeRuntime whose `session_id` and `resume_argv` both target it.
+
+Still open from this task's work list: item 5, whether codex, cursor-agent and hermes need the same treatment. Codex is known to persist natively without orgasmic asking — a run that died on a provider 503 still wrote `~/.codex/sessions/2026/07/25/rollout-...jsonl` — so the question there is session-id correlation, not persistence.
+
+Gates as recorded on TASK-Z8WEJ. Not verified end to end: the running daemon is the installed 0.0.14 build, so proving this against a live dispatch needs a daemon rebuild and restart.
+BLOCKER RESTATED [2026-07-26]. Stays in_review; the closing line above is stale
+in the opposite direction from how it reads.
+
+"Not verified end to end: the running daemon is the installed 0.0.14 build"
+suggests the work is done and merely unproven. TASK-SGRTX (b43fc70, f5c6913)
+showed it was INERT in production: the claude adapter returned Simulated before
+building argv, so the pinned --session-id and the NativeRuntime event this task
+adds never reached a real process. After SGRTX it does work — so the honest
+status is "verified only after a fix that landed later, on a runtime the
+operator is not yet running".
+
+The verification this needs is a live claude acp-stdio dispatch on a daemon
+carrying todays main, proving the three acceptance criteria against a real run:
+a native transcript the existing finder resolves, a NativeRuntime lifecycle
+event carrying the minted session id, and resume_native_fork actually offered
+for that run by resolve_recovery_actions. The operators daemon is
+0.0.15-dev.1, which predates SGRTX; the publish is gated behind
+TASK-8W30B -> TASK-6FNAY.
+
+Work item 5 also remains open: whether codex, cursor-agent and hermes need the
+same treatment. The body already notes codex persists natively without being
+asked (a run that died on a 503 still wrote ~/.codex/sessions/...jsonl), so for
+codex the open question is session-id correlation rather than persistence.
+
+Lands together with TASK-Z8WEJ — same adapter, same live dispatch proves both.
+LIVE MEASUREMENT 2026-07-27 after the runtime rebuild (commit 4d1369a, daemon boot 306cf994), run run-20260727T131952-9138610466c24c469819ac27e3f6c504, worker implementer-claude-acp-stdio, acp-stdio/claude/claude-opus-5/high. The composed argv now reaches the spawned process. Observed live via ps and confirmed against the persisted launch_argv lifecycle event: claude --strict-mcp-config -p --input-format stream-json --output-format stream-json --include-partial-messages --verbose --session-id df92384b-fd23-423c-ab2c-131beb03db82 --model claude-opus-5 --effort high. Compare the SGRTX baseline, which was the bare stdio_spawn list with no session id, model, effort or mcp flag. Session pinning is real and end to end: orgasmic recorded runtime_id df92384b-fd23-423c-ab2c-131beb03db82 on every event, passed that same value as --session-id, and the vendor transcript landed at ~/.claude/projects/-Users-aspirational-Documents-code-tools-orgasmic--orgasmic-tmp-dispatch-task-RWCRN-worktree/df92384b-fd23-423c-ab2c-131beb03db82.jsonl, so the filename equals the runtime_id exactly and the live-only acceptance is met. Note for anyone re-checking: compare against runtime_id, not against the 32-hex suffix inside run_id, which is the dispatch attempt token and will never match. The driver also reports capabilities.simulated=false with endpoint="" — the shape dec_S18RH requires — so f5c6913 is confirmed live rather than merely merged.
 

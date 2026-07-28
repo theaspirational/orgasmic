@@ -34562,3 +34562,317 @@
 :REASON:       escalated: observed firing continuously during the Q07Y5 incident — the predecessor held the home lock with its listener already closed, so every replacement refused to start with 'incumbent is not healthy'
 :PRIORITY:     P0
 :END:
+
+* TX 2026-07-28 Tue 14:21:23 manager.dispatch_aborted TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3253
+:TIME:         [2026-07-28 Tue 14:21:23]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:REASON:       killed by the Q07Y5 restart loop before reporting
+:CLOSED_TX:    tx-20260728-orgasmic-3238
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vb9dq-review/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 14:21:30 manager.dispatch_aborted TASK-S0QRM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3254
+:TIME:         [2026-07-28 Tue 14:21:30]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S0QRM
+:REASON:       killed by the Q07Y5 restart loop before reporting
+:CLOSED_TX:    tx-20260728-orgasmic-3242
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-s0qrm/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 14:21:30 task.state_transitioned TASK-S0QRM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3255
+:TIME:         [2026-07-28 Tue 14:21:30]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S0QRM
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-S0QRM to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-28 Tue 14:21:31 manager.dispatch_aborted TASK-JQARS
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3256
+:TIME:         [2026-07-28 Tue 14:21:31]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQARS
+:REASON:       killed by the Q07Y5 restart loop before reporting
+:CLOSED_TX:    tx-20260728-orgasmic-3245
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-jqars/worktree
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 14:21:31 task.state_transitioned TASK-JQARS
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3257
+:TIME:         [2026-07-28 Tue 14:21:31]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JQARS
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-JQARS to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-28 Tue 14:21:40 task.state_transitioned TASK-R74E8
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3258
+:TIME:         [2026-07-28 Tue 14:21:40]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R74E8
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-R74E8 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 14:21:42 manager.dispatch_started TASK-R74E8
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3259
+:TIME:         [2026-07-28 Tue 14:21:42]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R74E8
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-r74e8/worktree
+:BRANCH:       task-r74e8-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-Q07Y51-body/task-Q07Y51-body.md
+:STARTED_AT:   [2026-07-28 Tue 14:21:42]
+:LIVENESS:     35b08d4a8a8f049d4b21fad5d896653d18de5d4e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P0: redo the reverted Q07Y5; the daemon must survive longer than a drain budget
+:END:
+
+* TX 2026-07-28 Tue 14:21:42 run.created TASK-R74E8
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3260
+:TIME:         [2026-07-28 Tue 14:21:42]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-R74E8
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-R74E8-implementer-20260728T142142.jsonl
+:REASON:       P0: redo the reverted Q07Y5; the daemon must survive longer than a drain budget
+:RUN_ID:       run-20260728T142142-19bf425f4f0a4187afd7e6f3d4c57e6c
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-r74e8/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-Q07Y51-body/task-Q07Y51-body.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-Q07Y51-body/task-Q07Y51-body-cd42d754524d427691798061796e8abd-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-Q07Y51-body/task-Q07Y51-body-cd42d754524d427691798061796e8abd-stdout.log
+:DISPATCH_ATTEMPT: cd42d754524d427691798061796e8abd
+:DISPATCH_TX:  tx-20260728-orgasmic-3259
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 14:22:10 task.state_transitioned TASK-S0QRM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3261
+:TIME:         [2026-07-28 Tue 14:22:10]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S0QRM
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-S0QRM to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 14:22:11 manager.dispatch_started TASK-S0QRM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3262
+:TIME:         [2026-07-28 Tue 14:22:11]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S0QRM
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-s0qrm/worktree
+:BRANCH:       task-s0qrm-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-S0QRM-impl/brief-S0QRM-impl.md
+:STARTED_AT:   [2026-07-28 Tue 14:22:11]
+:LIVENESS:     35b08d4a8a8f049d4b21fad5d896653d18de5d4e
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch after the restart loop killed the first attempt
+:END:
+
+* TX 2026-07-28 Tue 14:22:11 run.created TASK-S0QRM
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3263
+:TIME:         [2026-07-28 Tue 14:22:11]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S0QRM
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-S0QRM-implementer-20260728T142211.jsonl
+:REASON:       re-dispatch after the restart loop killed the first attempt
+:RUN_ID:       run-20260728T142211-b0d990e17b3c4ad99f6a5ba4605ef708
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-s0qrm/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-S0QRM-impl/brief-S0QRM-impl.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-S0QRM-impl/brief-S0QRM-impl-bcfdb6ca30304d5f9c8ecaf70363cb6b-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-S0QRM-impl/brief-S0QRM-impl-bcfdb6ca30304d5f9c8ecaf70363cb6b-stdout.log
+:DISPATCH_ATTEMPT: bcfdb6ca30304d5f9c8ecaf70363cb6b
+:DISPATCH_TX:  tx-20260728-orgasmic-3262
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 14:22:17 manager.dispatch_started TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3264
+:TIME:         [2026-07-28 Tue 14:22:17]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vb9dq-review/worktree
+:BRANCH:       task-vb9dq-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-VB9DQ-review/brief-VB9DQ-review.md
+:STARTED_AT:   [2026-07-28 Tue 14:22:17]
+:LIVENESS:     35b08d4a8a8f049d4b21fad5d896653d18de5d4e
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: re-dispatch after the restart loop killed the first attempt
+:END:
+
+* TX 2026-07-28 Tue 14:22:17 run.created TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3265
+:TIME:         [2026-07-28 Tue 14:22:17]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-VB9DQ-reviewer-20260728T142217.jsonl
+:REASON:       re-dispatch after the restart loop killed the first attempt
+:RUN_ID:       run-20260728T142217-455f640c330843b2adb33b29eeadbc4d
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vb9dq-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-VB9DQ-review/brief-VB9DQ-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-VB9DQ-review/brief-VB9DQ-review-eca5345316c54e0096ebf00b13545a52-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-VB9DQ-review/brief-VB9DQ-review-eca5345316c54e0096ebf00b13545a52-stdout.log
+:DISPATCH_ATTEMPT: eca5345316c54e0096ebf00b13545a52
+:DISPATCH_TX:  tx-20260728-orgasmic-3264
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 14:34:54 reviewer.reported TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3266
+:TIME:         [2026-07-28 Tue 14:34:54]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:RUN_ID:       run-20260728T142217-455f640c330843b2adb33b29eeadbc4d
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-vb9dq-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 14:35:44 reviewer.done TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3267
+:TIME:         [2026-07-28 Tue 14:35:44]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:CLOSED_TX:    tx-20260728-orgasmic-3264
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 14:35:45 task.state_transitioned TASK-VB9DQ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3268
+:TIME:         [2026-07-28 Tue 14:35:45]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-VB9DQ
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-VB9DQ to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 14:36:19 task.created TASK-H0TYV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3269
+:TIME:         [2026-07-28 Tue 14:36:19]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-H0TYV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       reviewer BLOCK SHIP tx-3267: implementation verified correct; dec_Y5MPK answers one of two retention questions, the harness matrix was never recorded, and the regression never asserts equality with ctx.identity.runtime_id
+:END:
