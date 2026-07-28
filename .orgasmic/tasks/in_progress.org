@@ -784,6 +784,8 @@ FIRST CAPTURED PANIC for the registry's quoted-origin entry [2026-07-29, from TA
 
 CANDIDATE PANIC [2026-07-29, TASK-0RCRY full-workspace run]: `task_010_recovery_routes_classify_and_continue_runs` (crates/orgasmic-daemon/tests/integration.rs:2637) — `recover: 409 Conflict` under load, green in isolation. Distinct shape from the quoted-origin flake; first time this panic has been written down. Route or register under this task's diagnosis as appropriate.
 
+ATTRIBUTION CONTRADICTED [2026-07-29, TASK-K4G1D differential]: the `left: "interrupted"` reattach flake is now named for the first time — `driver tmux/claude attach proof exceeded inventory deadline`, the Err(_) timeout branch of finish_driver_attach (api.rs:9858). Measured with real tmux 3.6a on a 0RCRY owned server, with the rmux arm GREEN in the same process under the same load. This contradicts this task's standing attribution (cross-test contention over shared external mux state) — that would be the third withdrawn attribution. The live question is why a one-process-spawn tmux attach probe cannot finish inside the inventory deadline under load, and whether that deadline is sized for process-spawn starvation. Also note: K4G1D found the seven tmux_on_path-gated tests execute rmux in worker environments (owned by its follow-up task), so any worker-vs-manager comparison recorded here that relied on "the worker ran these under tmux" needs re-reading.
+
 * IN_PROGRESS TASK-GEZHQ Preflight accepts an unusable credential under parallel load: 200 where 400 is required, and a worktree is left behind
 :PROPERTIES:
 :ID: TASK-GEZHQ
@@ -999,62 +1001,4 @@ project ledger and cannot tell from the exit code.
 
 Fix direction: default `tx record` to the cwd project like its siblings, and
 keep --project / --tx-path as explicit overrides.
-
-* IN_PROGRESS TASK-K4G1D Run the mux-dependent daemon tests under tmux as well as rmux, so 'is rmux at fault' becomes a measurement :testing:daemon:drivers:rmux:
-:PROPERTIES:
-:DEPENDS_ON: TASK-RRT4T
-:ID: TASK-K4G1D
-:PRIORITY: P1
-:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs
-:END:
-
-Filed after the operator asked whether rmux, being far less mature than tmux,
-might itself be the defect behind the recurring artifact-test failures.
-
-It cannot currently be answered, and that is the problem worth fixing.
-
-WHAT IS KNOWN
-rmux 0.9.0 (crates.io, pinned `=0.9.0` in crates/orgasmic-drivers/Cargo.toml) is
-a pre-1.0 third-party tmux clone with a tmux-compatible CLI. Measured 2026-07-26
-against tmux on the same machine: 15 create+kill cycles cost 12.1 ms each against
-tmux's 13.1 ms, 20 pane spawns of a warm script cost 12.8 ms against tmux's
-6.9 ms, neither leaves a session behind, and neither costs syspolicyd anything.
-So at the level that can be measured from outside, rmux is leak-free and merely
-about 2x slower per pane spawn.
-
-WHAT IS NOT KNOWN
-Every artifact-regenerate test in crates/orgasmic-daemon/src/api.rs runs only
-under rmux. There is no tmux counterpart, so when one fails there is no way to
-tell whether the defect is in our driver, in rmux, or in the test's deadline.
-Two of the three worker rounds on TASK-STWVB attributed that failure to a
-different cause and both attributions were later withdrawn.
-
-The one confirmed rmux-adjacent defect so far was OURS, not rmux's: TASK-8W30B,
-where RmuxControl::release aborted its lifecycle task before Session::kill and
-poisoned the shared ordered SDK transport. Worth noting the structural asymmetry
-it exposed, though — the tmux driver drives tmux through its CLI, one process per
-command and no shared state, while the rmux driver holds a persistent socket with
-an ordered transport shared between Session and the lifecycle watcher. The second
-design has failure modes the first cannot have, and every hang and leak this week
-has been on that side. That is an argument about our integration, not about rmux's
-correctness, and the two keep getting conflated.
-
-WHAT TO DO
-Parameterize the artifact-regenerate tests (and any other mux-dependent daemon
-test) over both rmux and tmux, running the same assertions through each mode.
-
-- red under rmux, green under tmux -> rmux is indicted, with a reproducer we can
-  file upstream or route around by defaulting to tmux
-- red under both -> the defect is ours, and we stop suspecting the dependency
-- green under both -> the deadline is the defect
-
-Depends on TASK-RRT4T: a mode that is unavailable must make the test fail or
-report as ignored, never silently pass. Without that this change would just
-double the number of tests that can quietly do nothing.
-
-Acceptance:
-- at least post_artifact_regenerate_hot_path_reuses_live_run_id runs under both
-  modes
-- a failure names which mode it failed under
-- the answer to "is rmux at fault" is a test result, not a judgement call
 

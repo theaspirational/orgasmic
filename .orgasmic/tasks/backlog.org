@@ -2032,3 +2032,99 @@ Registering with this task as owner is the fallback; fixing is the goal.
   diagnosis documented.
 - Injection per TCTTD standard where patch-expressible (the 5FEN5 artifact's
   first-probe-returns-empty injection is the template).
+
+* BACKLOG TASK-JGHNC Seven tmux-gated daemon tests accept the rmux shim and have been measuring rmux while reporting tmux
+:PROPERTIES:
+:ID: TASK-JGHNC
+:PRIORITY: P1
+:END:
+
+From TASK-K4G1D (2026-07-29), measured, not inferred: inside an orgasmic
+worker, `tmux` on PATH is the rmux shim, and a `-L`-pinned call through the
+shim creates an RMUX server (the socket lands in /private/tmp/rmux-501/, and
+the real tmux cannot connect to it). The 0RCRY owned-server mechanism does not
+protect against this — the isolation holds, but the multiplexer is the wrong
+one.
+
+Consequence: seven tmux-gated daemon tests gate on `tmux_on_path()`, which
+accepts the shim, so IN EVERY WORKER-RUN SUITE they have been measuring rmux
+while reporting tmux:
+
+  boot_rehydration_reattaches_tmux_session,
+  explicit_reattach_tmux_session_endpoint,
+  pending_plan_reattach_existing_session,
+  boot_reattach_respawns_when_session_gone,
+  failed_terminal_with_live_tmux_session_is_not_resurrected,
+  production_resume_native_fork_uses_pinned_claude_not_path_shim,
+  two_recovery_chain_second_resume_uses_first_fork_session_id
+
+(names as listed in K4G1D's report §6.2; verify against HEAD before acting).
+
+K4G1D added the strict availability rule (`tmux_mode_availability_for` — a
+shimmed tmux counts as ABSENT, loudly) but deliberately did NOT widen
+`tmux_on_path()`: regating seven tests is a decision, not a fix — it would
+newly fail the tmux sentinel in every worker environment, and it partly
+reframes the worker-vs-manager failure comparisons recorded on TASK-STWVB.
+
+=== Ask
+
+1. Decide: should these seven tests demand REAL tmux (strict rule), or is
+   testing-through-the-shim acceptable for some of them (in which case they
+   should SAY they ran rmux)? Record the decision and its reason.
+2. Apply it: either regate on the strict rule (accepting that worker-run
+   suites will report tmux NOT RUN via the honesty manifest — that is the
+   truth), or split tests into genuinely-mode-agnostic (rename/parameterize per
+   K4G1D's pattern) vs really-tmux-specific (strict gate).
+3. Re-examine any STWVB comparison that relied on "the worker ran these under
+   tmux" — it ran them under rmux.
+
+=== Acceptance
+
+- No daemon test can report mode=tmux while executing rmux: proven by test
+  (K4G1D's strict rule is the template; its verify artifact pins the
+  silent-GREEN failure mode).
+- The honesty manifest names whatever is gated out in a worker environment.
+- Injection per TCTTD standard, self-tested before reporting.
+
+* BACKLOG TASK-HVM6H tmux interactive follow-up (send_input + tmux/custom pair): decide feature-or-close, then artifact hot-path differential
+:PROPERTIES:
+:ID: TASK-HVM6H
+:PRIORITY: P2
+:END:
+
+From TASK-K4G1D (2026-07-29): the artifact-regenerate hot path cannot be
+measured under tmux today, for two independent structural reasons, both
+measured:
+
+1. `("tmux", "custom")` is not in `orgasmic_drivers::SUPPORTED` — and it is the
+   repo's canonical UNSUPPORTED pair, used by two api.rs tests precisely
+   because it must fail. Registering it needs tmux's `build_spawn_plan` to grow
+   a custom arm mirroring rmux's (harness_args[0] as command) AND an equivalent
+   of rmux's `custom_dispatch_misconfig` guard (which stops a dispatch prompt
+   being pasted into a bare shell). Product decision, not test plumbing.
+2. `TmuxTuiControl` implements only transition_state/babysitter_action/release;
+   `send_input` falls to the trait default → `Unsupported("send_input")`,
+   measured against live tmux 3.6a on an owned server. The hot path IS
+   send_input (api.rs:15793), so `post_artifact_regenerate_hot_path_reuses_
+   live_run_id` cannot hold under tmux by construction.
+
+K4G1D's caveat binds any implementation: a differential whose tmux arm is
+brand-new code cannot answer "is rmux at fault" — red under new tmux code
+indicts the new code. So this task is only worth doing if the tmux driver's
+send_input is wanted AS A FEATURE (interactive follow-up under tmux), with the
+differential as a byproduct once the code has matured.
+
+=== Ask
+
+1. Decide whether tmux interactive follow-up is wanted at all. If not, close
+   this task with the decision recorded — the K4G1D attach-proof differential
+   already provides the rmux-vs-tmux instrument.
+2. If wanted: implement `TmuxTuiControl::send_input`, register tmux/custom with
+   the misconfig guard, extend the two canonical-unsupported-pair tests to a
+   new canonical pair, and only then parameterize the artifact hot-path test.
+
+=== Acceptance
+
+- Either a recorded decision closing the gap as not-wanted, or send_input under
+  tmux proven live plus the parameterized hot-path test naming its mode.
+- Injection per TCTTD standard if code ships.
