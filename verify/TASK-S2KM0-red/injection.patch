@@ -1,0 +1,13 @@
+diff --git a/crates/orgasmic-core/src/slots.rs b/crates/orgasmic-core/src/slots.rs
+index fedb039..6c145c1 100644
+--- a/crates/orgasmic-core/src/slots.rs
++++ b/crates/orgasmic-core/src/slots.rs
+@@ -286,7 +286,7 @@ pub fn compile(
+         out.push_str(&template[cursor..r.start]);
+         let value = values.get(&r.name).expect("dry_run validated presence");
+         out.push_str(value);
+-        cursor = r.end;
++        cursor = r.start;
+     }
+     out.push_str(&template[cursor..]);
+     Ok(out)

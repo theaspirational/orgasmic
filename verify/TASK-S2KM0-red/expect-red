@@ -1,0 +1,36 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# This is the acceptance criterion "a pull request that breaks the workspace
+# suite fails a check", made into an artifact. The injection is an ordinary
+# off-by-one in slot substitution — `cursor = r.start` instead of `cursor =
+# r.end`, so each placeholder's own text is re-emitted after its value. It is
+# deliberately a defect in PRODUCT code rather than in a test: what the lane has
+# to catch is a contributor landing a regression, not a contributor editing an
+# assertion.
+#
+# What is being proven is the whole chain, not the test: a broken workspace test
+# reaches `scripts/run-tests.sh`, survives the isolation rerun, finds no registry
+# entry willing to excuse it, and comes back out as a nonzero exit. That exit is
+# the check failing. Before this task nothing in .github/workflows/ ran any of
+# it, so the same regression merged green.
+exit: 1
+
+# Unregistered, so it may not be waved through. This is the load-bearing line:
+# the wrapper's whole purpose is that a red it cannot account for stays red.
+contains: NOT IN THE REGISTRY — no entry claims this failure
+
+# Red alone as well as under load. A regression that only appears in a crowded
+# suite would be classifiable as a flake; this one is not, and the replay should
+# fail loudly if the isolation rerun ever starts passing.
+contains: isolation: FAILED (exit 101)
+
+# Both tests that read a compiled template fall, and the verdict says so with a
+# count. If only one falls, the injection is no longer reaching the same code
+# path and this proof has gone stale.
+contains: REAL (2):
+contains: slots::tests::compile_substitutes_values
+contains: verdict: RED — 2 real failure(s). This red means something.
+
+# The environment section still reports honestly under a red run — the manifest
+# is not something that only appears on green.
+contains: environ  : complete — no tool requirement was waived

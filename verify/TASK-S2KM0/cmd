@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-S2KM0`.
+# No cargo: the honesty manifest is shell, and its self-test drives the real
+# script against fixture cargo logs, so the whole replay is about a second and
+# spends nothing. The companion artifact TASK-S2KM0-red proves the other half —
+# that a broken workspace test reddens the wrapper CI actually invokes.
+bash scripts/run-tests-selftest.sh
