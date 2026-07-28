@@ -32140,3 +32140,124 @@
 :WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.2/worktree
 :SHA:          ab9baf18286ea5bff40049a8fee456052258f07e
 :END:
+
+* TX 2026-07-28 Tue 07:26:30 implementer.reported TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3108
+:TIME:         [2026-07-28 Tue 07:26:30]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:RUN_ID:       run-20260728T065514-e25355f6e5794a3f91f5d895a42c2ef0
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.3/worktree
+:SHA:          0c403658d1147c9fbd0b74fb73f1f2b073772a26
+:END:
+
+* TX 2026-07-28 Tue 07:36:17 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3109
+:TIME:         [2026-07-28 Tue 07:36:17]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Correction to tx-20260728-orgasmic-3079: I claimed the TASK-STWVB set had shrunk from four tests to three, because recovery_inventory_waits_for_atomic_claim_commit did not fail in any of my four full daemon --lib runs. That claim was premature and I am retracting it. The TASK-6AYEJ.3 worker saw that exact test fail in a full run and, unlike me, ran the right control: it stashed its api.rs and manager.rs changes and reran the full suite, getting an identical failure set of 510 passed / 2 failed with the same two names. So the test is a genuine STWVB member that simply did not surface in my particular runs, not one that has been fixed. The set is at least four and which members surface varies with ordering and machine load rather than with the tree under test. Method note for whoever takes TASK-STWVB: absence from a handful of runs is not evidence of absence for a load-dependent interference bug, and the stashed-baseline comparison is the control that distinguishes a pre-existing interference from a regression. I should have run it before narrowing the task. Combined-tree state at this correction: 522 tests, three STWVB members failing in-suite and all three passing in isolation.
+:END:
+
+* TX 2026-07-28 Tue 07:36:29 implementer.done TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3110
+:TIME:         [2026-07-28 Tue 07:36:29]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:MODEL:        claude-opus-5
+:EFFORT:       medium
+:MERGE_SHA:    edc68b4a428608436966cffbca45d6f7516f71b4
+:BRANCH:       task-c0xmr-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3101
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 07:36:29 task.state_transitioned TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3111
+:TIME:         [2026-07-28 Tue 07:36:29]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-C0XMR to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 07:36:33 implementer.done TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3112
+:TIME:         [2026-07-28 Tue 07:36:33]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:MODEL:        claude-opus-5
+:EFFORT:       medium
+:MERGE_SHA:    edc68b4a428608436966cffbca45d6f7516f71b4
+:BRANCH:       task-wgxkd.2-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3095
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 07:36:34 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3113
+:TIME:         [2026-07-28 Tue 07:36:34]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-WGXKD.2 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 07:36:38 implementer.done TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3114
+:TIME:         [2026-07-28 Tue 07:36:38]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:MODEL:        claude-opus-5
+:EFFORT:       medium
+:MERGE_SHA:    edc68b4a428608436966cffbca45d6f7516f71b4
+:BRANCH:       task-6ayej.3-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3098
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 07:36:39 task.state_transitioned TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3115
+:TIME:         [2026-07-28 Tue 07:36:39]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-6AYEJ.3 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
