@@ -6514,3 +6514,274 @@ async fn dispatch_cli_subprocess_wire_preserves_verbatim_model_in_session() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+/// TASK-GQPGR injection. A dispatch worktree carries a FROZEN `.orgasmic/`
+/// snapshot from the commit it was created at, so the cwd marker walk in
+/// `find_project_root` hands `manager dispatch-status` a plausibly-shaped but
+/// stale project. Measured 2026-07-28 against the live project: the verb
+/// printed EMPTY from inside a worktree while three dispatches were open and
+/// their workers healthy — read, briefly, as "all workers died".
+///
+/// Red signature without the guard: the second invocation SUCCEEDS with empty
+/// stdout, so `run_orgasmic_output(...).status.success()` is true and this
+/// test fails on `refusing to read project state`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_status_from_dispatch_worktree_refuses_frozen_snapshot_answer() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "frozen snapshot guard brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "frozen snapshot guard",
+        ],
+    );
+    assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
+    // Default layout: the worktree is nested inside the project it snapshots.
+    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+    assert!(worktree.is_dir(), "default worktree should exist");
+    assert!(
+        worktree.join(".orgasmic/project.org").is_file(),
+        "the worktree must carry the frozen .orgasmic snapshot this test is about"
+    );
+
+    // Live truth, read from the primary root.
+    let from_root = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status"],
+    );
+    assert!(
+        from_root.contains("TASK=TASK-DISPATCH"),
+        "primary root must see the open dispatch, got:\n{from_root}"
+    );
+
+    // Same verb, same machine, cwd inside the worktree: must not answer from
+    // the snapshot.
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &["manager", "dispatch-status"],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(
+        !output.status.success(),
+        "dispatch-status from a dispatch worktree must refuse, not answer from the \
+         frozen snapshot; exit ok with stdout={stdout:?} stderr={stderr:?}"
+    );
+    assert!(
+        stderr.contains("refusing to read project state"),
+        "refusal must name the situation, got stderr:\n{stderr}"
+    );
+    let primary = std::fs::canonicalize(&project_root).unwrap();
+    assert!(
+        stderr.contains(&primary.display().to_string()),
+        "refusal must name the primary project root {}, got stderr:\n{stderr}",
+        primary.display()
+    );
+    assert!(
+        stderr.contains("TASK-DISPATCH"),
+        "refusal should name the dispatch this worktree belongs to, got stderr:\n{stderr}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-GQPGR carve-out. The worker-authority `dispatch` verb group
+/// (dec_3M7M0) runs from inside the worker's own worktree by definition, and
+/// the frozen-snapshot guard must not touch it — a guard that bricks workers
+/// is worse than no guard. Uses the default nested layout, where the worktree
+/// does carry a `.orgasmic/project.org` snapshot, so the guard's detection
+/// condition is genuinely satisfied here and still must not fire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_still_works_from_inside_its_own_worktree() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/task-dispatch-brief.md");
+    write(&brief, "worker carve-out brief");
+
+    let running = boot(home.clone()).await;
+    let dispatch_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch",
+            "--task",
+            "TASK-DISPATCH",
+            "--kind",
+            "implementer",
+            "--mode",
+            "acp-ws",
+            "--harness",
+            "codex",
+            "--brief",
+            brief.to_str().unwrap(),
+            "--from",
+            &head,
+            "--reason",
+            "worker carve-out",
+        ],
+    );
+    assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
+    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+    assert!(
+        worktree.join(".orgasmic/project.org").is_file(),
+        "carve-out is only meaningful when the worktree carries the snapshot"
+    );
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "worker carve-out summary");
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
+        "worker finalize must keep working from its own worktree: {finalize_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-GQPGR acceptance #2. Daemon-routed writes resolve the project by ID
+/// and the daemon owns the live root, so `task update` from inside a dispatch
+/// worktree must land in the LIVE ledger — never return a tx id that only the
+/// frozen snapshot would explain. Workers run these verbs from their worktree
+/// constantly, so this path is deliberately NOT guarded; this test is what
+/// makes "unguarded" a checked claim rather than an assumption.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn task_update_from_dispatch_worktree_lands_in_the_live_ledger() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let path_env = path_with_stub(&bin_dir);
+
+    // A real dispatch-shaped worktree at the default layout, frozen at `head`.
+    let worktree = project_root.join(".orgasmic/tmp/dispatch/task-dispatch/worktree");
+    run_git(
+        &project_root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "task-dispatch-ledger",
+            worktree.to_str().unwrap(),
+            &head,
+        ],
+    );
+    assert!(worktree.join(".orgasmic/project.org").is_file());
+
+    let running = boot(home.clone()).await;
+    let stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "task",
+            "update",
+            "TASK-DISPATCH",
+            "--state",
+            "todo",
+            "--reason",
+            "frozen snapshot ledger check",
+        ],
+    );
+    let payload: serde_json::Value = serde_json::from_str(&stdout).expect("task update json");
+    let tx_id = payload["tx_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("task update returned no tx_id: {stdout}"))
+        .to_string();
+
+    assert!(
+        tx_log(&project_root).contains(&tx_id),
+        "tx {tx_id} returned from inside the worktree must exist in the LIVE ledger"
+    );
+    assert!(
+        !worktree.join(".orgasmic/tx").exists(),
+        "the frozen snapshot must not be the thing that absorbed the write"
+    );
+    let from_root = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["task", "get", "TASK-DISPATCH"],
+    );
+    let task: serde_json::Value = serde_json::from_str(&from_root).expect("task get json");
+    assert_eq!(
+        task["lifecycle_stage"].as_str(),
+        Some("todo"),
+        "the update must be visible from the primary root: {from_root}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}

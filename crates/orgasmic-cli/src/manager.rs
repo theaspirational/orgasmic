@@ -635,7 +635,7 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
 }
 
 pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
-    let project_root = find_project_root()?;
+    let project_root = find_live_project_root(home, "manager dispatch-close")?;
     let project_id = read_project_id(&project_root)?;
     let tasks = normalize_tasks(args.task.clone())?;
     let open = match resolve_close_target(&project_root, &tasks, args.started_tx.as_deref())? {
@@ -1872,7 +1872,7 @@ async fn resolve_finalize_run(
 }
 
 pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> {
-    let project_root = find_project_root()?;
+    let project_root = find_live_project_root(home, "manager dispatch-status")?;
     if args.cleanup_failed {
         let mut failures = scan_cleanup_failures(&project_root)?;
         if let Some(task) = args.task.as_deref() {
@@ -3308,6 +3308,82 @@ pub(crate) fn find_project_root() -> Result<PathBuf> {
             bail!("could not find .orgasmic/project.org in cwd or ancestors");
         }
     }
+}
+
+/// Project root for verbs that read or write `.orgasmic/` state as FILES —
+/// as opposed to the daemon-routed verbs, which carry only a project id and
+/// let the daemon bind it to the live root.
+///
+/// A dispatch worktree carries a FROZEN `.orgasmic/` snapshot from the commit
+/// it was created at, so [`find_project_root`]'s marker walk stops inside the
+/// worktree and hands back a project that is plausibly shaped and arbitrarily
+/// stale. Measured 2026-07-28 (TASK-GQPGR): `dispatch-status` printed EMPTY
+/// with three dispatches open and their workers healthy, and
+/// `dispatch-close --started-tx` denied a tx that exists — both read as fact.
+///
+/// Policy is REFUSE, not silently re-resolve to the primary root. Three
+/// reasons, recorded here because the task asked for the choice to be argued:
+/// (1) `dispatch-close` performs destructive cleanup (`--worktree-remove`)
+/// and could be pointed at the very worktree it is running in, which
+/// auto-resolution would make silently reachable; (2) the failure this guards
+/// is one of misplaced confidence, and a stderr note on an otherwise
+/// successful command is exactly the signal that already goes unread in agent
+/// transcripts; (3) neither verb accepts `--project`, so `cd` to the primary
+/// root is the single unambiguous remedy and the error can just name it.
+// orgasmic:task_GQPGR
+fn find_live_project_root(home: &Home, verb: &str) -> Result<PathBuf> {
+    let root = find_project_root()?;
+    if let Some(primary) = frozen_snapshot_primary_root(home, &root) {
+        let dispatch = dispatch_worktree_task_hint(&primary, &root)
+            .map(|tasks| format!("the dispatch worktree for {tasks}"))
+            .unwrap_or_else(|| "a linked git worktree of this project".to_string());
+        bail!(
+            "{verb}: refusing to read project state from {} — it is {dispatch}, and its \
+             .orgasmic/ is a frozen snapshot of the commit the worktree was created at, so \
+             any answer here is stale rather than live. Run this from the primary project \
+             root instead: {}",
+            root.display(),
+            primary.display()
+        );
+    }
+    Ok(root)
+}
+
+/// `Some(primary_root)` when `root` is a linked git worktree whose project id
+/// resolves, on the live board, to a DIFFERENT directory — i.e. `root` holds a
+/// point-in-time copy of `.orgasmic/` and not the live one.
+///
+/// Every uncertain case (primary checkout, unreadable `project.org`, project
+/// not registered on the board) returns `None`, so the guard can only fire on
+/// the shape it positively identifies. A stale project id that no longer
+/// matches the board falls through here and stays loud downstream: the
+/// daemon-routed verbs reject the unknown project outright.
+fn frozen_snapshot_primary_root(home: &Home, root: &Path) -> Option<PathBuf> {
+    // A linked worktree's `.git` is a FILE (`gitdir: ...`); a primary checkout
+    // has a directory. Anything else is not a worktree and needs no guard.
+    if !root.join(".git").is_file() {
+        return None;
+    }
+    let project_id = read_project_id(root).ok()?;
+    let primary = registered_project_root(home, &project_id).ok()?;
+    (normalize_path(root) != normalize_path(&primary)).then_some(primary)
+}
+
+/// Name the dispatch a worktree belongs to, read from the LIVE project's tx
+/// log, so the refusal can say "the dispatch worktree for TASK-X". Best
+/// effort: an unreadable or unmatched live ledger just drops the detail.
+fn dispatch_worktree_task_hint(primary: &Path, worktree: &Path) -> Option<String> {
+    let target = normalize_path(worktree);
+    scan_open_dispatches(primary)
+        .ok()?
+        .into_iter()
+        .find(|record| {
+            record
+                .worktree
+                .as_deref()
+                .is_some_and(|path| normalize_path(path) == target)
+        })
+        .map(|record| task_list_property(&record.tasks))
 }
 
 fn registered_project_root(home: &Home, project_id: &str) -> Result<PathBuf> {
