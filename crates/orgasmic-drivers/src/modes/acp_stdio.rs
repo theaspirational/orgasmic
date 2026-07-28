@@ -1160,8 +1160,13 @@ impl DriverControl for AcpStdioControl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::claude::ClaudeAdapter;
     use crate::adapters::shell::ShellAdapter;
+    use crate::modes::rmux::test_tooling::{
+        command_succeeds, skip_test_if_missing, test_environment_lock,
+    };
     use orgasmic_core::RuntimeIdentity;
+    use serde_json::json;
 
     fn base_spawn() -> StdioSpawn {
         StdioSpawn {
@@ -1194,9 +1199,13 @@ mod tests {
     #[test]
     fn composed_argv_survives_the_mode_instead_of_being_rebuilt_from_spawn() {
         let spawn = base_spawn();
+        let ctx = ctx();
         let mut adapter = ShellAdapter::new();
         // What an adapter composes: the spawn base plus credential-mode,
-        // session-id and model flags layered on top.
+        // session-id and model flags layered on top. The session id is the
+        // run's `runtime_id` because that is the only value the vendor
+        // transcript path can be computed from; a free-floating literal here
+        // would let the mode pass a different id and still look correct.
         let composed = HarnessRequest::Subprocess {
             binary: "claude".into(),
             args: vec![
@@ -1204,7 +1213,7 @@ mod tests {
                 "-p".into(),
                 "--verbose".into(),
                 "--session-id".into(),
-                "pinned-session-id".into(),
+                ctx.identity.runtime_id.clone(),
                 "--model".into(),
                 "claude-sonnet-5".into(),
             ],
@@ -1214,14 +1223,9 @@ mod tests {
             close_stdin: false,
         };
 
-        let (request, session_init) = compose_stdio_request(
-            &spawn,
-            &ctx(),
-            &DriverConfig::empty(),
-            &mut adapter,
-            composed,
-        )
-        .expect("compose");
+        let (request, session_init) =
+            compose_stdio_request(&spawn, &ctx, &DriverConfig::empty(), &mut adapter, composed)
+                .expect("compose");
 
         assert!(session_init.is_none());
         let HarnessRequest::Subprocess {
@@ -1235,7 +1239,7 @@ mod tests {
         // The three flags the mode used to drop on the floor.
         assert!(
             args.windows(2)
-                .any(|w| w == ["--session-id", "pinned-session-id"]),
+                .any(|w| w == ["--session-id", ctx.identity.runtime_id.as_str()]),
             "the pinned session id must reach the spawned process: {args:?}"
         );
         assert!(
@@ -1249,5 +1253,61 @@ mod tests {
         // env still merges, with the adapter's values layered over spawn's.
         assert_eq!(env.get("FROM_SPAWN").map(String::as_str), Some("spawn"));
         assert_eq!(env.get("FROM_ADAPTER").map(String::as_str), Some("adapter"));
+    }
+
+    /// The same property as the claude adapter's
+    /// `every_mode_persists_a_locatable_native_session`, asserted one layer up
+    /// on the request the mode actually hands to the spawner.
+    ///
+    /// The test above is a pass-through check: it feeds a hand-built request in
+    /// and proves the mode does not rebuild argv from `stdio_spawn`. It cannot
+    /// see where the session id came from, because the test supplies it. This
+    /// one drives the real `ClaudeAdapter`, so changing the value the adapter
+    /// pins to `--session-id` turns both layers red instead of only the
+    /// adapter's own unit test.
+    #[tokio::test]
+    async fn the_spawned_session_id_is_the_runs_runtime_id() {
+        const NAME: &str = "the_spawned_session_id_is_the_runs_runtime_id";
+        let _guard = test_environment_lock().lock().await;
+        std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        if skip_test_if_missing(
+            NAME,
+            &[("claude", command_succeeds("claude", &["--version"]))],
+        ) {
+            return;
+        }
+
+        let mut adapter = ClaudeAdapter::new();
+        let ctx = ctx();
+        // The shape a real dispatch sends: no endpoint (dec_S18RH).
+        let config = DriverConfig(json!({}));
+        let composed = adapter.compose_request(&ctx, &config).expect("compose");
+        let spawn = adapter
+            .stdio_spawn()
+            .expect("claude adapter always exposes stdio_spawn");
+
+        let (request, _) = compose_stdio_request(&spawn, &ctx, &config, &mut adapter, composed)
+            .expect("compose_stdio_request");
+
+        let HarnessRequest::Subprocess { args, .. } = request else {
+            panic!("expected a Subprocess request");
+        };
+        let session_id = args
+            .windows(2)
+            .find(|w| w[0] == "--session-id")
+            .map(|w| w[1].clone())
+            .expect("a native session id must reach the spawned argv");
+        assert_eq!(
+            session_id, ctx.identity.runtime_id,
+            "the session id the mode spawns must be the run's runtime_id, or the \
+             vendor transcript path orgasmic computes is not the one claude \
+             writes: {args:?}"
+        );
+
+        let native = adapter
+            .native_runtime()
+            .expect("the adapter must report NativeRuntime metadata");
+        assert_eq!(native.session_id.as_deref(), Some(session_id.as_str()));
     }
 }
