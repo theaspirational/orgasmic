@@ -1,0 +1,33 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# WHY THIS RED AND NOT A DIFFERENTIAL FAILURE
+#
+# This task's deliverable is a measurement: the same daemon assertions run
+# through rmux and through tmux, so a divergence indicts one multiplexer. The
+# measurement's own precondition is that the tmux arm really is tmux. Inside an
+# orgasmic worker it is not — rmux prepends a shim directory in which `tmux` is
+# a symlink to `rmux`, and `tmux -V` lies about it (3.4 printed, 3.6a real).
+# Measured 2026-07-29: `tmux -L k4g1d-probe new-session` through the shim
+# created /private/tmp/rmux-501/k4g1d-probe, and real tmux on the same label
+# answered `error connecting to /private/tmp/tmux-501/k4g1d-probe`.
+#
+# So the defect this artifact pins is not a red test — it is a GREEN one. Under
+# the injection the tmux arm runs rmux, both arms pass, and the suite reports
+# "green under both modes", which by this task's own decision table means "the
+# deadline is the defect". A parameterization that can manufacture that answer
+# is worse than no parameterization.
+#
+# A silent pass cannot be pinned as a signature, so the proof is aimed one layer
+# up at its cause: the availability rule itself, as a pure function over a
+# resolved path. It fails identically on every host, needs neither tmux nor
+# rmux, and starts no session.
+
+exit: 101
+
+# The rule, named exactly: a `tmux` that follows through to `rmux` is not tmux.
+contains: a tmux that is really rmux must not count as tmux available
+contains: tmux_mode_rejects_an_rmux_shim_resolved_as_tmux
+
+# One test, and it is this one. A binary that collapses wholesale is a different
+# failure and has not reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed

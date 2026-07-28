@@ -1,0 +1,25 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -21982,15 +21982,12 @@
+         let Some(resolved) = resolved else {
+             return Err("no tmux on PATH".to_string());
+         };
+-        let real = std::fs::canonicalize(resolved).unwrap_or_else(|_| resolved.to_path_buf());
+-        if real.file_name().and_then(|name| name.to_str()) == Some("rmux") {
+-            return Err(format!(
+-                "tmux on PATH ({}) is the rmux shim ({}); a genuine tmux-mode run needs the \
+-                 real binary resolved ahead of the shim",
+-                resolved.display(),
+-                real.display()
+-            ));
+-        }
++        // TASK-K4G1D injection: the pre-fix state. Availability is "something
++        // called tmux answered a PATH lookup", exactly what `tmux_on_path` asks
++        // -- so inside an orgasmic worker, where `tmux` is a symlink to `rmux`,
++        // the tmux arm of every parameterized mux test runs rmux and reports
++        // the two modes agreeing.
++        let _ = resolved;
+         Ok(())
+     }
+ 
