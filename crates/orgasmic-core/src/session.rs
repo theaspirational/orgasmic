@@ -263,9 +263,15 @@ pub enum DriverEvent {
     Heartbeat { seq: u64 },
     /// A TUI pane wrote bytes to its terminal. Emitted only by the pane
     /// transports (rmux), coalesced to at most one event per fixed interval,
-    /// and carrying no pane content — `lines` is just how many pane lines were
-    /// observed in the window (dec_WDR5K item 7 keeps rendered TUI output out
-    /// of the JSONL; see TASK-AFE5Q).
+    /// and carrying no pane content — `bytes` is just how many raw pane output
+    /// bytes were observed in the window (dec_WDR5K item 7 keeps rendered TUI
+    /// output out of the JSONL; see TASK-AFE5Q).
+    ///
+    /// The unit is deliberately raw bytes, not lines: a full-screen harness
+    /// repaints in place with ANSI/CR and can run for an entire stall window
+    /// without ever emitting LF, so a line-terminated observation would go
+    /// silent on exactly the runs this event exists to protect (TASK-RWCRN.1).
+    /// A pane transport that cannot observe bytes must not emit this variant.
     ///
     /// What it proves: the harness process is still writing to its terminal.
     /// What it does NOT prove: that the worker made progress — a TUI that
@@ -279,7 +285,7 @@ pub enum DriverEvent {
     /// clock — e.g. TASK-VZMZE moving stall onto a progress-only clock — must
     /// give the pane transports a replacement signal in the same change, or
     /// TASK-RWCRN regresses.
-    PaneActivity { seq: u64, lines: u64 },
+    PaneActivity { seq: u64, bytes: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

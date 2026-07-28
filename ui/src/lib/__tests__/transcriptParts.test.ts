@@ -127,7 +127,7 @@ describe('normalizeTranscriptParts', () => {
     const parts = normalizeTranscriptParts(
       source(
         event(1, { type: 'text_chunk', stream: 'system', chunk: 'Still thinking' }),
-        event(2, { type: 'pane_activity', seq: 0, lines: 412 }),
+        event(2, { type: 'pane_activity', seq: 0, bytes: 16480 }),
       ),
     );
     expect(parts).toHaveLength(1);

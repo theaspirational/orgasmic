@@ -254,7 +254,7 @@ async fn pane_activity_defers_the_stall_release_until_the_pane_goes_silent() {
 
     for seq in 0..10 {
         tokio::time::sleep(Duration::from_millis(300)).await;
-        tx.send(DriverEvent::PaneActivity { seq, lines: 37 })
+        tx.send(DriverEvent::PaneActivity { seq, bytes: 1_480 })
             .await
             .expect("pane activity is accepted while the run is live");
     }
