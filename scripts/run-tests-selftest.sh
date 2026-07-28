@@ -281,6 +281,68 @@ EOF
 run --classify "$TMP/suite.log"
 check 1 "$RUN_EXIT" "$TMP/out.txt" "RAN. THIS COSTS REAL MONEY." "the skip did not hold"
 
+# -- what the environment withheld ------------------------------------------
+
+# orgasmic:TASK-S2KM0
+#
+# The CI failure mode these three cases exist to make impossible: a lane runs on
+# a host that cannot provide `claude`, acknowledges it with
+# ORGASMIC_ALLOW_MISSING_TOOLS so the sentinel stops failing, and then reports a
+# green verdict that never mentions the tests it declined to run. Every skip is
+# defensible; a silent one is not.
+
+start "acknowledged missing tooling is named in the verdict, with counts"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+warning: ORGASMIC_ALLOW_MISSING_TOOLS explicitly allows missing test tooling: claude (gates 8 tests), codex (gates 1 test); those gated tests did not run
+
+running 1 test
+test tests::unrelated_a ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "environ  : INCOMPLETE — 9 test(s) gated out by absent tooling" \
+    "NOT RUN (9)" \
+    "These tests did not pass. They did not execute:" \
+    "claude           gates 8 test(s)" \
+    "codex            gates 1 test(s)" \
+    "verdict: GREEN"
+
+# One tool, two binaries, two different gated counts. Deduping the pairs would
+# report 8 and hide the ninth test; these really are nine tests that did not run.
+start "the same tool gated in two binaries sums rather than dedupes"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+warning: ORGASMIC_ALLOW_MISSING_TOOLS explicitly allows missing test tooling: claude (gates 8 tests); those gated tests did not run
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+     Running tests/driver_modes.rs ($TMP/green)
+warning: ORGASMIC_ALLOW_MISSING_TOOLS explicitly allows missing test tooling: claude (gates 1 test); those gated tests did not run
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" "NOT RUN (9)" "claude           gates 9 test(s)"
+
+start "nothing waived -> the verdict says the environment was complete"
+registry "${KNOWN_FLAKE_ENTRY[@]}"
+cat > "$TMP/suite.log" <<EOF
+     Running unittests src/lib.rs ($TMP/green)
+
+running 1 test
+test tests::unrelated_a ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 1.00s
+EOF
+run --classify "$TMP/suite.log"
+check 0 "$RUN_EXIT" "$TMP/out.txt" \
+    "environ  : complete — no tool requirement was waived" \
+    "ignored  : 2 test(s) carrying #[ignore]"
+
 # ---------------------------------------------------------------------------
 
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"

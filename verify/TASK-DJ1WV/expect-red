@@ -22,7 +22,13 @@ contains: FAIL registered name, WRONG signature -> REAL, exit 1 (the mislabel de
 # names the wrong task.
 contains: FAIL two entries for one name -> the matching one wins and names its own owner
 
-# Exactly two cases fall, and thirteen still pass. If a future edit makes the
+# Exactly two cases fall, and the rest still pass. If a future edit makes the
 # whole self-test collapse, that is a different failure and this proof has not
 # reproduced the defect it claims to.
-contains: 13 passed, 2 failed
+#
+# The count moved 13 -> 16 on 2026-07-29 (TASK-S2KM0), which added three cases
+# to the self-test covering the environment-honesty section of the verdict.
+# None of the three touches signature matching, so the injection still fells
+# exactly the same two cases; only the passing count grew. Re-measured under
+# the injection here before editing this line.
+contains: 16 passed, 2 failed

@@ -1,0 +1,233 @@
+# orgasmic:TASK-S2KM0
+#
+# The per-PR gate. Before this file, `.github/workflows/` held six workflows and
+# none of them ran a test: every "gates green" line in every task's Evidence
+# section was a local run, by whoever happened to run it, on whatever their
+# machine looked like at the time. Nothing re-checked it on merge.
+#
+# THE SUITE RUNS THROUGH `scripts/run-tests.sh`, NOT BARE `cargo test`
+# --------------------------------------------------------------------
+# Bare `cargo test` gives a CI lane two ways to lie. It goes red on a known,
+# owned, load-dependent flake — and a lane that is red for reasons nobody is
+# expected to fix teaches everyone to ignore it, which is worse than no lane.
+# And it goes green while silently skipping every test whose runtime is absent.
+# The wrapper closes both: it reruns each failure in isolation, matches the
+# panic against `verify/flake-registry.toml`, and exits nonzero only on a REAL
+# or unregistered failure — with the owning task named for everything it
+# excuses. Its verdict block is this lane's actual output.
+#
+# WHAT THE RUNNER MUST PROVIDE, AND WHAT HAPPENS IF IT DOES NOT
+# -------------------------------------------------------------
+# `assert_required_test_tooling` (crates/orgasmic-drivers/src/modes/rmux.rs)
+# fails one sentinel test per binary when a required tool is missing, so a tool
+# this lane forgets to install does not skip quietly — it arrives in the verdict
+# as an unregistered failure, classified REAL, and the lane goes red. That is
+# the required-environment mode, and it is why `tmux` and `rmux` are installed
+# below rather than hoped for.
+#
+# `ORGASMIC_ALLOW_MISSING_TOOLS` is the only escape hatch, and it names exactly
+# the three proprietary harness CLIs a GitHub runner cannot install. Waiving a
+# tool does not make it invisible: the wrapper lifts the acknowledgement out of
+# the cargo log into a `NOT RUN (n)` block in the verdict, per tool, with counts.
+# A green verdict from this lane is therefore always accompanied by the list of
+# tests it declined to run. Adding a name to that list is a deliberate,
+# reviewable act; forgetting to install something is not.
+#
+# NO LANE HERE MAY BILL
+# ---------------------
+# One drivers test submits a real provider turn (~$0.10/run, measured
+# 2026-07-25, see .orgasmic/gotchas.org). It is double-locked: `#[ignore]` plus
+# a runtime guard demanding `ORGASMIC_ALLOW_BILLED_TESTS=1` exactly. This lane
+# never sets it and asserts its absence before running anything, so the lock
+# cannot be defeated by an inherited repo- or org-level variable.
+#
+# WHY macOS FOR THE SUITE
+# -----------------------
+# The daemon suite assumes launchd and a macOS-shaped service adapter, and the
+# mux tests assume a real tmux. There is deliberately NO linux lane: a subset
+# lane would need a decision about which tests are portable that nobody has
+# made, and a lane that runs an unstated subset is the same silent-skip problem
+# in a different costume. If linux coverage is wanted, that is its own task.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Never set ORGASMIC_ALLOW_BILLED_TESTS here or anywhere downstream.
+  CARGO_TERM_COLOR: never
+  HOMEBREW_NO_AUTO_UPDATE: 1
+  HOMEBREW_NO_INSTALL_CLEANUP: 1
+
+jobs:
+  # Cheapest signal, and platform-independent — rustfmt's output does not vary
+  # by host — so this one runs on the 1x runner.
+  fmt:
+    name: cargo fmt --all --check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: |
+          set -uo pipefail
+          cargo fmt --all --check > "${RUNNER_TEMP}/fmt.txt" 2>&1
+          status=$?
+          cat "${RUNNER_TEMP}/fmt.txt"
+          if [ "$status" -ne 0 ]; then
+            files=$(grep -c '^Diff in' "${RUNNER_TEMP}/fmt.txt" || true)
+            echo "::error::The tree is not rustfmt-clean ($files hunk(s)). Run \`cargo fmt --all\` and commit."
+            echo "This repository had no fmt gate until TASK-S2KM0, so the tree" >&2
+            echo "drifted. Measured at e432632 on 2026-07-29: 17 hunks across 9" >&2
+            echo "files, all whitespace, no behaviour. If this is the first run of" >&2
+            echo "this lane, that drift is what you are looking at — format the" >&2
+            echo "tree once and this stays green thereafter." >&2
+          fi
+          exit $status
+
+  # macOS rather than ubuntu because 9 `cfg(target_os = "macos")` blocks would
+  # otherwise go unlinted, and macOS is the only platform the daemon ships on.
+  # If runner minutes ever hurt, this is the job to move to ubuntu first — it
+  # gives up the least.
+  clippy:
+    name: cargo clippy -D warnings
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  suite:
+    name: Workspace suite (classified)
+    runs-on: macos-15
+    # The daemon suite alone runs ~8 minutes idle on a developer machine and
+    # degrades under contention; a shared runner is contention. Add a cold
+    # build and the isolation reruns the wrapper performs for every failure.
+    # Generous on purpose: a timeout kill produces no verdict block at all,
+    # which is the least useful possible outcome.
+    timeout-minutes: 90
+    env:
+      # The three proprietary harness CLIs a GitHub runner cannot install.
+      # Everything else — tmux, rmux, cc, bash, sleep — is REQUIRED, and its
+      # absence fails a sentinel test rather than skipping quietly.
+      ORGASMIC_ALLOW_MISSING_TOOLS: claude,cursor-agent,codex
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Before anything builds: prove the money lock is intact. A repository or
+      # organisation variable of this name would otherwise arm a billed test
+      # inside a lane nobody expects to spend anything.
+      - name: Refuse to run if billing is armed
+        run: |
+          set -uo pipefail
+          if [ -n "${ORGASMIC_ALLOW_BILLED_TESTS:-}" ]; then
+            echo "::error::ORGASMIC_ALLOW_BILLED_TESTS is set in this environment. No CI lane may bill a provider turn. Remove the repository/organisation variable."
+            exit 1
+          fi
+          echo "ORGASMIC_ALLOW_BILLED_TESTS is unset; the billed test stays double-locked."
+
+      - name: Provision tmux
+        run: |
+          set -euo pipefail
+          brew list tmux > /dev/null 2>&1 || brew install tmux
+          tmux -V
+
+      # Pinned to the version the code demands, read from the code, so this step
+      # cannot drift away from RMUX_REQUIRED_VERSION. `probe_rmux_binary`
+      # compares `rmux -V` against it exactly: a mismatch reports the binary
+      # unusable, which fails the sentinel, which reddens this lane. That is the
+      # intended behaviour — it is how a stale pin announces itself.
+      - name: Provision rmux
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/.*RMUX_REQUIRED_VERSION: &str = "\([^"]*\)".*/\1/p' \
+            crates/orgasmic-drivers/src/modes/rmux.rs | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::could not read RMUX_REQUIRED_VERSION from crates/orgasmic-drivers/src/modes/rmux.rs"
+            exit 1
+          fi
+          echo "RMUX_REQUIRED_VERSION = $version"
+          cargo install rmux --version "$version" --locked
+          rmux -V
+
+      # An entry owned by a closed task is a permanently excused test. Checking
+      # it first means the lane refuses a rotten registry before spending 40
+      # minutes building against it.
+      - name: Registry hygiene
+        run: bash scripts/run-tests.sh --check
+
+      - name: Suite
+        run: |
+          set -uo pipefail
+          bash scripts/run-tests.sh --work-dir "${RUNNER_TEMP}/run-tests" \
+            > "${RUNNER_TEMP}/verdict.txt" 2>&1
+          status=$?
+          cat "${RUNNER_TEMP}/verdict.txt"
+          exit $status
+
+      # The verdict block is the deliverable of this lane, including its
+      # `NOT RUN (n)` manifest. Put it where a reviewer sees it without opening
+      # a log, whether the job passed or failed.
+      - name: Publish the verdict
+        if: always()
+        run: |
+          set -uo pipefail
+          verdict="${RUNNER_TEMP}/verdict.txt"
+          if [ ! -f "$verdict" ]; then
+            echo "The suite step produced no verdict — it failed before classification." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '## Workspace suite verdict'
+            echo
+            echo '```text'
+            sed -n '/^=====/,$p' "$verdict"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload suite logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-logs
+          path: |
+            ${{ runner.temp }}/verdict.txt
+            ${{ runner.temp }}/run-tests
+          if-no-files-found: warn
+          retention-days: 14
