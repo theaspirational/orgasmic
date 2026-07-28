@@ -337,6 +337,18 @@ struct RunReleaseResponse {
     terminal_tx_id: Option<String>,
 }
 
+/// Capability token meaning "this daemon writes the `terminal_tx` a release
+/// carries, as part of that release" (TASK-WGXKD, handshake added by
+/// TASK-WGXKD.1). Mirrors `orgasmic_daemon::api::CAPABILITY_RELEASE_TERMINAL_TX`
+/// — matched over the wire, so it is a string on both sides by design.
+const CAPABILITY_RELEASE_TERMINAL_TX: &str = "release.terminal_tx";
+
+#[derive(Debug, Default, Deserialize)]
+struct DaemonCapabilitiesResponse {
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
 #[derive(Debug, Default, Deserialize)]
 struct RunsResponse {
     #[serde(default)]
@@ -1214,6 +1226,12 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
         }
     }
 
+    // Version-skew handshake (TASK-WGXKD.1). Deliberately before the commit and
+    // before last.txt, not merely before the release: a refusal then leaves the
+    // worktree exactly as this finalize found it, so the retry after a daemon
+    // restart is the same command with the same effect.
+    runtime.block_on(require_daemon_writes_terminal_tx(&client, &task))?;
+
     let sha = if args.commit {
         Some(commit_worktree(
             &git_root,
@@ -1399,11 +1417,13 @@ pub fn cmd_dispatch_finalize(home: &Home, args: DispatchFinalizeArgs) -> Result<
     // 3. The terminal tx is on record. Normally the daemon wrote it as part of
     // the release above, which is what makes "lease released, run unreported"
     // impossible even when this process is killed by that release. The
-    // client-side POST is the fallback for the two cases the daemon did not
-    // cover: a daemon older than TASK-WGXKD (no `terminal_tx_id` in its
-    // response), and the stall-sweep race above, where our release 404'd and
-    // the daemon never released anything for us. Same deterministic request id
-    // either way, so a redundant attempt dedupes.
+    // client-side POST now covers only the stall-sweep race above, where our
+    // release 404'd and the daemon never released anything for us — in that
+    // case nothing killed this process and it does get another turn. The old
+    // daemon case is gone: the handshake refuses before releasing rather than
+    // relying on a fallback that a group reap would never let run
+    // (TASK-WGXKD.1). Same deterministic request id either way, so a redundant
+    // attempt dedupes.
     let tx_id = match release.and_then(|response| response.terminal_tx_id) {
         Some(tx_id) => tx_id,
         None => {
@@ -2078,6 +2098,56 @@ async fn release_dispatch_run_with_reason(
     client
         .post_json(&format!("/runs/{}/release", path_segment(run_id)), &request)
         .await
+}
+
+/// Refuse to release the lease unless the daemon has proven, BEFORE the
+/// release call, that it will write the terminal tx as part of that release
+/// (TASK-WGXKD.1, reviewer finding 1).
+///
+/// Why a pre-flight probe and not a post-release fallback: on acp-stdio there
+/// is no "after the release" for this process. The release tears down the
+/// driver, the driver reaps the harness's setsid process group, and this CLI is
+/// in it — so a fallback that runs after the release call returns never runs at
+/// all. New CLI against a not-yet-restarted daemon (a source build, or the
+/// window between a runtime install and the daemon kickstart) otherwise
+/// reproduces the original defect exactly: committed, reported to last.txt,
+/// lease released, no terminal tx, no orphan flag.
+///
+/// NOTE FOR THE NEXT READER — this deliberately inverts the invariant the
+/// original finalize-ordering comment argued for. Failing here leaves the LEASE
+/// HELD, which that comment was written to avoid. Take the trade anyway: a held
+/// lease is visible in `dispatch-status`, and the orphan/stall paths can rescue
+/// it. A released-but-unreported run is the invisible fourth state TASK-WGXKD
+/// exists to eliminate — nothing surfaces it except an `[unreported]` marker
+/// nobody is looking at. Visible-and-wrong beats invisible-and-wrong. Do not
+/// "fix" this back into a post-release fallback.
+async fn require_daemon_writes_terminal_tx(client: &DaemonClient, task: &str) -> Result<()> {
+    let probe = client
+        .get::<DaemonCapabilitiesResponse>("/daemon/capabilities")
+        .await;
+    let detail = match &probe {
+        Ok(response) => {
+            if response
+                .capabilities
+                .iter()
+                .any(|capability| capability == CAPABILITY_RELEASE_TERMINAL_TX)
+            {
+                return Ok(());
+            }
+            format!("it does not advertise `{CAPABILITY_RELEASE_TERMINAL_TX}`")
+        }
+        // A daemon older than TASK-WGXKD has no such route and answers 404;
+        // any other probe failure is equally not a proof of support.
+        Err(error) => format!("the capability probe failed: {error}"),
+    };
+    bail!(
+        "refusing to release the lease for {task}: this daemon cannot be shown to write \
+         the worker's terminal tx as part of the release ({detail}). Releasing anyway \
+         would report nothing and leave no orphan flag — the run would simply vanish \
+         from reporting. The lease is still held and this finalize is safe to re-run: \
+         restart the daemon onto the current runtime (`orgasmic daemon restart`), then \
+         run the same `orgasmic dispatch finalize` command again."
+    )
 }
 
 /// Whether `err` is the daemon's "run not found" response to a release call

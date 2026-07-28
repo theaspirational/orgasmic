@@ -86,14 +86,14 @@ async fn boot_with_options(home: Home, options: DaemonOptions) -> RunningDaemon 
     Daemon::run(home, options).await.expect("boot daemon")
 }
 
-struct RunsRejectingProxy {
+struct InterceptingProxy {
     addr: std::net::SocketAddr,
     paths: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     join: tokio::task::JoinHandle<()>,
 }
 
-impl Drop for RunsRejectingProxy {
+impl Drop for InterceptingProxy {
     fn drop(&mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
@@ -102,10 +102,38 @@ impl Drop for RunsRejectingProxy {
     }
 }
 
-async fn start_runs_rejecting_proxy(backend: std::net::SocketAddr) -> RunsRejectingProxy {
+/// A daemon whose `/api/runs` is unavailable, for the recorded-id close path.
+async fn start_runs_rejecting_proxy(backend: std::net::SocketAddr) -> InterceptingProxy {
+    start_intercepting_proxy(backend, |path| {
+        (path == "/api/runs").then_some((503, "Service Unavailable", "runs list disabled"))
+    })
+    .await
+}
+
+/// A daemon that predates TASK-WGXKD: it has no capability route at all, so the
+/// pre-flight handshake 404s exactly as it would against a daemon that has not
+/// been restarted onto the current runtime. Everything else is the real daemon,
+/// so if the client were to release anyway the release would really happen.
+async fn start_pre_wgxkd_daemon_proxy(backend: std::net::SocketAddr) -> InterceptingProxy {
+    start_intercepting_proxy(backend, |path| {
+        (path == "/api/daemon/capabilities").then_some((
+            404,
+            "Not Found",
+            "{\"error\":\"not found\"}",
+        ))
+    })
+    .await
+}
+
+/// TCP proxy in front of the daemon that answers `intercept`ed paths itself and
+/// forwards everything else, recording every path it saw.
+async fn start_intercepting_proxy(
+    backend: std::net::SocketAddr,
+    intercept: fn(&str) -> Option<(u16, &'static str, &'static str)>,
+) -> InterceptingProxy {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
-        .expect("bind runs-rejecting proxy");
+        .expect("bind intercepting proxy");
     let addr = listener.local_addr().unwrap();
     let paths = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     let recorded_paths = paths.clone();
@@ -145,14 +173,13 @@ async fn start_runs_rejecting_proxy(backend: std::net::SocketAddr) -> RunsReject
                     .unwrap_or_default()
                     .to_string();
                 request_paths.lock().unwrap().push(path.clone());
-                if path == "/api/runs" {
-                    let body = b"runs list disabled";
+                if let Some((status, reason, body)) = intercept(&path) {
                     let response = format!(
-                        "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                         body.len()
                     );
                     inbound.write_all(response.as_bytes()).await.unwrap();
-                    inbound.write_all(body).await.unwrap();
+                    inbound.write_all(body.as_bytes()).await.unwrap();
                     return;
                 }
 
@@ -175,7 +202,7 @@ async fn start_runs_rejecting_proxy(backend: std::net::SocketAddr) -> RunsReject
             });
         }
     });
-    RunsRejectingProxy {
+    InterceptingProxy {
         addr,
         paths,
         shutdown: Some(shutdown),
@@ -2852,6 +2879,132 @@ async fn dispatch_finalize_terminal_tx_survives_client_death_at_release() {
         status_stdout.contains("[reported]"),
         "a released run must never show as [unreported] after a successful \
          finalize: {status_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-WGXKD.1 finding 1: a finalize that cannot prove the daemon will write
+/// its terminal tx must refuse BEFORE releasing, leaving the lease held.
+///
+/// The skew is real and routine: CLI and daemon ship in one runtime bundle, but
+/// a source build — or the window between installing a runtime and kickstarting
+/// the daemon — puts a new CLI in front of an old daemon. That daemon ignores
+/// the unknown `terminal_tx` field, performs the release, and on acp-stdio the
+/// release reaps the finalize process's own group before any client-side
+/// fallback could run. Committed, reported to last.txt, lease released, nothing
+/// on record: the exact defect TASK-WGXKD closed.
+///
+/// So the handshake happens first, and here it 404s. What must be true after:
+/// no release, no terminal tx, the lease STILL HELD (`[run-live]`), and the
+/// worktree untouched so the same command can simply be re-run once the daemon
+/// is restarted. A held lease is the deliberate trade — visible and rescuable,
+/// versus a released run that reports nothing and flags nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_finalize_refuses_release_against_pre_wgxkd_daemon() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+
+    write(&worktree.join("worker-change.txt"), "worker output\n");
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "implementer report");
+
+    let proxy = start_pre_wgxkd_daemon_proxy(running.addr).await;
+    let finalize = run_orgasmic_output_with_daemon_url(
+        &home,
+        &format!("http://{}", proxy.addr),
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--task",
+            "TASK-DISPATCH",
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+            "--commit",
+        ],
+        &[],
+    );
+    let stderr = String::from_utf8_lossy(&finalize.stderr).to_string();
+    assert!(
+        !finalize.status.success(),
+        "finalize against a pre-WGXKD daemon must fail, not release\nstdout={}\nstderr={stderr}",
+        String::from_utf8_lossy(&finalize.stdout)
+    );
+    assert!(
+        stderr.contains("refusing to release the lease"),
+        "the refusal must say the lease was NOT released: {stderr}"
+    );
+    assert!(
+        stderr.contains("orgasmic daemon restart"),
+        "the refusal must name the operator remedy: {stderr}"
+    );
+
+    let paths = proxy.paths.lock().unwrap().clone();
+    assert!(
+        paths.iter().any(|path| path == "/api/daemon/capabilities"),
+        "the handshake must actually be attempted: {paths:?}"
+    );
+    assert!(
+        !paths
+            .iter()
+            .any(|path| path.starts_with("/api/runs/") && path.ends_with("/release")),
+        "the release must never be sent once the handshake failed: {paths:?}"
+    );
+    assert!(
+        !paths.iter().any(|path| path == "/api/tx"),
+        "no terminal tx may be posted for a run whose lease was not released: {paths:?}"
+    );
+
+    let raw = tx_log(&project_root);
+    assert!(
+        !raw.contains(":TYPE:         implementer.reported"),
+        "a refused finalize must leave no report behind:\n{raw}"
+    );
+    assert!(
+        !run_git(&worktree, &["status", "--porcelain"]).is_empty(),
+        "refusing before the commit is what makes the retry identical; the \
+         worktree must be untouched"
+    );
+
+    drop(proxy);
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains("[run-live]"),
+        "the lease must still be held — visible-and-wrong is the whole point of \
+         refusing: {status_stdout}"
     );
 
     let _ = running.shutdown.send(());
