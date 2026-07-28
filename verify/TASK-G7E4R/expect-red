@@ -1,0 +1,27 @@
+# Pinned from the real red run of 2026-07-29, with the 5s literal restored.
+#
+# Both halves of the proof have to bite, and they bite differently. Without
+# both lines this artifact would accept a red produced by either one alone,
+# which is how a relationship test that no longer describes the code passes as
+# a fix.
+exit: 101
+
+# Half one — the composition. `macos_unload_timeout()` must be the service
+# manager's own kill deadline plus the named launchd-teardown margin. The
+# literal is not.
+contains: test daemon_service::tests::unload_poll_outlasts_every_wait_a_healthy_stop_may_spend ... FAILED
+contains: the unload poll must be composed of the service manager's kill deadline plus the launchd-teardown margin
+
+# Half two — the behaviour, against the real `wait_until_unloaded`: a stop
+# whose drain outlasts the old literal must still succeed. With the literal
+# back, the poll expires on a drain that was still healthy — the operator-
+# visible defect, not just an arithmetic one.
+contains: test daemon_service::tests::a_drain_past_the_old_literal_is_not_reported_as_a_stuck_unload ... FAILED
+contains: the derived ceiling must sit out a healthy drain and report success
+
+# The injected value itself, so a red caused by unrelated breakage in this
+# module cannot be mistaken for this one. Pinned on the LEFT side only: the
+# right-hand side is the derivation, and pinning that would make this artifact
+# fail the next time a shutdown budget legitimately moves — which is the exact
+# coupling the fix exists to remove.
+contains: left: 5s

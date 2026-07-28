@@ -492,7 +492,53 @@ fn validate_rmux_service_version(rmux: &Path) -> Result<()> {
 // (RunAtLoad/KeepAlive) before our own restart got to `bootstrap`, so the new
 // binary lost the EADDRINUSE race. Verify the unload actually completed
 // (bounded poll) and fail loudly instead of racing a respawn.
-const MACOS_UNLOAD_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Slack the CLI allows on top of the service manager's own kill deadline
+/// before it calls an unload stuck.
+///
+/// `bootout` is the *request*; the job leaves the domain only once the process
+/// is gone and launchd has reaped it. This margin covers what
+/// [`service_stop_timeout`] does not: launchd's own teardown of the job after
+/// the process exits (`launchctl print` keeps answering for a short window
+/// after it), one [`MACOS_UNLOAD_POLL`] of granularity, and the cost of
+/// spawning that `launchctl print` on a machine loaded enough to have made the
+/// shutdown slow in the first place.
+///
+/// Deliberately no larger than [`SERVICE_STOP_MARGIN`]: a genuinely stuck
+/// unload must be reported within one service-manager margin of the last
+/// moment it could legitimately have completed, not whenever we feel safe.
+const MACOS_UNLOAD_MARGIN: Duration = Duration::from_secs(5);
+
+/// How long `stop_macos_launch_agent` polls for the job to leave the domain
+/// after `bootout`.
+///
+/// orgasmic:TASK-G7E4R — this was a literal 5s, and it was the last constant on
+/// this axis that was not derived. `bootout` sends SIGTERM; the job disappears
+/// only when the daemon finishes its shutdown, which may legitimately spend
+/// [`orgasmic_daemon::ShutdownBudgets::total`] (40s), and the *last* thing that
+/// can make it disappear is launchd's own SIGKILL at the `ExitTimeOut` we write
+/// into the plist — [`service_stop_timeout`]. A 5s poll therefore expired in
+/// the middle of a healthy drain and failed the stop with "launchd still
+/// reports … loaded 5s after bootout": a failure message for something that
+/// was working, the same operator experience TASK-QRB8S fixed on the start
+/// path.
+///
+/// Derived from the deadline it must outlast rather than written down, for the
+/// reason TASK-Q07Y5 gave for `service_stop_timeout`: raising any shutdown
+/// budget moves this with it instead of silently invalidating it.
+///
+/// The deliberate trade: sitting past `service_stop_timeout` means a stop that
+/// only completed because launchd SIGKILLed the daemon is reported as a
+/// success. That is the lesser harm. `service_stop_timeout` is sized so the
+/// SIGKILL cannot land inside a healthy shutdown, so reaching it means the
+/// daemon blew its own budget — and that case is not silent: the shutdown loss
+/// record on disk is what tells the operator which runs were at risk. Giving up
+/// first would instead fail stops that were still working, which is the defect
+/// being fixed.
+fn macos_unload_timeout() -> Duration {
+    service_stop_timeout() + MACOS_UNLOAD_MARGIN
+}
+
 const MACOS_UNLOAD_POLL: Duration = Duration::from_millis(150);
 const MACOS_RMUX_START_TIMEOUT: Duration = Duration::from_secs(5);
 const MACOS_RMUX_START_POLL: Duration = Duration::from_millis(150);
@@ -517,14 +563,14 @@ fn stop_macos_launch_agent(_home: &Home) -> Result<()> {
     .context("launchctl bootout")?;
     wait_until_unloaded(
         || macos_service_loaded(&service),
-        MACOS_UNLOAD_TIMEOUT,
+        macos_unload_timeout(),
         MACOS_UNLOAD_POLL,
     )
     .with_context(|| {
         format!(
             "launchd still reports {service} loaded {}s after bootout; \
              KeepAlive would respawn the old daemon and race the next bind",
-            MACOS_UNLOAD_TIMEOUT.as_secs()
+            macos_unload_timeout().as_secs()
         )
     })?;
     let _ = run_command("launchctl", &["disable", &service]);
@@ -1119,6 +1165,98 @@ mod tests {
             service_stop_timeout() > Duration::from_secs(20),
             "launchd's 20s default lands inside the release drain"
         );
+    }
+
+    /// orgasmic:TASK-G7E4R — the unload poll is the third fuse on the same
+    /// axis as `stop_timeout` and `start_timeout`, and it has to be ordered the
+    /// same way. `bootout` only *asks*; the job leaves the domain when the
+    /// daemon exits, and the last actor that can force that is launchd itself
+    /// at `ExitTimeOut` = `service_stop_timeout()`. A poll that gives up first
+    /// fails a stop that was still working — which is what the old 5s literal
+    /// did, expiring 35s before the drain it was watching could even finish.
+    ///
+    /// Asserted as a composition and an ordering, never as a number: a literal
+    /// cannot be shown to still be correct once the budgets it was sized
+    /// against move.
+    #[test]
+    fn unload_poll_outlasts_every_wait_a_healthy_stop_may_spend() {
+        let budget = orgasmic_daemon::ShutdownBudgets::default();
+
+        assert_eq!(
+            macos_unload_timeout(),
+            service_stop_timeout() + MACOS_UNLOAD_MARGIN,
+            "the unload poll must be composed of the service manager's kill \
+             deadline plus the launchd-teardown margin, so changing \
+             ShutdownBudgets moves it"
+        );
+        // The drain itself. `bootout`'s SIGTERM starts the daemon's whole
+        // shutdown budget; polling for less than that is polling for less than
+        // a healthy stop costs.
+        assert!(
+            macos_unload_timeout() > budget.total(),
+            "unload poll {:?} must outlast the daemon's entire SIGTERM budget \
+             {:?}, or a healthy drain is reported as a stuck unload",
+            macos_unload_timeout(),
+            budget.total()
+        );
+        // And the service manager is still the last actor, exactly as
+        // `start_fuse_outlasts_the_predecessor_wait_a_replacement_may_spend`
+        // requires of the start fuse: launchd forces the job out at
+        // `service_stop_timeout`, so giving up before that is giving up before
+        // the last thing that can make the job disappear.
+        assert!(
+            macos_unload_timeout() > service_stop_timeout(),
+            "unload poll {:?} must outlast the service manager's own kill \
+             deadline {:?}, which is the last thing that can unload the job",
+            macos_unload_timeout(),
+            service_stop_timeout()
+        );
+        // Bounded and actionable, not merely generous: a genuinely stuck
+        // unload is reported within one service-manager margin of the last
+        // moment it could legitimately have completed.
+        assert!(
+            MACOS_UNLOAD_MARGIN <= SERVICE_STOP_MARGIN,
+            "unload margin {MACOS_UNLOAD_MARGIN:?} must not exceed the \
+             service-manager margin {SERVICE_STOP_MARGIN:?}, or a stuck unload \
+             stops being actionable"
+        );
+    }
+
+    /// orgasmic:TASK-G7E4R — the behavioural half of the assertion above,
+    /// against the real `wait_until_unloaded`: a stop whose drain outlasts the
+    /// old 5s literal must still succeed.
+    ///
+    /// Both timelines are divided by `TIME_SCALE`, so the test costs
+    /// milliseconds rather than the minute the real ceiling allows. Only the
+    /// ratio between the drain and the two ceilings is under test, and that
+    /// ratio is taken from the live values, not restated.
+    #[test]
+    fn a_drain_past_the_old_literal_is_not_reported_as_a_stuck_unload() {
+        const TIME_SCALE: u32 = 100;
+        const OLD_LITERAL: Duration = Duration::from_secs(5);
+        let poll = Duration::from_millis(1);
+
+        // A healthy stop: the job stays loaded for the whole shutdown budget,
+        // then goes.
+        let healthy_drain = orgasmic_daemon::ShutdownBudgets::default().total() / TIME_SCALE;
+
+        let gone_at = Instant::now() + healthy_drain;
+        let err = wait_until_unloaded(
+            || Instant::now() < gone_at,
+            OLD_LITERAL / TIME_SCALE,
+            poll,
+        )
+        .expect_err("the 5s literal must expire inside a healthy drain — that is the defect")
+        .to_string();
+        assert!(err.contains("timed out"), "{err}");
+
+        let gone_at = Instant::now() + healthy_drain;
+        wait_until_unloaded(
+            || Instant::now() < gone_at,
+            macos_unload_timeout() / TIME_SCALE,
+            poll,
+        )
+        .expect("the derived ceiling must sit out a healthy drain and report success");
     }
 
     #[test]
