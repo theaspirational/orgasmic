@@ -32983,3 +32983,116 @@
 :FROM_STATE:   in_progress
 :TO_STATE:     in_review
 :END:
+
+* TX 2026-07-28 Tue 11:08:32 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3158
+:TIME:         [2026-07-28 Tue 11:08:32]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-Z3093 merged as 268de73 and independently verified by the manager, not taken on the worker's report: env -u ORGASMIC_RUN_ID cargo test -p orgasmic-drivers with the TASK-099T6 billing test skipped came back 275 passed / 0 failed across all five binaries, and the rmux session list went from 3 before the run to 2 after - the live session the suite created was reaped by the guard rather than surviving it, which is the behaviour the task exists to produce. The worker's own evidence was an A/B injection: with reap_owned_sessions removed from Drop the new panic test fails naming the surviving session, restored it passes. Nine duplicate LiveSessionGuard definitions are now one, in modes::rmux::test_tooling. Registration is opt-in and every artifactor test that spawns a real session registers its run id before the first assertion that can panic.
+:END:
+
+* TX 2026-07-28 Tue 11:08:39 manager.dispatch_started TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3159
+:TIME:         [2026-07-28 Tue 11:08:39]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay-review/worktree
+:BRANCH:       task-6fnay-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-6FNAY-review/brief-6FNAY-review.md
+:STARTED_AT:   [2026-07-28 Tue 11:08:39]
+:LIVENESS:     0c9b398a5b308f7c571a530419682802e6a63925
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review 83ea420: is any part of the post-merge rmux leak attributable to the production release path
+:END:
+
+* TX 2026-07-28 Tue 11:08:40 run.created TASK-6FNAY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3160
+:TIME:         [2026-07-28 Tue 11:08:40]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6FNAY
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-6FNAY-reviewer-20260728T110839.jsonl
+:REASON:       review 83ea420: is any part of the post-merge rmux leak attributable to the production release path
+:RUN_ID:       run-20260728T110839-e79450cbfd234d59b3fae25f7de634be
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6fnay-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-6FNAY-review/brief-6FNAY-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-6FNAY-review/brief-6FNAY-review-2afbdfba61e24693a124c8ef8674f249-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-6FNAY-review/brief-6FNAY-review-2afbdfba61e24693a124c8ef8674f249-stdout.log
+:DISPATCH_ATTEMPT: 2afbdfba61e24693a124c8ef8674f249
+:DISPATCH_TX:  tx-20260728-orgasmic-3159
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 11:08:41 manager.dispatch_started TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3161
+:TIME:         [2026-07-28 Tue 11:08:41]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrt4t-review/worktree
+:BRANCH:       task-rrt4t-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-RRT4T-review/brief-RRT4T-review.md
+:STARTED_AT:   [2026-07-28 Tue 11:08:41]
+:LIVENESS:     0c9b398a5b308f7c571a530419682802e6a63925
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: review f894a7a: a skipped test must be loud by default, and the diagnosis is still open
+:END:
+
+* TX 2026-07-28 Tue 11:08:42 run.created TASK-RRT4T
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3162
+:TIME:         [2026-07-28 Tue 11:08:42]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RRT4T
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RRT4T-reviewer-20260728T110841.jsonl
+:REASON:       review f894a7a: a skipped test must be loud by default, and the diagnosis is still open
+:RUN_ID:       run-20260728T110841-294c03fb6256426aaceb0991bfa7f993
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rrt4t-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-RRT4T-review/brief-RRT4T-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-RRT4T-review/brief-RRT4T-review-45dc2e03b87c403fb39eaa7c4cd78f34-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-RRT4T-review/brief-RRT4T-review-45dc2e03b87c403fb39eaa7c4cd78f34-stdout.log
+:DISPATCH_ATTEMPT: 45dc2e03b87c403fb39eaa7c4cd78f34
+:DISPATCH_TX:  tx-20260728-orgasmic-3161
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
