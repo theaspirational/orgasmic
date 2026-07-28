@@ -1,0 +1,3 @@
+# One line. Run from the repo root by `orgasmic verify TASK-TCTTD`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bin orgasmic verify::tests::

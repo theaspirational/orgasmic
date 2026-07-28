@@ -30,6 +30,7 @@ mod path_env;
 #[cfg(test)]
 mod test_support;
 mod update;
+mod verify;
 
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -51,6 +52,7 @@ use crate::home::Home;
 use crate::manager::{DispatchArgs, DispatchCloseArgs, DispatchFinalizeArgs, DispatchStatusArgs};
 use crate::member::{cmd_member, MemberCmd};
 use crate::node::{cmd_node, NodeCmd};
+use crate::verify::{cmd_verify, VerifyArgs, VERIFY_AFTER_HELP};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -297,6 +299,10 @@ Examples:
         #[command(subcommand)]
         cmd: NodeCmd,
     },
+    /// Replay a task's shipped injection proof: red under the injection,
+    /// green without it, tree byte-identical afterwards.
+    #[command(after_help = VERIFY_AFTER_HELP)]
+    Verify(VerifyArgs),
     /// Artifact store: block vocabulary, submit, and feedback.
     Artifact {
         #[command(subcommand)]
@@ -1001,6 +1007,7 @@ fn main() -> Result<()> {
         Cmd::Architecture { cmd } => cmd_architecture(&home, cmd),
         Cmd::Graph { cmd } => cmd_graph(&home, cmd),
         Cmd::Node { cmd } => cmd_node(&home, cmd),
+        Cmd::Verify(args) => cmd_verify(args),
         Cmd::Artifact { cmd } => cmd_artifact(&home, cmd),
         Cmd::Member { cmd } => cmd_member(&home, cmd),
         Cmd::Grill {

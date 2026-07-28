@@ -1,0 +1,12 @@
+# The verb's own proof, pinned from the real red run of 2026-07-28.
+#
+# The injection removes the one thing that makes a replay worth running: the
+# assertion that the injected tree produced the PINNED red. Everything else
+# still works — patch applies, command runs, tree restores, PASS is printed —
+# which is precisely the failure this task was filed about. Both false-green
+# detector tests then observe a replay that returned Ok, one of them with the
+# injected tree exiting 0.
+exit: 101
+contains: test verify::tests::injection_that_does_not_change_behaviour_fails_loudly ... FAILED
+contains: test verify::tests::red_that_does_not_match_the_pinned_signature_fails_loudly ... FAILED
+contains: called `Result::unwrap_err()` on an `Ok` value
