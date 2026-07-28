@@ -1,0 +1,28 @@
+# Pinned from the real red run of 2026-07-28 with the injection applied.
+#
+# The injection makes the classifier excuse a failure by NAME alone — it stops
+# reading the registered signature. That is not a hypothetical regression: it is
+# the exact behaviour this task was filed to delete. Classifying from the name
+# is what a human does from memory, and it is how one failure got filed against
+# TASK-5HBST when the mode that fired belonged to TASK-STWVB.
+#
+# Everything else about the runner still works under the injection — it runs,
+# reruns failures in isolation, prints a verdict block, exits 0. A green
+# classifier that has quietly stopped discriminating is indistinguishable from a
+# working one, which is why the proof is pinned rather than re-authored.
+exit: 1
+
+# The mislabel detector itself: a registered name whose panic does not match the
+# registered signature must be REAL. Under the injection it is waved through as
+# a FLAKE and the run exits 0.
+contains: FAIL registered name, WRONG signature -> REAL, exit 1 (the mislabel detector)
+
+# The same defect from the other side: when one test name carries two entries
+# with two owners, name-only matching picks whichever was written first and
+# names the wrong task.
+contains: FAIL two entries for one name -> the matching one wins and names its own owner
+
+# Exactly two cases fall, and thirteen still pass. If a future edit makes the
+# whole self-test collapse, that is a different failure and this proof has not
+# reproduced the defect it claims to.
+contains: 13 passed, 2 failed

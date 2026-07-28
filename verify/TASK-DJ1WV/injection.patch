@@ -1,0 +1,13 @@
+diff --git a/scripts/run-tests.sh b/scripts/run-tests.sh
+index 24d960b..bddb513 100755
+--- a/scripts/run-tests.sh
++++ b/scripts/run-tests.sh
+@@ -445,7 +445,7 @@ classify_one() {
+ 
+     while IFS=$'\t' read -r _t owner sig ev _filed; do
+         [ -n "$sig" ] || continue
+-        if [ -n "$detail" ] && [ -f "$detail" ] && grep -qF -- "$sig" "$detail"; then
++        if [ -n "$sig" ]; then
+             matched_owner="$owner"
+             matched_sig="$sig"
+             matched_ev="$ev"
