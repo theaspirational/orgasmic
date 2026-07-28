@@ -182,6 +182,12 @@ struct NodeDoc {
 struct NodeSection {
     title: String,
     body: String,
+    // orgasmic:task_ZYWZD
+    /// Nested sub-sections the daemon now reports (TASK-ZYWZD). `body` is only
+    /// the prose above them, so an append that ignored these would land in the
+    /// middle of the section it claimed to append to.
+    #[serde(default)]
+    sections: Vec<NodeSection>,
 }
 
 #[derive(Deserialize)]
@@ -248,25 +254,8 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
                         .await?;
                     let base_version = base_version
                         .filter(|value| !value.trim().is_empty())
-                        .unwrap_or(doc.source.base_version);
-                    let existing = match section.as_deref() {
-                        None => doc.body,
-                        Some(title) => doc
-                            .sections
-                            .iter()
-                            .find(|candidate| candidate.title == title)
-                            .map(|candidate| candidate.body.clone())
-                            .ok_or_else(|| {
-                                anyhow::anyhow!(
-                                    "node {id} has no section {title:?}; sections: {:?} (use `set --section` to create one via add)",
-                                    doc.sections
-                                        .iter()
-                                        .map(|candidate| candidate.title.as_str())
-                                        .collect::<Vec<_>>()
-                                )
-                            })?,
-                    };
-                    let mut merged = existing;
+                        .unwrap_or_else(|| doc.source.base_version.clone());
+                    let mut merged = append_base_body(&doc, section.as_deref(), &id)?;
                     if !merged.is_empty() && !merged.ends_with('\n') {
                         merged.push('\n');
                     }
@@ -383,6 +372,49 @@ pub fn cmd_node(home: &Home, cmd: NodeCmd) -> Result<()> {
     })
 }
 
+// orgasmic:task_ZYWZD
+/// The prose `append` reads, extends, and writes back.
+///
+/// `append` re-submits the whole prose span, so it can only be honest when that
+/// span is the whole of what it claims to append to. A section carrying nested
+/// sub-headings is refused by name: appending would silently insert the new
+/// text *above* those sub-sections rather than at the end of the section.
+fn append_base_body(doc: &NodeDoc, section: Option<&str>, id: &str) -> Result<String> {
+    let Some(title) = section else {
+        return Ok(doc.body.clone());
+    };
+    let target = doc
+        .sections
+        .iter()
+        .find(|candidate| candidate.title == title)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "node {id} has no section {title:?}; sections: {:?} (use `set --section` to create one via add)",
+                doc.sections
+                    .iter()
+                    .map(|candidate| candidate.title.as_str())
+                    .collect::<Vec<_>>()
+            )
+        })?;
+    if !target.sections.is_empty() {
+        let nested: Vec<&str> = target
+            .sections
+            .iter()
+            .map(|nested| nested.title.as_str())
+            .collect();
+        anyhow::bail!(
+            "section {title:?} of node {id} has {} nested sub-section(s) ({}); \
+             `append` re-writes the prose above them, so the appended text would land \
+             before them rather than at the end of the section — refusing rather than \
+             writing it somewhere you did not ask for. Read the node, compose the full \
+             section, and use `node body set --section {title:?}` (with `===` sub-headings)",
+            nested.len(),
+            nested.join(", "),
+        );
+    }
+    Ok(target.body.clone())
+}
+
 fn edit_path(id: &str, want_full: bool) -> String {
     if want_full {
         format!("/org/node/{id}/edit?json=true")
@@ -453,6 +485,73 @@ fn node_get_path(id: &str, project: Option<&str>, kind: Option<&str>) -> String 
         path.push_str(kind);
     }
     path
+}
+
+// orgasmic:task_ZYWZD
+#[cfg(test)]
+mod append_round_trip {
+    use super::*;
+
+    fn doc(sections: Vec<NodeSection>) -> NodeDoc {
+        NodeDoc {
+            body: "Node prose.".to_string(),
+            sections,
+            source: NodeSource {
+                base_version: "0000000000000000".to_string(),
+            },
+        }
+    }
+
+    fn section(title: &str, body: &str, nested: Vec<NodeSection>) -> NodeSection {
+        NodeSection {
+            title: title.to_string(),
+            body: body.to_string(),
+            sections: nested,
+        }
+    }
+
+    #[test]
+    fn append_reads_the_prose_it_will_write_back() {
+        let doc = doc(vec![section("Description", "Existing prose.", Vec::new())]);
+        assert_eq!(
+            append_base_body(&doc, None, "TASK-001").unwrap(),
+            "Node prose."
+        );
+        assert_eq!(
+            append_base_body(&doc, Some("Description"), "TASK-001").unwrap(),
+            "Existing prose."
+        );
+    }
+
+    /// `append` re-submits the section's prose span. When the section also
+    /// carries sub-sections, that span is not the end of the section, so the
+    /// append is refused by name instead of landing above them.
+    #[test]
+    fn append_refuses_a_section_with_nested_sub_sections_naming_them() {
+        let doc = doc(vec![section(
+            "Description",
+            "Lead prose.",
+            vec![
+                section("The gap", "Detail.", Vec::new()),
+                section("Ask", "More.", Vec::new()),
+            ],
+        )]);
+        let err = append_base_body(&doc, Some("Description"), "TASK-001")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("The gap") && err.contains("Ask"), "{err}");
+        assert!(err.contains('2'), "must name how many: {err}");
+        assert!(err.contains("node body set --section"), "{err}");
+    }
+
+    #[test]
+    fn append_to_a_missing_section_still_lists_what_exists() {
+        let doc = doc(vec![section("Description", "Prose.", Vec::new())]);
+        let err = append_base_body(&doc, Some("Evidence"), "TASK-001")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("has no section") && err.contains("Description"), "{err}");
+    }
 }
 
 #[cfg(test)]

@@ -1459,7 +1459,8 @@ fn org_error_line(err: &OrgError) -> Option<usize> {
         | OrgError::PropertyNotFound { .. }
         | OrgError::SectionNotFound { .. }
         | OrgError::NoPropertyDrawer { .. }
-        | OrgError::BodyHeadingInjection { .. } => None,
+        | OrgError::BodyHeadingInjection { .. }
+        | OrgError::BodyRoundTripLoss { .. } => None,
     }
 }
 
@@ -1746,12 +1747,36 @@ fn parse_task(
     }))
 }
 
+// orgasmic:task_ZYWZD
+/// Nested sections a task's own fields already carry. Everything else under a
+/// task heading is body prose that would otherwise be dropped on read.
+const STRUCTURED_TASK_SECTIONS: &[&str] = &[
+    "Description",
+    "Acceptance Criteria",
+    "Evidence",
+    "Notes",
+    "Worklog",
+    "Reviewer pass",
+];
+
 fn parse_task_body(file: &OrgFile, heading: &Heading) -> TaskBody {
-    let pre_section = trim_section(file.slice(heading.body.clone()));
-    let description_section = section_text(file, heading, "Description");
+    // orgasmic:task_ZYWZD
+    // `description` is the whole authored body, not just the prose before the
+    // first nested heading: the free body, the Description section *including*
+    // its sub-headings, and any section the task schema does not otherwise
+    // expose, in file order. Presenting the leading prose as the complete
+    // description is what hid 92% of TASK-ATAXN.
+    let mut blocks = vec![trim_section(file.slice(heading.body.clone()))];
+    for section in &heading.sections {
+        if section.title == "Description" {
+            blocks.push(section_content(file, section));
+        } else if !STRUCTURED_TASK_SECTIONS.contains(&section.title.as_str()) {
+            blocks.push(trim_section(file.slice(section.span.clone())));
+        }
+    }
     let acceptance = section_text(file, heading, "Acceptance Criteria");
     TaskBody {
-        description: join_blocks([pre_section, description_section]),
+        description: join_blocks(blocks),
         acceptance_criteria: parse_acceptance_criteria(&acceptance),
         evidence: section_lines(file, heading, "Evidence"),
         notes: section_text(file, heading, "Notes"),
@@ -1760,10 +1785,18 @@ fn parse_task_body(file: &OrgFile, heading: &Heading) -> TaskBody {
     }
 }
 
+/// A section's full authored content — its prose plus every nested sub-heading
+/// verbatim — with its own title line dropped.
+fn section_content(file: &OrgFile, section: &Heading) -> String {
+    let span = section.span.clone();
+    let start = section.title_line.end.min(span.end).max(span.start);
+    trim_section(file.slice(start..span.end))
+}
+
 fn section_text(file: &OrgFile, heading: &Heading, title: &str) -> String {
     heading
         .section(title)
-        .map(|section| trim_section(file.slice(section.body.clone())))
+        .map(|section| section_content(file, section))
         .unwrap_or_default()
 }
 
