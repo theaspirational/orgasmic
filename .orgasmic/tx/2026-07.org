@@ -31647,3 +31647,115 @@
 :PROJECT:      orgasmic
 :REASON:       TASK-STWVB datapoint 2026-07-28: across four independent full runs of cargo test -p orgasmic-daemon --lib today (at merges a0feecc+19264a7, 80dc4ec, and the combined 6AYEJ.2+WGXKD.1 tree) exactly THREE of the four listed tests failed every time, never a different set and never intermittently: post_artifact_regenerate_hot_path_reuses_live_run_id, recovery_reattaches_tmux_session_when_handle_exists, poll_direct_child_pid_prefers_worker_server_over_generic_sibling. All three passed in isolation on every check. The fourth listed test, recovery_inventory_waits_for_atomic_claim_commit, did NOT fail in any of the four runs, so the set has shrunk from four to three since the 2026-07-25 measurement and the task body should be narrowed when someone picks this up. Suite total is now 512. This also reconfirms the task's own framing: these are deterministic cross-test interference under full-suite parallelism, not flakes. Manager note: my dispatch briefs have been calling them flakes, which is the wrong word and invites workers to wave them through; briefs should say deterministic in-suite interference, verify in isolation, and report the isolation result.
 :END:
+
+* TX 2026-07-28 Tue 06:28:03 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3080
+:TIME:         [2026-07-28 Tue 06:28:03]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-WGXKD LIVE TRIAL PASSED, closing the acceptance clause the implementer honestly declined to claim for itself. The first acp-stdio dispatch after the fix was installed (TASK-6AYEJ.2, run-20260728T054151-016e79a750ae46bdb1c05b4a97caeef1, runtime built at 3515a20) finalized and its terminal tx is on record: an implementer.reported entry carrying that exact RUN_ID in .orgasmic/tx/2026-07.org, and dispatch-status printed [reported]. acp-stdio was 0/3 before the fix and is 1/1 after. The other half of acceptance, a test that kills the finalizing client between release and tx, is dispatch_finalize_terminal_tx_survives_client_death_at_release, which SIGKILLs the real binary the instant release returns. Both halves are now met. Note this does NOT close TASK-WGXKD: its reviewer returned BLOCK SHIP with 2 HIGH findings, fixed by TASK-WGXKD.1 (merged), which is itself awaiting a fresh review before the parent can go done.
+:END:
+
+
+* TX 2026-07-28 Tue 06:32:07 manager.dispatch_started TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3081
+:TIME:         [2026-07-28 Tue 06:32:07]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.2-review/worktree
+:BRANCH:       task-6ayej.2-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-6AYEJ2-review/task-6AYEJ2-review-brief.md
+:STARTED_AT:   [2026-07-28 Tue 06:32:07]
+:LIVENESS:     fd7fcd6bd6df705a12f946f1a0f7f11bcb316d9f
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:END:
+
+* TX 2026-07-28 Tue 06:32:08 run.created TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3082
+:TIME:         [2026-07-28 Tue 06:32:08]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-6AYEJ.2-reviewer-20260728T063207.jsonl
+:REASON:       cli dispatch reviewer with reviewer-codex-rmux
+:RUN_ID:       run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.2-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-6AYEJ2-review/task-6AYEJ2-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-6AYEJ2-review/task-6AYEJ2-review-fd311c2f8cdd4edab22de316d7c503cf-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-6AYEJ2-review/task-6AYEJ2-review-fd311c2f8cdd4edab22de316d7c503cf-stdout.log
+:DISPATCH_ATTEMPT: fd311c2f8cdd4edab22de316d7c503cf
+:DISPATCH_TX:  tx-20260728-orgasmic-3081
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 06:32:08 manager.dispatch_started TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3083
+:TIME:         [2026-07-28 Tue 06:32:08]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.1-review/worktree
+:BRANCH:       task-wgxkd.1-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-WGXKD1-review/task-WGXKD1-review-brief.md
+:STARTED_AT:   [2026-07-28 Tue 06:32:08]
+:LIVENESS:     fd7fcd6bd6df705a12f946f1a0f7f11bcb316d9f
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:END:
+
+* TX 2026-07-28 Tue 06:32:09 run.created TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3084
+:TIME:         [2026-07-28 Tue 06:32:09]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-WGXKD.1-reviewer-20260728T063208.jsonl
+:REASON:       cli dispatch reviewer with reviewer-codex-rmux
+:RUN_ID:       run-20260728T063208-1080f3a600dc40b6946754da476afca8
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.1-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/task-WGXKD1-review/task-WGXKD1-review-brief.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/task-WGXKD1-review/task-WGXKD1-review-a37b8f3ffe504577a60ab7cb878f72b0-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/task-WGXKD1-review/task-WGXKD1-review-a37b8f3ffe504577a60ab7cb878f72b0-stdout.log
+:DISPATCH_ATTEMPT: a37b8f3ffe504577a60ab7cb878f72b0
+:DISPATCH_TX:  tx-20260728-orgasmic-3083
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
