@@ -191,6 +191,9 @@ pub struct DaemonOptions {
     /// Tests widen the gap so a caller can be made to vanish inside it
     /// (TASK-WGXKD).
     pub release_terminal_tx_delay: Option<std::time::Duration>,
+    /// Artificial delay between release admission and the detached spawn
+    /// (tests only). See [`api::ApiState::release_admission_delay`].
+    pub release_admission_delay: Option<std::time::Duration>,
     /// Trusted host-supplied executable implementing the internal
     /// `__exec-pinned` boundary. Production leaves this unset and uses the
     /// running orgasmic executable; process-isolated integration hosts may
@@ -214,6 +217,7 @@ impl Default for DaemonOptions {
             tmux_input_ready_timeout_secs: None,
             dispatch_response_delay: None,
             release_terminal_tx_delay: None,
+            release_admission_delay: None,
             trusted_exec_wrapper_override: None,
         }
     }
@@ -571,6 +575,7 @@ impl Daemon {
             tmux_input_ready_timeout_secs: opts.tmux_input_ready_timeout_secs,
             dispatch_response_delay: opts.dispatch_response_delay,
             release_terminal_tx_delay: opts.release_terminal_tx_delay,
+            release_admission_delay: opts.release_admission_delay,
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
@@ -662,10 +667,22 @@ impl Daemon {
                 .wait_idle(api::RELEASE_FINALIZATION_DRAIN_TIMEOUT)
                 .await
             {
+                // orgasmic:TASK-WGXKD.2 — name the runs. "3 outstanding" is not
+                // something an operator can act on; a run id is.
                 tracing::error!(
-                    outstanding,
+                    outstanding = outstanding.len(),
+                    run_ids = %outstanding.join(", "),
                     "shutting down with release finalizations still in flight; \
-                     their terminal tx may be lost"
+                     their terminal tx may be lost — rescue with `orgasmic recovery \
+                     status` then `orgasmic run recover <run_id>`"
+                );
+            }
+            for lost in release_tasks.lost_finalizations() {
+                tracing::error!(
+                    run_id = %lost.run_id,
+                    terminal_tx_type = lost.terminal_tx_type.as_deref().unwrap_or("-"),
+                    reason = %lost.reason,
+                    "release finalization on this daemon ended without its terminal tx"
                 );
             }
             writer_for_shutdown.shutdown().await;

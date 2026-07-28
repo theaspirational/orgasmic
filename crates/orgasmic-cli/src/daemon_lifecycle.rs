@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Utc};
+use orgasmic_daemon::api::RestartResponse;
 #[cfg(test)]
 use orgasmic_daemon::boot_state_path;
 use orgasmic_daemon::{read_boot_state, DaemonBootState};
@@ -28,7 +29,14 @@ use crate::home::Home;
 // Generous enough to cover the daemon's startup bind-retry (up to ~8s while a
 // draining predecessor releases the port during a runtime-swap restart).
 const START_TIMEOUT: Duration = Duration::from_secs(20);
-const STOP_TIMEOUT: Duration = Duration::from_secs(10);
+/// orgasmic:TASK-WGXKD.2 — a graceful stop is now allowed to take real time:
+/// the daemon's own SIGTERM path runs the release drain (up to
+/// `RELEASE_FINALIZATION_DRAIN_TIMEOUT` = 20s) and then the writer shutdown.
+/// At 10s this ceiling declared a healthy, still-progressing shutdown a
+/// failure. 35s covers that budget with margin and costs nothing when the
+/// daemon exits promptly, which is the normal case now that the CLI drains
+/// first.
+const STOP_TIMEOUT: Duration = Duration::from_secs(35);
 /// A healthy large-board rebuild can take several minutes. This ceiling is
 /// measured from the daemon-authored boot timestamp, not from a later CLI
 /// invocation, so autostart remains finite without cutting off responsive
@@ -239,7 +247,7 @@ fn stop_inner(
             if protect_live_manager && !force {
                 refuse_if_live_manager(home)?;
             }
-            let _ = request_restart_drain(home);
+            report_restart_drain(request_restart_drain(home));
             daemon_service::stop(home)?;
             if process_alive(status.pid) {
                 stop_pid(status.pid)?;
@@ -844,29 +852,97 @@ async fn probe_local_async(home: &Home) -> Result<LocalDaemonState> {
     Ok(LocalDaemonState::Running(status))
 }
 
-fn request_restart_drain(home: &Home) -> Result<()> {
+/// How long the CLI waits for the daemon's pre-stop drain.
+///
+/// orgasmic:TASK-WGXKD.2 finding 2 — the old 5s was BELOW the server-side
+/// budget it was waiting on, so a legitimate drain looked like a failure and
+/// the service was stopped underneath it. Derived from what the endpoint can
+/// legitimately spend:
+/// - release-finalization drain: `RELEASE_FINALIZATION_DRAIN_TIMEOUT` = 20s,
+/// - writer drain barrier: `RESTART_WRITER_DRAIN_TIMEOUT` = 5s,
+/// - the rest of the handler (acquisition pause, two supervisor snapshots) plus
+///   connect/transport: 15s of slack.
+///
+/// 40s, and it is a ceiling, not a cost: a healthy daemon answers in
+/// milliseconds. Only a daemon that is genuinely still writing a terminal tx
+/// makes the operator wait, which is the correct trade against losing it.
+const RESTART_DRAIN_TIMEOUT: Duration = Duration::from_secs(40);
+
+/// What the pre-stop drain reported, when it could be asked at all.
+#[derive(Debug)]
+enum RestartDrainOutcome {
+    /// No local daemon URL/token to ask, so there is nothing to drain.
+    NotApplicable,
+    Reported(RestartResponse),
+}
+
+fn request_restart_drain(home: &Home) -> Result<RestartDrainOutcome> {
     let Some(base_url) = local_base_url(home)? else {
-        return Ok(());
+        return Ok(RestartDrainOutcome::NotApplicable);
     };
     let Some(token) = read_token(home) else {
-        return Ok(());
+        return Ok(RestartDrainOutcome::NotApplicable);
     };
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     runtime.block_on(async {
         let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(5))
+            .timeout(RESTART_DRAIN_TIMEOUT)
             .build()
             .context("build daemon restart client")?;
-        let _ = client
+        // orgasmic:TASK-WGXKD.2 — the send result used to be discarded with
+        // `let _ =`, so a timed-out or refused drain was indistinguishable from
+        // a clean one and the service was stopped either way.
+        let response = client
             .post(daemon_url(&base_url, "/daemon/restart"))
             .bearer_auth(token)
             .json(&serde_json::json!({
                 "reason": "cli lifecycle restart",
             }))
             .send()
-            .await;
-        Ok::<(), anyhow::Error>(())
+            .await
+            .context("request daemon pre-stop drain")?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .context("read daemon pre-stop drain response")?;
+        if !status.is_success() {
+            bail!("daemon pre-stop drain returned {status}: {}", body.trim());
+        }
+        let parsed: RestartResponse = serde_json::from_str(&body)
+            .with_context(|| format!("decode daemon pre-stop drain response: {}", body.trim()))?;
+        Ok(RestartDrainOutcome::Reported(parsed))
     })
+}
+
+/// Print the drain's own account of itself before the service is stopped.
+///
+/// orgasmic:TASK-WGXKD.2 — the endpoint has always returned warnings; nothing
+/// ever read them. A stop that proceeds past an incomplete drain must at least
+/// leave the operator the run ids and the commands that recover them, since the
+/// lease is already gone and no worker will retry.
+fn report_restart_drain(outcome: Result<RestartDrainOutcome>) {
+    let response = match outcome {
+        Ok(RestartDrainOutcome::NotApplicable) => return,
+        Ok(RestartDrainOutcome::Reported(response)) => response,
+        Err(error) => {
+            eprintln!(
+                "[warn] daemon pre-stop drain did not complete: {error:#}\n\
+                 [warn] stopping anyway; any run release that was mid-flight may be \
+                 unreported. Check with `orgasmic recovery status`."
+            );
+            return;
+        }
+    };
+    for warning in &response.warnings {
+        eprintln!("[warn] daemon shutdown: {}", warning.message);
+        for run_id in &warning.run_ids {
+            eprintln!("[warn]   run {run_id}");
+            if warning.kind.starts_with("release_finalization") {
+                eprintln!("[warn]     orgasmic run recover {run_id}");
+            }
+        }
+    }
 }
 
 fn explicit_daemon_url() -> Option<String> {
@@ -1390,6 +1466,136 @@ mod tests {
             err.to_string()
                 .contains("local daemon lifecycle is externally owned"),
             "unexpected error: {err:?}"
+        );
+    }
+
+    /// orgasmic:TASK-WGXKD.2 finding 2 — the two budgets must be ordered, not
+    /// picked. The CLI's fuse has to outlast everything the endpoint may
+    /// legitimately spend, or a healthy drain reads as a failure and the
+    /// service is stopped underneath it (which is what the old 5s did).
+    #[test]
+    fn restart_drain_fuse_outlasts_the_endpoint_budgets_it_waits_on() {
+        let server_budget = orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT
+            + orgasmic_daemon::api::RESTART_WRITER_DRAIN_TIMEOUT;
+        assert!(
+            RESTART_DRAIN_TIMEOUT > server_budget,
+            "CLI restart-drain timeout {RESTART_DRAIN_TIMEOUT:?} must exceed the \
+             endpoint's release-finalization plus writer-drain budget {server_budget:?}"
+        );
+        assert!(
+            STOP_TIMEOUT > orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT,
+            "wait_until_down {STOP_TIMEOUT:?} must outlast the daemon's own SIGTERM \
+             release drain {:?}, or a graceful stop is reported as a failure",
+            orgasmic_daemon::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT
+        );
+    }
+
+    /// The pre-fix client had a 5s fuse and threw the response away, so a drain
+    /// that legitimately took longer was indistinguishable from a clean one.
+    /// Here a stand-in daemon answers after 8s — beyond that old fuse — with a
+    /// timeout warning naming a run, and the CLI must both wait for it and
+    /// parse it.
+    #[test]
+    fn restart_drain_waits_past_five_seconds_and_parses_the_warning() {
+        let _guard = env_guard();
+        let _env = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            // Read just enough of the request that the client is committed.
+            let mut buf = [0_u8; 1024];
+            use std::io::Read as _;
+            let _ = socket.read(&mut buf);
+            std::thread::sleep(Duration::from_secs(8));
+            let body = serde_json::json!({
+                "status": "restart_requested",
+                "boot_id": "boot-test",
+                "acquisition_paused": true,
+                "warnings": [{
+                    "kind": "release_finalization_timeout",
+                    "pending_writes": 1,
+                    "message": "1 run release(s) had not finished writing their terminal tx",
+                    "run_ids": ["run-slow"],
+                }],
+            })
+            .to_string();
+            use std::io::Write as _;
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            socket.flush().unwrap();
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(
+            home.config(),
+            format!("bind_host: 127.0.0.1\nbind_port: {port}\n"),
+        )
+        .unwrap();
+        std::fs::write(home.auth_token(), "test-token\n").unwrap();
+
+        let started = Instant::now();
+        let outcome = request_restart_drain(&home).expect("drain request");
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+
+        assert!(
+            elapsed >= Duration::from_secs(8),
+            "the client gave up before the daemon answered: {elapsed:?}"
+        );
+        let RestartDrainOutcome::Reported(response) = outcome else {
+            panic!("a reachable daemon must report, not be skipped");
+        };
+        assert_eq!(response.warnings.len(), 1);
+        assert_eq!(response.warnings[0].kind, "release_finalization_timeout");
+        assert_eq!(response.warnings[0].run_ids, vec!["run-slow".to_string()]);
+    }
+
+    /// A drain that cannot be completed must surface as an error, not be
+    /// swallowed: `let _ = send()` was the defect.
+    #[test]
+    fn restart_drain_propagates_a_refused_request() {
+        let _guard = env_guard();
+        let _env = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 1024];
+            use std::io::Read as _;
+            let _ = socket.read(&mut buf);
+            use std::io::Write as _;
+            let body = "{\"error\":\"writer drain failed\"}";
+            write!(
+                socket,
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .unwrap();
+            socket.flush().unwrap();
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        std::fs::write(
+            home.config(),
+            format!("bind_host: 127.0.0.1\nbind_port: {port}\n"),
+        )
+        .unwrap();
+        std::fs::write(home.auth_token(), "test-token\n").unwrap();
+
+        let error = request_restart_drain(&home).expect_err("a 500 must not read as a clean drain");
+        server.join().unwrap();
+        assert!(
+            format!("{error:#}").contains("writer drain failed"),
+            "the daemon's own reason must survive: {error:#}"
         );
     }
 
