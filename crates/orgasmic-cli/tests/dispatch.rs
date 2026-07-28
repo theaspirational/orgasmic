@@ -3081,6 +3081,298 @@ async fn exact_close_refuses_destructive_cleanup_beneath_an_unassociated_live_ru
     let _ = running.join.await;
 }
 
+/// TASK-1T3FZ: the interleaving neither TASK-6AYEJ.3 test covers, and the only
+/// one that reproduced the defect — a recovery that starts AFTER the close has
+/// decided nothing is live and BEFORE it removes anything.
+///
+/// The two existing tests put the competing run in place *before* the close
+/// begins, which the CLI-side snapshot could see. The window this one drives is
+/// between the decision and the removal, and it cannot be closed from inside
+/// the CLI at all: `POST /runs/:origin/recover` acquires in the daemon, in
+/// another request, in another process. An audit of `await` points in
+/// `cmd_dispatch_close` concludes the code is safe and is wrong.
+///
+/// The ordering is a rendezvous, not a sleep. `test_hooks::gate_dispatch_close_guard`
+/// parks the daemon inside the close-guard handler with the worktree reserved
+/// and the liveness verdict already taken; the recovery is issued while it is
+/// parked; only then is the close let go. A slow or fast machine changes
+/// nothing about which happens first — which is the point, because a race test
+/// that passes because the machine was slow is how this defect survived a
+/// round.
+///
+/// Injection-checked: with the reservation install removed from
+/// `Supervisor::reserve_dispatch_close`, the recovery below succeeds, and the
+/// close then removes the worktree out from under it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn recovery_interleaved_between_the_close_verdict_and_removal_cannot_take_the_worktree() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    let started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let origin_run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+
+    // Interrupt the origin so the close finds nothing live and the recovery
+    // below has something real to recover. This is the state a crashed worker
+    // leaves: a recoverable run, a worktree still on disk, an open record.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    let running = boot(home.clone()).await;
+    assert!(
+        !live_run_ids(&home, &running, &project_root, &path_env).contains(&origin_run_id),
+        "the origin must be gone before the close, or the close never reaches the guard window"
+    );
+
+    let mut gate = orgasmic_daemon::api::test_hooks::gate_dispatch_close_guard("TASK-DISPATCH");
+    let close = {
+        let home = home.clone();
+        let daemon_url = format!("http://{}", running.addr);
+        let project_root = project_root.clone();
+        let path_env = path_env.clone();
+        let started_tx = started_tx.clone();
+        let head = head.clone();
+        tokio::task::spawn_blocking(move || {
+            run_orgasmic_output_with_daemon_url(
+                &home,
+                &daemon_url,
+                &project_root,
+                &path_env,
+                &[
+                    "manager",
+                    "dispatch-close",
+                    "--task",
+                    "TASK-DISPATCH",
+                    "--started-tx",
+                    &started_tx,
+                    "--status",
+                    "done",
+                    "--merge-sha",
+                    &head,
+                    "--worktree-remove",
+                    "--reason",
+                    "close racing a recovery",
+                ],
+                &[],
+            )
+        })
+    };
+
+    // The close is now parked in the daemon: worktree reserved, liveness
+    // decided, nothing removed yet.
+    gate.reached().await;
+
+    let recover = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "run",
+            "recover",
+            &origin_run_id,
+            "--project",
+            "orgasmic",
+            "--action",
+            "start_recovery_run",
+            "--force-inert",
+        ],
+    );
+    let recover_stderr = String::from_utf8_lossy(&recover.stderr).to_string();
+    let recover_stdout = String::from_utf8_lossy(&recover.stdout).to_string();
+    assert!(
+        !recover.status.success(),
+        "a recovery landing inside the close's cleanup window must be refused, not admitted \
+         into a worktree that is about to be removed\nstdout={recover_stdout}\nstderr={recover_stderr}"
+    );
+    assert!(
+        recover_stderr.contains("cleanup") || recover_stdout.contains("cleanup"),
+        "the refusal must name the cleanup reservation as the reason\nstdout={recover_stdout}\nstderr={recover_stderr}"
+    );
+    let live_during_close = live_run_ids(&home, &running, &project_root, &path_env);
+    assert!(
+        live_during_close.is_empty(),
+        "the refused recovery must not have left a live run in the worktree: {live_during_close:?}"
+    );
+
+    gate.proceed();
+    let close = close.await.expect("dispatch-close task");
+    assert!(
+        close.status.success(),
+        "the close must still succeed once the recovery is refused\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&close.stdout),
+        String::from_utf8_lossy(&close.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "the close held the worktree the whole time, so removal must have happened"
+    );
+    assert!(
+        live_run_ids(&home, &running, &project_root, &path_env).is_empty(),
+        "no run may be left living in a worktree that no longer exists"
+    );
+
+    // And the reservation is handed back, not leaked: a fence that outlived
+    // its cleanup would make this worktree path permanently unacquirable, and
+    // the path a task dispatches to is deterministic. Asked directly, because
+    // "the next dispatch works" is a much slower way to learn the same thing.
+    // The bare directory is recreated only so the endpoint's path validation
+    // has something to look at; the reservation is keyed by the same
+    // canonicalized path either way.
+    std::fs::create_dir_all(&worktree).unwrap();
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let regrant: serde_json::Value = reqwest::Client::new()
+        .post(format!(
+            "http://{}/api/projects/orgasmic/tasks/TASK-DISPATCH/dispatch/close-guard",
+            running.addr
+        ))
+        .header(AUTHORIZATION, format!("Bearer {token}"))
+        .json(&serde_json::json!({ "worktree_path": worktree }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        regrant["status"], "reserved",
+        "the close's reservation must have been released: {regrant}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-1T3FZ finding 2: an open record with NO `RUN_ID` at all. The real
+/// shape is a CLI that died after the daemon acquire succeeded and before
+/// `run.created` was appended — the worker is live in its worktree and the
+/// ledger cannot name it.
+///
+/// That branch used to call `fetch_live_runs` purely to prove the daemon was
+/// reachable, discard the runs it got back, and clean up anyway. Reachability
+/// is not evidence that an unidentified live worker is absent; undetermined
+/// liveness must refuse. It now takes the same daemon-owned worktree
+/// reservation as every other destructive close, and the refusal comes from
+/// the same verdict.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn close_without_a_recorded_run_id_refuses_cleanup_beneath_a_live_worker() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let live_run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+    assert!(worktree.is_dir());
+
+    // The open record the crash leaves: a dispatch_started over the live
+    // worktree, and no run.created to name what is running in it.
+    let path = tx_file_path(&project_root);
+    let mut raw = std::fs::read_to_string(&path).unwrap();
+    raw.push_str(&format!(
+        "\n\n* TX 2026-05-23 Sat 10:00:00 manager.dispatch_started TASK-NORUNID\n:PROPERTIES:\n:TX_ID:        tx-start-norunid\n:TIME:         [2026-05-23 Sat 10:00:00]\n:TYPE:         manager.dispatch_started\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-NORUNID\n:KIND:         implementer\n:WORKTREE:     {}\n:BRANCH:       task-dispatch-test-impl\n:CODEX_BRIEF_PATH: {}\n:STARTED_AT:   [2026-05-23 Sat 10:00:00]\n:END:\n",
+        worktree.display(),
+        brief.display()
+    ));
+    write(&path, raw);
+
+    let output = run_orgasmic_output(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-NORUNID",
+            "--started-tx",
+            "tx-start-norunid",
+            "--status",
+            "done",
+            "--merge-sha",
+            &head,
+            "--worktree-remove",
+            "--reason",
+            "close a record that never learned its run id",
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "a record with no RUN_ID cannot prove the worker is gone, so it must refuse\nstdout={}\nstderr={stderr}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.contains("refusing to clean up dispatch") && stderr.contains(&live_run_id),
+        "the refusal must name the live run that blocked it: {stderr}"
+    );
+    assert!(
+        worktree.is_dir(),
+        "the live worker's worktree must survive the refused close"
+    );
+    assert!(
+        live_run_ids(&home, &running, &project_root, &path_env).contains(&live_run_id),
+        "the refused close must not have released the live run either"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
 /// The `manager.dispatch_started` tx id printed by `manager dispatch`, i.e. the
 /// generation token `dispatch-close --started-tx` takes (TASK-6AYEJ.1).
 fn started_tx_from_dispatch_stdout(stdout: &str) -> String {
