@@ -1879,6 +1879,8 @@ tasks whose defects cannot be patch-expressed.
 
 - No CI wiring here (TASK-S2KM0 owns the lane; it should call `verify --all`).
 
+NIGHTLY REPLAY [2026-07-29, deferred from TASK-S2KM0]: the per-PR CI lane deliberately excludes `orgasmic verify` replays (cost grows with history; some artifacts are load-dependent reproductions or 60s soaks that would flake on shared runners and teach people to ignore the lane). The right home is the nightly: replay every verify/TASK-*/ artifact on a schedule. That is this task's `verify --all` ask with a concrete consumer — wire it into nightly-soak.yml or a sibling scheduled workflow.
+
 * BACKLOG TASK-0DANB Billing-capable daemon tests are one lock from a charge and their ignore reasons hide the spend    :daemon:testing:mechanism:
 :PROPERTIES:
 :ID: TASK-0DANB
@@ -2099,3 +2101,121 @@ rather than timing — diagnose before assuming it's the same class.
   preferred over load replay, per the 5FEN5 artifact's precedent.
 - No production behaviour change without naming it; test-side-only fixes state
   so explicitly.
+
+FOURTH ENTRY [2026-07-29, from TASK-EP3H1's gate run]: `recovery_faults_kill_real_daemon_and_preserve_original_pane` (crates/orgasmic-daemon/tests/recovery_fault_restart.rs:308) — `called Result::unwrap() on an Err value: AddrParseError(Socket)`. The test harness reads the child daemon's address file and parse().unwrap()s it; under load it reads mid-write and parses a truncated address. Fix is in the harness (retry on parse failure inside the existing 20s deadline loop), not product code. Green in isolation.
+
+* BACKLOG TASK-GEZHQ Preflight accepts an unusable credential under parallel load: 200 where 400 is required, and a worktree is left behind
+:PROPERTIES:
+:ID: TASK-GEZHQ
+:PRIORITY: P1
+:END:
+
+From TASK-EP3H1's gate run (2026-07-29), full-suite under parallel load:
+`an_unusable_credential_leaves_no_lease_no_session_and_no_run`
+(crates/orgasmic-daemon/tests/dispatch_preflight.rs:211) failed with the daemon
+ACCEPTING a dispatch whose claude credential the test intends to be unusable:
+
+  assertion `left == right` failed: preflight rejection must be a 400 so the
+  CLI treats it as an unambiguous refusal and rolls back the worktree it
+  created: {"run_id":"run-20260728T221637-…","driver":"acp-stdio",
+  "harness":"claude",…}
+    left: 200
+   right: 400
+
+The `left: 200` body shows a REAL RUN was created. The assertion text names the
+stake: the CLI relies on the 400 to roll back the worktree it created, so a 200
+here leaves a worktree behind for a dispatch that should never have started.
+
+This is deliberately NOT filed into the load-flake class: the EP3H1 worker's
+read is that it is environment-dependent rather than timing-dependent — a
+usable claude credential exists on the dev machine, and parallelism changes
+which credential the preflight probe observes. A preflight that PASSES when it
+should refuse is a product defect surface, not a test-timing defect. Green in
+isolation, so the gate does not catch it.
+
+=== Ask
+
+1. Diagnose how the probe found a usable credential when the test constructs an
+   unusable one — fixture bleed (real ~/.claude reachable from the test env?),
+   probe fallback order, or a race in credential selection.
+2. Fix so the test's intent holds under parallel load: an unusable credential
+   yields 400, no lease, no session, no run, no leftover worktree — regardless
+   of what else is on the machine.
+3. If the root cause is the test env leaking the operator's real credentials
+   into the probe, treat that as the defect (isolation), not the assertion.
+
+=== Acceptance
+
+- The test survives >=5 consecutive full-suite loaded runs (pre-fix red count
+  pinned for A/B if reproducible).
+- Injection per TCTTD standard, `git apply`-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+
+* BACKLOG TASK-P9T4N Multi-tx writer transaction so dispatch-close is one commit; reconciliation becomes backstop
+:PROPERTIES:
+:ID: TASK-P9T4N
+:PRIORITY: P2
+:END:
+
+From TASK-EP3H1 (2026-07-29): `WriterHandle::transaction(rewrites, tx)` takes
+exactly ONE tx, which is the only reason `dispatch-close` cannot be a single
+commit — a close needs two ledger entries (the terminal `implementer.done` and
+the `task.state_transitioned` from `write_task_lifecycle_and_record`), so the
+CLI issues N+1 requests and the pair can tear.
+
+EP3H1 shipped the backstop: close txs record LIFECYCLE_FROM/TO and
+`reconcile_torn_closes` finishes a torn close on the next manager command, and
+labelled idempotency (`already_applied` vs `already_in_state`) makes replays
+safe. What remains is making the tear impossible rather than repairable.
+
+=== Ask
+
+Add a multi-tx writer transaction — `transaction_multi(rewrites, Vec<TxAppend>)`
+or equivalent — so the close tx and `task.state_transitioned` land under one
+flock, then route dispatch-close through it. Reconciliation stays as the
+backstop for pre-existing ledgers and for client-side response loss (which no
+server-side atomicity can fix — EP3H1's measured loss was a client timeout on a
+request that SUCCEEDED server-side).
+
+=== Acceptance
+
+- A close is one commit: an injected crash between the two legs can no longer
+  produce a ledger with the close tx but not the transition.
+- Reconciler still passes its torn-close tests against old-format ledgers.
+- The writer core change is proven with its own tests (concurrent writers, one
+  flock, ordering) — this is the risky layer; EP3H1 deliberately did not touch
+  it.
+- Injection per TCTTD standard.
+
+* BACKLOG TASK-WKJX4 Format the tree (17 hunks, 9 files) in a no-live-worker window; unblocks marking the CI fmt job required
+:PROPERTIES:
+:ID: TASK-WKJX4
+:PRIORITY: P2
+:END:
+
+From TASK-S2KM0 (2026-07-29): the tree has never had a fmt gate and is not
+rustfmt-clean — `cargo fmt --all --check` fails with 17 hunks across 9 files at
+e432632, all whitespace, no behaviour. The new CI lane's `fmt` job is therefore
+RED at HEAD by design (it prints the measured baseline and the remediation
+rather than shipping a silently-green gate), and the operator activation
+checklist requires formatting the tree BEFORE marking the job required.
+
+S2KM0 deliberately did not bundle the reformat: 3 of the 17 hunks are in
+crates/orgasmic-daemon/src/api.rs, where another worker was live, and a
+whitespace reformat would have buried the reviewable lane diff.
+
+=== Ask
+
+1. Run `cargo fmt --all`, commit the reformat as its own commit (nothing else
+   in it), after confirming no live worker holds api.rs/manager.rs/tmux.rs.
+2. Verify `cargo fmt --all --check` exits 0 and the suite still passes through
+   scripts/run-tests.sh.
+3. This unblocks activation step 1 of the CI lane (marking fmt required).
+
+=== Acceptance
+
+- `cargo fmt --all --check` exit 0.
+- The reformat commit contains zero non-whitespace changes (reviewed
+  mechanically, e.g. `git diff -w` is empty).
+- Timing note: coordinate with the manager for a no-live-worker window; a
+  reformat under an active worker's feet is the collision S2KM0 avoided.

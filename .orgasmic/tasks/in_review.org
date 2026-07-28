@@ -826,3 +826,103 @@ THIRD CANDIDATE [2026-07-29], from the TASK-HQ970 worker's gate classification: 
 
 FOURTH CANDIDATE [2026-07-29], from the TASK-XPYRR worker's gate run: `supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases` — "run run-… did not release within 12s" (crates/orgasmic-daemon/src/supervisor.rs:8065), one RED under full-suite load, green in isolation. Same shape: a timeout-bounded wait on background work observed under contention. Same rule applies: capture the verbatim panic under the load recipe before registering; ownership under this task, not a new entry.
 
+* IN_REVIEW TASK-EP3H1 dispatch-close tears under load: tx appended, lifecycle stranded, and a timed-out request can succeed invisibly :cli:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-EP3H1
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 at load average ~190 (a worker deliberately inducing load).
+`orgasmic manager dispatch-close --task TASK-G7E4R --status done` produced:
+
+  warning: close tx appended but lifecycle update failed: daemon request
+  failed ... is the daemon reachable?
+  closed: TASK-G7E4R implementer.done tx=tx-20260728-orgasmic-3500
+
+State afterwards: close tx recorded, dispatch record closed, task stranded at
+`in_review`. The warning is loud (good — this is not a silent tear), but the
+operator is left to repair the lifecycle by hand.
+
+The repair then hit the second half of the defect: a follow-up
+`task update --state done` returned `"changed": {}` with an EMPTY tx_id —
+because the "failed" lifecycle request had actually landed server-side after
+the client gave up. Client timeout is not server failure. Two consequences:
+
+1. `dispatch-close` is not atomic across its two writes (tx append +
+   lifecycle update) and does not retry or reconcile the second on failure.
+2. A timed-out request can succeed invisibly, so naive retry logic can
+   double-apply or mis-read state. The `{"changed":{}, "tx_id":""}` no-op
+   response was correct here, but nothing documents that contract.
+
+=== Ask
+
+1. Make dispatch-close's task-state transition part of the same daemon
+   operation as the close tx (single request, single commit), or make the CLI
+   reconcile on startup of the next manager command ("close tx tx-N exists but
+   task is in_review -> finish the transition").
+2. Idempotency: closes and state updates should carry the started-tx (they
+   already do) and the daemon should treat a re-submitted close/transition for
+   an already-closed dispatch as a clean no-op with a response that SAYS it was
+   already applied, distinguishable from "nothing to do".
+3. While in the file: the CLI's timeout error text "is the daemon reachable?"
+   misdiagnoses scheduler starvation as daemon death (three occurrences on
+   2026-07-29, all with the daemon healthy and answering raw HTTP in 0.4s).
+   Say "request timed out after Ns; the daemon may be healthy but the system
+   is under load" and name the load if cheaply readable.
+
+=== Acceptance
+
+- A close whose lifecycle leg is injected to fail leaves a state the NEXT
+  manager command repairs automatically, proven by test.
+- A re-submitted close is a labelled no-op, proven by test.
+- Injection per the TCTTD standard; verify artifact `git apply`-clean.
+
+* IN_REVIEW TASK-S2KM0 No CI workflow runs the test suite; every green gate in this project is a local claim :ci:process:test:
+:PROPERTIES:
+:ID: TASK-S2KM0
+:priority: P1
+:PRIORITY: P1
+:END:
+
+Verified 2026-07-26 while ruling on reviewer finding 5 on TASK-8W30B.
+
+`.github/workflows/` contains six files — nightly-android, nightly-macos,
+nightly-runtime, release-android, release-macos, runtime-bundles. `grep -rn
+"cargo test\|cargo nextest" .github/workflows/` returns nothing. No workflow runs
+the Rust test suite, clippy or fmt.
+
+Every "gates green" claim in every task Evidence section in this repository is
+therefore a local run by whoever happened to run it, on their machine, in
+whatever state that machine was in. Nothing re-checks it on merge, and nothing
+would catch a regression landed by a contributor who skipped the local run.
+
+This session is a direct illustration. The full suite degrades as it runs
+(TASK-8W30B: leaked rmux sessions), a driver test now bills real money and fails
+intermittently (TASK-099T6), three daemon tests are known-red, and all of that
+was discovered by hand, twice, because two different agents ran the suite in two
+different local states and got two different answers.
+
+The reviewer raised the narrow version — the new rmux regression test skips
+rather than fails when rmux is absent, so adding `cargo test` to CI naively would
+make it green forever without ever creating a session. That is real, but it is
+downstream of the larger gap.
+
+Work:
+1. Add a CI lane that runs `cargo test --workspace`, `cargo clippy --workspace
+   --all-targets -- -D warnings` and `cargo fmt --all --check`.
+2. Decide what to do about the three known-red daemon tests before turning the
+   lane required — a lane that is red on arrival teaches everyone to ignore it.
+3. Decide which live-harness tests may run in CI at all. Some spawn real claude
+   and cost money per run (see the gotcha "Asking a harness to prove it can work
+   costs real money"); those need an opt-in gate, not a default lane.
+4. For tests that skip when their runtime is unavailable, add a required-environment
+   mode where a skip is a failure, and provision rmux in whatever lane is
+   designated as the gate.
+
+Acceptance:
+- a pull request that breaks the workspace suite fails a check
+- the suite CI runs is honest about what it did not run, rather than skipping
+  silently
+- no default CI lane bills the operator for a provider turn
+SIBLINGS FILED [2026-07-28]: TASK-DJ1WV (flake registry + retry-in-isolation runner wrapper) is the concrete answer to work item 2 — the CI lane should consume its verdict block so known flakes cannot teach anyone to ignore the lane. TASK-WE0Q7 adds the scheduled minutes-scale daemon soak (the uptime blindspot class behind Q07Y5) as the nightly complement to this per-PR lane. TASK-TCTTD's `orgasmic verify` replay is a candidate per-merge CI step once it exists.
+
