@@ -28,6 +28,7 @@ use orgasmic_core::{
     BabysitterTool, DriverEvent, RuntimeIdentity, SandboxAllowlist, TextStream, WorkerTool,
 };
 
+use crate::catalog::TransportInteraction;
 use crate::runtime_options::{
     RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc, RuntimeOptionsRequest,
 };
@@ -478,6 +479,18 @@ pub trait WorkerDriver: Send + Sync + 'static {
     /// `(mode, harness)` pair.
     fn harness(&self) -> Option<&'static str> {
         None
+    }
+
+    /// Whether a dispatch on this transport runs with nobody attached, or
+    /// spawns an interactive terminal pane. It is the first thing a manager
+    /// choosing a transport needs to know, and only the driver can answer it.
+    ///
+    /// The default is [`TransportInteraction::Undeclared`], never
+    /// `Unattended`: a driver that never declared how it runs must not pass as
+    /// safe to dispatch unattended. `catalog::tests` fails while any supported
+    /// pair still answers `Undeclared`.
+    fn interaction(&self) -> TransportInteraction {
+        TransportInteraction::Undeclared
     }
 
     /// Validate configuration before any acquire. Returning `Err` here is

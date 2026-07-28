@@ -35,6 +35,7 @@ use tokio::task::JoinHandle;
 
 use orgasmic_core::{DriverEvent, RuntimeIdentity};
 
+use crate::catalog::TransportInteraction;
 use crate::r#trait::{
     preflight_via_adapter, AttachOutcome, Attached, BabysitterAck, BabysitterRequest, DriverConfig,
     DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
@@ -137,6 +138,12 @@ impl WorkerDriver for TmuxDriver {
 
     fn harness(&self) -> Option<&'static str> {
         Some(self.adapter.harness())
+    }
+
+    /// The harness runs as its own TUI inside a tmux pane an operator can
+    /// attach to; the pane runtime must exist for the run to start at all.
+    fn interaction(&self) -> TransportInteraction {
+        TransportInteraction::TerminalPane
     }
 
     fn validate(&self, config: &DriverConfig) -> Result<(), DriverError> {

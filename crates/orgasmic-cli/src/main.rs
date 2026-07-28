@@ -18,6 +18,7 @@ mod daemon_lifecycle;
 mod daemon_runtime;
 mod daemon_service;
 mod doctor;
+mod drivers;
 mod goal;
 mod home;
 mod install_state;
@@ -786,6 +787,9 @@ enum HubCmd {
 enum ManagerCmd {
     /// Show manager state for registered projects.
     State,
+    /// List the supported `(mode, harness)` transport pairs, which of them run
+    /// unattended, and where each harness's model/effort values come from.
+    Drivers(drivers::DriversArgs),
     /// Dispatch a worker for one or more tasks (worktree + tx + driver).
     Dispatch(DispatchArgs),
     /// Close an open dispatch (done or aborted).
@@ -2984,6 +2988,7 @@ fn print_lifecycle_entry(action: &str, entry: &LifecycleEntry) {
 
 fn cmd_manager(home: &Home, cmd: ManagerCmd) -> Result<()> {
     match cmd {
+        ManagerCmd::Drivers(args) => drivers::cmd_drivers(args),
         ManagerCmd::Dispatch(args) => manager::cmd_dispatch(home, args),
         ManagerCmd::DispatchClose(args) => manager::cmd_dispatch_close(home, args),
         ManagerCmd::DispatchStatus(args) => manager::cmd_dispatch_status(home, args),

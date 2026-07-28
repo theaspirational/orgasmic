@@ -16,6 +16,7 @@ use tokio_tungstenite::{
 
 use orgasmic_core::DriverEvent;
 
+use crate::catalog::TransportInteraction;
 use crate::modes::jsonrpc::{
     dispatch_incoming_json, handle_outcome, request_response, run_jsonrpc_handshake,
     send_driver_error, JsonRpcTransport, RpcIds,
@@ -51,6 +52,11 @@ impl WorkerDriver for AcpWsDriver {
 
     fn harness(&self) -> Option<&'static str> {
         Some(self.adapter.harness())
+    }
+
+    /// ACP over a websocket: no terminal, no operator.
+    fn interaction(&self) -> TransportInteraction {
+        TransportInteraction::Unattended
     }
 
     fn validate(&self, config: &DriverConfig) -> Result<(), DriverError> {
