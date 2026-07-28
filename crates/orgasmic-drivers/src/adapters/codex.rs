@@ -19,8 +19,8 @@ use orgasmic_core::{DriverEvent, SandboxAllowlist, TextStream};
 use crate::preflight::{classify_prose_login, read_status_output, ProseLogin};
 use crate::r#trait::{
     AcpWsProtocol, BabysitterRequest, DriverConfig, DriverContext, DriverError,
-    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, StdioSpawn,
-    TransitionRequest, UserInputRequest, WireMessage,
+    HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, Preflight, PreflightOutcome,
+    StdioSpawn, TransitionRequest, UserInputRequest, WireMessage,
 };
 
 /// How `codex login status` reports each login state.
@@ -115,7 +115,11 @@ impl HarnessEventAdapter for CodexAdapter {
     /// Codex carries no API-key config of its own, so there is one credential
     /// to ask about and `codex login status` is the question that asks about
     /// it.
-    async fn preflight(&mut self, _ctx: &DriverContext, _config: &DriverConfig) -> Preflight {
+    async fn preflight(
+        &mut self,
+        _ctx: &DriverContext,
+        _config: &DriverConfig,
+    ) -> PreflightOutcome {
         let command = self
             .stdio_spawn()
             .map(|spawn| spawn.command)
@@ -130,6 +134,9 @@ impl HarnessEventAdapter for CodexAdapter {
             ),
             None => Preflight::Unsupported,
         }
+        // Nothing to pin: codex resolves no per-run credential choice, so its
+        // launch derives nothing this probe could disagree with.
+        .into()
     }
 
     fn stdio_spawn(&self) -> Option<StdioSpawn> {

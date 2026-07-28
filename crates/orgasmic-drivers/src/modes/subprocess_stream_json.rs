@@ -19,8 +19,8 @@ use crate::adapters::cursor::distill_subprocess_exit_summary;
 use crate::r#trait::{
     preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
     DriverContext, DriverControl, DriverError, DriverSession, HarnessControlOutcome,
-    HarnessEventAdapter, HarnessRequest, Preflight, RunKind, TransitionAck, TransitionRequest,
-    UserInputAck, UserInputRequest, WorkerDriver,
+    HarnessEventAdapter, HarnessRequest, PreflightOutcome, RunKind, TransitionAck,
+    TransitionRequest, UserInputAck, UserInputRequest, WorkerDriver,
 };
 
 const MODE: &str = "subprocess-stream-json";
@@ -34,6 +34,25 @@ pub struct SubprocessStreamJsonDriver {
 impl SubprocessStreamJsonDriver {
     pub fn new(adapter: Box<dyn HarnessEventAdapter>) -> Self {
         Self { adapter }
+    }
+
+    /// Spawn a request that has **already been composed**, by the caller, on the
+    /// adapter handed in here.
+    ///
+    /// ACP-stdio delegates the plain-subprocess shape to this mode. It used to
+    /// do so by handing over a fresh adapter clone and letting `acquire`
+    /// compose a second time, which meant every acp-stdio claude dispatch built
+    /// its argv twice and — until the credential plan was pinned — detected its
+    /// credentials twice, after the lease was already held (TASK-KKBTP). The
+    /// request the mode spawns is now the request the caller composed, so there
+    /// is one composition per dispatch and no way for the two to disagree.
+    pub(crate) async fn acquire_composed(
+        adapter: Box<dyn HarnessEventAdapter>,
+        ctx: DriverContext,
+        request: HarnessRequest,
+        native_runtime: Option<crate::r#trait::NativeRuntimeMeta>,
+    ) -> Result<DriverSession, DriverError> {
+        spawn_composed(adapter, ctx, request, native_runtime).await
     }
 }
 
@@ -53,7 +72,7 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
 
     /// Readiness is the harness's question, not the transport's (see
     /// [`preflight_via_adapter`]).
-    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> PreflightOutcome {
         preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 
@@ -72,112 +91,7 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
         // lifecycle event at all, and recovery could never offer
         // `resume_native_fork` (TASK-VB9DQ item 3, TASK-SGRTX).
         let native_runtime = adapter.native_runtime();
-        let (tx, rx) = mpsc::channel(64);
-
-        let (control, producer) = match request {
-            HarnessRequest::Simulated { events } => {
-                for event in events {
-                    let _ = tx.send(event).await;
-                }
-                (
-                    SubprocessControlMode::Simulated {
-                        adapter,
-                        events: tx,
-                    },
-                    None,
-                )
-            }
-            HarnessRequest::Subprocess {
-                binary,
-                args,
-                env,
-                cwd,
-                stdin_payload,
-                close_stdin,
-            } => {
-                let (commands, command_rx) = mpsc::channel(16);
-                let mut cmd = Command::new(&binary);
-                cmd.args(args)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                if let Some(cwd) = cwd {
-                    cmd.current_dir(cwd);
-                }
-                for (key, value) in env {
-                    cmd.env(key, value);
-                }
-                detach_subprocess(&mut cmd);
-                let mut child = cmd
-                    .spawn()
-                    .map_err(|e| DriverError::Transport(format!("{binary} spawn: {e}")))?;
-                let pid = child.id();
-                let Some(mut stdin) = child.stdin.take() else {
-                    let _ = child.kill().await;
-                    return Err(DriverError::Transport(format!(
-                        "{binary} stdin unavailable"
-                    )));
-                };
-                let Some(stdout) = child.stdout.take() else {
-                    let _ = child.kill().await;
-                    return Err(DriverError::Transport(format!(
-                        "{binary} stdout unavailable"
-                    )));
-                };
-                let Some(stderr) = child.stderr.take() else {
-                    let _ = child.kill().await;
-                    return Err(DriverError::Transport(format!(
-                        "{binary} stderr unavailable"
-                    )));
-                };
-                if let Some(payload) = stdin_payload {
-                    if let Err(e) = stdin.write_all(&payload).await {
-                        let _ = child.kill().await;
-                        return Err(DriverError::Transport(format!(
-                            "{binary} initial write: {e}"
-                        )));
-                    }
-                }
-                let stdin = if close_stdin {
-                    let _ = stdin.shutdown().await;
-                    None
-                } else {
-                    Some(stdin)
-                };
-                let producer = tokio::spawn(run_subprocess_stream_json(SubprocessRuntime {
-                    binary,
-                    child,
-                    stdin,
-                    stdout,
-                    stderr,
-                    command_rx,
-                    events: tx,
-                    adapter,
-                }));
-                (
-                    SubprocessControlMode::Real { commands, pid },
-                    Some(producer),
-                )
-            }
-            _ => {
-                return Err(DriverError::Unsupported(
-                    "subprocess-stream-json request shape",
-                ));
-            }
-        };
-
-        Ok(DriverSession {
-            identity: ctx.identity.clone(),
-            pid: control.pid(),
-            events: rx,
-            control: Box::new(SubprocessStreamJsonControl {
-                mode: control,
-                kind: ctx.run_kind,
-                released: false,
-            }),
-            producer,
-            native_runtime,
-        })
+        spawn_composed(adapter, ctx, request, native_runtime).await
     }
 
     async fn attach(
@@ -187,6 +101,121 @@ impl WorkerDriver for SubprocessStreamJsonDriver {
     ) -> Result<AttachOutcome, DriverError> {
         Ok(AttachOutcome::NotReattachable)
     }
+}
+
+/// Own the process lifecycle for an already-composed request.
+async fn spawn_composed(
+    adapter: Box<dyn HarnessEventAdapter>,
+    ctx: DriverContext,
+    request: HarnessRequest,
+    native_runtime: Option<crate::r#trait::NativeRuntimeMeta>,
+) -> Result<DriverSession, DriverError> {
+    let (tx, rx) = mpsc::channel(64);
+
+    let (control, producer) = match request {
+        HarnessRequest::Simulated { events } => {
+            for event in events {
+                let _ = tx.send(event).await;
+            }
+            (
+                SubprocessControlMode::Simulated {
+                    adapter,
+                    events: tx,
+                },
+                None,
+            )
+        }
+        HarnessRequest::Subprocess {
+            binary,
+            args,
+            env,
+            cwd,
+            stdin_payload,
+            close_stdin,
+        } => {
+            let (commands, command_rx) = mpsc::channel(16);
+            let mut cmd = Command::new(&binary);
+            cmd.args(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped());
+            if let Some(cwd) = cwd {
+                cmd.current_dir(cwd);
+            }
+            for (key, value) in env {
+                cmd.env(key, value);
+            }
+            detach_subprocess(&mut cmd);
+            let mut child = cmd
+                .spawn()
+                .map_err(|e| DriverError::Transport(format!("{binary} spawn: {e}")))?;
+            let pid = child.id();
+            let Some(mut stdin) = child.stdin.take() else {
+                let _ = child.kill().await;
+                return Err(DriverError::Transport(format!(
+                    "{binary} stdin unavailable"
+                )));
+            };
+            let Some(stdout) = child.stdout.take() else {
+                let _ = child.kill().await;
+                return Err(DriverError::Transport(format!(
+                    "{binary} stdout unavailable"
+                )));
+            };
+            let Some(stderr) = child.stderr.take() else {
+                let _ = child.kill().await;
+                return Err(DriverError::Transport(format!(
+                    "{binary} stderr unavailable"
+                )));
+            };
+            if let Some(payload) = stdin_payload {
+                if let Err(e) = stdin.write_all(&payload).await {
+                    let _ = child.kill().await;
+                    return Err(DriverError::Transport(format!(
+                        "{binary} initial write: {e}"
+                    )));
+                }
+            }
+            let stdin = if close_stdin {
+                let _ = stdin.shutdown().await;
+                None
+            } else {
+                Some(stdin)
+            };
+            let producer = tokio::spawn(run_subprocess_stream_json(SubprocessRuntime {
+                binary,
+                child,
+                stdin,
+                stdout,
+                stderr,
+                command_rx,
+                events: tx,
+                adapter,
+            }));
+            (
+                SubprocessControlMode::Real { commands, pid },
+                Some(producer),
+            )
+        }
+        _ => {
+            return Err(DriverError::Unsupported(
+                "subprocess-stream-json request shape",
+            ));
+        }
+    };
+
+    Ok(DriverSession {
+        identity: ctx.identity.clone(),
+        pid: control.pid(),
+        events: rx,
+        control: Box::new(SubprocessStreamJsonControl {
+            mode: control,
+            kind: ctx.run_kind,
+            released: false,
+        }),
+        producer,
+        native_runtime,
+    })
 }
 
 #[cfg(unix)]

@@ -128,14 +128,21 @@ async fn runs_json(running: &RunningDaemon, token: &str) -> serde_json::Value {
 /// process behind. Rejecting late is what made all of that litter; rejecting
 /// early is the fix, and "early" only means anything if nothing was created.
 ///
-/// The credential is made unusable in the one way that is both deterministic
-/// and honest — an *empty* `ANTHROPIC_API_KEY`. That is a certain failure
-/// knowable without asking the provider, so the verdict costs no network call
-/// and no money (a probe that submits a real turn was measured at $0.0994 per
-/// dispatch and rejected on that ground). It also exercises the real
-/// `resolve_credentials` path: an inherited key selects `--bare`, whose whole
-/// contract is that no other credential source is read, so there is nothing
-/// left to fall back on.
+/// The credential is made unusable without asking the provider anything, so the
+/// verdict costs no network call and no money (a probe that submits a real turn
+/// was measured at $0.0994 per dispatch and rejected on that ground): no login,
+/// no key, no `apiKeyHelper`.
+///
+/// It used to rely on an *empty* `ANTHROPIC_API_KEY` alone, and that stopped
+/// working when TASK-S0QRM established that an empty key is not a credential
+/// (measured: `ANTHROPIC_API_KEY=""` reports `apiKeySource: "none"`, exactly as
+/// an unset one does). With no key to prefer, the mode fell through to whatever
+/// the *developer's own machine* answered — so this test asserted a rejection
+/// while passing only on a logged-out machine, and failed on main on a
+/// logged-in one. Nothing about the credential under test may come from the
+/// machine running the suite, so all three sources are now pinned: an empty
+/// key, a `claude` stub that reports itself logged out, and an empty
+/// `CLAUDE_CONFIG_DIR` so the operator's real `apiKeyHelper` cannot decide it.
 ///
 /// The assertion on the error text is load-bearing, not decoration. Without it
 /// the absence checks below would pass just as well if the dispatch had been
@@ -147,6 +154,15 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
     std::env::set_var("ANTHROPIC_API_KEY", "");
     // A forced simulation would skip the probe entirely and defeat the test.
     std::env::remove_var("ORGASMIC_DRIVER_SIMULATE");
+    let harness_dir = tempfile::tempdir().unwrap();
+    write_logged_out_claude_stub(harness_dir.path());
+    let saved_path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var(
+        "PATH",
+        format!("{}:{saved_path}", harness_dir.path().display()),
+    );
+    let settings_dir = tempfile::tempdir().unwrap();
+    std::env::set_var("CLAUDE_CONFIG_DIR", settings_dir.path());
 
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
@@ -267,6 +283,38 @@ async fn an_unusable_credential_leaves_no_lease_no_session_and_no_run() {
         "the first rejection must not have left a lease behind"
     );
 
+    std::env::set_var("PATH", &saved_path);
+    std::env::remove_var("CLAUDE_CONFIG_DIR");
     let _ = running.shutdown.send(());
     let _ = running.join.await;
+}
+
+/// A `claude` that answers `auth status` with the logged-out payload the real
+/// harness emits, so the credential this test rejects is the test's own and not
+/// the developer's.
+///
+/// `claude auth status` exits 1 when logged out (measured 2026-07-25 on 2.1.220)
+/// and the adapter deliberately reads the payload rather than the exit status;
+/// the stub reproduces both so it cannot pass for the wrong reason.
+fn write_logged_out_claude_stub(dir: &Path) {
+    let stub = dir.join("claude");
+    std::fs::write(
+        &stub,
+        r#"#!/bin/sh
+if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  printf '%s\n' '{"loggedIn":false,"authMethod":"none","apiProvider":"firstParty"}'
+  exit 1
+fi
+if [ "$1" = "--version" ]; then
+  exit 0
+fi
+echo "unexpected stub invocation: $*" >&2
+exit 3
+"#,
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    let mut perms = std::fs::metadata(&stub).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&stub, perms).unwrap();
 }

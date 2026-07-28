@@ -23,7 +23,7 @@ use crate::modes::jsonrpc::{
 use crate::r#trait::{
     preflight_via_adapter, AcpWsProtocol, AttachOutcome, BabysitterAck, BabysitterRequest,
     DriverConfig, DriverContext, DriverControl, DriverError, DriverSession, HarnessEventAdapter,
-    HarnessRequest, Preflight, RunKind, TransitionAck, TransitionRequest, UserInputAck,
+    HarnessRequest, PreflightOutcome, RunKind, TransitionAck, TransitionRequest, UserInputAck,
     UserInputRequest, WorkerDriver,
 };
 use crate::runtime_options::{RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsRequest};
@@ -59,7 +59,7 @@ impl WorkerDriver for AcpWsDriver {
 
     /// Readiness is the harness's question, not the transport's (see
     /// [`preflight_via_adapter`]).
-    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> Preflight {
+    async fn preflight(&self, ctx: &DriverContext, config: &DriverConfig) -> PreflightOutcome {
         preflight_via_adapter(self.adapter.as_ref(), ctx, config).await
     }
 

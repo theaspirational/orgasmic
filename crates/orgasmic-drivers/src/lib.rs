@@ -26,8 +26,8 @@ pub use r#trait::{
     build_babysitter_request, implementer_tool_is_allowed, AcpWsProtocol, AttachOutcome, Attached,
     BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
     DriverSession, HarnessControlOutcome, HarnessEventAdapter, HarnessRequest, NativeRuntimeMeta,
-    Preflight, RunKind, StdioSpawn, TransitionAck, TransitionRequest, UserInputAck,
-    UserInputRequest, WireMessage, WorkerDriver,
+    Preflight, PreflightOutcome, RunKind, StdioSpawn, TransitionAck, TransitionRequest,
+    UserInputAck, UserInputRequest, WireMessage, WorkerDriver,
 };
 pub use runtime_options::{
     RuntimeModelOption, RuntimeOptionsAck, RuntimeOptionsCatalog, RuntimeOptionsCatalogRpc,
