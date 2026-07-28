@@ -2083,3 +2083,80 @@ differential as a byproduct once the code has matured.
 :END:
 
 From TASK-K4G1D (2026-07-29): the recovery action id 'reattach_tmux' is emitted for rmux runs as well (api.rs:10295 at K4G1D's HEAD; re-locate before acting). Harmless today, actively misleading in exactly the mux-differential investigations K4G1D built the instrument for (TASK-STWVB, TASK-JGHNC). Rename so the action id names the actual mode, keeping any external consumers of the id in mind — grep the UI and shipped conventions for the string before changing it. Injection per TCTTD standard (natural red: an rmux recovery emitting an id that claims tmux).
+
+* BACKLOG TASK-ZKZBF Audit the remaining --property surfaces (node prop, glossary/decision/architecture create, dispatch-close) for the HXSW0 silent-drop shape
+:PROPERTIES:
+:ID: TASK-ZKZBF
+:PRIORITY: P2
+:END:
+
+From TASK-HXSW0 (2026-07-29), which fixed key validation on task create/update
+— the surface all six measured silent-drop instances lived on. The same
+untyped-passthrough shape exists on:
+
+- `node prop set` / `node prop unset`
+- `glossary create --property`
+- `decision create --property`
+- `architecture create --property`
+- `manager dispatch-close --property`
+
+For each surface: determine whether a miscased key is stored-and-never-read
+(the `Heading::property` byte comparison in crates/orgasmic-core/src/org.rs
+makes this the DEFAULT outcome for any drawer-backed key), whether any per-key
+filter drops silently, and whether the key set diverges from a sibling verb.
+
+Reuse `validate_task_property_keys` (api.rs, TASK-HXSW0) where the target is a
+schema-read drawer. NOTE: `dispatch-close --property` writes tx metadata, not a
+node drawer — the same rule may not apply unchanged; decide and state the rule
+for it rather than assuming.
+
+=== Acceptance
+
+- A production-path test per surface asserting a miscased key is refused BY
+  NAME (real binary, drawer read off disk afterwards — the HXSW0 test shape in
+  crates/orgasmic-cli/tests/task_property_silent_drop_cli.rs is the template).
+- Injection per TCTTD standard, self-tested with `orgasmic verify --artifact`
+  before reporting.
+
+* BACKLOG TASK-TKR0H Guard shipped prose that DENIES a real verb: negative claims about command names must fail when the verb resolves
+:PROPERTIES:
+:ID: TASK-TKR0H
+:PRIORITY: P2
+:END:
+
+From TASK-HXSW0 (2026-07-29). Its shipped-prose guard
+(crates/orgasmic-cli/tests/cli_parity.rs, 128 invocations across shipped/**)
+proves every QUOTED command resolves against the real clap surface. It cannot
+catch the inverse: prose asserting a real verb is ABSENT. That inverse is
+measured, not hypothetical — `shipped/prompt-studio/conventions/manager-dispatch.org`
+said "there is no listing command … that verb has never existed in any command
+group" and `prompt-specs/manager.org` listed `manager drivers` among "commands
+that sound obvious and do not exist" — for MONTHS after TASK-JQARS landed
+`orgasmic manager drivers`. The prose instructed managers to discover transport
+pairs by submitting a bogus pair and reading the rejection. Both were corrected
+by hand in HXSW0; nothing prevents recurrence.
+
+=== Ask
+
+A guard that detects negative claims about command names in shipped prose —
+"does not exist", "has never existed", "there is no … command/verb" within N
+tokens of an `orgasmic …` span — and FAILS when the named verb resolves against
+the real clap tree. Precision matters: the corpus legitimately says "X does not
+exist" about verbs that genuinely don't (that is the guard passing); tune the
+extraction so real negatives survive.
+
+=== Acceptance
+
+- An injection that re-adds a "verb X does not exist" sentence about a verb
+  that DOES resolve is caught by the test (this is the natural verify artifact).
+- The guard runs in the same test binary as the existing shipped-prose check
+  and shares its extraction, so the two directions cannot drift apart.
+- Zero false failures on the corpus at HEAD.
+
+* BACKLOG TASK-C4BJR Decide whether task drawer keys are a closed set; document or enumerate the ~15 free-form annotation keys
+:PROPERTIES:
+:ID: TASK-C4BJR
+:PRIORITY: P3
+:END:
+
+From TASK-HXSW0 (2026-07-29): --property accepts any UPPERCASE key. Live task headings carry ~15 keys no reader consumes (:MERGE_SHA: x23, :CODEX_COMMIT: x23, :SET_BY:, :CLOSED_AT:, :SEVERITY:, :RESUME_SKILL:, ...), some plainly deliberate annotation. Either (a) declare the drawer open and document the annotation convention, or (b) declare it closed, enumerate the legal set, and migrate existing keys. HXSW0 deliberately did not choose: rejecting unknown keys would have broken working manager flows for a defect nobody measured. Product decision — record it as a dec_ node, then implement whichever guard follows.
