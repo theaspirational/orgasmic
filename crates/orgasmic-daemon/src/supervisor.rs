@@ -8009,6 +8009,18 @@ mod tests {
         assert_release_reason(&session_path, "max_run_duration_exceeded");
     }
 
+    // orgasmic:task_JGHNC
+    /// Where a PATH lookup of `tmux` lands, reported rather than reduced to a
+    /// yes/no — the strict rule needs the path to follow, not the answer.
+    fn which_tmux_for_test() -> Option<std::path::PathBuf> {
+        let out = Command::new("which").arg("tmux").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        (!path.is_empty()).then(|| std::path::PathBuf::from(path))
+    }
+
     fn command_available_for_test(command: &str) -> bool {
         Command::new("which")
             .arg(command)
@@ -8020,7 +8032,15 @@ mod tests {
     }
 
     async fn tmux_spawn_usable_for_test() -> bool {
-        if !command_available_for_test("tmux") {
+        // orgasmic:task_JGHNC
+        // Not `command_available_for_test("tmux")`: inside an orgasmic worker
+        // that lookup lands on the rmux shim, this probe then spawns a session
+        // through it, succeeds, and reports tmux PRESENT — so the tooling
+        // sentinel stays green and the honesty manifest never names the tmux
+        // tests that did not run. The rule is the api-side one, shared rather
+        // than copied, so gate and sentinel cannot disagree.
+        if crate::api::tests::tmux_mode_availability_for(which_tmux_for_test().as_deref()).is_err()
+        {
             return false;
         }
         // orgasmic:TASK-0RCRY
@@ -8056,8 +8076,16 @@ mod tests {
         assert_required_test_tooling(&[
             // orgasmic:task_K4G1D — +1 for the rmux arm of the parameterized
             // attach-proof test in `api`.
-            ToolRequirement::new("rmux", 9, probe_rmux_binary().found),
-            ToolRequirement::new("tmux", 6, tmux_spawn_usable_for_test().await),
+            // orgasmic:task_JGHNC — +5 for the rmux arms of the five reattach
+            // and fencing shapes parameterized there. The tmux count is
+            // corrected rather than moved: it was 6 while nine tests gated on
+            // tmux, and a count that understates is the same lie as a probe
+            // that overstates — it is the number the NOT RUN block prints.
+            // Recount when a mux-gated test is added: api has six
+            // `MuxMode::Tmux` arms, six `MuxMode::Rmux` arms, two direct tmux
+            // gates and seven direct rmux gates; this module has one of each.
+            ToolRequirement::new("rmux", 14, probe_rmux_binary().found),
+            ToolRequirement::new("tmux", 9, tmux_spawn_usable_for_test().await),
             ToolRequirement::new("bash", 1, command_available_for_test("bash")),
         ]);
     }

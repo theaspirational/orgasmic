@@ -1,0 +1,32 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied, in an
+# orgasmic worker (`tmux` on PATH = the rmux shim).
+#
+# WHY THIS RED AND NOT ONE OF THE SEVEN GATED TESTS
+#
+# The defect is a GREEN one, and TASK-K4G1D pinned the same shape for the same
+# reason. Seven daemon tests gated on "a PATH lookup of tmux succeeded", which
+# inside a worker lands on rmux's shim directory. They ran. They passed. They
+# reported tmux. Measured 2026-07-29 on this binary before the fix: all seven
+# ran, and the owned server they created was /private/tmp/rmux-501/
+# orgasmic-test-25603 — an RMUX server. Nothing was red, so no gated test's
+# failure can serve as the signature.
+#
+# K4G1D's artifact pins the *rule* (a tmux that follows through to rmux is not
+# tmux). This one pins the *wiring*: that the gate those tests actually call is
+# that rule. A strict rule the gated tests do not use is exactly the state this
+# task found, and it is invisible to K4G1D's proof.
+#
+# The replay repoints PATH at a synthetic shim in a temp dir, so it fails
+# identically on every host — worker, dev box, or a machine with a real tmux
+# first on PATH — needs neither multiplexer, and starts no session.
+
+exit: 101
+
+# The wiring, named exactly: the gate the tmux-mode tests share is not a PATH
+# lookup.
+contains: the gate every tmux-mode daemon test shares must refuse a PATH whose tmux is the rmux shim
+contains: the_tmux_gate_the_daemon_tests_share_refuses_a_shimmed_tmux
+
+# One test, and it is this one. A binary that collapses wholesale is a different
+# failure and has not reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed
