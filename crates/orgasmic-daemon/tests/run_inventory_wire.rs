@@ -22,6 +22,7 @@ use orgasmic_core::{
     Home, Lifecycle, ReleaseOutcome, SessionEnvelope, SessionEventKind, SessionScanBudget,
 };
 use orgasmic_daemon::{Daemon, DaemonOptions};
+use orgasmic_drivers::modes::rmux::test_tooling::test_environment_lock;
 use serde_json::{json, Value};
 
 /// The CLI's own run-list budget. Every assertion here is well inside it.
@@ -204,9 +205,30 @@ impl SessionFixture {
     }
 }
 
+// orgasmic:TASK-5HBST
+/// Restores `PATH` when the test that installed a stub drops it — on the panic
+/// path too, which a trailing restore statement misses.
+struct PathGuard(Option<std::ffi::OsString>);
+
+impl Drop for PathGuard {
+    fn drop(&mut self) {
+        match self.0.take() {
+            Some(previous) => std::env::set_var("PATH", previous),
+            None => std::env::remove_var("PATH"),
+        }
+    }
+}
+
 /// A `tmux` that never answers. The inventory attach probe must abandon it at
 /// its own deadline instead of holding the response open.
-fn install_hanging_tmux(bin_dir: &Path) {
+///
+/// `PATH` is process-global, so this stub is visible to every test in this
+/// binary until the returned guard drops — the other test boots its own daemon,
+/// whose recovery probes would otherwise resolve `tmux` to a `sleep 600`. Both
+/// tests hold `test_environment_lock` for that reason; the guard bounds the
+/// window and the lock keeps anyone from being inside it.
+#[must_use]
+fn install_hanging_tmux(bin_dir: &Path) -> PathGuard {
     let stub = bin_dir.join("tmux");
     write(
         &stub,
@@ -217,8 +239,10 @@ fn install_hanging_tmux(bin_dir: &Path) {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
+    let previous = std::env::var_os("PATH");
     let path = std::env::var("PATH").unwrap_or_default();
     std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), path));
+    PathGuard(previous)
 }
 
 struct WireResponse {
@@ -289,6 +313,7 @@ fn classification_ids(runs: &Value, bucket: &str) -> Vec<String> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_transcripts() {
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
@@ -305,7 +330,7 @@ async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_tr
 
     let bin_dir = tmp.path().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
-    install_hanging_tmux(&bin_dir);
+    let _tmux_path = install_hanging_tmux(&bin_dir);
 
     let missing_worktree = tmp.path().join("pruned-worktree");
     let fixtures = [
@@ -443,6 +468,10 @@ async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_tr
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
+    // This test mutates nothing, but it boots a daemon whose recovery probes
+    // resolve `tmux` through `PATH`. Holding the lock is what keeps the other
+    // test's hanging stub out of this one's timing assertions.
+    let _environment = test_environment_lock().lock().await;
     let tmp = tempfile::tempdir().unwrap();
     let home = Home::at(tmp.path().join("home"));
     home.ensure().unwrap();
