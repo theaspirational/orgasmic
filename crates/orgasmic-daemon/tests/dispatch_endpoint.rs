@@ -1379,8 +1379,28 @@ async fn wait_for_session_nonempty(session_path: &Path) {
     panic!("timed out waiting for session file");
 }
 
+/// Wait for the first driver event of a real dispatched run.
+///
+/// This is the most expensive wait in the file and it had the smallest bound
+/// (5s): reaching `ready` means the daemon booted, the dispatch landed, and a
+/// freshly written fake agent executable was exec'd for the first time — which
+/// on macOS queues behind a system-wide serialized Gatekeeper evaluation
+/// (.orgasmic/gotchas.org). Under full-suite load that queue, not the daemon,
+/// is what spent the 5s: measured here 2026-07-29, `dispatch_endpoint` beside
+/// a looping `orgasmic-daemon --lib` at 64 threads under 12 cpu hogs, this
+/// helper produced `timed out waiting for session ready` for
+/// `dispatch_system_only_session_without_finalize_orphans_not_scrapes` — the
+/// TASK-5FEN5 third candidate, and the same failure TASK-HQ970's gate saw.
+///
+/// The bound now matches what the rest of this file already spends on lesser
+/// waits (`wait_for_session_nonempty` 15s, run-complete 30s), so it is a hang
+/// guard rather than a bet on how fast a loaded machine execs a new file. The
+/// durable fix for the underlying cost is one pre-warmed shared executable,
+/// as TASK-STWVB did for the daemon unit tests; this file still installs a
+/// fresh script per test and that is its own task.
 async fn wait_for_session_ready(session_path: &Path) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let waited = Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + waited;
     while std::time::Instant::now() < deadline {
         if let Ok(envelopes) = read_session_file(session_path) {
             if envelopes.iter().any(|envelope| {
@@ -1392,7 +1412,10 @@ async fn wait_for_session_ready(session_path: &Path) {
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
-    panic!("timed out waiting for session ready");
+    panic!(
+        "timed out waiting for session ready after {waited:?} in {}",
+        session_path.display()
+    );
 }
 
 async fn release_dispatch_run(
