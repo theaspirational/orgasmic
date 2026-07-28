@@ -1055,3 +1055,76 @@ One shared guard that owns cleanup, not nine that own a file lock.
   bounded, not zero.
 - Do not run `legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
   (TASK-099T6) — it bills real money. Skip it explicitly on the drivers suite.
+
+* IN_PROGRESS TASK-WGXKD.2 release admission must be atomic with tracker closure; restart must actually await the drain :dispatch:daemon:cli:defect:race:
+:PROPERTIES:
+:ID: TASK-WGXKD.2
+:PRIORITY: P0
+:END:
+
+Fix round for the TASK-WGXKD.1 reviewer BLOCK SHIP (run-20260728T063208-1080f3a600dc40b6946754da476afca8, merge 1fbc3f7). Findings verbatim.
+
+IMPORTANT CORROBORATION: finding 1 was found INDEPENDENTLY by a second reviewer in a separate worktree - it is finding 3 of the TASK-6AYEJ.2 review (run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1), with the same file:line anchors and the same conclusion. Two independent derivations; treat it as confirmed, not speculative.
+
+** Finding 1 - HIGH: release admission is not atomic with tracker closure
+api.rs:217-240, 6672-6702, 9857-9861. post_run_release reads is_closed() and THEN awaits supervisor.snapshot() before calling spawn(). close() only flips an independent atomic flag, while spawn() increments active unconditionally and never rechecks the closed state. On the multi-thread runtime a release can read false, restart can then close the tracker and observe active == 0, and the release can register and run AFTER the release drain and potentially after the writer barrier. That recreates the exact graceful-shutdown loss this task exists to eliminate: the lease is released while its terminal tx lands after the barrier or dies with the service.
+
+The added late-release assertion does not cover this straddling request - it sends the release only after the restart response, when is_closed() is already true. The endpoint test at dispatch_endpoint.rs:3734-3774 sleeps 500ms until it is inside the injected delay and only then requests restart, so it proves waiting for an ALREADY-REGISTERED task, not atomic close-versus-registration.
+
+FIX DIRECTION: replace the separate is_closed() + spawn() sequence with one atomic admission operation (try_acquire / try_spawn) that checks closed and increments active under the same synchronization boundary, acquired BEFORE any await that restart can overtake. If closure won, drop the count and return 503. Add a barrier-controlled race test with a deterministic hook between handler admission and tracker registration, raced against controlled restart, proving the release is either tracked to completion or rejected.
+
+** Finding 2 - HIGH: the real restart command abandons the drain after 5s, discards warnings, and stops the service anyway
+daemon_lifecycle.rs:242, 847-868; api.rs:145-148, 9856-9877; main.rs:1795-1833. request_restart_drain() gives the HTTP request a 5-SECOND timeout, DROPS the send() result, returns Ok, and stop_inner() immediately invokes the OS service stop. The new API may legitimately wait 15 seconds. Driver teardown alone is budgeted 5s plus producer join 5s (supervisor.rs:4021-4051), and rmux can spend 2s on the SDK kill plus 2s on the CLI fallback (rmux.rs:83-87, 1514-1525). So a realistic teardown exceeds the lifecycle client's 5s fuse before the terminal tx append.
+
+The endpoint warning is not actionable because the CLI never parses it. And the non-restart mirror in lib.rs is NOT a backstop for service shutdown: cmd_serve converts only Ctrl+C into RunningDaemon.shutdown, whereas LaunchAgent/systemd stop terminates the service.
+
+MANAGER VERIFIED THIS DIRECTLY: crates/orgasmic-cli/src/main.rs:1830-1831 awaits tokio::signal::ctrl_c() and nothing else - there is no SIGTERM handler. Every launchctl kickstart -k of orgasmic.daemon, which is the manager's standard runtime-rebuild step and has run four times today, therefore SIGTERMs the daemon WITHOUT running the finalization drain at all. The graceful-shutdown fix is currently unreachable on the only shutdown path this machine actually uses.
+
+The passing integration test uses a 3s delay and calls /daemon/restart directly, staying below the hidden 5s production boundary and never exercising service stop.
+
+FIX DIRECTION: make the lifecycle restart request typed and authoritative - timeout GREATER than release-finalization plus writer-drain budgets, propagate request failures, parse RestartResponse, and do not stop the service after a drain timeout without a durable recovery plan. Include run ids / dispatch generations and copyable rescue commands in timeout output. Route SIGTERM and service-stop through RunningDaemon.shutdown so the library drain actually runs. Add an end-to-end lifecycle test with a delay beyond 5s and the real stop sequence.
+
+** Finding 3 - MEDIUM: a panicked or aborted finalization decrements the count but its lost tx is invisible
+api.rs:178-195, 230-239, 6702-6705. The drop guard correctly lets wait_idle() finish, but the tracker retains only a COUNT, not the JoinHandle or the completion outcome. The sole join-error log lives in the HTTP request future - and dropping that future is the NORMAL worker-finalize case this whole change documents. If the detached task panics after release and before append, the guard moves the count to zero, restart reports a clean drain, and no durable warning or rescue record identifies the lost tx. There is no panic/abort regression test. This is a live-daemon task failure, NOT the accepted whole-daemon crash gap.
+
+FIX DIRECTION: give the tracker ownership of task OUTCOMES, not just a count. Catch and retain panic/abort results keyed by run id and intended terminal tx, surface them through restart warnings and dispatch recovery/status, and add panic/abort tests proving both count release and visible loss recovery.
+
+** Reviewer conclusions that are settled - do not re-litigate
+- The duplicated capability string has effective integration coverage: CLI finalize tests run against the current daemon and would fail if the constants drifted.
+- Failing closed on transient probe errors is the CORRECT safety trade, because the retry remains pre-commit and the error includes the underlying transport/HTTP detail.
+- scripts/install.sh can temporarily place a new CLI in front of an old daemon, but its final orgasmic status staleness check prints 'restart recommended'. orgasmic update performs the restart itself. No silent standard upgrade path was found beyond the defects above.
+- The one-way close is consistent with the pre-existing one-way acquisition pause; not filed separately. Fixing finding 2 should make restart failure/timeout explicit and define whether the daemon reopens or stays quiesced.
+- The TASK-6AYEJ.2 interaction leaves a USABLE path, not a dead end: dispatch-status prints TX_ID, tokened close remains available, and fresh recovery records run.created ORIGIN=recovery. Caveat: the WGXKD refusal text's 'run the same finalize command again' is optimistic - the operator may first need orgasmic recovery status / orgasmic run recover. Consider softening that text while you are here.
+
+* IN_PROGRESS TASK-C0XMR a worker that finalizes from its active turn is recorded as architect.failed :daemon:architect:defect:
+:PROPERTIES:
+:ID: TASK-C0XMR
+:PRIORITY: P1
+:END:
+
+Found by the TASK-6AYEJ.2 reviewer (run-20260728T063207-654ec2af0d5140ffbb091ed15de786d1, finding 2, HIGH). Filed separately because it is a defect in stage outcome computation, not in the dispatch-close generation work that review was scoped to.
+
+It was previously written off as a test-stub artifact. It is not: the reviewer traced the production ordering and the false failure is user-visible.
+
+** The path
+The production-path test acknowledges that real finalize records architect.failed and declines to assert completion (cli/tests/dispatch.rs:5223-5230). That test launches the real ACP stage and invokes real finalize (dispatch.rs:4911-4979, 5124-5221).
+
+1. ACP release interrupts/closes the active turn (drivers/src/adapters/codex.rs:479-496).
+2. Teardown reaps the harness process group (drivers/src/modes/acp_stdio.rs:817-833).
+3. subprocess_stream_json.rs:315-360 synthesizes a FATAL driver error for the resulting non-success exit, because no terminal event preceded it.
+4. The supervisor drains that error before appending the authoritative finalized_by_worker release (daemon/src/supervisor.rs:2181-2239).
+5. But stage_outcome_from_session returns Failed IMMEDIATELY on the earlier fatal error (daemon/src/api.rs:5889-5924) and never reaches the finalized-tombstone handling at api.rs:5937-5949.
+
+So the session contains BOTH a teardown-induced fatal driver error AND an authoritative worker-finalize release, and the outcome function honours the wrong one because it short-circuits on the first.
+
+** Why it matters
+A worker finalizing from its still-active turn is the NORMAL contract, not an edge case - that is what orgasmic dispatch finalize does. So a successful architect stage can be recorded as failed on the ordinary path.
+
+The daemon unit at api.rs:21758-21833 synthesizes only a clean release, so it never exercises the production ordering and cannot catch this.
+
+** Fix direction (reviewer)
+Parse the COMPLETE stage session and make an authoritative Lifecycle::Release { finalized_by_worker: true } DOMINATE teardown-induced driver errors. Retain genuine pre-finalize failure semantics - an error that precedes any finalize must still fail the stage. Extend the production CLI stage test to REQUIRE architect.completed and FORBID architect.failed, and add a session-order regression with a fatal driver error immediately before the finalized release.
+
+** Note
+Check whether the same short-circuit affects non-architect stage kinds and the implementer/reviewer outcome paths, or whether stage_outcome_from_session is architect-only. The reviewer did not state this either way.
+

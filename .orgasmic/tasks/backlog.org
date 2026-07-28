@@ -1597,3 +1597,291 @@ Break the removal into stages that can each land and gate independently, e.g.: (
 ** Non-goals
 Do not remove anything. Do not edit architecture.org. Do not rewrite tx or done.org. No source changes beyond a throwaway experiment for question 6 (which must be reverted). The output is a report and a decision draft.
 
+* BACKLOG TASK-Q07Y5 WGXKD.2 fix round: bound writer shutdown and derive ExitTimeOut from the real budget    :dispatch:daemon:cli:fix:
+:PROPERTIES:
+:ID: TASK-Q07Y5
+:PRIORITY: P0
+:test_cmd: cargo test -p orgasmic-cli
+:write_scope: crates/orgasmic-cli/src/daemon_service.rs crates/orgasmic-cli/src/daemon_lifecycle.rs crates/orgasmic-cli/tests/daemon_lifecycle.rs crates/orgasmic-daemon/src/lib.rs crates/orgasmic-daemon/src/writer.rs
+:END:
+
+Fix round for the reviewer BLOCK SHIP on TASK-WGXKD.2 (merged `6a518f3`).
+Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
+run-20260728T103240, reported tx-20260728-orgasmic-3136, closed
+tx-20260728-orgasmic-3137.
+
+The merged change is NOT reverted. Its central claim held under review: `try_admit`
+checks `closed` and inserts the admission under the same `watch::Sender` write
+lock, `post_run_release` acquires it before its first await, the admission moves
+into the detached task so cancellation retains ownership through `Drop`, and no
+sole handle is taken before a cancellable await. `daemon restart` does parse the
+real `/daemon/restart` response with a 40s client ceiling, SIGTERM and Ctrl+C both
+route through `RunningDaemon.shutdown`, and the macOS plist is rewritten on every
+service start (`start_macos_launch_agent` writes it before bootstrap), not only on
+install. All independent gates exited 0 at `ca3f9df`.
+
+What follows is what the round claimed and did not establish.
+
+** 1. HIGH — `ExitTimeOut 60` is not larger than the worst-case shutdown, because
+   half of that shutdown has no budget at all
+
+`crates/orgasmic-cli/src/daemon_service.rs:707-727`,
+`crates/orgasmic-daemon/src/lib.rs:665-688`,
+`crates/orgasmic-daemon/src/writer.rs:513-522`.
+
+After SIGTERM, `RunningDaemon` waits up to 20s for release finalizations and then
+calls `WriterHandle::shutdown().await`. That call queues behind prior writer
+commands and awaits its reply **with no timeout**. `RESTART_WRITER_DRAIN_TIMEOUT`
+bounds only the pre-stop marker, not `WriterHandle::shutdown`.
+
+Concrete failure: a terminal-tx append is still blocked in writer I/O or fsync
+when the 20s release drain expires; shutdown then waits behind that append, and
+launchd sends SIGKILL at 60s while the append is still non-durable. That
+recreates the released-but-unreported loss the whole WGXKD family exists to
+prevent.
+
+The comment at daemon_service.rs:707 reasons "drain (20s) + writer shutdown < 60",
+but the second term is unbounded, so the inequality is unprovable rather than
+generous. The budget test added in this round checks 40 > 20 + 5 and 35 > 20 — it
+never proves the plist timeout covers writer shutdown.
+
+**This is live on the operator's machine right now.** The plist was rewritten with
+`ExitTimeOut 60` on 2026-07-28 (tx-20260728-orgasmic-3118); the window is wider
+than it was, and still not closed.
+
+Required: give writer shutdown an explicit finite budget and a durable timeout
+outcome, then **derive** the service-manager timeout from release drain + writer
+shutdown + margin rather than hard-coding 60. If the derived number differs from
+60, the plist must carry the derived one, and a test must assert the plist value
+is the derived value — not a literal.
+
+** 2. LOW — the production lifecycle composition still has no end-to-end regression
+
+`crates/orgasmic-cli/src/daemon_lifecycle.rs:1498-1563`,
+`crates/orgasmic-cli/tests/daemon_lifecycle.rs:99-181`.
+
+The >5s test uses a stand-in HTTP server and stops after parsing its response; the
+SIGTERM test has no in-flight release. Both pass even if the real `daemon restart`
+sequence parses the drain response and then has launchd cut off the old daemon
+during writer shutdown — which is exactly finding 1.
+
+Required: drive the actual lifecycle restart path with a release lasting beyond
+five seconds, including service stop and replacement bind. Testing the HTTP wait
+and the SIGTERM routing in isolation is what let finding 1 through.
+
+** Acceptance
+
+- `WriterHandle::shutdown` has a finite budget and a defined outcome on timeout;
+  the outcome is durable or recoverable, not silent.
+- The macOS `ExitTimeOut` is derived from the drain and writer budgets, and a test
+  asserts the rendered plist carries the derived value.
+- A SIGTERM test holds a terminal-tx append in flight through the release timeout
+  and proves either durability before exit, or a durable run-specific recovery
+  record written before the watchdog can kill the daemon.
+- An end-to-end restart regression covers service stop and replacement bind with a
+  release that outlasts five seconds.
+
+** Non-goals
+
+- Do not revert `6a518f3`. Its atomic-admission fix is sound and reviewed.
+- Reviewer finding 2 (old CLI → new daemon terminal-tx race) is **out of scope**
+  and filed separately. It is pre-existing from TASK-WGXKD.1 and the reviewer
+  states it does not block this round.
+
+* BACKLOG TASK-QSSQH C0XMR fix round: a genuine RunFail must survive a later worker finalize    :daemon:stage:fix:
+:PROPERTIES:
+:ID: TASK-QSSQH
+:PRIORITY: P0
+:test_cmd: cargo test -p orgasmic-daemon
+:write_scope: crates/orgasmic-daemon/src/api.rs crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+Fix round for the reviewer BLOCK SHIP on TASK-C0XMR (merged `0533735`).
+Reviewer: reviewer-codex-rmux (rmux / codex / gpt-5.6-sol / high),
+run-20260728T103249, closed tx-20260728-orgasmic-3139.
+
+The merged change is NOT reverted. What it got right, confirmed by review:
+session ordering on the normal path is persisted JSONL order and the
+implementation does **not** compare wall-clock timestamps; the same outcome
+function serves grill, architect and plan, so the fix is not architect-specific
+and does not depend on `architector.done`; duplicate CLI finalize is already
+convergent at the release/tx boundary (release removes the live run, retries
+verify the durable worker-finalize tombstone, the terminal tx has a deterministic
+request id) — no idempotence defect exists. All gates passed, including the real
+production-path test `stage_architect_finalize_from_orgasmic_run_id_on_main`.
+
+The defect is the one the brief named as worse than the original bug, and it is
+in this diff.
+
+** HIGH — a genuine terminal failure followed by a worker finalize is turned green
+
+`crates/orgasmic-daemon/src/api.rs:6098,6141-6149`.
+
+`DriverEvent::RunFail` is a real failure: the production drain maps it to
+`ReleaseOutcome::Failed` and stores it on the run
+(`supervisor.rs:3429-3463`). Explicit release deliberately waits for that drain
+and persists the stored terminal outcome, so a finalize racing a queued `RunFail`
+produces the authoritative shape
+`Release { outcome: Failed, finalized_by_worker: true }`
+(`supervisor.rs:2181-2228`).
+
+The new scan sets `pending_failure` and then clears it **unconditionally** on
+`finalized_by_worker`, inspecting neither the failure kind nor the release
+outcome, and returns `StageOutcome::Completed`. The stage watcher then writes
+`<stage>.completed` for a run the supervisor classified as failed.
+
+The added negative test does not cover the claimed case:
+`stage_outcome_fails_when_a_fatal_driver_error_has_no_worker_finalize_after_it`
+uses `finalized_by_worker: false`, while the adversarial case is failure **plus**
+finalize.
+
+Required (reviewer's direction 1): make semantic failure sticky across worker
+finalize. At minimum `RunFail` must survive a later finalize. For fatal driver
+errors, persist enough release-boundary or classification data to suppress only
+the errors *caused by* the finalize teardown, rather than clearing every earlier
+failure. Add a regression for
+`RunFail -> Release { outcome: Failed, finalized_by_worker: true }`, plus a
+production-path race test.
+
+** Open question the reviewer raised, and it is the crux
+
+What durable session event should identify the finalize-admission boundary? The
+trailing release cannot distinguish a queued genuine `RunFail` from a fatal error
+caused by teardown, because **both are drained before that release**. Answer this
+explicitly before writing the fix; a suppression rule that cannot name its
+boundary will get one of the two cases wrong. Record the answer in the task or a
+decision, not only in a code comment.
+
+** Acceptance
+
+- A run with a queued `RunFail` that is then finalized by its worker is recorded
+  as failed, not completed.
+- A teardown-induced error after a clean finalize is still suppressed — the
+  original C0XMR symptom must not regress.
+- Both cases have regressions, and the failure case exercises
+  `finalized_by_worker: true`.
+- The finalize-admission boundary is named and durable, not inferred from
+  ordering alone.
+
+** Non-goals
+
+- Do not revert `0533735`.
+- Reviewer finding 2 (a live stage loses its completion watcher across daemon
+  restart) is **out of scope** and filed separately. It is pre-existing and
+  outside this diff.
+
+* BACKLOG TASK-37TAF An old CLI releasing with no terminal_tx still loses it on acp-stdio; only one skew direction is fail-closed    :dispatch:daemon:defect:skew:
+:PROPERTIES:
+:ID: TASK-37TAF
+:PRIORITY: P1
+:test_cmd: cargo test -p orgasmic-daemon
+:END:
+
+Found 2026-07-28 by the TASK-WGXKD.2 reviewer (reviewer-codex-rmux,
+run-20260728T103240) as finding 2. Pre-existing from TASK-WGXKD.1, outside the
+TASK-WGXKD.2 diff, so it did not block that round — but it means the parent
+TASK-WGXKD **cannot claim both version-skew directions are safe**, and TASK-WGXKD
+must not close until this is resolved.
+
+** The defect
+
+`crates/orgasmic-daemon/src/api.rs:6849,7118-7141`.
+
+`terminal_tx` is optional on the release payload. A `finalized_by_worker` release
+carrying `terminal_tx: None` releases the run and returns success with
+`terminal_tx_id: None`. An old CLI then still owes the separate `POST /tx`.
+
+On acp-stdio the release reaps the old finalize process's own setsid group
+**before** that POST is made, leaving a released run with no terminal tx. That is
+exactly the loss TASK-WGXKD exists to prevent, arriving through the skew
+direction the capability handshake does not cover.
+
+** What is already correct — do not redo it
+
+The other direction is fail-closed and proven: new CLI against an old daemon is
+refused by the TASK-WGXKD.1 capability handshake, and its regression passed under
+review. Only old CLI → new daemon is open.
+
+** Fix, per the reviewer
+
+Two shapes, choose and record which:
+
+A. Fail closed before releasing when `finalized_by_worker: true` arrives with no
+   `terminal_tx`, and tell the operator to upgrade or restart the CLI. Keeps the
+   lease held rather than releasing into a known-lossy path.
+B. Reconstruct the terminal tx server-side from what the daemon already knows,
+   so the old CLI's missing POST stops mattering.
+
+A is the safe one and matches the handshake's existing posture; B removes the
+skew concern entirely but has to be correct about what the daemon can reconstruct
+without the worker's own report.
+
+** Acceptance
+
+- An old-payload / new-daemon acp-stdio regression that proves either the lease
+  stays held, or the terminal tx lands atomically with the release.
+- The chosen shape is recorded, not just implemented.
+- TASK-WGXKD's version-skew claim is restated to match what is actually true.
+
+** Non-goals
+
+- Do not touch the capability handshake's new-CLI/old-daemon direction; it works.
+- Do not fold this into the TASK-WGXKD.2 fix round (TASK-Q07Y5) — the reviewer
+  scoped them apart deliberately, and Q07Y5's writer-budget work is unrelated.
+
+* BACKLOG TASK-KPMFK A live stage loses its completion watcher across daemon restart, so no terminal tx is ever emitted    :daemon:stage:boot:defect:
+:PROPERTIES:
+:ID: TASK-KPMFK
+:PRIORITY: P1
+:test_cmd: cargo test -p orgasmic-daemon
+:END:
+
+Found 2026-07-28 by the TASK-C0XMR reviewer (reviewer-codex-rmux,
+run-20260728T103249) as finding 2. Pre-existing and outside the C0XMR diff, so it
+did not block that round — but it falsifies the cross-restart guarantee that
+review asked C0XMR to prove, so it belongs to the same family.
+
+** The defect
+
+`crates/orgasmic-daemon/src/api.rs:3321-3330,8973-9020`.
+
+`post_stage` keeps `stage`, `target` and completion ownership **only** in the
+spawned in-process `StageCompletion`. Boot reattach reconstructs the run but
+respawns only `DispatchCompletion`, and only when both `last_path` and
+`stdout_path` exist.
+
+Stage runs carry `last_path: Some` and `stdout_path: None`
+(`api.rs:3239-3267`), so they land in the partial-artifact warning branch and **no
+stage watcher is recreated**.
+
+Consequence: if the daemon restarts while `grill`, `plan` or `architect` is live,
+a later worker finalize is persisted but no `<stage>.completed` or
+`<stage>.failed` tx is ever emitted. The C0XMR outcome rule is never called at
+all. The stage silently has no terminal record.
+
+No restart test exercises a stage watcher, which is why this survived.
+
+** Fix, per the reviewer
+
+Persist stage completion metadata — `stage`, project/task, and `target` — in
+recoverable lifecycle state, and have boot reconciliation respawn or directly
+reconcile `StageCompletion`.
+
+Note the partial-artifact branch is doing real work for dispatch runs; the fix is
+to stop treating `stdout_path: None` as "incomplete" for a run shape that legitimately
+never has one, not to weaken the branch for everybody.
+
+** Acceptance
+
+- A daemon-restart test for each shared stage path (`grill`, `plan`, `architect`).
+- The `architect` case must cover its report-only terminal tx specifically —
+  `architect` is a STAGE kind whose worker finalize emits `architector.reported`
+  rather than `architector.done` (recorded near `api.rs:22475`, TASK-6AYEJ.1), so
+  a watcher keyed on `.done` would pass the other two and still miss this one.
+- A stage live across a restart emits its terminal tx.
+
+** Non-goals
+
+- Do not fold this into the C0XMR fix round (TASK-QSSQH). That round owns the
+  failure-stickiness rule; this one owns watcher recovery. They touch the same
+  file and must not be dispatched concurrently.

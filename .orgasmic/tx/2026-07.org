@@ -32607,3 +32607,156 @@
 :PROJECT:      orgasmic
 :REASON:       TASK-RRT4T nuance, measured on the live daemon 2026-07-28: the task attributes the false green to launchd not carrying ~/.local/bin, but that is not true on this machine. The LaunchAgent plist embeds the PATH captured at daemon start, and ps eww on daemon pid 32814 shows /Users/aspirational/.local/bin present with an executable rmux in it, so a dispatched worker DOES resolve rmux here. The measured PATH table in the task is a simulation of a worker environment (an explicitly stripped PATH), not a measurement of one; the direct evidence that workers actually skipped is the zero rmux-session growth in the round-2 report, which is separate and stronger. Also ruled out for the daemon lib binary: the only PATH mutations there (api.rs:24529, tests/dispatch_endpoint.rs:2406) PREPEND a dir and restore, so they cannot hide rmux; the crate that empties PATH outright is orgasmic-drivers (adapters/claude.rs:1866 sets PATH to empty and restores at :1874), a different test binary. None of this changes the fix - a skip must be loud - but the stated mechanism should not be carried forward unverified.
 :END:
+
+* TX 2026-07-28 Tue 10:47:12 reviewer.reported TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3135
+:TIME:         [2026-07-28 Tue 10:47:12]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:RUN_ID:       run-20260728T103240-3591c57ecd8440b4a07800163c32d580
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.2-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 10:47:57 reviewer.reported TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3136
+:TIME:         [2026-07-28 Tue 10:47:57]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:RUN_ID:       run-20260728T103249-807f7a44690e460984d859f2a35ad705
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-c0xmr-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 10:48:23 reviewer.done TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3137
+:TIME:         [2026-07-28 Tue 10:48:23]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 6a518f3
+:CLOSED_TX:    tx-20260728-orgasmic-3119
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 10:48:23 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3138
+:TIME:         [2026-07-28 Tue 10:48:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-WGXKD.2 to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 10:49:08 reviewer.done TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3139
+:TIME:         [2026-07-28 Tue 10:49:08]
+:TYPE:         reviewer.done
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REVIEWED_DIFF: 0533735
+:CLOSED_TX:    tx-20260728-orgasmic-3123
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 10:49:08 task.state_transitioned TASK-C0XMR
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3140
+:TIME:         [2026-07-28 Tue 10:49:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-C0XMR
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-C0XMR to in_progress
+:FROM_STATE:   in_review
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 10:49:35 task.created TASK-Q07Y5
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3141
+:TIME:         [2026-07-28 Tue 10:49:35]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Q07Y5
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-Q07Y5
+:END:
+
+* TX 2026-07-28 Tue 10:49:36 task.created TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3142
+:TIME:         [2026-07-28 Tue 10:49:36]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-QSSQH
+:END:
+
+* TX 2026-07-28 Tue 10:49:41 reviewer.reported TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3143
+:TIME:         [2026-07-28 Tue 10:49:41]
+:TYPE:         reviewer.reported
+:ACTOR:        agent.reviewer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:RUN_ID:       run-20260728T103245-041f13f86fad42978172d0aa3986f64c
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.3-review/worktree
+:END:
+
+* TX 2026-07-28 Tue 10:50:13 task.created TASK-37TAF
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3144
+:TIME:         [2026-07-28 Tue 10:50:13]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-37TAF
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-37TAF
+:END:
+
+* TX 2026-07-28 Tue 10:50:14 task.created TASK-KPMFK
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3145
+:TIME:         [2026-07-28 Tue 10:50:14]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KPMFK
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-KPMFK
+:END:
