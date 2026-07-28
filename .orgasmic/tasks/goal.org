@@ -2,12 +2,28 @@
 #+orgasmic_version: 1
 #+scope: project
 
-* GOAL Land the committed runtime fixes safely, then repair what took the runtime down :goal:
+* GOAL drive the whole board to done, including what the work uncovers :goal:
+:PROPERTIES:
+:ID:               goal-20260728-drive-the-whole
+:SET_AT:           [2026-07-28 Tue]
+:SET_BY:           theaspirational@users.noreply.github.com
+:REPLACES:         goal-20260725-land-the-committed
+:END:
+
+** Statement
+Operator directive 2026-07-27: keep working the task board to completion without asking for per-dispatch approval. Tasks discovered while implementing existing tasks are in scope, not deferrals — file them and drive them too. Be creative about method. Standing authorization to dispatch workers of any harness; the 2026-07-26 hold on claude workers is LIFTED. Judgement still required and still mine: choose the transport that can actually survive the work (the standing worker matrix says rmux, but rmux panes are unprotected past 600s for redraw-only TUI harnesses until TASK-RWCRN.1 lands, so acp-stdio is the correct choice for claude fix rounds in the meantime), never run TASK-099T6's billing test, never hand-edit .orgasmic state, and keep reporting failures as failures. Do not ask before dispatching; do ask before anything irreversible or outward-facing, such as publishing a release or pushing to a remote.
+
+** Reached When
+Every task in backlog, todo, in_progress and in_review is either done or cancelled with a recorded reason, and no reviewer verdict is left unactioned. Fix subtasks minted from reviewer findings count as tasks: a BLOCK SHIP is not closed until its fix round lands and passes a fresh review.
+
+* SUPERSEDED Land the committed runtime fixes safely, then repair what took the runtime down :goal:
 :PROPERTIES:
 :ID:               goal-20260725-land-the-committed
 :SET_AT:           [2026-07-25 Sat]
 :SET_BY:           theaspirational@users.noreply.github.com
 :REPLACES:         goal-20260725-harden-the-manager
+:STATUS:           superseded
+:SUPERSEDED_AT:    [2026-07-28 Tue]
 :END:
 
 ** Statement

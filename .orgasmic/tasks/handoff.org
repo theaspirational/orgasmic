@@ -8,7 +8,7 @@
 :LIVENESS:         db071733bf3bf95e275d6d1314c31b277a5441dd
 :LIVENESS_AT:      [2026-07-26 Sun]
 :UPDATED_AT:       [2026-07-26 Sun]
-:GOAL_ID:          goal-20260725-land-the-committed
+:GOAL_ID:          goal-20260728-drive-the-whole
 :END:
 
 Session 2026-07-26 (manager-direct + four dispatches). The theme: the daemon test
