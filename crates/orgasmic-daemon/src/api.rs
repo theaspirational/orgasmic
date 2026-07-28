@@ -19180,11 +19180,15 @@ mod tests {
             boot_id: "boot-before-restart".into(),
         };
         let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = Command::new("tmux")
+        let status = orgasmic_drivers::modes::tmux::tmux_command()
             .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
             .status()
             .unwrap();
-        assert!(status.success(), "tmux test session should start");
+        assert!(
+            status.success(),
+            "tmux test session should start on {}",
+            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        );
         let guard = TmuxSessionGuard(session_name);
 
         let session_path =
@@ -19473,11 +19477,15 @@ mod tests {
         // replay that reattaches an *existing* runtime rather than spawning.
         let planned_session =
             orgasmic_drivers::modes::tmux::tmux_session_name(&plan.planned_identity);
-        let status = Command::new("tmux")
+        let status = orgasmic_drivers::modes::tmux::tmux_command()
             .args(["new-session", "-d", "-s", &planned_session, "sleep", "60"])
             .status()
             .unwrap();
-        assert!(status.success(), "planned tmux session should start");
+        assert!(
+            status.success(),
+            "planned tmux session should start on {}",
+            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        );
         let _planned_guard = TmuxSessionGuard(planned_session);
 
         let state = direct_stage_test_state(home).await;
@@ -19537,11 +19545,15 @@ mod tests {
             boot_id: "boot-before-restart".into(),
         };
         let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = Command::new("tmux")
+        let status = orgasmic_drivers::modes::tmux::tmux_command()
             .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
             .status()
             .unwrap();
-        assert!(status.success(), "tmux test session should start");
+        assert!(
+            status.success(),
+            "tmux test session should start on {}",
+            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        );
         let _guard = TmuxSessionGuard(session_name);
 
         let session_path =
@@ -21770,7 +21782,7 @@ mod tests {
 
     impl Drop for TmuxSessionGuard {
         fn drop(&mut self) {
-            let _ = Command::new("tmux")
+            let _ = orgasmic_drivers::modes::tmux::tmux_command()
                 .args(["kill-session", "-t", &self.0])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -21779,6 +21791,14 @@ mod tests {
     }
 
     fn tmux_on_path() -> bool {
+        // orgasmic:TASK-0RCRY
+        // Every tmux-gated test in this binary gates on this, so this is where
+        // the run claims the server it owns — before any fixture session is
+        // created. Without it a fixture lands on whichever server the
+        // environment selects: the operator's own on a dev box, and inside an
+        // orgasmic worker (where `tmux` on PATH is a symlink to `rmux`) the
+        // rmux server hosting live worker panes.
+        orgasmic_drivers::modes::tmux::own_tmux_server_for_tests();
         Command::new("which")
             .arg("tmux")
             .stdout(std::process::Stdio::null())
@@ -24031,11 +24051,15 @@ mod tests {
             boot_id: "boot-test".into(),
         };
         let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = Command::new("tmux")
+        let status = orgasmic_drivers::modes::tmux::tmux_command()
             .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
             .status()
             .unwrap();
-        assert!(status.success(), "tmux test session should start");
+        assert!(
+            status.success(),
+            "tmux test session should start on {}",
+            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        );
         let _guard = TmuxSessionGuard(session_name);
         let project_root = tmp.path().join("proj");
         write_nonterminal_session(
@@ -24417,11 +24441,15 @@ mod tests {
             boot_id: "boot-test".into(),
         };
         let session_name = orgasmic_drivers::modes::tmux::tmux_session_name(&identity);
-        let status = Command::new("tmux")
+        let status = orgasmic_drivers::modes::tmux::tmux_command()
             .args(["new-session", "-d", "-s", &session_name, "sleep", "60"])
             .status()
             .unwrap();
-        assert!(status.success(), "tmux test session should start");
+        assert!(
+            status.success(),
+            "tmux test session should start on {}",
+            orgasmic_drivers::modes::tmux::tmux_server_selection()
+        );
         let _guard = TmuxSessionGuard(session_name);
         let session_path =
             write_nonterminal_session(&project_root, identity, "tmux-tui/1", "manager-tmux-tui");

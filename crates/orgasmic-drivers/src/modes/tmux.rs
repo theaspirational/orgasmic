@@ -616,7 +616,172 @@ impl Drop for TmuxTuiControl {
     }
 }
 
+// orgasmic:TASK-0RCRY
+/// Names the tmux server every call site in this process talks to, as a `-L`
+/// socket label.
+///
+/// Unset in production, deliberately: the daemon must reach the same server an
+/// operator's own `tmux attach` reaches, or an attached pane would be
+/// invisible. A test binary sets it (see [`own_tmux_server_for_tests`]) so its
+/// sessions live on a server the run created and nothing else can reach.
+pub const TMUX_SOCKET_ENV: &str = "ORGASMIC_TMUX_SOCKET";
+
+/// Where [`own_tmux_server_for_tests`] records this process's own socket.
+///
+/// In-process rather than environment-only on purpose. Tests in this workspace
+/// do mutate process-global environment (see `.orgasmic/gotchas.org`, "Tests
+/// that set PATH break every other test in the binary"), and a run that lost
+/// `ORGASMIC_TMUX_SOCKET` mid-flight would silently fall back to the shared
+/// server — the exact failure this exists to prevent, in its hardest-to-see
+/// form. The environment variable is still set alongside, so a child process
+/// inherits the selection and so an operator can pin one by hand.
+static OWNED_TMUX_SOCKET: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The `-L` label for this process, or `None` for "whichever server the
+/// environment selects".
+///
+/// Resolved on every call rather than cached: a test binary pins the socket
+/// from its first tmux-gated test, and a cached `None` from some earlier
+/// unrelated probe would strand the whole binary on the shared server.
+fn tmux_socket() -> Option<String> {
+    if let Some(socket) = OWNED_TMUX_SOCKET.get() {
+        return Some(socket.clone());
+    }
+    std::env::var(TMUX_SOCKET_ENV)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+// orgasmic:TASK-0RCRY
+/// The tmux server this process talks to, and how that server was selected —
+/// for failure messages.
+///
+/// `tmux new-session failed: server exited unexpectedly` is true and useless
+/// when tmux is installed and working; the server identity is the part that
+/// distinguishes "tmux is broken" from "something else is using this server".
+#[must_use]
+pub fn tmux_server_selection() -> String {
+    match tmux_socket() {
+        Some(socket) => format!("server '-L {socket}' (selected by {TMUX_SOCKET_ENV})"),
+        None => {
+            let tmpdir = std::env::var("TMUX_TMPDIR").unwrap_or_default();
+            let via = if tmpdir.is_empty() {
+                "no -L/-S and no TMUX_TMPDIR".to_string()
+            } else {
+                format!("no -L/-S, TMUX_TMPDIR={tmpdir}")
+            };
+            format!("the default shared server ({via})")
+        }
+    }
+}
+
+// orgasmic:TASK-0RCRY
+/// The server-selection argv every tmux invocation carries — the whole of what
+/// this task adds to a tmux command line.
+///
+/// Split from [`tmux_socket`] so the property "a pinned socket really reaches
+/// the command line" is provable without mutating process-global environment
+/// while other tests are spawning real tmux clients.
+fn tmux_socket_args_for(socket: Option<&str>) -> Vec<String> {
+    match socket {
+        Some(socket) => vec!["-L".to_string(), socket.to_string()],
+        None => Vec::new(),
+    }
+}
+
+fn tmux_socket_args() -> Vec<String> {
+    tmux_socket_args_for(tmux_socket().as_deref())
+}
+
+// orgasmic:TASK-0RCRY
+/// Every synchronous tmux invocation in this crate is built here so the `-L`
+/// selection cannot be forgotten at one call site.
+///
+/// Public because the daemon's test binaries create their fixture sessions
+/// directly and must land on the same server as the production code they then
+/// exercise.
+#[must_use]
+pub fn tmux_command() -> StdCommand {
+    let mut command = StdCommand::new("tmux");
+    command.args(tmux_socket_args());
+    command
+}
+
+// orgasmic:TASK-0RCRY
+/// [`tmux_command`] for the async call sites.
+fn tmux_async_command() -> tokio::process::Command {
+    let mut command = tokio::process::Command::new("tmux");
+    command.args(tmux_socket_args());
+    command
+}
+
+// orgasmic:TASK-0RCRY
+/// Pin this process to a tmux server it owns, and hold that server open for as
+/// long as the process lives. Returns the `-L` socket label.
+///
+/// Idempotent and safe to call from every tmux-gated test: the first caller
+/// wins and every later caller gets the same label.
+///
+/// Two things are being bought here, and `-L` alone buys only the first:
+///
+/// 1. *Isolation.* Without `-L`, a test run reaches whichever server the
+///    environment selects — on a developer box that is the operator's own
+///    server, and inside an orgasmic worker (where `tmux` on `PATH` is a
+///    symlink to `rmux`) it is the rmux server hosting live worker panes.
+/// 2. *Stability.* A tmux server exits when its last session goes away, and
+///    its socket outlives that decision by a moment. The live-mux tests are
+///    serialized by the TASK-Z3093 flock, so the shared server repeatedly
+///    drains to zero sessions between tests — and the next test's client,
+///    arriving in that window, is told `server exited unexpectedly`. The
+///    keepalive session below means the session count never reaches zero, so
+///    that window never opens.
+///
+/// Reaping: nothing here needs an atexit hook. Each test still reaps its own
+/// session through its existing drop-guard, and the keepalive pane runs a shell
+/// loop that exits once this test process is gone — which removes the server's
+/// last session, at which point tmux tears the server down and unlinks the
+/// socket by itself. The loop is additionally capped so a recycled pid cannot
+/// keep an orphan server alive indefinitely.
+#[doc(hidden)]
+pub fn own_tmux_server_for_tests() -> &'static str {
+    OWNED_TMUX_SOCKET.get_or_init(|| {
+        let pid = std::process::id();
+        let socket = format!("orgasmic-test-{pid}");
+        // The in-process record above is what every call site reads; this is
+        // for child processes and for an operator pinning one by hand.
+        std::env::set_var(TMUX_SOCKET_ENV, &socket);
+        // Deliberately not `kill-server` first: killing a server is exactly
+        // what produces `server exited unexpectedly` for a concurrent client,
+        // and a per-pid socket cannot collide with a live one anyway.
+        let keepalive = format!(
+            "i=0; while [ $i -lt 21600 ] && kill -0 {pid} 2>/dev/null; do sleep 1; i=$((i+1)); done"
+        );
+        // Built from `socket` directly, NOT through `tmux_command()`: this runs
+        // inside `get_or_init`, so the record every other call site reads is
+        // not published yet and the keepalive would go to the shared server —
+        // the one session that must never land there.
+        let _ = StdCommand::new("tmux")
+            .args(tmux_socket_args_for(Some(&socket)))
+            .args([
+                "new-session",
+                "-d",
+                "-s",
+                "orgasmic-test-keepalive",
+                "--",
+                "/bin/sh",
+                "-c",
+                &keepalive,
+            ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        socket
+    })
+}
+
 fn tmux_available() -> bool {
+    // `-V` never contacts a server, so it needs no socket selection.
     StdCommand::new("tmux")
         .arg("-V")
         .stdout(std::process::Stdio::null())
@@ -633,7 +798,7 @@ pub fn tmux_session_name(identity: &RuntimeIdentity) -> String {
 /// Synchronous tmux session probe for crash-reconciliation paths that cannot
 /// await driver I/O.
 pub fn tmux_session_exists(session: &str) -> bool {
-    std::process::Command::new("tmux")
+    tmux_command()
         .args(["has-session", "-t", session])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -643,7 +808,7 @@ pub fn tmux_session_exists(session: &str) -> bool {
 }
 
 async fn has_tmux_session(session: &str) -> Result<bool, DriverError> {
-    let mut command = tokio::process::Command::new("tmux");
+    let mut command = tmux_async_command();
     command.kill_on_drop(true);
     let status = command
         .args(["has-session", "-t", session])
@@ -1537,7 +1702,7 @@ async fn spawn_tmux_session(
         execution_args = gated_args;
     }
 
-    let mut tmux = tokio::process::Command::new("tmux");
+    let mut tmux = tmux_async_command();
     tmux.args([
         "new-session",
         "-d",
@@ -1569,9 +1734,15 @@ async fn spawn_tmux_session(
         .map_err(|e| DriverError::Transport(format!("tmux spawn: {e}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        // orgasmic:TASK-0RCRY
+        // Name the server. `server exited unexpectedly` is true and useless on
+        // a host where tmux is installed and working; which server was reached,
+        // and how it got chosen, is the part that tells "tmux is broken" apart
+        // from "this server is shared with something else".
         return Err(DriverError::Transport(format!(
-            "tmux new-session failed (exit {}): {}",
+            "tmux new-session failed (exit {}) on {}: {}",
             output.status.code().unwrap_or(-1),
+            tmux_server_selection(),
             stderr.trim()
         )));
     }
@@ -1630,7 +1801,7 @@ async fn spawn_tmux_session(
         ["set-option", "-t", session, "mouse", "on"],
         ["set-option", "-t", session, "allow-rename", "off"],
     ] {
-        let _ = tokio::process::Command::new("tmux")
+        let _ = tmux_async_command()
             .args(opts)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -1659,7 +1830,7 @@ async fn paste_text_into_pane(
             .map_err(|e| DriverError::Transport(format!("tmux load-buffer prepare: {e}")))?;
         owner
             .spawn_register_and_wait(cancel, || {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = tmux_async_command();
                 cmd.args(["load-buffer", "-b", &buffer_name, "-"])
                     .stdin(Stdio::from(input))
                     .stdout(Stdio::null())
@@ -1668,7 +1839,7 @@ async fn paste_text_into_pane(
             })
             .await?;
     } else {
-        let mut child = tokio::process::Command::new("tmux")
+        let mut child = tmux_async_command()
             .args(["load-buffer", "-b", &buffer_name, "-"])
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -1719,7 +1890,7 @@ async fn run_tmux(
         let args = args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
         owner
             .spawn_register_and_wait(cancel, || {
-                let mut cmd = tokio::process::Command::new("tmux");
+                let mut cmd = tmux_async_command();
                 for arg in &args {
                     cmd.arg(arg);
                 }
@@ -1729,7 +1900,7 @@ async fn run_tmux(
             })
             .await
     } else {
-        let child = tokio::process::Command::new("tmux")
+        let child = tmux_async_command()
             .args(args)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
@@ -1865,7 +2036,7 @@ async fn session_exit_watch(
 }
 
 async fn capture_pane(session: &str) -> Result<String, DriverError> {
-    let output = tokio::process::Command::new("tmux")
+    let output = tmux_async_command()
         .args(["capture-pane", "-p", "-t", session, "-S", "-2000"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1936,7 +2107,7 @@ async fn deliver_prompt(
 }
 
 async fn capture_pane_visible(session: &str) -> Result<String, DriverError> {
-    let output = tokio::process::Command::new("tmux")
+    let output = tmux_async_command()
         .args(["capture-pane", "-p", "-t", session])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -2457,7 +2628,7 @@ pub(crate) fn strip_ansi_codes(input: &str) -> String {
 }
 
 async fn kill_tmux_session(session: &str) {
-    let _ = tokio::process::Command::new("tmux")
+    let _ = tmux_async_command()
         .args(["kill-session", "-t", session])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -2466,7 +2637,7 @@ async fn kill_tmux_session(session: &str) {
 }
 
 fn kill_tmux_session_sync(session: &str) {
-    let _ = StdCommand::new("tmux")
+    let _ = tmux_command()
         .args(["kill-session", "-t", session])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -2521,11 +2692,17 @@ mod tests {
         if !tmux_available() {
             return false;
         }
+        // orgasmic:TASK-0RCRY
+        // Every tmux-gated test in this binary funnels through this probe, so
+        // this is the one place that has to claim the owned server — and it
+        // claims it *before* the first session is created, which is what keeps
+        // a probe session off the operator's server.
+        own_tmux_server_for_tests();
         let session = format!(
             "orgasmic-test-probe-{}",
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
         );
-        let status = tokio::process::Command::new("tmux")
+        let status = tmux_async_command()
             .args(["new-session", "-d", "-s", &session, "--", "sleep", "1"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -2552,7 +2729,7 @@ mod tests {
         let _environment = test_environment_lock().lock().await;
         assert_required_test_tooling(&[
             ToolRequirement::new("rmux", 9, probe_rmux_binary().usable()),
-            ToolRequirement::new("tmux", 8, tmux_spawn_usable().await),
+            ToolRequirement::new("tmux", 9, tmux_spawn_usable().await),
             ToolRequirement::new("sleep", 1, command_available("sleep")),
             ToolRequirement::new("bash", 1, command_available("bash")),
             ToolRequirement::new("claude", 8, command_succeeds("claude", &["--version"])),
@@ -3797,7 +3974,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let session = format!("orgasmic-trust-probe-{}", std::process::id());
         let _guard = live_session_guard();
-        let output = tokio::process::Command::new("tmux")
+        let output = tmux_async_command()
             .args([
                 "new-session",
                 "-d",
@@ -3819,7 +3996,7 @@ mod tests {
         let pane = capture_pane_visible(&session)
             .await
             .expect("capture probe pane");
-        let _ = tokio::process::Command::new("tmux")
+        let _ = tmux_async_command()
             .args(["kill-session", "-t", &session])
             .status()
             .await;
@@ -3969,6 +4146,110 @@ mod tests {
         assert_eq!(driver().transport(), "tmux");
     }
 
+    // orgasmic:TASK-0RCRY
+    /// The socket a run pins must actually reach the tmux command line.
+    ///
+    /// This is the injection proof for TASK-0RCRY, and it deliberately touches
+    /// no tmux server at all: a run with the isolation removed must be caught
+    /// by a check that cannot itself create a session on somebody else's
+    /// server. `tmux_sessions_land_on_a_server_the_test_run_owns` is the
+    /// behavioural half.
+    ///
+    /// Injection: make `tmux_socket_args_for` return `Vec::new()` — the pre-fix
+    /// state in which no call site passes `-L`/`-S`.
+    #[test]
+    fn tmux_socket_args_pin_the_server_on_the_command_line() {
+        assert_eq!(
+            tmux_socket_args_for(Some("orgasmic-test-42")),
+            vec!["-L".to_string(), "orgasmic-test-42".to_string()],
+            "a pinned socket must reach the tmux command line as -L <socket>"
+        );
+        assert!(
+            tmux_socket_args_for(None).is_empty(),
+            "production pins nothing: the daemon must reach the same server an \
+             operator's own tmux client reaches"
+        );
+    }
+
+    // orgasmic:TASK-0RCRY
+    /// A test run must never reach a tmux server it did not create.
+    ///
+    /// Before TASK-0RCRY no call site passed `-L`/`-S`, so every probe and
+    /// fixture session landed on whichever server the environment selected: the
+    /// operator's own on a developer box, and inside an orgasmic worker — where
+    /// `tmux` on `PATH` is a symlink to `rmux` — the rmux server hosting live
+    /// worker panes.
+    ///
+    /// Injection: make `tmux_socket()` return `None`, or drop the `-L` from
+    /// `tmux_command`, and the argv assertion below goes red. It is asserted
+    /// first, deliberately: a run with the isolation removed must fail *before*
+    /// it can create a session on a server someone else owns.
+    #[tokio::test]
+    async fn tmux_sessions_land_on_a_server_the_test_run_owns() {
+        let _live_guard = live_session_guard();
+        let (tmux_available, _) = tmux_and_command_available(None).await;
+        if skip_test_if_missing(
+            "tmux_sessions_land_on_a_server_the_test_run_owns",
+            &[("tmux", tmux_available)],
+        ) {
+            return;
+        }
+
+        let socket = own_tmux_server_for_tests();
+        assert!(
+            socket.starts_with("orgasmic-test-"),
+            "the owned socket must be this test process's own, got {socket:?}"
+        );
+
+        let argv = tmux_command()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            argv,
+            vec!["-L".to_string(), socket.to_string()],
+            "every tmux invocation must pin the server this run owns; \
+             selection reported as: {}",
+            tmux_server_selection()
+        );
+
+        // And the session really is only there: created through the same
+        // constructor the driver uses, it must be invisible to a client that
+        // selects the server the way every call site used to.
+        let session = format!(
+            "orgasmic-owned-probe-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        );
+        let _guard = SessionGuard(session.clone());
+        let status = tmux_async_command()
+            .args(["new-session", "-d", "-s", &session, "--", "sleep", "10"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .expect("spawn tmux");
+        assert!(
+            status.success(),
+            "session must start on {}",
+            tmux_server_selection()
+        );
+        assert!(
+            has_tmux_session(&session).await.unwrap(),
+            "the owned server must hold the session this run created"
+        );
+        let on_shared_server = StdCommand::new("tmux")
+            .args(["has-session", "-t", &session])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        assert!(
+            !on_shared_server,
+            "a test session must not be reachable on the shared default server"
+        );
+    }
+
     /// Real-tmux smoke. The binary sentinel reports hosts without `tmux`;
     /// when tmux is present we verify the driver actually spawns + tears
     /// down a session.
@@ -4006,7 +4287,7 @@ mod tests {
         assert_eq!(capabilities["inert"], false);
         // Verify tmux actually has the session.
         let session_name = tmux_session_name(&s.identity);
-        let listed = std::process::Command::new("tmux")
+        let listed = tmux_command()
             .args(["has-session", "-t", &session_name])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -4016,7 +4297,7 @@ mod tests {
         s.control.release("done").await.unwrap();
         // Give tmux a moment to actually tear down.
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let listed = std::process::Command::new("tmux")
+        let listed = tmux_command()
             .args(["has-session", "-t", &session_name])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -4088,7 +4369,7 @@ mod tests {
                 .unwrap();
             let _ready = s.events.recv().await.unwrap();
             let session_name = tmux_session_name(&s.identity);
-            let listed = std::process::Command::new("tmux")
+            let listed = tmux_command()
                 .args(["has-session", "-t", &session_name])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -4098,7 +4379,7 @@ mod tests {
             session_name
         };
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        let listed = std::process::Command::new("tmux")
+        let listed = tmux_command()
             .args(["has-session", "-t", &session_name])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -4263,7 +4544,7 @@ mod tests {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         let mut pane = String::new();
         while std::time::Instant::now() < deadline {
-            let output = std::process::Command::new("tmux")
+            let output = tmux_command()
                 .args(["capture-pane", "-pt", &session_name, "-S", "-100"])
                 .output()
                 .unwrap();
