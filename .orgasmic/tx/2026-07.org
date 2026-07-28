@@ -36037,3 +36037,119 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-28 Tue 16:16:53 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3342
+:TIME:         [2026-07-28 Tue 16:16:53]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-WGXKD.2 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-28 Tue 16:16:54 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3343
+:TIME:         [2026-07-28 Tue 16:16:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-WGXKD.2 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 16:16:54 task.state_transitioned TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3344
+:TIME:         [2026-07-28 Tue 16:16:54]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-WGXKD.2 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 16:16:55 task.state_transitioned TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3345
+:TIME:         [2026-07-28 Tue 16:16:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-WGXKD.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 16:16:55 task.state_transitioned TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3346
+:TIME:         [2026-07-28 Tue 16:16:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-WGXKD.1 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 16:16:55 task.state_transitioned TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3347
+:TIME:         [2026-07-28 Tue 16:16:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-WGXKD to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 16:16:56 task.state_transitioned TASK-WGXKD
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3348
+:TIME:         [2026-07-28 Tue 16:16:56]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-WGXKD to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 16:17:11 verification orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3349
+:TIME:         [2026-07-28 Tue 16:17:11]
+:TYPE:         verification
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       WGXKD chain closed on evidence: merges 80dc4ec/1fbc3f7/6a518f3 all on main, terminal fix round R74E8 merged e1b94b2 after Q07Y5 0829c34 was reverted; Q07Y5 finding 1 satisfied in HEAD (WRITER_SHUTDOWN_TIMEOUT + shutdown_within TimedOut outcome, service_stop_timeout derived, plist test asserts the relationship not a literal, live ExitTimeOut=50) and finding 2 by the stalled_writer end-to-end regression in CLI tests
+:END:

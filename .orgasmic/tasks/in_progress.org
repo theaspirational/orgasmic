@@ -745,68 +745,6 @@ passes `-L`/`-S`, so every probe, test session and production call shares a
 single tmux server. If isolating that server does not fix these, the result
 belongs back here.
 
-* IN_PROGRESS TASK-WGXKD a worker finalize can lose its terminal tx because releasing the lease kills the process that writes it :dispatch:cli:defect:race:
-:PROPERTIES:
-:ID: TASK-WGXKD
-:PRIORITY: P0
-:BLOCKED_BY: TASK-R74E8
-:END:
-
-MEASURED 2026-07-27 on run run-20260727T131952-9138610466c24c469819ac27e3f6c504 (TASK-RWCRN, implementer-claude-acp-stdio, rebuilt runtime 4d1369a). A worker called `orgasmic dispatch finalize --summary-file ... --commit` and it half-applied: the commit landed (2a69f66 at 13:51:57Z), last.txt was written (16566 bytes), the lease release succeeded and the daemon emitted run_complete with summary "worker finalize for TASK-RWCRN" (session seq 984) — but NO terminal tx was ever written, to either the project or the home ledger. dispatch-status reported [pid-gone] [run-live] [unreported]. The very next session event, seq 985, is a fatal driver_error: "claude exited with status signal: 9 (SIGKILL)".
-
-THE MECHANISM. cmd_dispatch_finalize (crates/orgasmic-cli/src/manager.rs:1213-1218) deliberately orders the terminal tx LAST, after commit, last.txt and lease release, and the comment states the intent: "If any earlier step fails or the process dies, no completion tx is on record — the run stalls and is flagged orphan (rescuable), never a done claim with no report + a held lease." The ordering is sound in isolation but is self-cancelling in production: step 2 (release_dispatch_run_with_reason, manager.rs:1246) tears down the driver, which SIGKILLs the harness process — and the `orgasmic dispatch finalize` CLI is a descendant of that same harness shell. Release kills the process that still has to perform step 3. The wider the gap between release and the tx POST, the more likely the loss.
-
-WHY IT IS NOT MERELY COSMETIC. The stated fallback did not occur either: the run was not flagged orphan, and the daemon log has no "release without worker finalize, flagging orphan" line for this run — because from the daemon side the release WAS a worker finalize. So the run lands in a fourth state the design did not anticipate: work durable, report durable, lease released, no terminal tx, no orphan flag. It is invisible to both the success path and the rescue path. The manager only noticed because dispatch-status printed [unreported], which exists solely because of TASK-6AYEJ.
-
-NOT a TASK-6AYEJ regression: 6AYEJ changed WHICH tx type finalize emits (implementer.reported instead of implementer.done), not when it is emitted. The ordering predates it. 6AYEJ is what made the failure visible rather than silent.
-
-FREQUENCY. Timing-dependent, not deterministic. The daemon log shows many successful "worker finalized via orgasmic dispatch finalize, skipping scrape" lines on 07-26, so the tx usually wins the race.
-
-CANDIDATE FIXES, to be argued rather than assumed:
-1. Move the terminal tx BEFORE the release, accepting the risk the design comment was avoiding (a done claim with a held lease) and mitigating it with the release immediately after.
-2. Have the daemon emit the terminal tx as part of the release-with-finalization call, so it is server-side and cannot be lost to client death. This looks strongest: the daemon already knows finalized_by_worker=true and the tx content is derivable from the run record.
-3. Keep the client-side tx but make the release non-fatal to the caller (defer harness teardown until the client disconnects or a grace period elapses).
-
-ACCEPTANCE. A worker finalize whose harness is killed the instant the lease is released still produces its terminal tx; proven by a test that kills the finalizing client between release and tx, plus one live dispatch. dispatch-status must never again show a released run as [unreported] after a successful finalize.
-
-* IN_PROGRESS TASK-WGXKD.1 terminal-tx emission must survive version skew and graceful daemon shutdown :dispatch:daemon:cli:defect:
-:PROPERTIES:
-:ID: TASK-WGXKD.1
-:PRIORITY: P0
-:END:
-
-Fix round for the TASK-WGXKD reviewer BLOCK SHIP (run-20260728T054156-cc1dc747e09c42898e9805950fac473f, merge 80dc4ec). Two HIGH findings, verbatim below.
-
-** Finding 1 - HIGH correctness: the version-skew fallback is unreachable on the transport that motivated the task
-manager.rs:1326-1412. The new client waits for /runs/:id/release to return and only then POSTs /tx when terminal_tx_id is absent. A pre-80dc4ec daemon ignores the unknown terminal_tx field, performs only release_with_finalization, and returns the old response shape. On acp-stdio that release calls reap_process_group (crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs:231-242) and signals the finalize CLI's own setsid group BEFORE the response or the fallback can execute.
-
-So new CLI + old daemon reproduces the original defect exactly: durable commit, durable report, released lease, no terminal tx. The claimed version-skew safety is false for precisely the transport WGXKD existed to fix. This is a realistic upgrade / source-build window - the two halves ship in one runtime bundle but a user can run a freshly built CLI against a daemon that has not been restarted yet.
-
-FIX DIRECTION (reviewer): add a pre-release capability handshake for atomic release+terminal-tx support. If the daemon lacks it, FAIL BEFORE RELEASING and tell the operator to restart/upgrade the daemon - do not rely on a post-release client fallback, because on subprocess transports there is no 'post-release' for the client. Add a version-skew regression that reproduces pre-80dc4ec daemon behaviour on acp-stdio and asserts either atomic reporting or refusal with the lease still held.
-
-Note the failure mode of the fix itself: refusing to release leaves the lease held, which is the state the ORIGINAL ordering comment was trying to avoid. That is acceptable here because a held lease is visible and rescuable, whereas the lost tx is the invisible fourth state. Say so explicitly in the code comment so the next reader does not 'fix' it back.
-
-** Finding 2 - HIGH correctness: the detached finalization task is not owned by graceful shutdown
-api.rs:6561-6565. The detached task's only JoinHandle lives in the request future. When the caller disconnects - which is the normal case this whole fix exists for - that handle is dropped and the task continues untracked.
-
-Controlled restart drains only work already enqueued in the writer (api.rs:9630-9665), while daemon shutdown stops the writer immediately after axum returns (crates/orgasmic-daemon/src/lib.rs:637-650). If a restart lands while the detached task is still in driver teardown or has not yet reached append_tx_request, the drain barrier can pass first, the writer and runtime shut down, and the terminal tx is lost.
-
-This is a normal graceful-restart race, DISTINCT from the already-accepted daemon-crash gap. It is live on the manager's own machine: every launchctl kickstart of orgasmic.daemon during a runtime rebuild is exactly this window.
-
-The existing disconnect test does not cover it - it widens the gap to three seconds via release_terminal_tx_delay but then waits for the tx before shutting down.
-
-FIX DIRECTION (reviewer): register release/finalization tasks in daemon-owned lifecycle state, e.g. a task tracker or JoinSet held outside request futures. Graceful restart/shutdown must stop accepting new releases, await those tasks, THEN place the writer drain barrier and shut the writer down. Add a test that disconnects during release_terminal_tx_delay, initiates controlled restart before the append, and proves the terminal tx is durable before the old daemon exits.
-
-** Reviewer conclusions that are NOT findings - do not re-litigate
-- append_tx_request extraction is faithful: POST /tx delegates directly to it, so actor choice, destination, tx-id policy and project/home refresh are identical for both callers.
-- Generation ordering is safe: the terminal tx carries the exact RUN_ID, mark_matching_dispatch_reported fails closed on a present-but-unmatched run id, and dispatch creation rejects overlapping open task records.
-- The failed-append shape is visible: release removes the run before the terminal append, append failure is logged and returned, dispatch-status leaves the record [run-gone] [unreported] and --orphans-only includes it. That was the acceptance floor and it is met.
-- Old CLI + new daemon is compatible: absent terminal_tx defaults to None and the old client does its existing POST /tx.
-- No reachable restart double-emission was found. Caveat carried forward: writer request-id caching is in-memory only, so any FUTURE transport-error fallback would need persistent ledger-aware dedupe.
-
-** Manager note
-The reviewer asked in Open Questions whether the live acp-stdio trial passed. That trial is the TASK-6AYEJ.2 dispatch on the rebuilt runtime; its result will be recorded on TASK-WGXKD when it lands. It does not gate this fix round - both findings are code-level and hold regardless of the trial outcome.
-
 * IN_PROGRESS TASK-JQARS Implement the documented orgasmic manager drivers command :cli:runtime:docs:
 :PROPERTIES:
 :ID: TASK-JQARS
