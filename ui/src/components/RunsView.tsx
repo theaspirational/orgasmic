@@ -1,9 +1,9 @@
 import { useMemo, useState } from 'react';
 
-import { fetchRun, fetchRuns, postRunRelease } from '../lib/api';
+import { fetchRun, fetchRecoveryInventory, postRunRelease } from '../lib/api';
 import { useRunDock } from '../lib/runDock';
 import { isExternalManagerRun } from '../lib/runLabels';
-import type { RecoveredRun, RunsResponse, RunSummary } from '../lib/types';
+import type { RecoveredRun, RecoveryInventoryResponse, RunSummary } from '../lib/types';
 import { useResource } from '../lib/useResource';
 import { Badge, DataTable, ErrorPanel, JsonPanel, Loading } from './Primitives';
 
@@ -45,7 +45,7 @@ function recoveredRows(classification: string, runs: RecoveredRun[]): RunRow[] {
   }));
 }
 
-function flattenRuns(data: RunsResponse | null): RunRow[] {
+function flattenRuns(data: RecoveryInventoryResponse | null): RunRow[] {
   if (!data) return [];
   return [
     ...liveRows(data.live),
@@ -58,7 +58,7 @@ function flattenRuns(data: RunsResponse | null): RunRow[] {
 
 export function RunsView({ projectId: _projectId }: { projectId: string | null }) {
   const { openRun } = useRunDock();
-  const runs = useResource('runs', fetchRuns);
+  const runs = useResource('runs', fetchRecoveryInventory);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const detail = useResource(
     `run-detail:${selectedRunId ?? 'none'}`,

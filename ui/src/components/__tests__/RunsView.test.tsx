@@ -3,12 +3,12 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RunSummary, RunsResponse } from '@/lib/types';
+import type { RunSummary, RecoveryInventoryResponse } from '@/lib/types';
 
-const { openRunMock, postRunReleaseMock, fetchRunsMock } = vi.hoisted(() => ({
+const { openRunMock, postRunReleaseMock, fetchRecoveryInventoryMock } = vi.hoisted(() => ({
   openRunMock: vi.fn(),
   postRunReleaseMock: vi.fn(async () => ({})),
-  fetchRunsMock: vi.fn(),
+  fetchRecoveryInventoryMock: vi.fn(),
 }));
 
 vi.mock('@/lib/runDock', () => ({
@@ -19,7 +19,7 @@ vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
     ...actual,
-    fetchRuns: fetchRunsMock,
+    fetchRecoveryInventory: fetchRecoveryInventoryMock,
     postRunRelease: postRunReleaseMock,
   };
 });
@@ -42,7 +42,7 @@ function run(runId: string, driver: string): RunSummary {
   };
 }
 
-function response(live: RunSummary[]): RunsResponse {
+function response(live: RunSummary[]): RecoveryInventoryResponse {
   return { live, interrupted: [], reattached: [], ambiguous: [], terminal_noop: [] };
 }
 
@@ -50,13 +50,13 @@ describe('RunsView external manager action', () => {
   beforeEach(() => {
     openRunMock.mockClear();
     postRunReleaseMock.mockClear();
-    fetchRunsMock.mockReset();
+    fetchRecoveryInventoryMock.mockReset();
   });
 
   afterEach(cleanup);
 
   it('renders End instead of Open and releases without creating a dock tab', async () => {
-    fetchRunsMock.mockResolvedValue(response([run('run-external', 'external')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(response([run('run-external', 'external')]));
     render(<RunsView projectId="proj" />);
 
     const end = await screen.findByRole('button', { name: 'End' });
@@ -68,7 +68,7 @@ describe('RunsView external manager action', () => {
   });
 
   it('keeps Open for an attachable run', async () => {
-    fetchRunsMock.mockResolvedValue(response([run('run-worker', 'rmux')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(response([run('run-worker', 'rmux')]));
     render(<RunsView projectId="proj" />);
     fireEvent.click(await screen.findByRole('button', { name: 'Open' }));
     expect(openRunMock).toHaveBeenCalledWith({ runId: 'run-worker' });

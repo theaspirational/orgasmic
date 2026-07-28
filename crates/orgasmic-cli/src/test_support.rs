@@ -87,3 +87,108 @@ impl Drop for ScopedEnv {
         }
     }
 }
+
+/// A minimal HTTP daemon stand-in that records every path it is asked for.
+///
+/// Exists so a control-path fence can be tested for *which question it asks*,
+/// not merely for the answer it reaches: a fence that reads liveness from the
+/// recovery inventory and one that reads it from the live source are
+/// indistinguishable by return value on a healthy board, and differ only on a
+/// board where the durable history cannot be read.
+pub(crate) struct RecordingDaemon {
+    port: u16,
+    paths: std::sync::Arc<Mutex<Vec<String>>>,
+    join: Option<std::thread::JoinHandle<()>>,
+}
+
+impl RecordingDaemon {
+    /// Bind an ephemeral port and answer each request through `respond`, which
+    /// maps a request path to `(status, json_body)`. An unmapped path is a 404.
+    pub(crate) fn start(respond: fn(&str) -> Option<(u16, String)>) -> Self {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind recording daemon");
+        let port = listener.local_addr().unwrap().port();
+        let paths = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let recorded = paths.clone();
+        let join = std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut request = Vec::new();
+                let mut byte = [0_u8; 1];
+                // Read just the request line + headers; these are GETs.
+                loop {
+                    match std::io::Read::read(&mut stream, &mut byte) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            request.push(byte[0]);
+                            if request.ends_with(b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let head = String::from_utf8_lossy(&request).to_string();
+                let Some(path) = head
+                    .lines()
+                    .next()
+                    .and_then(|line| line.split_whitespace().nth(1))
+                else {
+                    continue;
+                };
+                if path == SHUTDOWN_PATH {
+                    break;
+                }
+                recorded.lock().unwrap_or_else(|p| p.into_inner()).push(path.to_string());
+                let (status, body) = respond(path)
+                    .unwrap_or_else(|| (404, "{\"error\":\"not found\"}".to_string()));
+                let reason = match status {
+                    200 => "OK",
+                    404 => "Not Found",
+                    500 => "Internal Server Error",
+                    _ => "Status",
+                };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = std::io::Write::write_all(&mut stream, response.as_bytes());
+                let _ = std::io::Write::flush(&mut stream);
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        });
+        Self {
+            port,
+            paths,
+            join: Some(join),
+        }
+    }
+
+    pub(crate) fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// Every path requested so far, in order.
+    pub(crate) fn paths(&self) -> Vec<String> {
+        self.paths
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone()
+    }
+}
+
+/// Path the accept loop treats as "stop"; never recorded, never routed.
+const SHUTDOWN_PATH: &str = "/__recording_daemon_shutdown";
+
+impl Drop for RecordingDaemon {
+    fn drop(&mut self) {
+        // Unblock the accept loop rather than leaving a thread parked on it.
+        if let Ok(mut stream) = std::net::TcpStream::connect(("127.0.0.1", self.port)) {
+            let _ = std::io::Write::write_all(
+                &mut stream,
+                format!("GET {SHUTDOWN_PATH} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes(),
+            );
+        }
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}

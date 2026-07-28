@@ -15,7 +15,7 @@ import { useMe } from '@/hooks/useMe';
 import {
   fetchManagerDrivers,
   fetchManagerState,
-  fetchRuns,
+  fetchLiveRuns,
   isRunGoneError,
   postManagerLaunch,
   postRunRelease,
@@ -70,7 +70,11 @@ export function RunDock() {
 
   const manager = useResource('rundock-manager-state', fetchManagerState);
   // Run buttons need summaries (driver/kind/task) to label and render.
-  const runs = useResource('rundock-runs', fetchRuns);
+  // orgasmic:task_6HJYT — the dock renders live runs only, so it reads the
+  // supervisor-local live source rather than the recovery inventory. Tab
+  // restore (lib/runDock.tsx) is the path that genuinely needs recovered
+  // classifications and stays on the inventory.
+  const runs = useResource('rundock-runs', fetchLiveRuns);
 
   const liveRuns = useMemo(() => runs.data?.live ?? [], [runs.data?.live]);
   const runById = useMemo(() => {

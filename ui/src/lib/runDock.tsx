@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 
-import { fetchRecoveryStatus, fetchRuns } from '@/lib/api';
+import { fetchRecoveryStatus, fetchRecoveryInventory } from '@/lib/api';
 import { isRunDockEligible } from '@/lib/runLabels';
 import type { RunSummary } from '@/lib/types';
 import { applyWorkerTabUpdate, clampDockHeight, DEFAULT_DOCK_HEIGHT } from '@/lib/runDockUtils';
@@ -181,7 +181,7 @@ export function RunDockProvider({ children }: { children: ReactNode }) {
     void (async () => {
       try {
         const [runs, recovery] = await Promise.all([
-          fetchRuns().catch(() => null),
+          fetchRecoveryInventory().catch(() => null),
           fetchRecoveryStatus().catch(() => null),
         ]);
         if (cancelled) return;

@@ -428,7 +428,19 @@ export type ManagerLaunchResponse = {
   run_id: string;
 };
 
-export type RunsResponse = {
+/** `GET /runs/live` — supervisor-local liveness. No durable history is read to
+ * produce it, so it stays correct (and cheap) on a board whose session files
+ * are large, slow, or unreadable. */
+export type LiveRunsResponse = {
+  boot_id: string;
+  acquisition_paused: boolean;
+  live: RunSummary[];
+};
+
+/** `GET /runs` — the crash-recovery inventory, not a general run list. Every
+ * bucket but `live` is classified by scanning durable session JSONL across the
+ * whole board. Use {@link LiveRunsResponse} when only live state is wanted. */
+export type RecoveryInventoryResponse = {
   live: RunSummary[];
   interrupted: RecoveredRun[];
   reattached: RecoveredRun[];

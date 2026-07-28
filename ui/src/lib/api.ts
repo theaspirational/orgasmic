@@ -38,7 +38,8 @@ import type {
   RunRuntimeOptionsCatalogResponse,
   RunRuntimeOptionsRequest,
   RunRuntimeOptionsResponse,
-  RunsResponse,
+  LiveRunsResponse,
+  RecoveryInventoryResponse,
   SkillSummary,
   TaskCommentRequest,
   TaskDetail,
@@ -231,8 +232,15 @@ export function fetchRecoveryStatus(): Promise<RecoveryStatus> {
   return get<RecoveryStatus>('/recovery/status');
 }
 
-export function fetchRuns(): Promise<RunsResponse> {
-  return get<RunsResponse>('/runs');
+/** Supervisor-local liveness: what is running right now, no session reads. */
+export function fetchLiveRuns(): Promise<LiveRunsResponse> {
+  return get<LiveRunsResponse>('/runs/live');
+}
+
+/** The crash-recovery inventory (whole-board session scan). Callers that only
+ * want live state belong on {@link fetchLiveRuns}. */
+export function fetchRecoveryInventory(): Promise<RecoveryInventoryResponse> {
+  return get<RecoveryInventoryResponse>('/runs');
 }
 
 export function fetchRun(id: string): Promise<RunDetailResponse> {

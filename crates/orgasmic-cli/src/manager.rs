@@ -418,8 +418,9 @@ struct DaemonCapabilitiesResponse {
     capabilities: Vec<String>,
 }
 
+/// `GET /runs/live` — run ids only, for health/orphan checks.
 #[derive(Debug, Default, Deserialize)]
-struct RunsResponse {
+struct LiveRunsSummaryResponse {
     #[serde(default)]
     live: Vec<RunSummary>,
 }
@@ -1247,7 +1248,7 @@ struct LiveRunInfo {
     /// when finalize's own release lands on an already-released run.
     #[serde(default)]
     session_path: Option<PathBuf>,
-    /// The run's own `RuntimeIdentity`, always present on `/runs.live`
+    /// The run's own `RuntimeIdentity`, always present on `/runs/live`
     /// (`RunSummary::identity`). Presented back on the finalize release call
     /// (TASK-DWJVH item A) so the daemon can reject a stale/reclaimed-slot
     /// release.
@@ -1921,7 +1922,7 @@ async fn resolve_finalize_run_by_id(
 
 /// Resolve the live run to finalize: an explicit `--run-id` is used as-is
 /// (fetched from `/runs/:id` to recover its kind/last_path); otherwise the
-/// single live run from `/runs` matching `task` (and `project_id`, when the
+/// single live run from `/runs/live` matching `task` (and `project_id`, when the
 /// daemon reports one) is used. Deliberately does NOT fall back to scanning
 /// `.orgasmic/tx`: a worker's own worktree checkout cannot see the live
 /// (uncommitted) daemon writes to the manager's `.orgasmic/tx`, so the only
@@ -1940,7 +1941,7 @@ async fn resolve_finalize_run(
     if let Some(run_id) = run_id {
         return resolve_finalize_run_by_id(client, project_id, &run_id).await;
     }
-    let live = client.get::<LiveRunsResponse>("/runs").await?.live;
+    let live = client.get::<LiveRunsResponse>("/runs/live").await?.live;
     let mut matches: Vec<LiveRunInfo> = live
         .into_iter()
         .filter(|run| {
@@ -2192,8 +2193,12 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
     }
 }
 
+/// orgasmic:task_6HJYT — the supervisor-local liveness answer. `dispatch-close`
+/// and `dispatch-status` ask "what is running right now"; that question is not
+/// the recovery inventory's, and must not be blocked by unrelated durable
+/// history the inventory cannot read.
 async fn fetch_live_runs(client: &DaemonClient) -> Result<Vec<RunSummary>> {
-    Ok(client.get::<RunsResponse>("/runs").await?.live)
+    Ok(client.get::<LiveRunsSummaryResponse>("/runs/live").await?.live)
 }
 
 #[derive(Debug, Serialize)]
@@ -4814,7 +4819,7 @@ fn extra_compat<'a>(entry: &'a TxEntry, key: &str, legacy_key: &str) -> Option<&
 
 // The CLI-side `live_run_blocking_cleanup` that used to live here was
 // TASK-6AYEJ.3's answer to "is a live worker occupying this worktree". It read
-// a `/runs` snapshot in this process and acted on it in this process, so a
+// a `/runs/live` snapshot in this process and acted on it in this process, so a
 // recovery landing in between was invisible to it. TASK-1T3FZ moved that
 // decision to `Supervisor::reserve_dispatch_close`, which makes it under the
 // same lock that admits an acquire and installs the fence before answering.

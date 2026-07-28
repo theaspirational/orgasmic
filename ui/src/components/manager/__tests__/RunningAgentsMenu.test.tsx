@@ -3,12 +3,12 @@ import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { RunSummary, RunsResponse } from '@/lib/types';
+import type { RunSummary, RecoveryInventoryResponse } from '@/lib/types';
 
-const { openRunMock, postRunReleaseMock, fetchRunsMock } = vi.hoisted(() => ({
+const { openRunMock, postRunReleaseMock, fetchRecoveryInventoryMock } = vi.hoisted(() => ({
   openRunMock: vi.fn(),
   postRunReleaseMock: vi.fn(async () => ({})),
-  fetchRunsMock: vi.fn(),
+  fetchRecoveryInventoryMock: vi.fn(),
 }));
 
 vi.mock('@/hooks/useEventStream', () => ({
@@ -23,7 +23,7 @@ vi.mock('@/lib/api', async () => {
   const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
   return {
     ...actual,
-    fetchRuns: fetchRunsMock,
+    fetchRecoveryInventory: fetchRecoveryInventoryMock,
     postRunRelease: postRunReleaseMock,
   };
 });
@@ -88,7 +88,7 @@ function workerRun(runId: string): RunSummary {
   };
 }
 
-function runsResponse(live: RunSummary[]): RunsResponse {
+function runsResponse(live: RunSummary[]): RecoveryInventoryResponse {
   return { live, interrupted: [], reattached: [], terminal_noop: [], ambiguous: [] };
 }
 
@@ -98,14 +98,14 @@ async function openMenu() {
     button: 0,
     ctrlKey: false,
   });
-  await waitFor(() => expect(fetchRunsMock).toHaveBeenCalled());
+  await waitFor(() => expect(fetchRecoveryInventoryMock).toHaveBeenCalled());
 }
 
 describe('RunningAgentsMenu external manager row', () => {
   beforeEach(() => {
     openRunMock.mockClear();
     postRunReleaseMock.mockClear();
-    fetchRunsMock.mockReset();
+    fetchRecoveryInventoryMock.mockReset();
   });
 
   afterEach(() => {
@@ -113,14 +113,14 @@ describe('RunningAgentsMenu external manager row', () => {
   });
 
   it('keeps an external manager run in the list (agentRuns does not drop it)', async () => {
-    fetchRunsMock.mockResolvedValue(runsResponse([externalRun('run-ext-1')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([externalRun('run-ext-1')]));
     render(<RunningAgentsMenu projectId="proj" />);
     await openMenu();
     expect(await screen.findByText(/Manager · External/i)).toBeInTheDocument();
   });
 
   it('renders an End control for the external row and releases without opening', async () => {
-    fetchRunsMock.mockResolvedValue(runsResponse([externalRun('run-ext-2')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([externalRun('run-ext-2')]));
     render(<RunningAgentsMenu projectId="proj" />);
     await openMenu();
 
@@ -134,7 +134,7 @@ describe('RunningAgentsMenu external manager row', () => {
   });
 
   it('clicking the external row itself does not call openRun', async () => {
-    fetchRunsMock.mockResolvedValue(runsResponse([externalRun('run-ext-3')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([externalRun('run-ext-3')]));
     render(<RunningAgentsMenu projectId="proj" />);
     await openMenu();
 
@@ -145,7 +145,7 @@ describe('RunningAgentsMenu external manager row', () => {
   });
 
   it('a normal worker row still opens the run on click', async () => {
-    fetchRunsMock.mockResolvedValue(runsResponse([workerRun('run-worker-1')]));
+    fetchRecoveryInventoryMock.mockResolvedValue(runsResponse([workerRun('run-worker-1')]));
     render(<RunningAgentsMenu projectId="proj" />);
     await openMenu();
 

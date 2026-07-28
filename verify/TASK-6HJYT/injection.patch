@@ -1,0 +1,26 @@
+diff --git a/crates/orgasmic-cli/src/daemon_lifecycle.rs b/crates/orgasmic-cli/src/daemon_lifecycle.rs
+index 6966dd0..893cca9 100644
+--- a/crates/orgasmic-cli/src/daemon_lifecycle.rs
++++ b/crates/orgasmic-cli/src/daemon_lifecycle.rs
+@@ -364,7 +364,7 @@ fn live_manager_runs(home: &Home) -> Result<Vec<String>> {
+             .build()
+             .context("build daemon live-runs client")?;
+         let body: serde_json::Value = client
+-            .get(daemon_url(&base_url, "/runs/live"))
++            .get(daemon_url(&base_url, "/runs"))
+             .bearer_auth(token)
+             .send()
+             .await
+diff --git a/crates/orgasmic-cli/src/update.rs b/crates/orgasmic-cli/src/update.rs
+index ff5b134..de0c8cf 100644
+--- a/crates/orgasmic-cli/src/update.rs
++++ b/crates/orgasmic-cli/src/update.rs
+@@ -443,7 +443,7 @@ fn preflight_daemon(home: &Home) -> Result<bool> {
+ fn refuse_if_live_runs(home: &Home) -> Result<()> {
+     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
+     let live = runtime.block_on(async {
+-        let body: serde_json::Value = DaemonClient::from_home(home)?.get("/runs/live").await?;
++        let body: serde_json::Value = DaemonClient::from_home(home)?.get("/runs").await?;
+         let live = body
+             .get("live")
+             .and_then(|live| live.as_array())
