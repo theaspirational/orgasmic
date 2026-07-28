@@ -22,6 +22,60 @@ fn manager_dispatch_convention() -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
+/// The explicit opt-in that lets a dangerous command appear in the convention
+/// at all. TASK-6AYEJ.2: the guard below used to anchor on a prose sentence
+/// ("destroys exactly that"), which meant an innocent rewording failed it and a
+/// reworded dangerous command (`git worktree remove <path> --force`) evaded it.
+/// A structured marker is neither.
+const DANGEROUS_EXAMPLE_MARKER: &str = "[DANGEROUS-EXAMPLE]";
+
+/// How far back from a dangerous command the marker may sit. Wide enough for a
+/// lead-in clause, narrow enough that a marker elsewhere in the paragraph does
+/// not license it.
+const MARKER_LOOKBEHIND: usize = 200;
+
+/// How far past `git worktree remove` a `--force` still counts as belonging to
+/// that command. Generous enough to span a path argument.
+const COMMAND_WINDOW: usize = 160;
+
+/// Largest byte index <= `at` that is a char boundary. The convention is UTF-8
+/// prose full of em dashes, so fixed-width windows must be clamped.
+fn floor_boundary(text: &str, at: usize) -> usize {
+    let mut at = at.min(text.len());
+    while !text.is_char_boundary(at) {
+        at -= 1;
+    }
+    at
+}
+
+/// Every offset at which the convention spells out a destructive git command,
+/// regardless of how its arguments are spelled or ordered.
+///
+/// Two shapes matter (TASK-6AYEJ.2):
+/// - `git worktree remove` anywhere on the same command as `--force`/`-f`, so
+///   `git worktree remove <path> --force` is caught as well as the adjacent
+///   form the old substring guard looked for;
+/// - a forced branch delete under any spelling (`-D`, `--delete --force`),
+///   whatever the branch is called.
+fn dangerous_command_offsets(text: &str) -> Vec<(usize, &'static str)> {
+    let mut hits = Vec::new();
+    for (index, _) in text.match_indices("git worktree remove") {
+        // Stop at the end of the line so a later, unrelated `--force` mention
+        // cannot be blamed on this command.
+        let window = &text[index..floor_boundary(text, index + COMMAND_WINDOW)];
+        let window = window.split('\n').next().unwrap_or(window);
+        if window.contains("--force") || window.contains(" -f ") {
+            hits.push((index, "forced worktree removal"));
+        }
+    }
+    for needle in ["git branch -D", "git branch --delete --force"] {
+        for (index, _) in text.match_indices(needle) {
+            hits.push((index, "forced branch deletion"));
+        }
+    }
+    hits
+}
+
 /// TASK-6AYEJ finding 1: step 4 used to tell the manager to run
 /// `git worktree remove --force && git branch -D` by hand. That destroys
 /// exactly the data `dispatch-close` exists to salvage — `finalize --commit` is
@@ -46,30 +100,51 @@ fn manager_convention_never_instructs_forced_worktree_removal_by_hand() {
         "the salvage rationale must survive; without it the instruction reads as arbitrary"
     );
 
-    // `git worktree remove --force` may appear ONCE, and only inside the
-    // sentence explaining that it is the data-loss path. Any second occurrence,
-    // or a first one that lost its warning context, is the instruction coming
-    // back.
-    let force_hits: Vec<usize> = text
-        .match_indices("worktree remove --force")
-        .map(|(i, _)| i)
-        .collect();
-    assert_eq!(
-        force_hits.len(),
-        1,
-        "expected exactly one (explanatory) mention of forced worktree removal, found {}",
-        force_hits.len()
-    );
-    let hit = force_hits[0];
-    let window = &text[hit.saturating_sub(400)..(hit + 400).min(text.len())];
-    assert!(
-        window.contains("destroys exactly that"),
-        "the only mention of forced removal must be the warning, not an instruction:\n{window}"
-    );
-    assert!(
-        !text.contains("git branch -D task-"),
-        "the convention must not spell out a by-hand branch deletion command"
-    );
+    // A destructive command may appear only as an explicitly marked example.
+    // Zero occurrences is fine — the guard never demands the warning exist.
+    for (offset, what) in dangerous_command_offsets(&text) {
+        let start = floor_boundary(&text, offset.saturating_sub(MARKER_LOOKBEHIND));
+        let end = floor_boundary(&text, offset + COMMAND_WINDOW);
+        assert!(
+            text[start..offset].contains(DANGEROUS_EXAMPLE_MARKER),
+            "the convention spells out {what} without a preceding \
+             `{DANGEROUS_EXAMPLE_MARKER}` marker, so it reads as an instruction:\n{}",
+            &text[start..end]
+        );
+    }
+}
+
+/// The guard's own regression test (TASK-6AYEJ.2). The previous guard matched
+/// the adjacent substring `worktree remove --force`, so the realistic variants
+/// below — the ORIGINAL dangerous instruction among them — walked straight
+/// past it. Each of these must be detected; the safe prose must not be.
+#[test]
+fn dangerous_command_detector_catches_reworded_variants() {
+    for dangerous in [
+        "run git worktree remove --force && git branch -D task-NNN-impl",
+        "run git worktree remove /tmp/wt --force to clean up",
+        "run git worktree remove \"$WT\" -f then move on",
+        "then git branch -D whatever-the-branch-is",
+        "then git branch --delete --force whatever-the-branch-is",
+    ] {
+        assert!(
+            !dangerous_command_offsets(dangerous).is_empty(),
+            "detector missed a dangerous variant: {dangerous}"
+        );
+    }
+
+    for safe in [
+        // The real convention's safe sentences, and a plain reworded one.
+        "cleanup belongs to =dispatch-close --worktree-remove --branch-delete=",
+        "the close path removes without =--force=, so git's clean check gates it",
+        "use git worktree remove only through dispatch-close\nnever pass --force",
+        "delete the branch with the --branch-delete flag",
+    ] {
+        assert!(
+            dangerous_command_offsets(safe).is_empty(),
+            "detector fired on safe prose: {safe}"
+        );
+    }
 }
 
 /// TASK-6AYEJ.1: `dispatch-close` is generation-bound. The convention must
@@ -88,5 +163,12 @@ fn manager_convention_documents_generation_bound_close() {
     assert!(
         text.contains("manager.dispatch_started"),
         "the prose must say what --started-tx names"
+    );
+    // TASK-6AYEJ.2: the flag is no longer advisory. The convention must not go
+    // back to describing what a tokenless close *selects*, because it now
+    // selects nothing — it is refused.
+    assert!(
+        text.contains("REFUSED"),
+        "the prose must say a tokenless close of a live dispatch is refused"
     );
 }
