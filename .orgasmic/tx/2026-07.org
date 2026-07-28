@@ -33875,3 +33875,181 @@
 :FROM_STATE:   in_review
 :TO_STATE:     done
 :END:
+
+* TX 2026-07-28 Tue 11:59:39 task.created TASK-ATAXN
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3211
+:TIME:         [2026-07-28 Tue 11:59:39]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ATAXN
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Q07Y5 residual: the instance lock is held until graceful_shutdown returns (up to 40s derived), but DAEMON_LOCK_RETRY_BUDGET is 125ms; not the 870YX case
+:END:
+
+* TX 2026-07-28 Tue 11:59:51 manager.dispatch_started TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3212
+:TIME:         [2026-07-28 Tue 11:59:51]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:REASON:
+:KIND:         reviewer
+:MODE:         rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-z8wej-review/worktree
+:BRANCH:       task-z8wej-review
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-Z8WEJ-review/brief-Z8WEJ-review.md
+:STARTED_AT:   [2026-07-28 Tue 11:59:51]
+:LIVENESS:     4c7fbfa041ba080c57147b34ae17ce161684af27
+:NEXT:         reviewer-watch-then-fix-or-close
+:MODEL:        gpt-5.6-sol
+:EFFORT:       high
+:REASON_INITIAL: P0 in_review with no review coverage; oldest unreviewed merge on the board
+:END:
+
+* TX 2026-07-28 Tue 11:59:51 run.created TASK-Z8WEJ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3213
+:TIME:         [2026-07-28 Tue 11:59:51]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z8WEJ
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-Z8WEJ-reviewer-20260728T115951.jsonl
+:REASON:       P0 in_review with no review coverage; oldest unreviewed merge on the board
+:RUN_ID:       run-20260728T115951-de8048c27223450dadf80e9a2872b907
+:ORIGIN:       cli_dispatch
+:WORKER:       reviewer-codex-rmux
+:KIND:         reviewer
+:DRIVER:       rmux
+:HARNESS:      codex
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-z8wej-review/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-Z8WEJ-review/brief-Z8WEJ-review.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-Z8WEJ-review/brief-Z8WEJ-review-da6a0e249278483ba2a91d7ef905dc54-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-Z8WEJ-review/brief-Z8WEJ-review-da6a0e249278483ba2a91d7ef905dc54-stdout.log
+:DISPATCH_ATTEMPT: da6a0e249278483ba2a91d7ef905dc54
+:DISPATCH_TX:  tx-20260728-orgasmic-3212
+:MODEL_OVERRIDE: gpt-5.6-sol
+:EFFORT_OVERRIDE: high
+:END:
+
+* TX 2026-07-28 Tue 12:05:32 implementer.reported TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3214
+:TIME:         [2026-07-28 Tue 12:05:32]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:RUN_ID:       run-20260728T113204-712e333860cc41c1a8cc5fc7512ff831
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-1t3fz/worktree
+:SHA:          5db86008e8d758740ddb309a736a9a1fcdaa18e3
+:END:
+
+* TX 2026-07-28 Tue 12:06:37 implementer.done TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3215
+:TIME:         [2026-07-28 Tue 12:06:37]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:WORKER_COMMIT: 5db86008e8d758740ddb309a736a9a1fcdaa18e3
+:MERGE_SHA:    68f3ed66cbc9eeb6a6200db55cc7dbe60439000b
+:BRANCH:       task-1t3fz-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3177
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 12:06:37 task.state_transitioned TASK-1T3FZ
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3216
+:TIME:         [2026-07-28 Tue 12:06:37]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-1T3FZ
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-1T3FZ to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 12:08:19 note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3217
+:TIME:         [2026-07-28 Tue 12:08:19]
+:TYPE:         note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       RRT4T open question answered: the worker/manager divergence is $TMUX inheritance, not PATH. Daemon pid 30834 runs inside an rmux pane and carries TMUX=/private/tmp/rmux-501/default; every dispatched worker inherits it; tmux's client with $TMUX set and no -L talks to the rmux socket, which is a tmux fork, and fails 'server exited unexpectedly' (exit 1). Same command with TMUX unset exits 0. rmux under the same TMUX exits 0 (matching binary), so the class is tmux-only: 6 gated daemon tests never run in any worker. Before RRT4T's sentinel they skipped silently.
+:END:
+
+* TX 2026-07-28 Tue 12:08:57 task.created TASK-0RCRY
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3218
+:TIME:         [2026-07-28 Tue 12:08:57]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0RCRY
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       Answers the RRT4T/R2HDN open question: measured 2026-07-28, tmux with inherited TMUX exits 1 against the rmux socket, exits 0 with TMUX unset; rmux exits 0 either way
+:END:
+
+* TX 2026-07-28 Tue 12:09:07 task.state_transitioned TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3219
+:TIME:         [2026-07-28 Tue 12:09:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       fix round TASK-1T3FZ merged
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 12:09:08 task.state_transitioned TASK-6AYEJ.3
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3220
+:TIME:         [2026-07-28 Tue 12:09:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.3
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       reviewed (BLOCK SHIP), fix round TASK-1T3FZ merged 5db8600: the liveness verdict moved into the daemon behind a worktree reservation installed under the supervisor lock, so it is monotone; verified by injection
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-28 Tue 12:09:28 task.created TASK-95SGV
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3221
+:TIME:         [2026-07-28 Tue 12:09:28]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-95SGV
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       1T3FZ residual: the NW4WV rollback path recomputes its key after removal; a leaked reservation makes the task's deterministic worktree permanently undispatchable
+:END:
