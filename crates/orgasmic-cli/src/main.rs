@@ -2312,13 +2312,23 @@ fn cmd_task(home: &Home, cmd: TaskCmd) -> Result<()> {
                 project,
                 state,
                 title: None,
-                base_version: _,
+                base_version,
                 priority,
                 reason,
                 request_id,
                 properties,
                 json,
             } => {
+                // The drawer/lifecycle writes below carry no OCC token, so an
+                // operator who passed one is expecting a guarantee this call
+                // does not give. Say so rather than ignore it.
+                if base_version.is_some() {
+                    anyhow::bail!(
+                        "--base-version applies to --title, the only `task update` field written \
+                         through the org-node editor; --state/--priority/--property do not take an \
+                         optimistic-concurrency token"
+                    );
+                }
                 let project = manager::resolve_project(project)?;
                 let properties: std::collections::BTreeMap<_, _> =
                     parse_key_values(properties)?.into_iter().collect();
