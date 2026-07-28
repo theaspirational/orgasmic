@@ -708,3 +708,73 @@ Acceptance:
 - a regression test asserts the ledger still parses after each supported write
 SIBLING FILED [2026-07-28]: TASK-ZYWZD applies this task's defect-2 principle (a writer must not commit what it cannot read back) to the node body surface, where `node body set` silently truncated TASK-ATAXN to 300 of 3959 chars. If either fix grows shared compose->re-parse->refuse machinery, use it for both.
 
+* IN_REVIEW TASK-XPYRR a task title cannot be corrected through any CLI surface, so a retracted claim outlives its correction
+:PROPERTIES:
+:ID: TASK-XPYRR
+:PRIORITY: P1
+:TAGS: cli,daemon,org-surface
+:END:
+** Description
+A task heading's title cannot be changed through any CLI surface. `task update`
+takes `--state`, `--priority`, `--reason` and `--property`, and rejects
+`--title` with `unexpected argument`. `node body set` edits prose and named
+sections, never the heading line. `node prop set` edits the drawer. Nothing
+edits the title.
+
+=== Why it matters, concretely
+
+TASK-0RCRY was filed on 2026-07-28 with a diagnosis that was **retracted the
+same day** (tx-20260728-orgasmic-3226): the claim that workers inherit the
+daemon's `$TMUX`. The body was rewritten around the one surviving fact and now
+opens with an explicit correction. **The title could not be rewritten**, so the
+board still reads:
+
+  "Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server
+   and six gated tests never run"
+
+The title is the most-read field on the board — it is what `dispatch-status`,
+the task lists and every survey print. A retracted claim sitting in a heading
+outlives the correction in the body, and the only reader guaranteed to see the
+correction is one who opens the task.
+
+The manager cannot fix this by hand: `.orgasmic` is daemon-owned and hand-edits
+are forbidden. So the wrong title is currently unfixable by any sanctioned path.
+
+=== Same class as TASK-JQARS
+
+JQARS was about a documented command that did not exist. This is the inverse:
+a field the product plainly owns, with no surface to write it. Both leave an
+operator with a state they can observe and cannot change.
+
+=== Ask
+
+1. Add title editing to the task surface, through the daemon with the same OCC +
+   structural guard as the other node writes. `task update --title` is the
+   obvious shape given the flag already suggested by clap's own "a similar
+   argument exists" tip.
+2. Decide and record whether a title edit is allowed to change the org tags on
+   the title line, or whether tags stay a separate concern. Do not let a title
+   write silently drop tags — the heading line carries both.
+3. Check the same question for the other node kinds that have titles (decision,
+   architecture, glossary, goal). Report which already have a write path and
+   which do not; fix only the ones in scope and file the rest.
+4. Fix TASK-0RCRY's title as the acceptance demonstration, to:
+   "No tmux call site passes -L/-S, so every probe and test session shares one
+    server — on a dev box, the operator's own"
+
+=== Acceptance
+
+- `orgasmic task update <id> --title "..."` rewrites the heading, preserves the
+  drawer, the body, all named sections and the org tags, and records a tx.
+- Prove it by injection: a test that rewrites a title and asserts tags and body
+  survive fails if the tag-preserving path is removed. Show it red, then green.
+- A title containing org-significant characters (`*` at line start, `:tag:`
+  shapes, trailing colons) either round-trips or is rejected with a reason — say
+  which you chose and why. A silently corrupted heading is worse than a refusal.
+- TASK-0RCRY reads correctly on the board afterwards.
+
+=== Non-goals
+
+- Do not add a general "edit any org line" escape hatch. The structural guard is
+  the reason these surfaces are narrow.
+
