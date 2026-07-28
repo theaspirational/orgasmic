@@ -309,6 +309,24 @@ pub mod test_tooling {
 
     pub const ALLOW_MISSING_TOOLS_ENV: &str = "ORGASMIC_ALLOW_MISSING_TOOLS";
 
+    // orgasmic:task_MFJZ7
+    /// Arms tests that submit a real, billed provider turn.
+    ///
+    /// This is the opposite direction from [`ALLOW_MISSING_TOOLS_ENV`], and the
+    /// distinction is the whole point of having two names. That one *waives* a
+    /// missing binary so a run that skipped work can still go green;
+    /// `ORGASMIC_ALLOW_BILLED_TESTS` *arms* work that is off by default because
+    /// running it costs money. It is not the "this test must really run"
+    /// fail-closed lane that `ORGASMIC_REQUIRE_LIVE_RMUX` was and that
+    /// `.orgasmic/gotchas.org` forbids reintroducing: nothing fails when it is
+    /// unset, which is exactly the safe default a billed test needs.
+    ///
+    /// A billed test carries two locks, not one. `#[ignore]` keeps it out of a
+    /// bare `cargo test`; this variable keeps `--include-ignored` from arming
+    /// it. `--include-ignored` is the flag someone reaches for to run "the slow
+    /// ones", and it must not silently also mean "and charge me".
+    pub const ALLOW_BILLED_TESTS_ENV: &str = "ORGASMIC_ALLOW_BILLED_TESTS";
+
     /// Tool probes and tests that temporarily mutate process environment share
     /// this lock so a sentinel never observes another test's synthetic PATH.
     #[must_use]
@@ -349,6 +367,66 @@ pub mod test_tooling {
             .stderr(Stdio::null())
             .status()
             .is_ok_and(|status| status.success())
+    }
+
+    // orgasmic:task_MFJZ7
+    /// Whether [`ALLOW_BILLED_TESTS_ENV`] arms billed tests for this process.
+    ///
+    /// Exactly `1`. Anything else — including `true`, `yes`, or an empty
+    /// value — leaves billing disarmed, so a stray export cannot half-mean it.
+    #[must_use]
+    pub fn billed_tests_allowed() -> bool {
+        std::env::var(ALLOW_BILLED_TESTS_ENV).is_ok_and(|value| value.trim() == "1")
+    }
+
+    // orgasmic:task_MFJZ7
+    /// The second lock on a billed test: returns `true` (skip) unless the
+    /// operator armed [`ALLOW_BILLED_TESTS_ENV`], and says so where a default
+    /// `cargo test` run can see it.
+    ///
+    /// The first lock is `#[ignore]` on the test itself. Both are required
+    /// because they close different doors: `#[ignore]` closes a bare run, this
+    /// closes `--include-ignored`.
+    #[must_use]
+    pub fn skip_unless_billing_allowed(test_name: &str) -> bool {
+        if billed_tests_allowed() {
+            return false;
+        }
+        emit_visible_notice(&format!(
+            "skipping {test_name}: it submits a real, billed provider turn; \
+             set {ALLOW_BILLED_TESTS_ENV}=1 to opt in"
+        ));
+        true
+    }
+
+    // orgasmic:task_MFJZ7
+    /// Name, on every default run, the tests this binary withholds because they
+    /// bill.
+    ///
+    /// [`assert_required_test_tooling`] counts tests gated by *missing tooling*.
+    /// A billed test is gated by policy on a host where the tooling is present,
+    /// so it belongs to none of those counts — and would therefore vanish from
+    /// the default output entirely, which is the accounting hole this exists to
+    /// close. Sentinels call it alongside their tool requirements.
+    pub fn report_billed_tests(tests: &[&str]) {
+        if tests.is_empty() {
+            return;
+        }
+        let noun = if tests.len() == 1 { "test" } else { "tests" };
+        let names = tests.join(", ");
+        let count = tests.len();
+        if billed_tests_allowed() {
+            emit_visible_notice(&format!(
+                "warning: {ALLOW_BILLED_TESTS_ENV}=1 arms {count} billed {noun}: {names}; \
+                 running with `--ignored` will spend real money"
+            ));
+        } else {
+            emit_visible_notice(&format!(
+                "notice: {count} billed {noun} withheld by default and counted by no tool \
+                 requirement above: {names}; each is `#[ignore]`d and additionally needs \
+                 {ALLOW_BILLED_TESTS_ENV}=1"
+            ));
+        }
     }
 
     /// Preserve the useful per-test diagnostic for `--nocapture` while the
