@@ -1,0 +1,15 @@
+diff --git a/crates/orgasmic-core/src/org.rs b/crates/orgasmic-core/src/org.rs
+index c517752..50589de 100644
+--- a/crates/orgasmic-core/src/org.rs
++++ b/crates/orgasmic-core/src/org.rs
+@@ -1123,9 +1123,7 @@ impl OrgRewriter {
+                     .as_deref()
+                     .map(|title| title.trim().to_string())
+                     .unwrap_or(current.title),
+-                // The tag-preserving path: absent an explicit tag edit, the
+-                // heading's own tags carry across untouched.
+-                tags: edit.tags.clone().unwrap_or(current.tags),
++                tags: edit.tags.clone().unwrap_or_default(),
+             };
+             (before, expected)
+         };

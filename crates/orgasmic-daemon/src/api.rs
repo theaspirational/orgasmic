@@ -32,9 +32,10 @@ use orgasmic_core::tx::TxEntry;
 use orgasmic_core::{
     goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
     lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
-    scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, Home, Lifecycle,
-    LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome, RuntimeIdentity,
-    SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget, SlotValues, WorkerKind,
+    scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, HeadingLineEdit,
+    Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome,
+    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget,
+    SlotValues, WorkerKind,
     DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
@@ -11956,41 +11957,56 @@ fn node_display_title(heading: &Heading) -> String {
         .to_string()
 }
 
-/// Recompose a node's title line from its immutable parts (level, TODO, id
-/// token) plus optional new display title / tags, ready for `set_title_line`.
-fn recompose_title_line(
+// orgasmic:task_XPYRR
+/// Reject a display title the heading line cannot hold before composing
+/// anything, so the operator gets the reason rather than a round-trip
+/// diagnostic. Everything subtler than this — a trailing `:tag:` shape, whose
+/// legality depends on whether a tag run already anchors the line end — is
+/// left to the rewriter's round-trip guard, which decides it by measurement
+/// instead of by pattern.
+fn validate_node_title(title: &str) -> Result<(), ApiError> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(ApiError::bad_request(
+            "title must not be empty; a node heading carries its id token and its prose",
+        ));
+    }
+    if title.contains(['\n', '\r']) {
+        return Err(ApiError::bad_request(
+            "title must be a single line; a newline would split the heading",
+        ));
+    }
+    Ok(())
+}
+
+// orgasmic:task_XPYRR
+/// Describe a node's title-line edit: the display title recomposed with its id
+/// token, plus the tags only when the caller actually asked to change them.
+/// Tags left as `None` are preserved by [`OrgRewriter::edit_heading_line`] —
+/// deliberately not restated here, so a title write has no way to touch them.
+fn node_heading_line_edit(
     heading: &Heading,
     new_title: Option<&str>,
     new_tags: Option<&[String]>,
-) -> String {
-    let stars = "*".repeat(heading.level);
-    let todo = heading
-        .todo
-        .as_deref()
-        .map(|t| format!("{t} "))
-        .unwrap_or_default();
+) -> HeadingLineEdit {
     let drawer_id = heading.property("ID").unwrap_or(heading.title.as_str());
-    let (id_token, current_display) = if let Some(rest) = heading.title.strip_prefix(drawer_id) {
-        (drawer_id, rest.trim())
-    } else {
-        (drawer_id, heading.title.trim())
-    };
+    let current_display = heading
+        .title
+        .strip_prefix(drawer_id)
+        .map(str::trim)
+        .unwrap_or_else(|| heading.title.trim());
     let display = new_title.map(str::trim).unwrap_or(current_display);
-    let tags: Vec<String> = new_tags
-        .map(|t| t.to_vec())
-        .unwrap_or_else(|| heading.tags.clone());
-    let mut line = format!("{stars} {todo}{id_token}");
-    if !display.is_empty() {
-        line.push(' ');
-        line.push_str(display);
+    let title = if display.is_empty() {
+        drawer_id.to_string()
+    } else {
+        format!("{drawer_id} {display}")
+    };
+    HeadingLineEdit {
+        title: Some(title),
+        tags: new_tags.map(<[String]>::to_vec),
     }
-    if !tags.is_empty() {
-        line.push_str("    :");
-        line.push_str(&tags.join(":"));
-        line.push(':');
-    }
-    line
 }
+
 
 // orgasmic:task_ZYWZD
 /// Map nested headings to [`NodeSection`]s, recursively, so no depth of the
@@ -12205,6 +12221,7 @@ async fn post_org_node_edit(
                 changed.insert(key, "<removed>".to_string());
             }
             NodeEditOp::SetTitle { title } => {
+                validate_node_title(&title)?;
                 changed.insert("title".to_string(), title.clone());
                 title_override = Some(title);
             }
@@ -12215,10 +12232,20 @@ async fn post_org_node_edit(
         }
     }
     if title_override.is_some() || tags_override.is_some() {
-        let line =
-            recompose_title_line(heading, title_override.as_deref(), tags_override.as_deref());
-        rw.set_title_line(&id, &line)
-            .map_err(|e| org_rewriter_error("set title line", &id, e))?;
+        // orgasmic:task_XPYRR
+        let edit =
+            node_heading_line_edit(heading, title_override.as_deref(), tags_override.as_deref());
+        rw.edit_heading_line(&id, &edit).map_err(|e| match e {
+            // The one rewriter failure an operator can act on: it names the
+            // title they submitted and what Org would have stored instead.
+            // Collapsing it into "org file update failed" would leave them
+            // with a refusal and no way to tell what to change.
+            e @ orgasmic_core::OrgError::HeadingRoundTripLoss { .. } => {
+                tracing::warn!(node_id = %id, error = %e, "title edit refused");
+                ApiError::bad_request(e.to_string())
+            }
+            e => org_rewriter_error("set title line", &id, e),
+        })?;
     }
 
     let updated = rw.finish();

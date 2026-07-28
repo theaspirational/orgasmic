@@ -1,0 +1,29 @@
+# Pinned from the real red run of 2026-07-28. The second half of TASK-XPYRR's
+# acceptance: a title edit must not be able to drop what else the heading line
+# carries.
+#
+# The injection deletes the tag-preserving path in
+# `OrgRewriter::edit_heading_line` — one line, `unwrap_or(current.tags)` becomes
+# `unwrap_or_default()`. That is the whole defect. It is worth a separate proof
+# from the missing-flag one because it fails in the opposite direction: the
+# command SUCCEEDS. Exit 0, a tx recorded, a corrected title on the board, and
+# four org tags gone. Nothing in the run says so.
+#
+# It also shows why the round-trip guard cannot be the detector here. The guard
+# compares what was composed against what re-parses back, and under this
+# injection both agree the heading has no tags — they were dropped before
+# either was computed. Preservation is enforced by construction (the rewriter
+# reads the tags off the pre-edit heading; the caller never gets to name them),
+# so what proves it is a test that knew the tags beforehand.
+exit: 101
+
+# The heading line, both sides. The left is what the injection wrote; the right
+# is what the fixture heading — shaped like TASK-0RCRY — is supposed to keep.
+contains: heading must keep its level, TODO keyword, id token and tags
+contains: :daemon:drivers:tmux:testing:
+
+# The failure is the tag assertion, not an earlier one: `--title` still parses,
+# still reaches the daemon, still rewrites the title. If a future edit breaks
+# the flag itself the run falls earlier with a different message and this
+# artifact has stopped reproducing what it claims.
+contains: test result: FAILED. 0 passed; 1 failed

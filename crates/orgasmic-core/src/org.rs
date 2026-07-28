@@ -75,6 +75,63 @@ pub struct Heading {
     pub body: Range<usize>,
 }
 
+// orgasmic:task_XPYRR
+/// Everything a heading's title line encodes, as a value: star depth, TODO
+/// keyword, title text, trailing tags. Written through
+/// [`OrgRewriter::edit_heading_line`], which compares what it composed against
+/// what re-parses back out — so a field the line carries cannot be lost by a
+/// caller that was only thinking about one of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadingLine {
+    pub level: usize,
+    pub todo: Option<String>,
+    /// Title text as the parser reports it: TODO keyword and trailing tags
+    /// already stripped, any leading node-id token still present.
+    pub title: String,
+    pub tags: Vec<String>,
+}
+
+impl HeadingLine {
+    pub fn of(heading: &Heading) -> Self {
+        Self {
+            level: heading.level,
+            todo: heading.todo.clone(),
+            title: heading.title.trim().to_string(),
+            tags: heading.tags.clone(),
+        }
+    }
+
+    /// Render back to one Org heading line, without a trailing newline.
+    pub fn render(&self) -> String {
+        let mut line = "*".repeat(self.level);
+        for token in [self.todo.as_deref(), Some(self.title.as_str())]
+            .into_iter()
+            .flatten()
+            .filter(|token| !token.is_empty())
+        {
+            line.push(' ');
+            line.push_str(token);
+        }
+        if !self.tags.is_empty() {
+            line.push_str("    :");
+            line.push_str(&self.tags.join(":"));
+            line.push(':');
+        }
+        line
+    }
+}
+
+// orgasmic:task_XPYRR
+/// Which fields of a heading line an edit means to change. `None` is "keep
+/// what the heading already has" — the point of the type: an edit describes
+/// its intent instead of composing the whole line, so the untouched fields
+/// are carried by the rewriter rather than by the caller's memory.
+#[derive(Debug, Clone, Default)]
+pub struct HeadingLineEdit {
+    pub title: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PropertyDrawer {
     pub entries: Vec<PropertyEntry>,
@@ -147,6 +204,19 @@ pub enum OrgError {
         target: String,
         submitted: usize,
         stored: usize,
+    },
+    // orgasmic:task_XPYRR
+    #[error(
+        "{file}: title edit rejected — the heading line of {heading} does not read back as \
+         written (wrote `{wrote}`, reads back `{read_back}`); Org would store this title as \
+         something else, so it is refused rather than corrupted — a trailing `:tag:` shape, \
+         a newline, or a column-0 `*` in the title are the usual causes"
+    )]
+    HeadingRoundTripLoss {
+        file: String,
+        heading: String,
+        wrote: String,
+        read_back: String,
     },
 }
 
@@ -1019,6 +1089,74 @@ impl OrgRewriter {
             })?;
         self.replace_with_view(heading.title_line.clone(), new_title_line);
         Ok(())
+    }
+
+    // orgasmic:task_XPYRR
+    /// Change the title text and/or the tags of a heading identified by
+    /// `:ID:`, leaving every other field the title line encodes exactly as it
+    /// was.
+    ///
+    /// This is the guarded counterpart to [`Self::set_title_line`], which
+    /// takes a whole composed line and trusts it. Here the rewriter — not the
+    /// caller — carries the untouched fields across: a caller that only means
+    /// to fix the prose cannot drop the TODO keyword or the tags, because it
+    /// never gets to say what they are. What it composes is then re-parsed and
+    /// compared against that intent, so a title Org cannot store verbatim
+    /// (a trailing `:tag:` shape, a newline, a leading `*`) is refused rather
+    /// than silently rewritten into something else — the same
+    /// compose → re-parse → compare → refuse discipline
+    /// [`Self::assert_body_round_trip`] applies to bodies.
+    pub fn edit_heading_line(
+        &mut self,
+        heading_id: &str,
+        edit: &HeadingLineEdit,
+    ) -> Result<(), OrgError> {
+        let (before, expected) = {
+            let view = OrgFile::parse(self.current_text(), &self.file_name)?;
+            let before = heading_structure_snapshot(&view.headings);
+            let current = HeadingLine::of(self.heading_or_err(&view, heading_id)?);
+            let expected = HeadingLine {
+                level: current.level,
+                todo: current.todo,
+                title: edit
+                    .title
+                    .as_deref()
+                    .map(|title| title.trim().to_string())
+                    .unwrap_or(current.title),
+                // The tag-preserving path: absent an explicit tag edit, the
+                // heading's own tags carry across untouched.
+                tags: edit.tags.clone().unwrap_or(current.tags),
+            };
+            (before, expected)
+        };
+        let wrote = expected.render();
+        self.set_title_line(heading_id, &wrote)?;
+        // A title line that grew a heading (`\n* …`) shows up here first, and
+        // `assert_structural_invariant` has already popped the edit.
+        self.assert_structural_invariant(before)
+            .map_err(|_| OrgError::HeadingRoundTripLoss {
+                file: self.file_name.clone(),
+                heading: heading_id.to_string(),
+                wrote: wrote.clone(),
+                read_back: "a different heading tree".to_string(),
+            })?;
+        let read_back = OrgFile::parse(self.current_text(), &self.file_name)
+            .ok()
+            .and_then(|view| view.find_by_id(heading_id).map(HeadingLine::of));
+        match read_back {
+            Some(ref line) if *line == expected => Ok(()),
+            other => {
+                self.edits.pop();
+                Err(OrgError::HeadingRoundTripLoss {
+                    file: self.file_name.clone(),
+                    heading: heading_id.to_string(),
+                    wrote,
+                    read_back: other
+                        .map(|line| line.render())
+                        .unwrap_or_else(|| "no heading with that :ID:".to_string()),
+                })
+            }
+        }
     }
 
     /// Insert a new `:KEY: value` line into the heading's existing property
@@ -2012,5 +2150,118 @@ Body.
             .section("Evidence")
             .is_some());
         assert!(out.contains(body));
+    }
+
+    // orgasmic:task_XPYRR
+    /// An untagged heading — the case where a title's own trailing `:tag:`
+    /// shape has nothing after it to anchor the end of the line.
+    const UNTAGGED: &str = "\
+#+title: example
+#+orgasmic_version: 1
+
+* BACKLOG TASK-003 Third task
+:PROPERTIES:
+:ID:               TASK-003
+:END:
+
+** Description
+Body prose.
+";
+
+    fn title_edit(title: &str) -> HeadingLineEdit {
+        HeadingLineEdit {
+            title: Some(title.to_string()),
+            ..HeadingLineEdit::default()
+        }
+    }
+
+    #[test]
+    fn edit_heading_line_changes_the_title_and_keeps_the_rest_of_the_line() {
+        let f = OrgFile::parse(SAMPLE, "sample.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "sample.org");
+        rw.edit_heading_line("TASK-001", &title_edit("TASK-001 Corrected title"))
+            .unwrap();
+        let out = rw.finish();
+        let reparsed = OrgFile::parse(out.clone(), "sample.org").unwrap();
+        let heading = reparsed.find_by_id("TASK-001").unwrap();
+        assert_eq!(heading.title, "TASK-001 Corrected title");
+        // The lifecycle keyword and the tags rode along untouched — a caller
+        // that only named the title never got to say what they were.
+        assert_eq!(heading.todo.as_deref(), Some("DONE"));
+        assert_eq!(heading.tags, vec!["foo".to_string(), "bar".to_string()]);
+        assert!(out.contains("A description body."));
+        // The other heading is undisturbed.
+        assert!(out.contains("* BACKLOG TASK-002 Second task :baz:"));
+    }
+
+    #[test]
+    fn edit_heading_line_changes_tags_without_being_told_the_title() {
+        let f = OrgFile::parse(SAMPLE, "sample.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "sample.org");
+        rw.edit_heading_line(
+            "TASK-001",
+            &HeadingLineEdit {
+                tags: Some(vec!["daemon".to_string()]),
+                ..HeadingLineEdit::default()
+            },
+        )
+        .unwrap();
+        let reparsed = OrgFile::parse(rw.finish(), "sample.org").unwrap();
+        let heading = reparsed.find_by_id("TASK-001").unwrap();
+        assert_eq!(heading.title, "TASK-001 First task");
+        assert_eq!(heading.tags, vec!["daemon".to_string()]);
+    }
+
+    #[test]
+    fn edit_heading_line_refuses_a_title_org_would_re_read_as_tags() {
+        let f = OrgFile::parse(UNTAGGED, "untagged.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "untagged.org");
+        let err = rw
+            .edit_heading_line("TASK-003", &title_edit("TASK-003 correct it :retracted:"))
+            .unwrap_err();
+        assert!(
+            matches!(err, OrgError::HeadingRoundTripLoss { .. }),
+            "{err}"
+        );
+        // Refused, not half-applied.
+        assert_eq!(rw.finish(), UNTAGGED);
+    }
+
+    #[test]
+    fn edit_heading_line_refuses_a_title_that_would_inject_a_heading() {
+        let f = OrgFile::parse(UNTAGGED, "untagged.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "untagged.org");
+        let err = rw
+            .edit_heading_line("TASK-003", &title_edit("TASK-003 correct it\n* Phantom"))
+            .unwrap_err();
+        assert!(
+            matches!(err, OrgError::HeadingRoundTripLoss { .. }),
+            "{err}"
+        );
+        assert_eq!(rw.finish(), UNTAGGED);
+    }
+
+    #[test]
+    fn edit_heading_line_accepts_a_title_after_a_refused_one() {
+        let f = OrgFile::parse(UNTAGGED, "untagged.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "untagged.org");
+        let _ = rw
+            .edit_heading_line("TASK-003", &title_edit("TASK-003 correct it\n* Phantom"))
+            .unwrap_err();
+        rw.edit_heading_line("TASK-003", &title_edit("TASK-003 correct it"))
+            .unwrap();
+        let reparsed = OrgFile::parse(rw.finish(), "untagged.org").unwrap();
+        assert_eq!(reparsed.headings.len(), 1);
+        assert_eq!(
+            reparsed.find_by_id("TASK-003").unwrap().title,
+            "TASK-003 correct it"
+        );
+    }
+
+    #[test]
+    fn heading_line_renders_every_component_it_parsed() {
+        let f = OrgFile::parse(SAMPLE, "sample.org").unwrap();
+        let line = HeadingLine::of(f.find_by_id("TASK-001").unwrap());
+        assert_eq!(line.render(), "* DONE TASK-001 First task    :foo:bar:");
     }
 }

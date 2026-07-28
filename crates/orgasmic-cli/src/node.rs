@@ -415,6 +415,48 @@ fn append_base_body(doc: &NodeDoc, section: Option<&str>, id: &str) -> Result<St
     Ok(target.body.clone())
 }
 
+// orgasmic:task_XPYRR
+/// Rewrite one node's heading title through the org-node editor — the same
+/// OCC token, structural guard and tx every other node write goes through.
+///
+/// Lives here rather than in the task command because the edit is a node edit;
+/// `task update --title` is only the task-shaped name for it. The `set_title`
+/// op writes the title prose alone: the lifecycle keyword and the org tags on
+/// the same heading line are preserved by the rewriter, not restated here.
+pub struct NodeTitleWrite<'a> {
+    pub id: &'a str,
+    pub project: Option<String>,
+    pub kind: Option<&'a str>,
+    pub title: &'a str,
+    /// OCC token; fetched from the node document when omitted.
+    pub base_version: Option<String>,
+    pub request_id: Option<String>,
+    /// Print the full node document instead of the compact mutation response.
+    pub json: bool,
+}
+
+pub async fn set_node_title(
+    client: &DaemonClient,
+    req: NodeTitleWrite<'_>,
+) -> Result<serde_json::Value> {
+    let (base_version, project) =
+        resolve_base_version(client, req.project, req.id, req.kind, req.base_version).await?;
+    let op = serde_json::json!({ "op": "set_title", "title": req.title });
+    client
+        .post_json(
+            &edit_path(req.id, req.json),
+            &edit_request(
+                &project,
+                req.kind,
+                &base_version,
+                &req.request_id,
+                op,
+                false,
+            ),
+        )
+        .await
+}
+
 fn edit_path(id: &str, want_full: bool) -> String {
     if want_full {
         format!("/org/node/{id}/edit?json=true")
