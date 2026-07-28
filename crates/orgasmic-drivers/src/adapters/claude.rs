@@ -1924,15 +1924,22 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
     /// verifies stdio JSONL parsing without spending tokens.
     #[tokio::test]
     async fn real_claude_stream_json_bridge_reports_auth_error() {
+        // The lock is taken *before* the availability probe, not after
+        // (TASK-R2HDN). `gate_simulates_for_empty_endpoint_stdio_when_claude_missing`
+        // holds this same lock while process-global PATH is `""`; probing first
+        // let this test observe that synthetic PATH, skip itself, and leave the
+        // suite green with its assertions never run — while the binary sentinel,
+        // which does wait for the lock, saw the restored PATH and passed.
+        //
+        // Holding it also prevents simulated_acquire_emits_ready_and_release from
+        // setting ORGASMIC_DRIVER_SIMULATE=1 while this test is running.
+        let _guard = env_lock().lock().await;
         if skip_test_if_missing(
             "real_claude_stream_json_bridge_reports_auth_error",
             &[("claude", claude_available())],
         ) {
             return;
         }
-        // Hold the env lock to prevent simulated_acquire_emits_ready_and_release
-        // from setting ORGASMIC_DRIVER_SIMULATE=1 while this test is running.
-        let _guard = env_lock().lock().await;
         std::env::set_var("ORGASMIC_TEST_CLAUDE_ACP_KEY", "invalid");
         let d = ClaudeAcpDriver;
         let cfg = DriverConfig::from_value(json!({
