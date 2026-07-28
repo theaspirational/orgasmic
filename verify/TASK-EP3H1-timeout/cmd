@@ -1,0 +1,8 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-EP3H1 --artifact verify/TASK-EP3H1-timeout`.
+#
+# Runs the real binary against a listener that completes the TCP handshake and
+# then never answers — scheduler starvation as the CLI sees it. A unit test on
+# the message alone cannot prove the wiring, because the bug was that the
+# TIMEOUT path reached the connection-refused text.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch client_timeout_reports_load_not_daemon_death

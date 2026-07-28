@@ -38,11 +38,16 @@ fn dispatch_request_timeout() -> std::time::Duration {
         .unwrap_or_else(|| std::time::Duration::from_secs(DEFAULT_DISPATCH_REQUEST_TIMEOUT_SECS))
 }
 
+/// The client's own patience, not the daemon's health budget. Named in the
+/// timeout error so a reader can tell the two apart (TASK-EP3H1).
+const DEFAULT_REQUEST_TIMEOUT_SECS: u64 = 10;
+
 #[derive(Debug, Clone)]
 pub struct DaemonClient {
     base: String,
     token: String,
     client: Client,
+    timeout: std::time::Duration,
 }
 
 impl DaemonClient {
@@ -59,20 +64,22 @@ impl DaemonClient {
     pub fn from_home(home: &Home) -> Result<Self> {
         let token = read_bearer_token(home)?;
         let base = read_base_url(home)?;
+        let timeout = std::time::Duration::from_secs(DEFAULT_REQUEST_TIMEOUT_SECS);
         let client = Client::builder()
-            .timeout(std::time::Duration::from_secs(10))
+            .timeout(timeout)
             .build()
             .context("build http client")?;
         Ok(Self {
             base,
             token,
             client,
+            timeout,
         })
     }
 
     pub async fn get<R: DeserializeOwned>(&self, path: &str) -> Result<R> {
         let req = self.client.get(self.url(path));
-        send_json(self.bearer(req)).await
+        send_json(self.bearer(req), self.timeout).await
     }
 
     pub async fn post_json<B: Serialize + ?Sized, R: DeserializeOwned>(
@@ -81,7 +88,7 @@ impl DaemonClient {
         body: &B,
     ) -> Result<R> {
         let req = self.client.post(self.url(path)).json(body);
-        send_json(self.bearer(req)).await
+        send_json(self.bearer(req), self.timeout).await
     }
 
     pub(crate) async fn post_dispatch(&self, plan: &DispatchPlan) -> Result<DispatchResponse> {
@@ -94,12 +101,13 @@ impl DaemonClient {
         // per-request override (well above the worst-case acquire) keeps the CLI
         // from timing out and reporting a transport failure while the daemon
         // actually completed the acquire — which is what created zombie leases.
+        let timeout = dispatch_request_timeout();
         let req = self
             .client
             .post(self.url(&format!("/projects/{project}/tasks/{task}/dispatch")))
-            .timeout(dispatch_request_timeout())
+            .timeout(timeout)
             .json(&request);
-        send_json(self.bearer(req)).await
+        send_json(self.bearer(req), timeout).await
     }
 
     pub(crate) async fn post_dispatch_cleanup(
@@ -243,11 +251,65 @@ pub(crate) fn path_segment(value: &str) -> String {
     encoded
 }
 
-async fn send_json<R: DeserializeOwned>(req: RequestBuilder) -> Result<R> {
-    let response = req
-        .send()
-        .await
-        .map_err(|e| anyhow!("daemon request failed: {e} — is the daemon reachable?"))?;
+/// The one-minute load average, when the platform will hand it over cheaply.
+///
+/// orgasmic:task_EP3H1 — a timeout error that names the load turns "the tool
+/// is broken" into "the machine is saturated" without the reader having to go
+/// look.
+#[cfg(unix)]
+fn load_average_1m() -> Option<f64> {
+    let mut loads = [0.0_f64; 3];
+    // SAFETY: getloadavg fills at most `nelem` entries of the array it is given.
+    let filled = unsafe { libc::getloadavg(loads.as_mut_ptr(), 3) };
+    (filled > 0).then_some(loads[0])
+}
+
+#[cfg(not(unix))]
+fn load_average_1m() -> Option<f64> {
+    None
+}
+
+/// What a transport failure actually says.
+///
+/// orgasmic:task_EP3H1 — three times on 2026-07-29 the CLI answered a timeout
+/// with "is the daemon reachable?" while the daemon was healthy and served raw
+/// HTTP in 0.4s; the machine was at load average ~190. A timeout is a statement
+/// about how long THIS client was willing to wait, and it says nothing about
+/// whether the request landed, so the text must not send a reader off to
+/// resurrect a daemon that never died.
+fn transport_error_message(
+    detail: &str,
+    timed_out: bool,
+    timeout: std::time::Duration,
+    load_1m: Option<f64>,
+) -> String {
+    if !timed_out {
+        return format!("daemon request failed: {detail} — is the daemon reachable?");
+    }
+    let load = match load_1m {
+        Some(load) => format!(" (1m load average {load:.2})"),
+        None => String::new(),
+    };
+    format!(
+        "daemon request timed out after {}s{load} — the daemon may be healthy but the system is \
+         under load; a timed-out request can still land server-side, so re-read state instead of \
+         assuming it failed ({detail})",
+        timeout.as_secs()
+    )
+}
+
+async fn send_json<R: DeserializeOwned>(
+    req: RequestBuilder,
+    timeout: std::time::Duration,
+) -> Result<R> {
+    let response = req.send().await.map_err(|e| {
+        anyhow!(transport_error_message(
+            &e.to_string(),
+            e.is_timeout(),
+            timeout,
+            load_average_1m(),
+        ))
+    })?;
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
@@ -523,6 +585,42 @@ mod tests {
         assert!(
             DaemonClient::dispatch_failure_needs_daemon_cleanup(&err),
             "post-send decode failures may have reached the daemon"
+        );
+    }
+
+    #[test]
+    fn timeout_message_names_the_budget_and_the_load_not_the_daemon() {
+        let message = transport_error_message(
+            "operation timed out",
+            true,
+            std::time::Duration::from_secs(10),
+            Some(190.12),
+        );
+        assert!(
+            message.contains("daemon request timed out after 10s"),
+            "{message}"
+        );
+        assert!(message.contains("1m load average 190.12"), "{message}");
+        assert!(
+            message.contains("the daemon may be healthy but the system is under load"),
+            "{message}"
+        );
+        assert!(!message.contains("is the daemon reachable?"), "{message}");
+    }
+
+    #[test]
+    fn non_timeout_transport_failure_still_asks_about_reachability() {
+        // A refused connection IS evidence about the daemon; only the timeout
+        // path was misdiagnosing (TASK-EP3H1).
+        let message = transport_error_message(
+            "connection refused",
+            false,
+            std::time::Duration::from_secs(10),
+            Some(0.4),
+        );
+        assert_eq!(
+            message,
+            "daemon request failed: connection refused — is the daemon reachable?"
         );
     }
 

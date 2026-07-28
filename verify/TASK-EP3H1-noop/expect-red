@@ -1,0 +1,19 @@
+# Pinned from the red run authored against the defect, 2026-07-29.
+#
+# The injection restores the unlabelled no-op: `from_state == to_state` returns
+# an empty change set and an empty tx id, whether or not the daemon can see
+# that this exact request already applied. That is what an operator got at the
+# terminal on 2026-07-29 while repairing a torn close by hand — a response that
+# reads like a failure and is in fact a success reported without attribution.
+exit: 101
+
+# The verbatim body, which is the whole complaint: `changed` empty, `tx_id`
+# empty, and nothing saying which of the two no-ops it is.
+contains: {"changed":{},"id":"TASK-CLEANUP","tx_id":""}
+contains: a re-submitted transition must say the request already landed
+contains: right: Some("already_applied")
+
+# The CLI-level `already-closed: ... (no-op)` line (TASK-6AYEJ) is asserted
+# BEFORE this point and still passes under the injection: the label that was
+# missing was the daemon's, on the leg the repair actually re-sends.
+contains: test result: FAILED. 0 passed; 1 failed

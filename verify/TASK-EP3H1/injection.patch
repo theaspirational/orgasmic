@@ -1,0 +1,13 @@
+diff --git a/crates/orgasmic-cli/src/manager.rs b/crates/orgasmic-cli/src/manager.rs
+index 881a6ea..e479ad7 100644
+--- a/crates/orgasmic-cli/src/manager.rs
++++ b/crates/orgasmic-cli/src/manager.rs
+@@ -2739,7 +2739,7 @@ fn close_done_request(
+         extra.push((key.clone(), sanitize_tx_value(value)));
+     }
+     extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
+-    push_lifecycle_extra(&mut extra, transition);
++    let _ = transition;
+     push_cleanup_extra(&mut extra, cleanup);
+     if let Some(goal_id) = optional_value(open.goal_id.as_deref()) {
+         extra.push(("GOAL_ID".to_string(), goal_id));

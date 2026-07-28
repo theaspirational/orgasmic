@@ -1,0 +1,17 @@
+# Pinned from the red run authored against the defect, 2026-07-29.
+#
+# The injection collapses the transport-error classification back to one
+# answer, so a timeout is again reported as a reachability question. This is
+# the text three closes produced on 2026-07-29, every one of them while the
+# daemon was healthy and served raw HTTP in 0.4s at load average ~190. It sent
+# an operator looking for a dead daemon that was never dead.
+exit: 101
+
+contains: is the daemon reachable?
+contains: the timeout must name itself and the budget it spent
+
+# The full misdiagnosis, verbatim: reqwest's generic send failure wearing a
+# reachability question it has no standing to ask.
+contains: Error: daemon request failed: error sending request for url
+
+contains: test result: FAILED. 0 passed; 1 failed

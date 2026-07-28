@@ -506,6 +506,11 @@ pub fn cmd_dispatch(home: &Home, args: DispatchArgs) -> Result<()> {
         return Ok(());
     }
 
+    // orgasmic:task_EP3H1 — a torn implementer close leaves its task short of
+    // IN_REVIEW, which is exactly the stage the reviewer dispatch below
+    // demands. Finish the transition before the gate reads it.
+    reconcile_torn_closes_best_effort(home, &plan.project_root, &plan.project_id);
+
     let mut reservation =
         DispatchArtifactReservation::reserve(&plan.project_root, &plan.brief_path)?;
     let plan = plan.with_artifacts(
@@ -638,6 +643,11 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-close")?;
     let project_id = read_project_id(&project_root)?;
     let tasks = normalize_tasks(args.task.clone())?;
+    // orgasmic:task_EP3H1 — before anything else, including the already-closed
+    // no-op below: a re-run of a torn close must finish the transition it lost
+    // rather than report "already closed" over a task still stranded at its
+    // pre-close stage.
+    reconcile_torn_closes_best_effort(home, &project_root, &project_id);
     let open = match resolve_close_target(&project_root, &tasks, args.started_tx.as_deref())? {
         CloseTarget::Open(open) => open,
         CloseTarget::AlreadyClosed(closed) => {
@@ -811,6 +821,10 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
             );
         }
     }
+    // orgasmic:task_EP3H1 — computed BEFORE the close txs so each one can carry
+    // the transition it is about to make. That is what makes a lost lifecycle
+    // leg repairable from the ledger instead of by hand.
+    let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
     let mut responses = Vec::new();
     match args.status {
         DispatchCloseStatus::Done => {
@@ -820,9 +834,12 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
                     &open,
                     task,
                     &args,
-                    merge_sha.as_deref(),
-                    tx_type,
-                    &cleanup,
+                    &CloseTxFacts {
+                        tx_type,
+                        merge_sha: merge_sha.as_deref(),
+                        cleanup: &cleanup,
+                        transition: transition_for(&transitions, task),
+                    },
                 );
                 responses.push(
                     runtime.block_on(client.post_json::<_, TxAppendResponse>("/tx", &request))?,
@@ -832,7 +849,14 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
         DispatchCloseStatus::Aborted => {
             let reason = abort_reason.as_deref().expect("validated aborted reason");
             for task in &missing_close_tasks {
-                let request = close_aborted_request(&project_id, &open, task, reason, &cleanup);
+                let request = close_aborted_request(
+                    &project_id,
+                    &open,
+                    task,
+                    reason,
+                    &cleanup,
+                    transition_for(&transitions, task),
+                );
                 responses.push(
                     runtime.block_on(client.post_json::<_, TxAppendResponse>("/tx", &request))?,
                 );
@@ -840,9 +864,14 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
         }
     };
 
-    let transitions = close_lifecycle_transitions(&project_root, &tasks, &open, &args)?;
-    if let Err(err) = apply_task_lifecycle_transitions(&client, &project_id, &transitions) {
-        eprintln!("warning: close tx appended but lifecycle update failed: {err}");
+    if let Err(err) =
+        apply_close_lifecycle_transitions(&client, &runtime, &project_id, &open.tx_id, &transitions)
+    {
+        eprintln!(
+            "warning: close tx appended but lifecycle update failed: {err}\n  \
+             the close tx records the transition it intended; the next `orgasmic manager` \
+             command finishes it"
+        );
     }
 
     let tx_ids = if responses.is_empty() {
@@ -1873,6 +1902,12 @@ async fn resolve_finalize_run(
 
 pub fn cmd_dispatch_status(home: &Home, args: DispatchStatusArgs) -> Result<()> {
     let project_root = find_live_project_root(home, "manager dispatch-status")?;
+    // orgasmic:task_EP3H1 — the command an operator runs after a close warns
+    // about a lost lifecycle leg is this one. Repair before reporting, so what
+    // it reports is the repaired state.
+    if let Ok(project_id) = read_project_id(&project_root) {
+        reconcile_torn_closes_best_effort(home, &project_root, &project_id);
+    }
     if args.cleanup_failed {
         let mut failures = scan_cleanup_failures(&project_root)?;
         if let Some(task) = args.task.as_deref() {
@@ -2621,15 +2656,55 @@ fn finalize_kill_self_after_release_for_tests() {
     }
 }
 
+/// The transition a close intends for one task, when it has one.
+fn transition_for<'a>(
+    transitions: &'a [CloseTransition],
+    task: &str,
+) -> Option<&'a CloseTransition> {
+    transitions
+        .iter()
+        .find(|transition| transition.task == task)
+}
+
+/// Record the intended lifecycle move on the close tx (TASK-EP3H1). Absent
+/// only when the task could not be read at all, in which case there is no
+/// transition to lose.
+fn push_lifecycle_extra(extra: &mut Vec<(String, String)>, transition: Option<&CloseTransition>) {
+    if let Some(transition) = transition {
+        extra.push((
+            LIFECYCLE_FROM_KEY.to_string(),
+            transition.from.as_str().to_string(),
+        ));
+        extra.push((
+            LIFECYCLE_TO_KEY.to_string(),
+            transition.to.as_str().to_string(),
+        ));
+    }
+}
+
+/// What a close knows about itself by the time it writes its tx: the terminal
+/// tx vocabulary, the merge it landed, what cleanup did, and the lifecycle move
+/// it is about to attempt.
+struct CloseTxFacts<'a> {
+    tx_type: &'a str,
+    merge_sha: Option<&'a str>,
+    cleanup: &'a CleanupOutcome,
+    transition: Option<&'a CloseTransition>,
+}
+
 fn close_done_request(
     project_id: &str,
     open: &DispatchRecord,
     task: &str,
     args: &DispatchCloseArgs,
-    merge_sha: Option<&str>,
-    tx_type: &str,
-    cleanup: &CleanupOutcome,
+    facts: &CloseTxFacts<'_>,
 ) -> TxAppendRequest {
+    let CloseTxFacts {
+        tx_type,
+        merge_sha,
+        cleanup,
+        transition,
+    } = *facts;
     let mut extra = Vec::new();
     if let Some(session) = optional_value(args.worker_session.as_deref()) {
         extra.push(("WORKER_SESSION".to_string(), session));
@@ -2664,6 +2739,7 @@ fn close_done_request(
         extra.push((key.clone(), sanitize_tx_value(value)));
     }
     extra.push(("CLOSED_TX".to_string(), open.tx_id.clone()));
+    push_lifecycle_extra(&mut extra, transition);
     push_cleanup_extra(&mut extra, cleanup);
     if let Some(goal_id) = optional_value(open.goal_id.as_deref()) {
         extra.push(("GOAL_ID".to_string(), goal_id));
@@ -2699,11 +2775,13 @@ fn close_aborted_request(
     task: &str,
     reason: &str,
     cleanup: &CleanupOutcome,
+    transition: Option<&CloseTransition>,
 ) -> TxAppendRequest {
     let mut extra = vec![("CLOSED_TX".to_string(), open.tx_id.clone())];
     if let Some(worktree) = &open.worktree {
         extra.push(("WORKTREE".to_string(), worktree.display().to_string()));
     }
+    push_lifecycle_extra(&mut extra, transition);
     push_cleanup_extra(&mut extra, cleanup);
     TxAppendRequest {
         // Deterministic per (task, dispatch generation) — see close_done_request.
@@ -3562,12 +3640,32 @@ fn dispatch_lifecycle_transitions(
     tasks.iter().map(|task| (task.clone(), stage)).collect()
 }
 
+/// The lifecycle move a `dispatch-close` intends for one task, recorded on the
+/// close tx itself (`LIFECYCLE_FROM`/`LIFECYCLE_TO`) before the transition is
+/// attempted.
+///
+/// orgasmic:task_EP3H1 — the close is two daemon writes (close tx, then task
+/// transition) and cannot be one commit without either a multi-tx writer
+/// transaction or collapsing `task.state_transitioned` into the close tx. So
+/// the tx carries its own intent instead: a close whose second leg is lost
+/// leaves a ledger that still says where the task was going, and
+/// [`reconcile_torn_closes`] finishes it on the next manager command.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CloseTransition {
+    task: String,
+    from: LifecycleStage,
+    to: LifecycleStage,
+}
+
+const LIFECYCLE_FROM_KEY: &str = "LIFECYCLE_FROM";
+const LIFECYCLE_TO_KEY: &str = "LIFECYCLE_TO";
+
 fn close_lifecycle_transitions(
     project_root: &Path,
     tasks: &[String],
     open: &DispatchRecord,
     args: &DispatchCloseArgs,
-) -> Result<Vec<(String, LifecycleStage)>> {
+) -> Result<Vec<CloseTransition>> {
     let mut transitions = Vec::new();
     for task in tasks {
         let info = read_task_lifecycle(project_root, task)?;
@@ -3591,7 +3689,11 @@ fn close_lifecycle_transitions(
                 other => bail!("cannot close dispatch kind `{other}` as done"),
             },
         };
-        transitions.push((info.id, stage));
+        transitions.push(CloseTransition {
+            task: info.id,
+            from: info.stage,
+            to: stage,
+        });
     }
     Ok(transitions)
 }
@@ -3643,6 +3745,190 @@ fn apply_task_lifecycle_transitions(
         }
         Ok(())
     })
+}
+
+/// The request id a close's lifecycle leg carries, deterministic per (task,
+/// dispatch generation) exactly as the close tx's own id is.
+///
+/// orgasmic:task_EP3H1 — a client timeout is not a server failure: the leg
+/// that "failed" may have landed. Because the retry (by hand, or by
+/// [`reconcile_torn_closes`]) re-sends the SAME request id, the daemon can
+/// answer `status=already_applied` with the tx it wrote instead of an
+/// unlabelled empty change set.
+fn close_lifecycle_request_id(task: &str, started_tx: &str) -> String {
+    format!("dispatch-close-state-{}-{}", request_slug(task), started_tx)
+}
+
+/// Apply a close's lifecycle transitions, reporting per-task whether the
+/// daemon applied them now or recognised them as already applied.
+fn apply_close_lifecycle_transitions(
+    client: &DaemonClient,
+    runtime: &tokio::runtime::Runtime,
+    project_id: &str,
+    started_tx: &str,
+    transitions: &[CloseTransition],
+) -> Result<Vec<TaskStateOutcome>> {
+    let mut outcomes = Vec::new();
+    for transition in transitions {
+        outcomes.push(runtime.block_on(post_task_state(
+            client,
+            project_id,
+            transition,
+            &close_lifecycle_request_id(&transition.task, started_tx),
+        ))?);
+    }
+    Ok(outcomes)
+}
+
+/// The daemon's labelled no-op contract for `POST /projects/:id/tasks/:task`
+/// with a `state`, mirrored on the client (see `update_task_state` in the
+/// daemon's `api.rs`, where the contract is documented).
+#[derive(Debug, Deserialize)]
+struct TaskStateOutcome {
+    #[serde(default)]
+    status: Option<String>,
+    #[serde(default)]
+    tx_id: String,
+}
+
+impl TaskStateOutcome {
+    fn already_applied(&self) -> bool {
+        self.status.as_deref() == Some("already_applied")
+    }
+}
+
+async fn post_task_state(
+    client: &DaemonClient,
+    project_id: &str,
+    transition: &CloseTransition,
+    request_id: &str,
+) -> Result<TaskStateOutcome> {
+    client
+        .post_json(
+            &format!(
+                "/projects/{project_id}/tasks/{}",
+                path_segment(&transition.task)
+            ),
+            &serde_json::json!({
+                "state": transition.to.as_str(),
+                "request_id": request_id,
+            }),
+        )
+        .await
+}
+
+/// Finish any `dispatch-close` whose lifecycle leg never landed.
+///
+/// orgasmic:task_EP3H1 — a close appends its tx and then transitions the task
+/// in a second daemon request. Under load the second one times out
+/// client-side (measured at load average ~190 on 2026-07-29) and the operator
+/// is left with a closed dispatch and a task stranded at its pre-close stage.
+/// The close tx records the transition it intended, so the repair is decidable
+/// from the ledger alone: a close is torn when it is the last lifecycle event
+/// for its task AND the task is still sitting at the recorded `LIFECYCLE_FROM`.
+/// Any later `task.state_transitioned` — including one an operator made on
+/// purpose — clears the candidate, so this never drags a deliberately moved
+/// task back.
+fn reconcile_torn_closes(
+    client: &DaemonClient,
+    runtime: &tokio::runtime::Runtime,
+    project_root: &Path,
+    project_id: &str,
+) -> Result<()> {
+    for (started_tx, transition) in torn_close_candidates(project_root)? {
+        let current = match read_task_lifecycle(project_root, &transition.task) {
+            Ok(info) => info.stage,
+            // A task that is no longer in any task file (archived, renamed)
+            // is not a tear this command can or should repair.
+            Err(_) => continue,
+        };
+        if current != transition.from || transition.from == transition.to {
+            continue;
+        }
+        let outcome = runtime.block_on(post_task_state(
+            client,
+            project_id,
+            &transition,
+            &close_lifecycle_request_id(&transition.task, &started_tx),
+        ));
+        match outcome {
+            Ok(outcome) => println!(
+                "reconciled: {} {} -> {} (torn close {}{})",
+                transition.task,
+                transition.from.as_str(),
+                transition.to.as_str(),
+                started_tx,
+                if outcome.already_applied() {
+                    "; the timed-out request had already applied it".to_string()
+                } else if outcome.tx_id.is_empty() {
+                    String::new()
+                } else {
+                    format!(" tx={}", outcome.tx_id)
+                }
+            ),
+            Err(err) => eprintln!(
+                "warning: could not finish torn close {started_tx} for {}: {err}",
+                transition.task
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// Best-effort reconciliation for a manager command that has not built a
+/// daemon client of its own. A daemon that cannot be reached is not a reason
+/// to fail the command the operator actually asked for.
+fn reconcile_torn_closes_best_effort(home: &Home, project_root: &Path, project_id: &str) {
+    let Ok(client) = DaemonClient::from_home_autostart(home) else {
+        return;
+    };
+    let Ok(runtime) = tokio::runtime::Runtime::new() else {
+        return;
+    };
+    if let Err(err) = reconcile_torn_closes(&client, &runtime, project_root, project_id) {
+        eprintln!("warning: torn-close reconciliation skipped: {err}");
+    }
+}
+
+/// Per task, the close transition still owed by the ledger: the newest close
+/// tx carrying `LIFECYCLE_FROM`/`LIFECYCLE_TO`, dropped again as soon as a
+/// later `task.state_transitioned` for that task appears.
+fn torn_close_candidates(project_root: &Path) -> Result<Vec<(String, CloseTransition)>> {
+    let mut pending: Vec<(String, CloseTransition)> = Vec::new();
+    for entry in read_tx_entries(project_root)? {
+        let Some(task) = entry.task.as_deref() else {
+            continue;
+        };
+        // A close tx names exactly one task (`dispatch-close` appends one per
+        // task), so a task list here is not a close and carries no intent.
+        match entry.ty.as_str() {
+            "implementer.done"
+            | "reviewer.done"
+            | "architector.done"
+            | "manager.dispatch_aborted" => {
+                pending.retain(|(_, pending)| pending.task != task);
+                let from = extra(&entry, LIFECYCLE_FROM_KEY).and_then(|v| v.parse().ok());
+                let to = extra(&entry, LIFECYCLE_TO_KEY).and_then(|v| v.parse().ok());
+                if let (Some(from), Some(to), Some(started_tx)) =
+                    (from, to, extra(&entry, "CLOSED_TX"))
+                {
+                    pending.push((
+                        started_tx.to_string(),
+                        CloseTransition {
+                            task: task.to_string(),
+                            from,
+                            to,
+                        },
+                    ));
+                }
+            }
+            "task.state_transitioned" => {
+                pending.retain(|(_, pending)| pending.task != task);
+            }
+            _ => {}
+        }
+    }
+    Ok(pending)
 }
 
 fn dispatchable_stage(kind: DispatchKind, stage: LifecycleStage) -> bool {
@@ -4903,7 +5189,71 @@ mod tests {
         assert_eq!(
             close_lifecycle_transitions(tmp.path(), &["TASK-086".to_string()], &open, &args)
                 .unwrap(),
-            vec![("TASK-086".to_string(), LifecycleStage::Done)]
+            vec![CloseTransition {
+                task: "TASK-086".to_string(),
+                from: LifecycleStage::InProgress,
+                to: LifecycleStage::Done,
+            }]
+        );
+    }
+
+    /// TASK-EP3H1: the reconciler's whole safety argument is "the close tx is
+    /// the last lifecycle word on this task". Anything later — a deliberate
+    /// move, a newer close — takes the candidate off the list.
+    #[test]
+    fn torn_close_candidates_yield_to_any_later_lifecycle_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tx_dir = tmp.path().join(".orgasmic/tx");
+        std::fs::create_dir_all(&tx_dir).unwrap();
+        let close = |tx_id: &str, task: &str, from: &str, to: &str| {
+            format!(
+                "* TX 2026-07-29 Wed 10:00:00 implementer.done {task}\n:PROPERTIES:\n:TX_ID:        {tx_id}\n:TIME:         [2026-07-29 Wed 10:00:00]\n:TYPE:         implementer.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:CLOSED_TX:    tx-start-{task}\n:LIFECYCLE_FROM: {from}\n:LIFECYCLE_TO: {to}\n:END:\n"
+            )
+        };
+        let transitioned = |task: &str| {
+            format!(
+                "* TX 2026-07-29 Wed 11:00:00 task.state_transitioned {task}\n:PROPERTIES:\n:TX_ID:        tx-moved-{task}\n:TIME:         [2026-07-29 Wed 11:00:00]\n:TYPE:         task.state_transitioned\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         {task}\n:END:\n"
+            )
+        };
+        std::fs::write(
+            tx_dir.join("2026-07.org"),
+            format!(
+                "#+title: tx\n#+orgasmic_version: 1\n\n{}\n{}\n{}\n{}",
+                close("tx-1", "TASK-TORN", "in_progress", "in_review"),
+                close("tx-2", "TASK-LANDED", "in_progress", "in_review"),
+                transitioned("TASK-LANDED"),
+                // No LIFECYCLE_* at all: a close written before this task
+                // shipped carries no intent and is not repairable.
+                "* TX 2026-07-29 Wed 12:00:00 implementer.done TASK-LEGACY\n:PROPERTIES:\n:TX_ID:        tx-3\n:TIME:         [2026-07-29 Wed 12:00:00]\n:TYPE:         implementer.done\n:ACTOR:        a@example.com\n:MACHINE:      host\n:PROJECT:      orgasmic\n:TASK:         TASK-LEGACY\n:CLOSED_TX:    tx-start-legacy\n:END:\n",
+            ),
+        )
+        .unwrap();
+
+        let candidates = torn_close_candidates(tmp.path()).unwrap();
+        assert_eq!(
+            candidates,
+            vec![(
+                "tx-start-TASK-TORN".to_string(),
+                CloseTransition {
+                    task: "TASK-TORN".to_string(),
+                    from: LifecycleStage::InProgress,
+                    to: LifecycleStage::InReview,
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn close_lifecycle_request_id_is_stable_per_task_and_generation() {
+        // TASK-EP3H1: the repair must re-send the SAME request id the close
+        // sent, or the daemon cannot recognise a lost-response replay.
+        assert_eq!(
+            close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-1"),
+            close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-1")
+        );
+        assert_ne!(
+            close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-1"),
+            close_lifecycle_request_id("TASK-086", "tx-20260729-orgasmic-2")
         );
     }
 
@@ -5659,6 +6009,7 @@ mod tests {
             "TASK-SALVAGE",
             "worker interrupted",
             &cleanup,
+            None,
         );
         assert_eq!(
             close
@@ -5701,7 +6052,14 @@ mod tests {
             before
         );
 
-        let close = close_aborted_request("orgasmic", &open, "TASK-CLEAN", "clean close", &cleanup);
+        let close = close_aborted_request(
+            "orgasmic",
+            &open,
+            "TASK-CLEAN",
+            "clean close",
+            &cleanup,
+            None,
+        );
         assert!(!close
             .extra
             .iter()

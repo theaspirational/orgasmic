@@ -1,0 +1,23 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index 973c63f..e0f0f66 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -13866,15 +13866,12 @@ async fn update_task_state(
+             Some(request_id) => state.writer.cached_tx_id(request_id).await,
+             None => None,
+         };
+-        let (status, tx_id) = match replayed {
+-            Some(tx_id) => (NoOpLabel::ALREADY_APPLIED, tx_id),
+-            None => (NoOpLabel::ALREADY_IN_STATE, String::new()),
+-        };
++        let _ = replayed;
+         let compact = CompactMutationResponse {
+             id: task_id.to_string(),
+             changed: BTreeMap::new(),
+-            tx_id,
+-            status: Some(status),
++            tx_id: String::new(),
++            status: None,
+         };
+         return compact_or_full_response(want_full, compact, detail);
+     }

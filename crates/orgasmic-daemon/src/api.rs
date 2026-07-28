@@ -11093,6 +11093,40 @@ pub struct CompactMutationResponse {
     pub id: String,
     pub changed: BTreeMap<String, String>,
     pub tx_id: String,
+    /// Why this response changed nothing, when it changed nothing
+    /// (TASK-EP3H1). Absent on a mutation that really wrote something, so
+    /// every existing response shape is unchanged. See
+    /// [`NoOpLabel`] for the vocabulary.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<&'static str>,
+}
+
+/// The two ways a mutation can be a no-op, which callers must be able to tell
+/// apart (TASK-EP3H1).
+///
+/// A client timeout is not a server failure: a request that "failed" may have
+/// landed, so the repair path re-submits work that is already done. An
+/// unlabelled `{"changed":{},"tx_id":""}` cannot distinguish "your request
+/// already applied — here is the tx it wrote" from "the state was already this
+/// and nothing you sent did it", and a caller that guesses wrong either
+/// double-applies or mis-reports. So the daemon says which:
+///
+/// - `already_applied` — this exact `request_id` is in the writer's
+///   idempotency record, so THIS request performed the change. `tx_id` carries
+///   the tx it wrote, exactly as the original response did.
+/// - `already_in_state` — the target state already held and nothing
+///   attributable to this request produced it. `tx_id` is empty because no tx
+///   was written for it.
+///
+/// The idempotency record lives in the writer's in-memory cache, so
+/// `already_applied` is only available while the daemon that served the
+/// original request is still up. A restart downgrades the answer to
+/// `already_in_state`, which is weaker but never wrong.
+pub struct NoOpLabel;
+
+impl NoOpLabel {
+    pub const ALREADY_APPLIED: &'static str = "already_applied";
+    pub const ALREADY_IN_STATE: &'static str = "already_in_state";
 }
 
 /// Query flag shared by mutation endpoints that default to
@@ -12275,6 +12309,7 @@ async fn post_org_node_edit(
         id: id.clone(),
         changed,
         tx_id,
+        status: None,
     };
     compact_or_full_response(q.json, compact, doc)
 }
@@ -12373,6 +12408,7 @@ async fn post_org_node_delete(
         id: id.clone(),
         changed,
         tx_id,
+        status: None,
     };
     // Full output is just the compact shape: the node no longer exists.
     compact_or_full_response(q.json, compact, compact_or_delete_full(&id))
@@ -13822,10 +13858,23 @@ async fn update_task_state(
             .expect("task index membership checked above");
         let body = project.task_bodies.get(task_id).cloned();
         let detail = crate::index::TaskDetail::from_indexed_body(task, body);
+        // TASK-EP3H1: label the no-op. If the caller's own request_id is in the
+        // writer's idempotency record, this request already made the change and
+        // its tx id is still the honest answer — the caller lost the response,
+        // not the write. See [`NoOpLabel`] for the contract.
+        let replayed = match req.request_id.as_deref() {
+            Some(request_id) => state.writer.cached_tx_id(request_id).await,
+            None => None,
+        };
+        let (status, tx_id) = match replayed {
+            Some(tx_id) => (NoOpLabel::ALREADY_APPLIED, tx_id),
+            None => (NoOpLabel::ALREADY_IN_STATE, String::new()),
+        };
         let compact = CompactMutationResponse {
             id: task_id.to_string(),
             changed: BTreeMap::new(),
-            tx_id: String::new(),
+            tx_id,
+            status: Some(status),
         };
         return compact_or_full_response(want_full, compact, detail);
     }
@@ -13898,6 +13947,7 @@ async fn update_task_state(
         id: task_id.to_string(),
         changed,
         tx_id,
+        status: None,
     };
     compact_or_full_response(want_full, compact, detail)
 }
@@ -14060,6 +14110,7 @@ async fn update_task_properties(
         id: task_id.to_string(),
         changed: changed_map,
         tx_id,
+        status: None,
     };
     compact_or_full_response(want_full, compact, detail)
 }

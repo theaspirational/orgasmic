@@ -1,0 +1,7 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-EP3H1 --artifact verify/TASK-EP3H1-noop`.
+#
+# Drives the real close twice through the real binary, then puts the lifecycle
+# leg's own no-op contract on the wire, because the contract is what the repair
+# path reads — not something a caller can infer from the CLI's printed line.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch resubmitted_close_and_transition_are_labelled_no_ops

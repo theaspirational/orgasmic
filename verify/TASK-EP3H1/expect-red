@@ -1,0 +1,24 @@
+# Pinned from the red run authored against the defect, 2026-07-29.
+#
+# The injection stops the close tx from recording the transition it intended
+# (`LIFECYCLE_FROM`/`LIFECYCLE_TO`). That is the root of the tear, not a
+# symptom of it: with no recorded intent the ledger cannot say where the task
+# was going, so no later command can finish the move, and the operator is left
+# to reconstruct it from the close's stderr by hand. Every other guarantee
+# still holds under the injection — the close still closes, the warning is
+# still loud, the task is still stranded — which is exactly the state
+# TASK-EP3H1 was filed on.
+exit: 101
+
+# The tear itself is NOT what fails: the test asserts it first and it passes
+# under the injection. What fails is the repair. The empty string after the
+# colon is `dispatch-status` printing nothing at all where a `reconciled:` line
+# belongs.
+contains: the next manager command must repair the torn close and say so:
+contains: torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command
+
+# Exactly one test falls. The re-submitted-close no-op and the timeout text are
+# independent defect modes with their own proofs:
+#   orgasmic verify TASK-EP3H1 --artifact verify/TASK-EP3H1-noop
+#   orgasmic verify TASK-EP3H1 --artifact verify/TASK-EP3H1-timeout
+contains: test result: FAILED. 0 passed; 1 failed
