@@ -2177,6 +2177,7 @@ From TASK-G7E4R's axis sweep (its report, section 3): daemon_lifecycle::RESTART_
 * BACKLOG TASK-EP3H1 dispatch-close tears under load: tx appended, lifecycle stranded, and a timed-out request can succeed invisibly    :cli:daemon:hardening:
 :PROPERTIES:
 :ID: TASK-EP3H1
+:PRIORITY: P1
 :END:
 
 Measured 2026-07-29 at load average ~190 (a worker deliberately inducing load).

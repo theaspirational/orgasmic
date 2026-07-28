@@ -38723,3 +38723,31 @@
 :REASON:       small, guarded already, composition naming only
 :PRIORITY:     P2
 :END:
+
+* TX 2026-07-28 Tue 21:32:46 task.property_updated TASK-EP3H1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3507
+:TIME:         [2026-07-28 Tue 21:32:46]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EP3H1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager-surface integrity under load; measured twice today
+:PRIORITY:     P1
+:END:
+
+* TX 2026-07-28 Tue 21:33:08 task.property_updated TASK-EP3H1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3508
+:TIME:         [2026-07-28 Tue 21:33:08]
+:TYPE:         task.property_updated
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EP3H1
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       manager-surface integrity under load; measured twice today
+:PRIORITY:     P1
+:END:
