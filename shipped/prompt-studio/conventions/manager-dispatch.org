@@ -82,18 +82,21 @@ What the stall detector can and cannot see on a pane: silence means silence, so 
 harness parked on an interactive gate (trust prompt, login) or one that finished
 without calling `dispatch finalize` is still released at 600 s. A harness that
 hangs while its TUI keeps animating a spinner still looks alive — same blind spot
-the acp-stdio heartbeat has, and the one TASK-VZMZE is about. The `lines` count on
+the acp-stdio heartbeat has, and the one TASK-VZMZE is about. The `bytes` count on
 each `pane_activity` event is diagnostic volume only — it is NOT a progress
 classifier. The supervisor never interprets it; any `pane_activity` resets the
-same clock. A full-screen renderer can rewrite many newline-delimited rows for a
-spinner-only frame, an SDK lag notice counts as one observed item, and
-`PaneOutputStart::Oldest` can replay retained output after a reattach. Do not
+same clock. A full-screen renderer can repaint thousands of bytes for a
+spinner-only frame, an SDK lag notice is counted as zero bytes of real activity,
+and `PaneOutputStart::Oldest` can replay retained output after a reattach. Do not
 read a healthy verdict out of that number.
 
-Known gap (TASK-RWCRN reviewer, HIGH): the liveness source observes
-newline-terminated lines, so a TUI that redraws in place with ANSI/CR and never
-emits LF produces no `pane_activity` at all and is still released at 600 s. Until
-that is fixed, a full-screen harness in an rmux pane is not protected.
+The unit is raw pane output bytes, not lines (TASK-RWCRN.1). The first
+implementation observed newline-terminated lines, so a TUI that redraws in place
+with ANSI/CR and never emits LF produced no `pane_activity` at all and was still
+released at 600 s — exactly the full-screen harnesses the event exists to
+protect. The driver now drains `PaneOutputStream` and counts chunk lengths;
+pane content is still never persisted. tmux dispatches do not yet have any
+liveness signal (TASK-XHP43) and remain unprotected past 600 s.
 
 An orphaned dispatch also blocks re-dispatch: `manager.dispatch_orphaned` is not
 in `scan_open_dispatches`'s terminal set, so the next attempt fails with

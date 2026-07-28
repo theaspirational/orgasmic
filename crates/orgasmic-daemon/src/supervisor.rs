@@ -5587,7 +5587,7 @@ mod tests {
         // and without satisfying the early-exit "did any work" test: a TUI
         // paints its banner even when the harness immediately wedges, so pane
         // output alone must never make a no-work run look productive.
-        let evt = DriverEvent::PaneActivity { seq: 0, lines: 12 };
+        let evt = DriverEvent::PaneActivity { seq: 0, bytes: 480 };
         assert!(terminal_outcome_for_event(&evt).is_none());
         assert!(!driver_event_counts_as_work(&evt));
         assert!(driver_event_counts_as_work(&DriverEvent::ToolCall {
@@ -6485,7 +6485,10 @@ mod tests {
         .await;
 
         driver
-            .inject(DriverEvent::PaneActivity { seq: 0, lines: 412 })
+            .inject(DriverEvent::PaneActivity {
+                seq: 0,
+                bytes: 16_480,
+            })
             .await;
         wait_for_event_count(&sup, &resp.run_id, 2).await;
         sup.release_first_timed_out_run().await;
