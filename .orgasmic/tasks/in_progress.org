@@ -897,3 +897,63 @@ Either way the observable acceptance is the same: a worker that exits without
 finalize produces a daemon-written release tombstone and an orphan tx without
 any manager action.
 
+* IN_PROGRESS TASK-6HJYT Split the liveness question out of the recovery inventory :daemon:api:architecture:
+:PROPERTIES:
+:ID: TASK-6HJYT
+:PRIORITY: P1
+:END:
+
+Problem: =GET /api/runs= answers three unrelated questions with one full pass
+over every session file on disk.
+
+1. "Is anything live?" — the CLI's fence before restart, update, and
+   dispatch-close (=daemon_lifecycle.rs::live_manager_runs=). It reads the
+   response, keeps =live=, and filters to =task_id= starting =manager.launch:=.
+2. "What should the UI badge show?" — =ui/src/hooks/useTaskRuns.ts=.
+3. "What needs recovery?" — the actual crash-recovery inventory, which is the
+   only one of the three that genuinely requires reading durable history.
+
+Question 1 needs no disk at all. Live runs are supervisor-local: the daemon
+already holds them in memory, with their identities. Answering it through the
+recovery inventory means a restart fence pays for classifying every historical
+run on the board.
+
+The codebase already contains this reasoning, applied to the singular endpoint
+and never to the plural one. =get_run= (api.rs, "Exact active-run lookups are
+supervisor-local") checks =state.supervisor.snapshot()= first and only falls
+back to =recovery_status= when the id is not live, with the comment: "Worker
+finalize and manager close must not scan unrelated durable recovery history
+before they can act on a live run whose id they already know." That is exactly
+the argument for splitting the list endpoint too.
+
+Why this is worth doing even though the scan is now cheap: the coupling, not the
+duration, is the defect. Measured on the operator's board 2026-07-25 after
+TASK-KWSTJ: 224 session files, 2.42 GB on disk, 31.4 MB inspected, 0.24 s to
+first byte — down from 41.9 s. Before that fix the same fence failed outright:
+=manager dispatch-close --status aborted= died after 10.03 s against the CLI's
+10 s deadline, so a dispatch that failed at startup could not be closed by the
+documented verb. Two defects multiplied — startup left the mess, enumeration
+prevented cleaning it. A control-path check that cannot fail for reasons
+belonging to unrelated historical runs removes that whole class.
+
+Work:
+1. Give the liveness question its own answer sourced from the supervisor
+   snapshot, with no session-file reads. The CLI fence and any other
+   "is something running right now" caller move onto it.
+2. Keep =GET /api/runs= as the recovery inventory it actually is. Decide
+   explicitly whether the UI badge path belongs on the live source, the
+   inventory, or a third shape — it wants live state per task, not history.
+3. Do not duplicate classification logic. If the live bucket is derived in two
+   places it will drift; the supervisor snapshot should be the single source for
+   "live" and the inventory should consume it rather than recompute it.
+4. Naming should stop implying that =/api/runs= is a general run list. It is a
+   recovery inventory and reads as one only after reading the handler.
+
+Acceptance:
+- the restart/update/dispatch-close fence performs no session-file reads
+- that fence still refuses correctly while a manager terminal is live, and
+  still permits when only historical runs exist
+- =GET /api/runs= keeps its current classifications and bounded-scan metrics
+- a regression proves the fence answers on a board whose session files are
+  unreadable or absent, since its correctness no longer depends on them
+
