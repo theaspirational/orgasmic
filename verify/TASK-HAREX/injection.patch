@@ -1,0 +1,15 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -4345,7 +4345,10 @@
+ /// to the state it protects.
+ fn begin_explicit_release(rec: &mut RunRecord) {
+     rec.explicit_release_in_progress = true;
+-    rec.release_requested.notify_one();
++    // TASK-HAREX injection: the pre-fix state. Nothing tells the run's drain
++    // that a release was requested, so its wait on the driver's stream stays
++    // unbounded and a driver holding a stray sender parks it forever — with
++    // the record still in `runs`, no tombstone, and no orphan tx.
+ }
+ 
+ /// The bounded `recv` a run's event drain uses instead of `events.recv()`

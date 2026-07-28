@@ -65,6 +65,37 @@ const BABYSITTER_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFAULT_MAX_RUN_DURATION: Duration = Duration::from_secs(14_400);
 const DRIVER_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a run's event drain may keep waiting for its driver's stream to
+/// end *after* a release has been requested for that run, before the drain
+/// stops waiting and lets the release finish without it.
+///
+/// orgasmic:TASK-HAREX — derived, not chosen. Once a release is requested the
+/// daemon has already stopped the driver, and
+/// [`crate::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT`] is the existing budget
+/// for the whole of that teardown (5s driver release + 5s producer join + 10s
+/// writer slack; see its doc comment). Reusing it as a deadline measured from
+/// the release request means the drain can never push a release past the
+/// budget the rest of the daemon already assumes a release fits inside, and
+/// a future change to the shutdown cost moves this with it.
+///
+/// Before this bound existed the wait was `while let Some(evt) =
+/// events.recv().await` with nothing to stop it: a driver that leaves one
+/// sender clone alive outside the task the supervisor holds as `producer`
+/// (aborting the producer then does not close the channel) parks the drain
+/// forever. `release_one` awaits that drain before it removes the run record
+/// and writes `Lifecycle::Release`, so the run stays in `runs` — live in
+/// `GET /runs`, 404 from `POST /runs/:id/release` because
+/// `explicit_release_in_progress` is already set, invisible to every timeout
+/// because `timed_out_run` skips a record with a `terminal_outcome` — with no
+/// tombstone and therefore no `manager.dispatch_orphaned`, until an operator
+/// restarts the daemon. That is the measured 2026-07-26 incident.
+///
+/// The bound arms only on a *requested* release, never on silence, so a
+/// healthy worker that says nothing for an hour while cargo builds is not
+/// affected by it at all.
+pub(crate) const RELEASE_DRAIN_BUDGET: Duration = crate::api::RELEASE_FINALIZATION_DRAIN_TIMEOUT;
+
 /// Default idle window for persistent (hot-session) artifactor runs: 15
 /// minutes of no accepted `send_input` before self-release. Long enough to
 /// survive an operator reading a diff or drafting review feedback between
@@ -300,6 +331,11 @@ pub struct Supervisor {
     /// Deliberately outside the mutex: the wait must not hold the lock the
     /// reattach it is waiting for needs.
     boot_reattach_resolved: Arc<tokio::sync::watch::Sender<bool>>,
+    /// [`RELEASE_DRAIN_BUDGET`] in milliseconds, in a cell so a test can
+    /// compress a tens-of-seconds production window to a few hundred
+    /// milliseconds and still drive the real code path (TASK-HAREX). Read once
+    /// per run, when `acquire` spawns that run's drain.
+    release_drain_budget_ms: Arc<AtomicU64>,
 }
 
 // orgasmic:TASK-AK6EM
@@ -975,7 +1011,23 @@ struct RunRecord {
     /// PID watcher observed subprocess exit (classification-only; not a release gate).
     early_exit_pid_exited: bool,
     /// Explicit timeout/cancel/finalize release is draining; stream-end must defer.
+    ///
+    /// Only ever set through [`begin_explicit_release`], which also arms this
+    /// run's drain deadline. Setting it directly would reintroduce TASK-HAREX:
+    /// a release whose drain never ends and whose record therefore never leaves
+    /// `runs`.
     explicit_release_in_progress: bool,
+    /// Notified once, by [`begin_explicit_release`], when some authority has
+    /// requested this run's release (worker finalize, timeout, cancel, an
+    /// observed subprocess exit, a terminal driver event). The run's drain
+    /// waits on it and, from that moment, stops waiting on the driver's stream
+    /// unboundedly: it gets [`RELEASE_DRAIN_BUDGET`] and then ends regardless,
+    /// so the release behind it can always reach its tombstone (TASK-HAREX).
+    ///
+    /// `notify_one` and not `notify_waiters`: the drain may be busy inside an
+    /// event when the release is requested, and a stored permit is what makes
+    /// the arming edge impossible to miss.
+    release_requested: Arc<tokio::sync::Notify>,
     /// A terminal driver event has taken the control handle and is stopping
     /// the producer. Unlike other explicit releases, receiver closure may
     /// remove this record and write the terminal lifecycle event.
@@ -1153,7 +1205,26 @@ impl Supervisor {
             // rehydration has none pending. `begin_boot_reattach` is what the
             // daemon calls, before it binds.
             boot_reattach_resolved: Arc::new(tokio::sync::watch::channel(true).0),
+            release_drain_budget_ms: Arc::new(AtomicU64::new(
+                RELEASE_DRAIN_BUDGET.as_millis() as u64
+            )),
         }
+    }
+
+    /// Override [`RELEASE_DRAIN_BUDGET`] for this supervisor (TASK-HAREX).
+    ///
+    /// The daemon calls this with `ShutdownBudgets::release_drain`, which is
+    /// the same constant in production and an injectable one in the tests that
+    /// drive a real shutdown with short budgets — so the window this bound uses
+    /// and the window the shutdown path waits for a release cannot drift apart.
+    /// Takes effect for runs acquired after the call.
+    pub fn set_release_drain_budget(&self, budget: Duration) {
+        self.release_drain_budget_ms
+            .store(budget.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    fn release_drain_budget(&self) -> Duration {
+        Duration::from_millis(self.release_drain_budget_ms.load(Ordering::SeqCst))
     }
 
     /// Declare that boot rehydration is about to run, so a destructive close
@@ -1527,6 +1598,11 @@ impl Supervisor {
         let producer = session.producer;
         let events = session.events;
         let kind = req.kind;
+        // orgasmic:TASK-HAREX — the record and its drain share this handle, so
+        // the drain learns that a release was requested without polling the
+        // run map.
+        let release_requested = Arc::new(tokio::sync::Notify::new());
+        let release_drain_budget = self.release_drain_budget();
         // Insert the run record before the drain task starts so stream-end and
         // early-exit coordination always find a resolvable lease owner.
         {
@@ -1584,6 +1660,7 @@ impl Supervisor {
                 stream_ended: false,
                 early_exit_pid_exited: false,
                 explicit_release_in_progress: false,
+                release_requested: Arc::clone(&release_requested),
                 terminal_event_shutdown_in_progress: false,
                 pid_exit_shutdown_in_progress: false,
             };
@@ -1600,7 +1677,12 @@ impl Supervisor {
         let identity_for_drain = identity.clone();
         let drain = tokio::spawn(async move {
             let mut events = events;
-            while let Some(evt) = events.recv().await {
+            let mut gate = DrainGate::new(
+                run_id_for_drain.clone(),
+                release_requested,
+                release_drain_budget,
+            );
+            while let Some(evt) = gate.next(&mut events).await {
                 let payload = match serde_json::to_value(&evt) {
                     Ok(v) => v,
                     Err(e) => {
@@ -2222,6 +2304,11 @@ impl Supervisor {
         let control = session.control;
         let producer = session.producer;
         let events = session.events;
+        // orgasmic:TASK-HAREX — a reattached run's drain is bounded the same
+        // way as a fresh one's; a boot reattach is exactly the situation where
+        // the driver on the other end may already be gone.
+        let release_requested = Arc::new(tokio::sync::Notify::new());
+        let release_drain_budget = self.release_drain_budget();
         let record = RunRecord {
             task_id: task_id.clone(),
             kind,
@@ -2275,6 +2362,7 @@ impl Supervisor {
             stream_ended: false,
             early_exit_pid_exited: false,
             explicit_release_in_progress: false,
+            release_requested: Arc::clone(&release_requested),
             terminal_event_shutdown_in_progress: false,
             pid_exit_shutdown_in_progress: false,
         };
@@ -2292,7 +2380,12 @@ impl Supervisor {
         let identity_for_drain = identity.clone();
         let drain = tokio::spawn(async move {
             let mut events = events;
-            while let Some(evt) = events.recv().await {
+            let mut gate = DrainGate::new(
+                run_id_for_drain.clone(),
+                release_requested,
+                release_drain_budget,
+            );
+            while let Some(evt) = gate.next(&mut events).await {
                 let payload = match serde_json::to_value(&evt) {
                     Ok(v) => v,
                     Err(e) => {
@@ -2679,7 +2772,7 @@ impl Supervisor {
             }
             // orgasmic:task_3TEDA — stop control and drain while the record
             // remains in the map; freeze classification only after quiescence.
-            rec.explicit_release_in_progress = true;
+            begin_explicit_release(rec);
             let control = std::mem::replace(&mut rec.control, Box::new(DetachedDriverControl));
             let producer = rec.producer.take();
             let drain = std::mem::replace(&mut rec.event_drain, tokio::spawn(async {}));
@@ -3892,7 +3985,7 @@ fn spawn_early_exit_watcher(
                     if rec.explicit_release_in_progress || rec.early_exit_release_taken {
                         None
                     } else {
-                        rec.explicit_release_in_progress = true;
+                        begin_explicit_release(rec);
                         rec.pid_exit_shutdown_in_progress = true;
                         Some((
                             rec.transport.clone(),
@@ -4239,6 +4332,89 @@ fn remove_record_lease(inner: &mut Inner, rec: &RunRecord) {
         &rec.task_id,
         rec.kind,
     ));
+}
+
+/// Mark a run as having a release in progress, and arm its drain deadline.
+///
+/// orgasmic:TASK-HAREX — the single door for `explicit_release_in_progress`.
+/// Every caller that sets it has already stopped, or is about to stop, the
+/// driver; from that point the drain waiting on the driver's stream is waiting
+/// on something the daemon has already told to go away, and a driver that
+/// leaves a stray sender clone alive turns that wait into a permanent one.
+/// Arming here rather than at each call site is what keeps the bound attached
+/// to the state it protects.
+fn begin_explicit_release(rec: &mut RunRecord) {
+    rec.explicit_release_in_progress = true;
+    rec.release_requested.notify_one();
+}
+
+/// The bounded `recv` a run's event drain uses instead of `events.recv()`
+/// (TASK-HAREX).
+///
+/// Unbounded until [`begin_explicit_release`] fires, then bounded by
+/// [`RELEASE_DRAIN_BUDGET`] measured from that moment. The asymmetry is the
+/// whole point: silence from a *working* driver must never end a drain — a
+/// dispatch worker can go quiet for twenty minutes while cargo builds — but
+/// silence from a driver the daemon has already told to shut down is the one
+/// case where waiting forever costs a run its tombstone.
+struct DrainGate {
+    run_id: String,
+    release_requested: Arc<tokio::sync::Notify>,
+    budget: Duration,
+    deadline: Option<Instant>,
+}
+
+impl DrainGate {
+    fn new(run_id: String, release_requested: Arc<tokio::sync::Notify>, budget: Duration) -> Self {
+        Self {
+            run_id,
+            release_requested,
+            budget,
+            deadline: None,
+        }
+    }
+
+    /// The next driver event, or `None` to end the drain.
+    ///
+    /// `None` means one of two things, and the caller treats them alike: the
+    /// driver's stream ended (the normal boundary), or a release was requested
+    /// a full budget ago and the stream still has not ended. Events that arrive
+    /// after the second case are dropped — by then the daemon has spent the
+    /// entire release budget waiting for a driver it already stopped, and a run
+    /// with no release tombstone is a worse outcome than a session missing its
+    /// last few events.
+    async fn next(
+        &mut self,
+        events: &mut tokio::sync::mpsc::Receiver<DriverEvent>,
+    ) -> Option<DriverEvent> {
+        loop {
+            match self.deadline {
+                Some(deadline) => {
+                    return match tokio::time::timeout_at(deadline, events.recv()).await {
+                        Ok(evt) => evt,
+                        Err(_) => {
+                            warn!(
+                                run_id = %self.run_id,
+                                budget_ms = self.budget.as_millis() as u64,
+                                "driver stream did not end within the release drain budget; \
+                                 ending the drain so the release can write its tombstone"
+                            );
+                            None
+                        }
+                    }
+                }
+                None => {
+                    tokio::select! {
+                        biased;
+                        evt = events.recv() => return evt,
+                        () = self.release_requested.notified() => {
+                            self.deadline = Some(Instant::now() + self.budget);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn session_is_early_exit_no_work_record(rec: &RunRecord) -> bool {
@@ -4722,7 +4898,7 @@ fn take_driver_terminal_release(
     }
 
     let rec = inner.runs.get_mut(run_id)?;
-    rec.explicit_release_in_progress = true;
+    begin_explicit_release(rec);
     rec.terminal_event_shutdown_in_progress = true;
     Some(TerminalRelease {
         run_id: rec.identity.run_id.clone(),
@@ -5770,6 +5946,101 @@ mod tests {
                 pid,
                 events: rx,
                 control: Box::new(HungReleaseControl),
+                producer: Some(producer),
+                native_runtime: None,
+            })
+        }
+    }
+
+    /// A driver that keeps one clone of its event sender alive in a task the
+    /// supervisor does not own (TASK-HAREX).
+    ///
+    /// Not an invented shape. `stop_and_join_driver_producer` stops the driver
+    /// control, then joins — and if that does not finish, aborts — the single
+    /// `producer` handle the driver returned. A real transport whose internal
+    /// reader, notification or pty task also holds a sender survives all of
+    /// that, so `events.recv()` never yields `None`: the run's drain parks
+    /// forever and the release waiting behind it never removes the record or
+    /// writes `Lifecycle::Release`.
+    ///
+    /// Everything else here is deliberately healthy — the control releases
+    /// promptly, the producer is joinable — so a test that fails against this
+    /// driver is failing on the drain and nothing else.
+    struct StraySenderDriver {
+        dead_pid: bool,
+        producer_dropped: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl StraySenderDriver {
+        fn new(dead_pid: bool) -> Self {
+            Self {
+                dead_pid,
+                producer_dropped: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for StraySenderDriver {
+        fn transport(&self) -> &'static str {
+            // The transport of the measured incident, and one that
+            // `terminal_event_releases_transport` does not allow-list.
+            "acp-stdio"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, DriverError> {
+            let pid = self.dead_pid.then(|| {
+                let mut child = Command::new("sh")
+                    .args(["-c", "exit 0"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn short-lived child");
+                let pid = child.id();
+                child.wait().expect("reap short-lived child");
+                pid
+            });
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tx.send(DriverEvent::Ready {
+                protocol_version: "stray-sender/1".into(),
+                capabilities: json!({"test": true}),
+            })
+            .await
+            .unwrap();
+            // A work envelope, so this models a worker that did its job and
+            // then vanished rather than one that never started. The two are
+            // classified differently on release — `early-exit subprocess with
+            // no work envelopes` vs `protocol_end_without_finalize` — and the
+            // incident is the second.
+            tx.send(DriverEvent::TextChunk {
+                stream: TextStream::Assistant,
+                chunk: "wrote the report".into(),
+                seq: 1,
+            })
+            .await
+            .unwrap();
+            // The clone no release path can reach.
+            let stray = tx.clone();
+            tokio::spawn(async move {
+                let _stray = stray;
+                std::future::pending::<()>().await;
+            });
+            let dropped = Arc::clone(&self.producer_dropped);
+            let producer = tokio::spawn(async move {
+                let _drop_probe = ProducerDropProbe(dropped);
+                let _tx = tx;
+                std::future::pending::<()>().await;
+            });
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid,
+                events: rx,
+                control: Box::new(NoopControl),
                 producer: Some(producer),
                 native_runtime: None,
             })
@@ -10751,6 +11022,128 @@ mod tests {
         assert_eq!(release_count(&session_path), 1);
     }
 
+    /// orgasmic:TASK-HAREX — the measured 2026-07-26 orphan, replayed.
+    ///
+    /// A dispatch worker on acp-stdio whose process is gone and whose driver
+    /// left a sender behind. Before the drain gained a release-scoped bound,
+    /// this run was unreleasable by anything short of restarting the daemon:
+    /// the PID watcher fired and requested shutdown, the producer was aborted,
+    /// and then `events.recv()` parked forever on the stray sender. The record
+    /// stayed in `runs` — live in `GET /runs`, 404 from `POST
+    /// /runs/:id/release` because `explicit_release_in_progress` was already
+    /// set, and invisible to `timed_out_run`.
+    ///
+    /// The budget is compressed to 300ms; production spends
+    /// `RELEASE_DRAIN_BUDGET` (20s), which no test can afford to sit through.
+    /// That is the point of `set_release_drain_budget`, and it is the same
+    /// window `ShutdownBudgets::release_drain` carries.
+    #[tokio::test]
+    async fn a_dead_worker_whose_stream_never_ends_is_still_released_as_orphaned() {
+        let (sup, dir, _w) = make_supervisor();
+        sup.set_release_drain_budget(Duration::from_millis(300));
+        let driver = StraySenderDriver::new(true);
+        let req = dispatch_impl_req("TASK-HAREX-DEAD", dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_run_release(&sup, &resp.run_id, Duration::from_secs(10)).await;
+        // Failed + protocol_end_without_finalize is what `record_dispatch_orphaned`
+        // reads to write `manager.dispatch_orphaned`; a Completed or
+        // finalized-by-worker tombstone here would release the lease and still
+        // leave the manager with nothing to rescue.
+        assert_release(&session_path, "protocol_end_without_finalize", "failed");
+        assert_eq!(release_count(&session_path), 1);
+    }
+
+    /// orgasmic:TASK-HAREX — the same wedge reached through worker finalize.
+    ///
+    /// `release_one` awaits the drain before it removes the record and appends
+    /// the tombstone, so a drain that never ends is a `dispatch finalize` that
+    /// never returns and a run that is never released. The timeout below is
+    /// the assertion: without the bound this await does not complete at all.
+    #[tokio::test]
+    async fn a_worker_finalize_completes_even_when_the_drain_never_ends() {
+        let (sup, dir, _w) = make_supervisor();
+        sup.set_release_drain_budget(Duration::from_millis(300));
+        let driver = StraySenderDriver::new(false);
+        let req = dispatch_impl_req("TASK-HAREX-FINALIZE", dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            sup.release_with_finalization(
+                &resp.run_id,
+                "worker finalize for TASK-HAREX-FINALIZE",
+                ReleaseOutcome::Completed,
+                true,
+                None,
+            ),
+        )
+        .await
+        .expect("worker finalize must not hang on a drain that never ends")
+        .expect("worker finalize release");
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release(
+            &session_path,
+            "worker finalize for TASK-HAREX-FINALIZE",
+            "completed",
+        );
+        assert_eq!(release_finalize_flags(&session_path), vec![true]);
+    }
+
+    /// orgasmic:TASK-HAREX — the false positive this bound must not have.
+    ///
+    /// Dispatch sessions here routinely go silent for ten or twenty minutes
+    /// while cargo builds. The drain bound arms on a *requested release*, never
+    /// on silence, so a healthy quiet worker is untouched by it — this run sits
+    /// through many multiples of its own budget with a live driver and stays
+    /// exactly where it is.
+    #[tokio::test]
+    async fn a_quiet_healthy_worker_is_never_ended_by_the_release_drain_budget() {
+        let (sup, dir, _w) = make_supervisor();
+        sup.set_release_drain_budget(Duration::from_millis(50));
+        let driver = StraySenderDriver::new(false);
+        let req = dispatch_impl_req("TASK-HAREX-QUIET", dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "a quiet worker with no release requested must stay live"
+        );
+        assert_eq!(release_count(&session_path), 0);
+    }
+
+    /// orgasmic:TASK-HAREX — the gate's own contract, on the production window.
+    ///
+    /// Paused time, so this asserts against `RELEASE_DRAIN_BUDGET` itself
+    /// rather than a compressed stand-in: an hour of silence does not end an
+    /// unarmed gate, and one budget of silence after arming does.
+    #[tokio::test(start_paused = true)]
+    async fn the_drain_gate_bounds_only_after_a_release_is_requested() {
+        let (_tx, mut rx) = tokio::sync::mpsc::channel::<DriverEvent>(4);
+        let release_requested = Arc::new(tokio::sync::Notify::new());
+        let mut gate = DrainGate::new(
+            "run-harex-gate".into(),
+            Arc::clone(&release_requested),
+            RELEASE_DRAIN_BUDGET,
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(3_600), gate.next(&mut rx))
+                .await
+                .is_err(),
+            "an unarmed gate must outwait any amount of driver silence"
+        );
+        release_requested.notify_one();
+        assert_eq!(
+            tokio::time::timeout(RELEASE_DRAIN_BUDGET * 2, gate.next(&mut rx))
+                .await
+                .expect("gate must end within its budget once a release is requested"),
+            None
+        );
+    }
+
     #[tokio::test]
     async fn delayed_queued_work_observed_before_stream_end_release() {
         let (sup, dir, _w) = make_supervisor();
@@ -11258,6 +11651,7 @@ mod tests {
             stream_ended: false,
             early_exit_pid_exited: false,
             explicit_release_in_progress: false,
+            release_requested: Arc::new(tokio::sync::Notify::new()),
             terminal_event_shutdown_in_progress: false,
             pid_exit_shutdown_in_progress: false,
         }

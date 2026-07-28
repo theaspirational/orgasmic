@@ -1,0 +1,24 @@
+# Pinned from the real red run of 2026-07-28 with the injection applied.
+#
+# The injection removes one line: the notification that tells a run's event
+# drain that a release has been requested. That is the whole pre-fix state —
+# the drain's `events.recv()` stays unbounded, and a driver that left a sender
+# clone alive outside the task the supervisor holds as `producer` parks it
+# forever. Both entrances to the release then wedge behind it.
+exit: 101
+
+# ENTRANCE 1 — a dead worker. The PID watcher fires, requests producer
+# shutdown, and the run is never released: this is the incident's observable,
+# a live record with a process long gone. The assertion is a *wait* expiring,
+# not a wrong value, because pre-fix nothing ever writes the tombstone.
+contains: did not release within 10s
+contains: a_dead_worker_whose_stream_never_ends_is_still_released_as_orphaned
+
+# ENTRANCE 2 — worker finalize, the route run-20260726T080801 took. The release
+# does not merely classify wrongly, it never returns at all: `release_one`
+# awaits the drain before it removes the record and appends `Lifecycle::Release`.
+contains: worker finalize must not hang on a drain that never ends: Elapsed(())
+
+# Both, and only these two. A binary that collapses wholesale is a different
+# failure and has not reproduced this defect.
+contains: test result: FAILED. 0 passed; 2 failed
