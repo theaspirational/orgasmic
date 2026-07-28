@@ -1,0 +1,14 @@
+diff --git a/crates/orgasmic-cli/src/daemon_client.rs b/crates/orgasmic-cli/src/daemon_client.rs
+index 100d0ce..fdce6c5 100644
+--- a/crates/orgasmic-cli/src/daemon_client.rs
++++ b/crates/orgasmic-cli/src/daemon_client.rs
+@@ -283,7 +283,8 @@ fn transport_error_message(
+     timeout: std::time::Duration,
+     load_1m: Option<f64>,
+ ) -> String {
+-    if !timed_out {
++    let _ = (timed_out, timeout, load_1m);
++    if true {
+         return format!("daemon request failed: {detail} — is the daemon reachable?");
+     }
+     let load = match load_1m {

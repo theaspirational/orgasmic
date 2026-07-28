@@ -1,0 +1,8 @@
+# One line. Run from the repo root by `orgasmic verify TASK-EP3H1`.
+#
+# The production path: the real `orgasmic` binary against a real daemon, with
+# the lifecycle write for TASK-CLEANUP answered 503 by a proxy in front of it.
+# That is the shape of what was measured on 2026-07-29 — the close tx lands,
+# the second request does not — and it is not reproducible below the CLI,
+# because the tear is between two of the CLI's own requests.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --test dispatch torn_dispatch_close_lifecycle_is_repaired_by_next_manager_command
