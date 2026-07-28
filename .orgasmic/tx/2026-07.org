@@ -31544,3 +31544,106 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: medium
 :END:
+
+* TX 2026-07-28 Tue 06:07:37 implementer.reported TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3073
+:TIME:         [2026-07-28 Tue 06:07:37]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:RUN_ID:       run-20260728T054151-016e79a750ae46bdb1c05b4a97caeef1
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-6ayej.2/worktree
+:SHA:          09b15f71eb5df60fc536283764be907394eb9ed0
+:END:
+
+* TX 2026-07-28 Tue 06:17:58 implementer.reported TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3074
+:TIME:         [2026-07-28 Tue 06:17:58]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:RUN_ID:       run-20260728T055909-d89091e782294be8941909ac47a7827f
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.1/worktree
+:SHA:          bd9a500a7bbeec9ade0ba6ef1f9cc7f62c69c263
+:END:
+
+* TX 2026-07-28 Tue 06:27:10 implementer.done TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3075
+:TIME:         [2026-07-28 Tue 06:27:10]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:MODEL:        claude-opus-5
+:EFFORT:       medium
+:MERGE_SHA:    1fbc3f762b2f59e4f9c4e69038aa5f2a74dfae27
+:BRANCH:       task-6ayej.2-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3062
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 06:27:11 task.state_transitioned TASK-6AYEJ.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3076
+:TIME:         [2026-07-28 Tue 06:27:11]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6AYEJ.2
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-6AYEJ.2 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 06:27:15 implementer.done TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3077
+:TIME:         [2026-07-28 Tue 06:27:15]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:MODEL:        claude-opus-5
+:EFFORT:       medium
+:MERGE_SHA:    1fbc3f762b2f59e4f9c4e69038aa5f2a74dfae27
+:BRANCH:       task-wgxkd.1-impl
+:CLOSED_TX:    tx-20260728-orgasmic-3071
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-28 Tue 06:27:15 task.state_transitioned TASK-WGXKD.1
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3078
+:TIME:         [2026-07-28 Tue 06:27:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.1
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-WGXKD.1 to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-28 Tue 06:27:38 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3079
+:TIME:         [2026-07-28 Tue 06:27:38]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-STWVB datapoint 2026-07-28: across four independent full runs of cargo test -p orgasmic-daemon --lib today (at merges a0feecc+19264a7, 80dc4ec, and the combined 6AYEJ.2+WGXKD.1 tree) exactly THREE of the four listed tests failed every time, never a different set and never intermittently: post_artifact_regenerate_hot_path_reuses_live_run_id, recovery_reattaches_tmux_session_when_handle_exists, poll_direct_child_pid_prefers_worker_server_over_generic_sibling. All three passed in isolation on every check. The fourth listed test, recovery_inventory_waits_for_atomic_claim_commit, did NOT fail in any of the four runs, so the set has shrunk from four to three since the 2026-07-25 measurement and the task body should be narrowed when someone picks this up. Suite total is now 512. This also reconfirms the task's own framing: these are deterministic cross-test interference under full-suite parallelism, not flakes. Manager note: my dispatch briefs have been calling them flakes, which is the wrong word and invites workers to wave them through; briefs should say deterministic in-suite interference, verify in isolation, and report the isolation result.
+:END:
