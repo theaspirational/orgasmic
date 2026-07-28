@@ -32274,3 +32274,14 @@
 :TARGET:       .orgasmic/tasks/backlog.org
 :REASON:       operator decision 2026-07-28: decisions.org is enough; architecture adds weight and redundant bureaucracy - scope the removal cost before committing
 :END:
+
+* TX 2026-07-28 Tue 10:18:32 manager.note orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3117
+:TIME:         [2026-07-28 Tue 10:18:32]
+:TYPE:         manager.note
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-8W30B evidence 2026-07-28: with live worker runs at 0 and no open dispatches, rmux ls still shows 2 orphan sessions from today's test fixtures (orgasmic_daemon-e5f5d4f31537ab72.fixture.sh artifact-ready), pane_dead=0, ages 3h18m and 2h46m, both parented to the rmux server (pid 75258), neither run id present in .orgasmic/tx/2026-07.org nor in /runs; one still names .orgasmic/tmp/dispatch/task-C0XMR/worktree which dispatch-close already removed, so a leaked session outlives worktree teardown; leak count matches the 3 dispatch-heavy hours since the last runtime restart
+:END:
