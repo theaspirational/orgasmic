@@ -361,7 +361,12 @@ struct DispatchRecord {
     last_path: Option<PathBuf>,
     stdout_path: Option<PathBuf>,
     dispatch_attempt_token: Option<String>,
+    /// The run this generation is currently addressed by — the dispatched run,
+    /// or the newest recovery replacement of it (TASK-6AYEJ.2).
     run_id: Option<String>,
+    /// Every run id this generation has ever owned: the dispatched one plus any
+    /// recovery replacements. A worker's `*.reported` may name any of them.
+    run_ids: BTreeSet<String>,
     worker_id: Option<String>,
     driver: Option<String>,
     harness: Option<String>,
@@ -670,26 +675,12 @@ pub fn cmd_dispatch_close(home: &Home, args: DispatchCloseArgs) -> Result<()> {
     {
         bail!("--merge-sha is required when closing an architector dispatch as architector.done");
     }
-    // Fail closed on the task-bound path (TASK-6AYEJ.1). `--merge-sha` is the
-    // manager's merge of a WORKER BRANCH, so it only belongs to an implementer
-    // or architector close; seeing it while the task-bound selection landed on
-    // a reviewer/griller/planner record means the caller is replaying an older
-    // generation's close onto a successor dispatch. Refuse instead of releasing
-    // and cleaning up a live one. `--started-tx` names the generation
-    // explicitly, so it is exempt.
-    if args.started_tx.is_none()
-        && args.status == DispatchCloseStatus::Done
-        && merge_sha.is_some()
-        && !matches!(tx_type, "implementer.done" | "architector.done")
-    {
-        bail!(
-            "--merge-sha was given but the open dispatch selected for {} is a {} \
-             (would close as {tx_type}); if you meant to close an earlier generation, \
-             pass --started-tx <TX_ID from dispatch-status>, otherwise drop --merge-sha",
-            task_list_property(&tasks),
-            open.kind
-        );
-    }
+    // The TASK-6AYEJ.1 `--merge-sha` fence that used to sit here guarded the
+    // TOKENLESS path against replaying an older generation's close onto a
+    // successor. TASK-6AYEJ.2 removed that path entirely — a tokenless close can
+    // no longer reach a live record at all — so reaching this point means
+    // `--started-tx` named this exact generation and there is nothing left to
+    // second-guess.
     let abort_reason = if args.status == DispatchCloseStatus::Aborted {
         Some(
             args.reason
@@ -1919,11 +1910,16 @@ fn build_dispatch_plan(home: &Home, args: DispatchArgs) -> Result<DispatchPlan> 
         // closed yet" case — e.g. dispatching the reviewer before closing the
         // implementer. Name the remedy instead of leaving the manager to
         // rediscover it.
+        // The hint must carry `--started-tx` (TASK-6AYEJ.2): a copyable close
+        // that omits the generation token is exactly the unsafe form this fix
+        // now refuses, and teaching it here is how it spreads.
         let hint = if open.reported {
             format!(
                 " — its worker has reported; close it first with \
-                 `orgasmic manager dispatch-close --task {} --status done --merge-sha <sha>`",
-                task_list_property(&open.tasks)
+                 `orgasmic manager dispatch-close --task {} --started-tx {} \
+                 --status done --merge-sha <sha>`",
+                task_list_property(&open.tasks),
+                open.tx_id
             )
         } else {
             String::new()
@@ -3488,16 +3484,16 @@ fn materialize_dispatch_brief(plan: &DispatchPlan) -> Result<()> {
         .with_context(|| format!("write {}", plan.brief_path.display()))
 }
 
-fn latest_open_dispatch_for_tasks(
-    project_root: &Path,
-    tasks: &[String],
-) -> Result<Option<DispatchRecord>> {
-    let open = scan_open_dispatches(project_root)?;
-    Ok(open.into_iter().rev().find(|record| {
-        tasks
-            .iter()
-            .all(|task| record.tasks.iter().any(|got| got == task))
-    }))
+/// Every still-open dispatch covering every requested task, oldest first.
+fn open_dispatches_for_tasks(project_root: &Path, tasks: &[String]) -> Result<Vec<DispatchRecord>> {
+    Ok(scan_open_dispatches(project_root)?
+        .into_iter()
+        .filter(|record| {
+            tasks
+                .iter()
+                .all(|task| record.tasks.iter().any(|got| got == task))
+        })
+        .collect())
 }
 
 /// Which dispatch generation a `dispatch-close` invocation acts on.
@@ -3521,9 +3517,13 @@ enum CloseTarget {
 /// task is open*, and a generation that is not in the ledger at all is a hard
 /// error rather than a fall-through to "whatever is open for this task".
 ///
-/// Without `--started-tx` the legacy task-bound selection stands, for callers
-/// (and ~10 historical records) that predate the flag; `cmd_dispatch_close`
-/// applies a narrower kind fence on that path.
+/// Without `--started-tx` a close may only act on an ALREADY-CLOSED record
+/// (TASK-6AYEJ.2). That keeps the ~10 historical worker-closed dispatches —
+/// which have no generation token and never will — a clean no-op, while making
+/// it impossible for a tokenless close to release a LIVE dispatch it never
+/// named. If an open matching dispatch exists the close is refused, and the
+/// refusal prints the candidate tokens so the operator can copy one rather than
+/// have the tool guess for them.
 fn resolve_close_target(
     project_root: &Path,
     tasks: &[String],
@@ -3557,8 +3557,24 @@ fn resolve_close_target(
             CloseTarget::Open(record)
         });
     }
-    if let Some(open) = latest_open_dispatch_for_tasks(project_root, tasks)? {
-        return Ok(CloseTarget::Open(open));
+    // A tokenless close must never act on a live dispatch (TASK-6AYEJ.2):
+    // task-bound selection picks "the newest open dispatch covering this task",
+    // which is the successor, not the generation the caller meant. Name the
+    // candidates and let the operator choose.
+    let open = open_dispatches_for_tasks(project_root, tasks)?;
+    if !open.is_empty() {
+        let candidates = open
+            .iter()
+            .map(|record| format!("  --started-tx {} ({})", record.tx_id, record.kind))
+            .collect::<Vec<_>>()
+            .join("\n");
+        bail!(
+            "--started-tx is required: {} has {} open dispatch generation(s), and a \
+             close bound to a task rather than a generation can release a SUCCESSOR \
+             dispatch (TASK-6AYEJ.1). Re-run with one of:\n{candidates}",
+            task_list_property(tasks),
+            open.len()
+        );
     }
     // Closing an already-closed dispatch is a no-op, not an error
     // (TASK-6AYEJ): a manager that died mid-integration and re-runs the close
@@ -3713,6 +3729,7 @@ fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
         stdout_path: None,
         dispatch_attempt_token: None,
         run_id: None,
+        run_ids: BTreeSet::new(),
         worker_id: None,
         driver: None,
         harness: None,
@@ -3730,7 +3747,32 @@ fn dispatch_record_from_entry(entry: &TxEntry) -> Option<DispatchRecord> {
     })
 }
 
+/// A fresh recovery/resume acquires a REPLACEMENT run for the same dispatch
+/// generation (TASK-6AYEJ.2). The daemon records the origin→replacement link as
+/// `run.created ORIGIN=recovery`; carry it onto the generation so a finalize
+/// from the replacement still resolves to this dispatch. Both ids stay valid —
+/// they are the same generation, so a report from either is honestly this
+/// dispatch's report.
+fn attach_recovery_run_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) {
+    let (Some(origin_run_id), Some(run_id)) =
+        (extra(entry, "ORIGIN_RUN_ID"), extra(entry, "RUN_ID"))
+    else {
+        return;
+    };
+    for record in open.iter_mut().rev() {
+        if !record.closed && record.run_ids.iter().any(|got| got == origin_run_id) {
+            record.run_ids.insert(run_id.to_string());
+            record.run_id = Some(run_id.to_string());
+            return;
+        }
+    }
+}
+
 fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) {
+    if extra(entry, "ORIGIN") == Some("recovery") {
+        attach_recovery_run_to_dispatch(open, entry);
+        return;
+    }
     if extra(entry, "ORIGIN") != Some("cli_dispatch") {
         return;
     }
@@ -3757,6 +3799,9 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
                 .any(|task| record.tasks.iter().any(|got| got == task));
         let kind_matches = kind.map(|got| got == record.kind).unwrap_or(true);
         if tx_matches || (task_matches && kind_matches && record.run_id.is_none()) {
+            if let Some(run_id) = run_id.as_deref() {
+                record.run_ids.insert(run_id.to_string());
+            }
             record.run_id = run_id;
             record.worker_id = worker_id;
             record.driver = driver;
@@ -3777,10 +3822,11 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
 }
 
 /// Attach a worker's `*.reported` finalize tx to its still-open dispatch
-/// (TASK-6AYEJ). Matches on the exact run id when the report carries one, and
-/// falls back to the newest-unclosed-overlapping-task rule
-/// [`close_matching_dispatch`] uses ONLY for a report that genuinely lacks a
-/// RUN_ID.
+/// (TASK-6AYEJ). Matches on the run id when the report carries one — against
+/// every run id the generation has owned, so a finalize from a recovery
+/// replacement still lands (TASK-6AYEJ.2) — and falls back to the
+/// newest-unclosed-overlapping-task rule [`close_matching_dispatch`] uses ONLY
+/// for a report that genuinely lacks a RUN_ID.
 ///
 /// A present-but-unmatched RUN_ID fails closed (TASK-6AYEJ.1): a late report
 /// for run A, dispatched and then aborted before run B took the same task,
@@ -3790,7 +3836,7 @@ fn attach_run_created_to_dispatch(open: &mut [DispatchRecord], entry: &TxEntry) 
 fn mark_matching_dispatch_reported(open: &mut [DispatchRecord], reported: &TxEntry) {
     if let Some(run_id) = extra(reported, "RUN_ID") {
         for record in open.iter_mut().rev() {
-            if !record.closed && record.run_id.as_deref() == Some(run_id) {
+            if !record.closed && record.run_ids.iter().any(|got| got == run_id) {
                 record.reported = true;
                 return;
             }
@@ -4099,6 +4145,7 @@ mod tests {
             stdout_path: None,
             dispatch_attempt_token: None,
             run_id: None,
+            run_ids: BTreeSet::new(),
             worker_id: None,
             driver: None,
             harness: None,
@@ -4656,13 +4703,52 @@ mod tests {
         }
     }
 
-    /// Without `--started-tx` the legacy task-bound selection is retained for
-    /// historical records — including the no-op on a task whose only dispatch
-    /// is closed. This pins the boundary of the fix: task-bound close is only
-    /// safe while no successor exists, which is why `--started-tx` is the
-    /// documented way to close.
+    /// TASK-6AYEJ.2, the other half of the boundary: a tokenless close may act
+    /// on a CLOSED record, never on a LIVE one. With an open generation for the
+    /// task, task-bound selection would have released it; now the close is
+    /// refused and the refusal names the token to copy.
     #[test]
-    fn close_without_started_tx_keeps_legacy_task_bound_selection() {
+    fn close_without_started_tx_refuses_while_a_dispatch_is_live() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_tx_log(
+            tmp.path(),
+            &format!(
+                "{}{}{}",
+                tx_started("tx-start-impl", "TASK-9", "implementer", "10:00:00"),
+                tx_terminal(
+                    "tx-done-impl",
+                    "TASK-9",
+                    "implementer.done",
+                    "tx-start-impl",
+                    "11:00:00"
+                ),
+                tx_started("tx-start-review", "TASK-9", "reviewer", "11:05:00"),
+            ),
+        );
+        let tasks = vec!["TASK-9".to_string()];
+
+        let err = resolve_close_target(tmp.path(), &tasks, None).unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("--started-tx is required"),
+            "unexpected error: {message}"
+        );
+        assert!(
+            message.contains("--started-tx tx-start-review"),
+            "the refusal must print a copyable candidate token: {message}"
+        );
+        assert!(
+            !message.contains("tx-start-impl"),
+            "only OPEN generations are candidates: {message}"
+        );
+    }
+
+    /// The compatible half of the same boundary: the ~10 historical
+    /// worker-closed dispatches have no generation token and never will, so a
+    /// tokenless close of a task whose only dispatch is already closed stays a
+    /// clean no-op.
+    #[test]
+    fn close_without_started_tx_still_noops_on_a_historical_closed_record() {
         let tmp = tempfile::tempdir().unwrap();
         write_tx_log(
             tmp.path(),

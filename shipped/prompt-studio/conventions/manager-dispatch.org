@@ -101,7 +101,8 @@ liveness signal (TASK-XHP43) and remain unprotected past 600 s.
 An orphaned dispatch also blocks re-dispatch: `manager.dispatch_orphaned` is not
 in `scan_open_dispatches`'s terminal set, so the next attempt fails with
 "dispatch already open for overlapping task(s)". Close it first with
-`manager dispatch-close --status aborted`.
+`manager dispatch-close --task TASK-NNN --started-tx <started_tx> --status
+aborted --reason <why>`.
 
 ** Typed stage authority
 Prefer explicit stage transitions over implicit continuation. Implementer,
@@ -202,7 +203,7 @@ Pair that with `--dry-run` and the check costs nothing.
    close blocked with evidence after a second interruption. Escalation is a
    manager decision; it does not redefine supervisor heartbeat or stall-timeout
    semantics.
-4. *Integrate.* Read =<project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt= for the worker summary, then from your base branch — the branch HEAD was on at dispatch (=git branch --show-current=): =main= in the default upstream flow, or your feature branch when developing a feature via parallel worktrees for a PR — run =git merge --no-ff task-NNN-impl=, resolve any same-file conflicts (usually only =use= statements when two tasks added imports to the same crate), run =cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings=, record evidence in the sprint task's =** Evidence= section. *Do not remove the worktree or delete the branch by hand.* Success-path cleanup belongs to =dispatch-close --worktree-remove --branch-delete= and only to it: that path salvages uncommitted worker output to =refs/orgasmic/salvage/<sha>= first (TASK-2BPWM, TASK-D0GA3) and removes without =--force=, so git's own clean check gates the removal. =dispatch finalize --commit= is optional, so a worker may legitimately leave dirty or untracked output that never reached the merged branch; =git worktree remove --force && git branch -D= destroys exactly that, which is the data-loss path those two tasks exist to close. The worker signals completion itself, as its terminal action, via =orgasmic dispatch finalize --summary-file <path> [--commit]= (dec_3M7M0) — the SOLE success signal: it writes the report verbatim, optionally commits the worktree, emits its =implementer.reported= completion tx, and releases the lease in one call over the same worker→daemon channel used for every other write. The =implementer.done= close tx is yours, emitted by =dispatch-close= (see below). Every worker persona's contract ends with this call. Pane/process exit or stall/max-duration timeout without finalize is a failed/orphaned run (=manager.dispatch_orphaned=) — there is no scrollback-scrape or end-of-turn-marker fallback. If the worker never finalized (manager-rescued merge, aborted dispatch), record the close yourself via =orgasmic tx record= or =orgasmic manager dispatch-close=. Never leave orphan pre-flight tx — see the exit checklist.
+4. *Integrate.* Read =<project_root>/.orgasmic/tmp/dispatch/task-NNN-impl/task-NNN-impl-last.txt= for the worker summary, then from your base branch — the branch HEAD was on at dispatch (=git branch --show-current=): =main= in the default upstream flow, or your feature branch when developing a feature via parallel worktrees for a PR — run =git merge --no-ff task-NNN-impl=, resolve any same-file conflicts (usually only =use= statements when two tasks added imports to the same crate), run =cargo test --workspace && cargo clippy --workspace --all-targets -- -D warnings=, record evidence in the sprint task's =** Evidence= section. *Do not remove the worktree or delete the branch by hand.* Success-path cleanup belongs to =dispatch-close --worktree-remove --branch-delete= and only to it: that path salvages uncommitted worker output to =refs/orgasmic/salvage/<sha>= first (TASK-2BPWM, TASK-D0GA3) and removes without =--force=, so git's own clean check gates the removal. =dispatch finalize --commit= is optional, so a worker may legitimately leave dirty or untracked output that never reached the merged branch; [DANGEROUS-EXAMPLE] =git worktree remove --force && git branch -D= destroys exactly that, which is the data-loss path those two tasks exist to close. The worker signals completion itself, as its terminal action, via =orgasmic dispatch finalize --summary-file <path> [--commit]= (dec_3M7M0) — the SOLE success signal: it writes the report verbatim, optionally commits the worktree, emits its =implementer.reported= completion tx, and releases the lease in one call over the same worker→daemon channel used for every other write. The =implementer.done= close tx is yours, emitted by =dispatch-close= (see below). Every worker persona's contract ends with this call. Pane/process exit or stall/max-duration timeout without finalize is a failed/orphaned run (=manager.dispatch_orphaned=) — there is no scrollback-scrape or end-of-turn-marker fallback. If the worker never finalized (manager-rescued merge, aborted dispatch), record the close yourself via =orgasmic tx record= or =orgasmic manager dispatch-close=. Never leave orphan pre-flight tx — see the exit checklist.
 
    *=dispatch-close= is how you finish, including after a successful finalize*
    (TASK-6AYEJ). The worker's finalize emits =implementer.reported= — "I am
@@ -213,18 +214,23 @@ Pair that with `--dry-run` and the check costs nothing.
    emits =implementer.done=, records YOUR merge sha, runs worktree/branch
    cleanup with the salvage path, and flips the lifecycle stage.
 
-   *Always pass =--started-tx=* (TASK-6AYEJ.1). It is the =TX_ID= of the
-   =manager.dispatch_started= this close belongs to — the dispatch GENERATION —
-   printed by =manager dispatch= as =started_tx== and by =dispatch-status= as
-   =TX_ID==. Close identity is a generation, not a task: a task outlives its
-   dispatches, so closing the implementer flips the task to IN_REVIEW and a
-   reviewer is then opened for the SAME task. Without =--started-tx= a repeated
-   close is bound only to the task and selects whatever is open for it — at that
-   point the live reviewer, which it would release, clean up and close under the
-   wrong tx type. With =--started-tx= the named generation decides: re-running
-   the same close is a clean no-op even while a successor dispatch is open, so a
-   close interrupted mid-integration is safe to repeat. An unknown
-   =--started-tx= is a hard error, never a fall-back to task matching.
+   *=--started-tx= is mandatory whenever a dispatch is live* (TASK-6AYEJ.1,
+   TASK-6AYEJ.2). It is the =TX_ID= of the =manager.dispatch_started= this close
+   belongs to — the dispatch GENERATION — printed by =manager dispatch= as
+   =started_tx== and by =dispatch-status= as =TX_ID==. Close identity is a
+   generation, not a task: a task outlives its dispatches, so closing the
+   implementer flips the task to IN_REVIEW and a reviewer is then opened for the
+   SAME task. A close bound only to the task would select whatever is open for
+   it — at that point the live reviewer, which it would release, clean up and
+   close under the wrong tx type. So a tokenless close is now REFUSED while any
+   dispatch for the task is open, and the refusal prints the candidate
+   =--started-tx= values for you to copy. (Tokenless still works on a task whose
+   dispatches are all closed, which is only the historical worker-closed
+   records; it can never act on a live one.) With =--started-tx= the named
+   generation decides: re-running the same close is a clean no-op even while a
+   successor dispatch is open, so a close interrupted mid-integration is safe to
+   repeat. An unknown =--started-tx= is a hard error, never a fall-back to task
+   matching.
 
    Note the ordering consequence: dispatching the reviewer for a task before
    closing its implementer is rejected as an overlapping open dispatch — close

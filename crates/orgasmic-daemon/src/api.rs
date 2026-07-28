@@ -7869,6 +7869,10 @@ async fn execute_run_recover_action(
                 })
                 .unwrap_or_else(|| format!("recover:{id}"));
             let reattach_existing = pending_plan.is_some_and(|plan| plan.reattach_existing);
+            // Kept for the replacement-generation association below, which
+            // needs them after `acquire_request` has taken ownership.
+            let association_task_id = task_id.clone();
+            let association_role = terminal_contract.role.clone();
 
             let acquire = if reattach_existing {
                 let plan = pending_plan.ok_or_else(|| {
@@ -7983,6 +7987,41 @@ async fn execute_run_recover_action(
                     .append_prompt_draft(&acquire.run_id, &session_path, &acquire.identity, &prompt)
                     .await
                     .map_err(supervisor_recover_error)?;
+            }
+
+            // TASK-6AYEJ.2: a fresh recovery acquires a REPLACEMENT run id
+            // while keeping the task and the terminal contract, so the worker's
+            // eventual `*.reported` carries an id the dispatch generation has
+            // never seen. Only `run.created ORIGIN=cli_dispatch` binds a run to
+            // a `manager.dispatch_started`, and recovery never emits one — so
+            // the manager's `dispatch-status` stayed `[unreported]` forever.
+            // Record the origin→replacement link so the generation can still be
+            // resolved. Reattach-in-place is exempt: it preserves the id.
+            if !reattach_existing
+                && acquire.run_id != id
+                && terminal_contract.requires_worker_finalize
+                && !association_task_id.starts_with("recover:")
+            {
+                record_api_tx(
+                    state,
+                    ApiTxRequest {
+                        ty: "run.created".to_string(),
+                        actor: None,
+                        project: req.project.clone(),
+                        task: Some(association_task_id.clone()),
+                        target: None,
+                        reason: format!("{action} replacing run {id}"),
+                        request_id: Some(format!("recovery-run-created-{}", acquire.run_id)),
+                        extra: vec![
+                            ("RUN_ID".to_string(), acquire.run_id.clone()),
+                            ("ORIGIN".to_string(), "recovery".to_string()),
+                            ("ORIGIN_RUN_ID".to_string(), id.to_string()),
+                            ("ACTION".to_string(), action.to_string()),
+                            ("KIND".to_string(), association_role.clone()),
+                        ],
+                    },
+                )
+                .await?;
             }
 
             Ok(RunRecoverResponse {
@@ -21509,8 +21548,10 @@ mod tests {
     /// That is safe only if stage completion is driven by the finalize
     /// TOMBSTONE and not by the tx type, and if a stage run leaves no
     /// `manager.dispatch_started` record for a report-only tx to leave open.
-    /// Both halves are asserted here: the session below carries a
-    /// worker-finalize release and no terminal tx of any kind.
+    /// This test owns the FIRST half only: the session below carries a
+    /// worker-finalize release and no terminal tx of any kind, and the stage
+    /// still completes. The second half needs the production launch path and is
+    /// asserted there (see the comment on the removed assertion below).
     #[tokio::test]
     async fn architect_stage_completes_off_the_finalize_tombstone_not_the_tx_type() {
         let tmp = tempfile::tempdir().unwrap();
@@ -21562,10 +21603,14 @@ mod tests {
             tx_body.contains("architect.completed"),
             "the tombstone must drive stage completion: {tx_body}"
         );
-        assert!(
-            !tx_body.contains("manager.dispatch_started"),
-            "a stage run must create no dispatch record: {tx_body}"
-        );
+        // The "a stage run creates no `manager.dispatch_started`" half is NOT
+        // asserted here (TASK-6AYEJ.2 finding 3): this test opens a synthetic
+        // session and calls the watcher directly, so the production stage
+        // launch/recording path never runs and the negative assertion could not
+        // fail. It now lives on the real path, in orgasmic-cli's
+        // `stage_architect_finalize_from_orgasmic_run_id_on_main`, which drives
+        // `POST /api/architect` and the real finalize and checks BOTH the
+        // project and home ledgers plus `dispatch-status`.
         assert!(
             !tx_body.contains("architector.reported") && !tx_body.contains("architector.done"),
             "stage completion must not depend on a worker terminal tx: {tx_body}"

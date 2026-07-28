@@ -681,6 +681,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert!(status_stdout.contains("TASK=TASK-DISPATCH"));
     assert!(status_stdout.contains("[exists]"));
 
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     let close_stdout = run_orgasmic(
         &home,
         &running,
@@ -691,6 +692,8 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "dispatch-close",
             "--task",
             "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -796,6 +799,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     assert_task_stage(&project_root, "TASK-REVIEW", "IN_REVIEW", "in_review");
     let _ = review_last;
 
+    let review_started_tx = started_tx_from_dispatch_stdout(&review_dispatch_stdout);
     let review_close_stdout = run_orgasmic(
         &home,
         &running,
@@ -806,6 +810,8 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "dispatch-close",
             "--task",
             "TASK-REVIEW",
+            "--started-tx",
+            &review_started_tx,
             "--status",
             "done",
             "--property",
@@ -861,6 +867,7 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
     );
     assert!(second_dispatch_stdout.contains("dispatched: TASK-NO-MERGE implementer pid="));
     let _ = second_last;
+    let second_started_tx = started_tx_from_dispatch_stdout(&second_dispatch_stdout);
     let close_stderr = run_orgasmic_failure(
         &home,
         &running,
@@ -871,6 +878,8 @@ async fn manager_dispatch_status_close_done_with_stub_codex() {
             "dispatch-close",
             "--task",
             "TASK-NO-MERGE",
+            "--started-tx",
+            &second_started_tx,
             "--status",
             "done",
         ],
@@ -940,6 +949,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
     );
     assert!(fix_stdout.contains("dispatched: TASK-FIX implementer pid="));
     let _ = fix_last;
+    let fix_started_tx = started_tx_from_dispatch_stdout(&fix_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -950,6 +960,8 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "dispatch-close",
             "--task",
             "TASK-FIX",
+            "--started-tx",
+            &fix_started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -990,6 +1002,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
     );
     assert!(fix_decl_stdout.contains("dispatched: TASK-FIX-DECL implementer pid="));
     let _ = fix_decl_last;
+    let fix_decl_started_tx = started_tx_from_dispatch_stdout(&fix_decl_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -1000,6 +1013,8 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "dispatch-close",
             "--task",
             "TASK-FIX-DECL",
+            "--started-tx",
+            &fix_decl_started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -1012,7 +1027,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
     write(&abort_brief, "abort brief");
     let abort_last = codex_dir.join("task-abort-last.txt");
     let abort_worktree = tmp.path().join("worktrees/task-abort");
-    run_orgasmic(
+    let abort_dispatch_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -1040,6 +1055,7 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
     );
     assert_task_stage(&project_root, "TASK-ABORT", "IN_PROGRESS", "in_progress");
     let _ = abort_last;
+    let abort_started_tx = started_tx_from_dispatch_stdout(&abort_dispatch_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -1050,6 +1066,8 @@ async fn dispatch_close_uses_fix_subtask_property_and_abort_backlog() {
             "dispatch-close",
             "--task",
             "TASK-ABORT",
+            "--started-tx",
+            &abort_started_tx,
             "--status",
             "aborted",
             "--reason",
@@ -1254,7 +1272,7 @@ async fn reviewer_close_with_recommended_subtasks_stays_in_review() {
     let worktree = tmp.path().join("worktrees/task-review-issues");
 
     let running = boot(home.clone()).await;
-    run_orgasmic(
+    let dispatch_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -1281,6 +1299,7 @@ async fn reviewer_close_with_recommended_subtasks_stays_in_review() {
         ],
     );
     let _ = last;
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -1291,6 +1310,8 @@ async fn reviewer_close_with_recommended_subtasks_stays_in_review() {
             "dispatch-close",
             "--task",
             "TASK-REVIEW-ISSUES",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--property",
@@ -1333,7 +1354,7 @@ async fn reviewer_close_verdict_ship_closes_done() {
     let worktree = tmp.path().join("worktrees/task-ship-clean");
 
     let running = boot(home.clone()).await;
-    run_orgasmic(
+    let dispatch_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -1360,6 +1381,7 @@ async fn reviewer_close_verdict_ship_closes_done() {
         ],
     );
     let _ = last;
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -1370,6 +1392,8 @@ async fn reviewer_close_verdict_ship_closes_done() {
             "dispatch-close",
             "--task",
             "TASK-SHIP-CLEAN",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--property",
@@ -1407,7 +1431,7 @@ async fn reviewer_close_verdict_has_issues_stays_in_progress() {
     let worktree = tmp.path().join("worktrees/task-has-issues");
 
     let running = boot(home.clone()).await;
-    run_orgasmic(
+    let dispatch_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -1434,6 +1458,7 @@ async fn reviewer_close_verdict_has_issues_stays_in_progress() {
         ],
     );
     let _ = last;
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -1444,6 +1469,8 @@ async fn reviewer_close_verdict_has_issues_stays_in_progress() {
             "dispatch-close",
             "--task",
             "TASK-HAS-ISSUES",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--property",
@@ -1534,6 +1561,7 @@ async fn multi_task_dispatch_writes_one_start_and_per_task_closes() {
     );
     assert!(status_stdout.contains("TASK=TASK-BUNDLE-A TASK-BUNDLE-B"));
 
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     run_orgasmic(
         &home,
         &running,
@@ -1546,6 +1574,8 @@ async fn multi_task_dispatch_writes_one_start_and_per_task_closes() {
             "TASK-BUNDLE-A",
             "--task",
             "TASK-BUNDLE-B",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -1692,6 +1722,8 @@ async fn bundled_partial_close_retry_is_idempotent_and_visible() {
             "TASK-BUNDLE-A",
             "--task",
             "TASK-BUNDLE-B",
+            "--started-tx",
+            &start_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -1770,7 +1802,7 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     let worktree = tmp.path().join("worktrees/task-cleanup");
 
     let running = boot(home.clone()).await;
-    run_orgasmic(
+    let dispatch_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -1798,6 +1830,7 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
     );
     let _ = last;
     std::fs::remove_dir_all(&worktree).unwrap();
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     let output = run_orgasmic_output(
         &home,
         &running,
@@ -1808,6 +1841,8 @@ async fn dispatch_close_records_cleanup_failure_and_status_filter_lists_it() {
             "dispatch-close",
             "--task",
             "TASK-CLEANUP",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -2347,7 +2382,7 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
     write(&brief, "stem cleanup brief");
 
     let running = boot(home.clone()).await;
-    let _ = run_orgasmic(
+    let dispatch_stdout = run_orgasmic(
         &home,
         &running,
         &project_root,
@@ -2371,6 +2406,7 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
             "stem cleanup regression",
         ],
     );
+    let started_tx = started_tx_from_dispatch_stdout(&dispatch_stdout);
     let worktree = stem_dir.join("worktree");
     assert!(worktree.is_dir());
     let tx_raw = tx_log(&project_root);
@@ -2403,6 +2439,8 @@ async fn dispatch_close_prunes_stem_dir_leaving_brief() {
             "dispatch-close",
             "--task",
             "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -2487,6 +2525,8 @@ async fn dispatch_close_fails_when_liveness_probe_unreachable() {
             "dispatch-close",
             "--task",
             "TASK-CLEANUP",
+            "--started-tx",
+            "tx-start-cleanup",
             "--status",
             "done",
             "--merge-sha",
@@ -2560,6 +2600,7 @@ async fn dispatch_close_with_recorded_run_id_does_not_enumerate_runs() {
         ],
     );
     assert!(dispatched.contains("dispatched: TASK-DISPATCH implementer pid="));
+    let started_tx = started_tx_from_dispatch_stdout(&dispatched);
 
     let proxy = start_runs_rejecting_proxy(running.addr).await;
     let output = run_orgasmic_output_with_daemon_url(
@@ -2572,6 +2613,8 @@ async fn dispatch_close_with_recorded_run_id_does_not_enumerate_runs() {
             "dispatch-close",
             "--task",
             "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -2665,6 +2708,126 @@ async fn dispatch_sleeping_implementer(
     assert!(dispatch_stdout.contains("dispatched: TASK-DISPATCH implementer pid="));
     assert!(worktree.is_dir(), "worktree should exist");
     started_tx_from_dispatch_stdout(&dispatch_stdout)
+}
+
+/// TASK-6AYEJ.2 finding 2, driven rather than reasoned about: a dispatched run
+/// is interrupted, a FRESH recovery run replaces it (a new run id, same task
+/// and terminal contract), and the worker finalizes from the replacement. The
+/// worker's `*.reported` therefore carries a run id the dispatch record has
+/// never seen. The manager's `dispatch-status` must still say `[reported]`;
+/// before the fix the fail-closed RUN_ID rule left it `[unreported]` forever.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recovery_replacement_run_finalize_still_marks_the_dispatch_reported() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let running = boot(home.clone()).await;
+    dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let origin_run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+
+    // Interrupt the origin: the daemon goes away with the run still live, so on
+    // the next boot its session file classifies as an interrupted run.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    let running = boot(home.clone()).await;
+
+    let recover_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "run",
+            "recover",
+            &origin_run_id,
+            "--project",
+            "orgasmic",
+            "--action",
+            "start_recovery_run",
+            "--force-inert",
+        ],
+    );
+    let recovered: serde_json::Value = serde_json::from_str(&recover_stdout)
+        .unwrap_or_else(|e| panic!("recover output is not json ({e}): {recover_stdout}"));
+    let replacement_run_id = recovered["run_id"].as_str().unwrap().to_string();
+    assert_ne!(
+        replacement_run_id, origin_run_id,
+        "start_recovery_run must acquire a REPLACEMENT run; without a new id \
+         there is no mismatch to fix and this test proves nothing"
+    );
+
+    let summary_path = tmp.path().join("summary.md");
+    write(&summary_path, "recovered implementer report");
+    let finalize_stdout = run_orgasmic(
+        &home,
+        &running,
+        &worktree,
+        &path_env,
+        &[
+            "dispatch",
+            "finalize",
+            "--run-id",
+            &replacement_run_id,
+            "--summary-file",
+            summary_path.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        finalize_stdout.contains("finalized: TASK-DISPATCH implementer.reported tx="),
+        "unexpected finalize output: {finalize_stdout}"
+    );
+    assert_eq!(
+        tx_property_for(
+            &tx_log(&project_root),
+            "implementer.reported",
+            "TASK-DISPATCH",
+            "RUN_ID"
+        ),
+        replacement_run_id,
+        "the report must carry the replacement run id — that is the mismatch"
+    );
+
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-DISPATCH"],
+    );
+    assert!(
+        status_stdout.contains("[reported]"),
+        "a finalize from a recovery replacement run must still mark its own \
+         dispatch generation reported: {status_stdout}"
+    );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
 }
 
 /// The `manager.dispatch_started` tx id printed by `manager dispatch`, i.e. the
@@ -3158,7 +3321,7 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
     let worktree = tmp.path().join("worktrees/task-dispatch");
 
     let running = boot(home.clone()).await;
-    dispatch_sleeping_implementer(
+    let started_tx = dispatch_sleeping_implementer(
         &home,
         &running,
         &project_root,
@@ -3214,6 +3377,41 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
     let merge_sha = run_git(&project_root, &["rev-parse", "HEAD"]);
     assert_ne!(merge_sha, worker_sha, "a --no-ff merge is its own commit");
 
+    // TASK-6AYEJ.2, on the production path: the same close WITHOUT
+    // `--started-tx` is refused while the dispatch is live, and the refusal
+    // hands the operator the token to copy. This runs before the real close so
+    // the record is genuinely open.
+    let tokenless_stderr = run_orgasmic_failure(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &[
+            "manager",
+            "dispatch-close",
+            "--task",
+            "TASK-DISPATCH",
+            "--status",
+            "done",
+            "--merge-sha",
+            &merge_sha,
+            "--worktree-remove",
+            "--branch-delete",
+            "--reason",
+            "merged",
+        ],
+    );
+    assert!(
+        tokenless_stderr.contains("--started-tx is required")
+            && tokenless_stderr.contains(&format!("--started-tx {started_tx}")),
+        "a tokenless close of a LIVE dispatch must be refused with a copyable \
+         token: {tokenless_stderr}"
+    );
+    assert!(
+        worktree.exists(),
+        "a refused close must not have cleaned up the live worktree"
+    );
+
     let close_stdout = run_orgasmic(
         &home,
         &running,
@@ -3224,6 +3422,8 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
             "dispatch-close",
             "--task",
             "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -3297,6 +3497,8 @@ async fn dispatch_finalize_then_manager_close_records_merge_sha_and_cleans_up() 
             "dispatch-close",
             "--task",
             "TASK-DISPATCH",
+            "--started-tx",
+            &started_tx,
             "--status",
             "done",
             "--merge-sha",
@@ -4834,6 +5036,45 @@ async fn stage_architect_finalize_from_orgasmic_run_id_on_main() {
         std::fs::read_to_string(&last_path).unwrap(),
         "architect finalize from main via ORGASMIC_RUN_ID"
     );
+
+    // TASK-6AYEJ.2 finding 3: the claim above — "a stage run has no
+    // `manager.dispatch_started`, so there is no dispatch for a report-only tx
+    // to leave open" — is asserted HERE, on the production path, because this
+    // test drove the real `POST /api/architect` launch and the real finalize.
+    // The daemon-side unit test that used to assert it never ran that path, so
+    // its negative assertion could not fail.
+    let project_tx = tx_log(&project_root);
+    let home_tx = std::fs::read_to_string(home.tx().join(tx_file_name())).unwrap_or_default();
+    for (label, ledger) in [("project", &project_tx), ("home", &home_tx)] {
+        assert!(
+            !ledger.contains("manager.dispatch_started"),
+            "a stage launch must create no dispatch record ({label} ledger): {ledger}"
+        );
+    }
+    assert!(
+        project_tx.contains(":TYPE:         architector.reported"),
+        "the stage finalize's report-only tx must be on record: {project_tx}"
+    );
+    let status_stdout = run_orgasmic(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &["manager", "dispatch-status", "--task", "TASK-STAGE-ARCH"],
+    );
+    assert!(
+        status_stdout.trim().is_empty(),
+        "the stage's report-only tx must leave no dispatch open: {status_stdout}"
+    );
+
+    // The other half — that stage completion comes off the finalize TOMBSTONE
+    // and not the tx type — stays in `api.rs`'s
+    // `architect_stage_completes_off_the_finalize_tombstone_not_the_tx_type`,
+    // which drives `spawn_stage_completion_watcher` over a clean
+    // worker-finalize release. It cannot be asserted here: the stub harness is
+    // SIGTERMed as the release tears the driver down, so the watcher sees a
+    // driver error and records `architect.failed` — a property of the stub, not
+    // of the stage contract.
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;

@@ -58,6 +58,18 @@ Auto-spawn success records reuse =run.created= with extras:
 - :DRIVER:         driver mode resolved for the worker (e.g. =acp-stdio=, =acp-ws=, =subprocess-stream-json=, =tmux=)
 - :HARNESS:        harness id resolved for the worker (e.g. =claude=, =codex=, =cursor-agent=, =hermes=)
 
+Fresh recovery/resume also reuses =run.created= to record the replacement run
+and the generation it continues (TASK-6AYEJ.2). Without it the dispatch
+generation cannot resolve the replacement, and a worker finalize from the
+recovery run leaves =dispatch-status= showing =[unreported]= forever. Extras:
+- :RUN_ID:         replacement run id acquired by the recovery
+- :ORIGIN:         =recovery=
+- :ORIGIN_RUN_ID:  run id the recovery replaces
+- :ACTION:         =resume_native_fork= | =start_recovery_run=
+- :KIND:           worker role carried over from the terminal contract
+
+Not emitted for =reattach_tmux=, which preserves the run id and so needs no link.
+
 *** Auto-spawn failures
 - auto_spawn.failed
 
