@@ -32079,3 +32079,25 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: medium
 :END:
+
+* TX 2026-07-28 Tue 06:58:27 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3103
+:TIME:         [2026-07-28 Tue 06:58:27]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-Z9C73 live evidence 2026-07-28: rmux ls shows leaked sessions accumulating from TEST fixtures, not only from real dispatches. Three orphans found at 09:57 local: orgasmic-rmux-run-20260728T044339-2b06208e9745433a92de8e704a6c47b5-ef2a3f1e (created 07:43), -run-20260728T053203-855acfed7174400bb214455a4d686ceb-b4e590f9 (08:32), and -run-20260728T062312-2692fa93af274283a17e99ea3959278b-96002d77 (09:23). All three are 404 to the daemon (orgasmic run show reports run not found), appear in no project ledger, and their panes sit at a fixture prompt printing ECHO: > ready / READY. So they are rmux sessions created by the cli/daemon test suites and never reaped, one per full test run, surviving hours after the test process exited. This matters for Z9C73 scoping in two ways. First, the leak is not confined to the dispatch teardown path that Z9C73 currently describes, so a fix limited to reap_rmux_session would leave the test-fixture leak in place. Second, workers run the full suites on every dispatch, so the leak rate scales with dispatch volume, which is why three accumulated in roughly two hours today. Manager cleaned these three by name after confirming the three live dispatch sessions (065513, 065514, 065516) were unaffected.
+:END:
+
+* TX 2026-07-28 Tue 07:00:34 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3104
+:TIME:         [2026-07-28 Tue 07:00:34]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Correction to tx-20260728-orgasmic-3103: the three leaked rmux sessions I measured at 09:57 today were filed against TASK-Z9C73 and belong to TASK-8W30B instead. The two are distinct defects, not duplicates, and I conflated them. Z9C73 is a defunct CHILD PROCESS under the rmux daemon while the session is gone - its own body states the session half is met and rmux ls is empty after release. 8W30B is the SESSION ITSELF surviving because RmuxControl::release (rmux.rs:1760) aborts its lifecycle and startup tasks before calling Session::kill(), so the kill is issued over a torn-down SDK transport, fails with BrokenPipe, and is reported only by a tracing warn. What I actually observed was three sessions VISIBLE IN rmux ls with LIVE panes sitting at a fixture prompt printing ECHO: > ready / READY, hours after their test process exited. Visible session plus live pane is 8W30B's signature exactly; it is the opposite of Z9C73's. The evidence therefore attaches to TASK-8W30B and my Z9C73 note should be disregarded. Two things this adds to 8W30B, which is in_review with a fix round already in progress as TASK-6FNAY/TASK-8W30B. First, the leak still reproduces on the installed runtime built at fd7fcd6, so whatever is in_review is either not yet installed or not yet sufficient. Second, and not in the 8W30B body: the leak is driven by the TEST SUITES, not only by real dispatches. All three orphans were 404 to the daemon and absent from every ledger, so they came from cli/daemon test fixtures. Since every dispatched worker runs the full suites, leak rate scales with dispatch volume - three accumulated in about two hours today. A fix scoped only to the production release path would leave that source open.
+:END:
