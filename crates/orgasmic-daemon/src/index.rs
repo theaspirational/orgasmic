@@ -1460,7 +1460,8 @@ fn org_error_line(err: &OrgError) -> Option<usize> {
         | OrgError::SectionNotFound { .. }
         | OrgError::NoPropertyDrawer { .. }
         | OrgError::BodyHeadingInjection { .. }
-        | OrgError::BodyRoundTripLoss { .. } => None,
+        | OrgError::BodyRoundTripLoss { .. }
+        | OrgError::HeadingRoundTripLoss { .. } => None,
     }
 }
 
