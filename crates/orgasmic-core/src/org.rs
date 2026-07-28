@@ -136,6 +136,18 @@ pub enum OrgError {
          (phantom heading injection); escape leading `*` characters before writing"
     )]
     BodyHeadingInjection { file: String },
+    // orgasmic:task_ZYWZD
+    #[error(
+        "{file}: body edit rejected — {target} did not round-trip after composing \
+         ({submitted} chars submitted, {stored} readable back); refusing to commit \
+         a partial write"
+    )]
+    BodyRoundTripLoss {
+        file: String,
+        target: String,
+        submitted: usize,
+        stored: usize,
+    },
 }
 
 impl OrgFile {
@@ -815,7 +827,48 @@ pub fn wrap_raw_body(payload: &str) -> String {
     format!("#+begin_example\n{escaped}#+end_example\n")
 }
 
+// orgasmic:task_ZYWZD
+/// Column-0 Org heading lines in a body payload, outside `#+begin_…/#+end_…`
+/// blocks — exactly the lines that would become real headings if the payload
+/// were written into a body span, and therefore the content a prose-replacing
+/// write cannot read back. Returns `(1-based line number, heading line)`.
+///
+/// Callers use this to refuse such a write *naming what would be lost* rather
+/// than committing a partial one (TASK-ZYWZD); the structural invariant guard
+/// in [`OrgRewriter`] remains the backstop.
+pub fn body_heading_lines(content: &str) -> Vec<(usize, String)> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    for (index, line) in content.lines().enumerate() {
+        let directive = line.trim_start().to_ascii_lowercase();
+        let starts_block = directive.starts_with("#+begin_");
+        let ends_block = directive.starts_with("#+end_");
+        let in_block = depth > 0 || starts_block;
+        if !in_block && heading_level(line.trim_end_matches('\r')).is_some() {
+            out.push((index + 1, line.trim_end().to_string()));
+        }
+        if starts_block {
+            depth += 1;
+        }
+        if ends_block && depth > 0 {
+            depth -= 1;
+        }
+    }
+    out
+}
+
 // --- rewriting ----------------------------------------------------------
+
+// orgasmic:task_ZYWZD
+/// Which span a body write claims to own, for the post-compose round-trip
+/// assertion.
+#[derive(Clone, Copy)]
+enum BodyTarget<'a> {
+    /// The heading's own free prose (`set_node_body`).
+    Node,
+    /// A named nested section's prose (`set_section_body` / `append_section`).
+    Section(&'a str),
+}
 
 /// In-place editor that rewrites byte spans of the original source while
 /// keeping every byte outside the touched spans verbatim.
@@ -900,6 +953,7 @@ impl OrgRewriter {
             })?;
         self.replace_with_view(section.body.clone(), new_body);
         self.assert_structural_invariant(before)?;
+        self.assert_body_round_trip(heading_id, BodyTarget::Section(section_title), new_body)?;
         Ok(())
     }
 
@@ -944,6 +998,7 @@ impl OrgRewriter {
         };
         self.replace_with_view(span, &replacement);
         self.assert_structural_invariant(before)?;
+        self.assert_body_round_trip(heading_id, BodyTarget::Node, content)?;
         Ok(())
     }
 
@@ -1090,6 +1145,7 @@ impl OrgRewriter {
         let section = render_section(title, body, level);
         self.replace_with_view(at..at, &section);
         self.assert_structural_invariant(expected)?;
+        self.assert_body_round_trip(heading_id, BodyTarget::Section(title), body)?;
         Ok(())
     }
 
@@ -1200,6 +1256,55 @@ impl OrgRewriter {
             });
         }
         Ok(())
+    }
+
+    // orgasmic:task_ZYWZD
+    /// Called immediately after [`Self::assert_structural_invariant`] in a
+    /// body-write op: re-parses the composed text and asserts the submitted
+    /// content is readable back from the span it was written into. A write that
+    /// would not round-trip (the caller's payload landed truncated, or in a
+    /// place the reader will not look) pops its pending edit and fails instead
+    /// of being committed — the same guarantee TASK-HQ970 states for
+    /// `tx record`.
+    ///
+    /// Compares trimmed content: byte-exact layout preservation (leading
+    /// whitespace, blank-line separators) is the rewriter's own contract and is
+    /// covered by dedicated tests; this guard is about *loss*.
+    ///
+    /// # Precondition
+    /// Exactly one pending edit, as for `assert_structural_invariant`.
+    fn assert_body_round_trip(
+        &mut self,
+        heading_id: &str,
+        target: BodyTarget<'_>,
+        submitted: &str,
+    ) -> Result<(), OrgError> {
+        let after_text = self.current_text();
+        let stored = match OrgFile::parse(&after_text, &self.file_name) {
+            Ok(view) => view.find_by_id(heading_id).and_then(|heading| match target {
+                BodyTarget::Node => Some(view.slice(heading.body.clone()).trim().to_string()),
+                BodyTarget::Section(title) => heading
+                    .section(title)
+                    .map(|section| view.slice(section.body.clone()).trim().to_string()),
+            }),
+            Err(_) => None,
+        };
+        let expected = submitted.trim();
+        match stored {
+            Some(stored) if stored == expected => Ok(()),
+            stored => {
+                self.edits.pop();
+                Err(OrgError::BodyRoundTripLoss {
+                    file: self.file_name.clone(),
+                    target: match target {
+                        BodyTarget::Node => format!("body of {heading_id}"),
+                        BodyTarget::Section(title) => format!("section {title} of {heading_id}"),
+                    },
+                    submitted: expected.chars().count(),
+                    stored: stored.map(|text| text.chars().count()).unwrap_or(0),
+                })
+            }
+        }
     }
 
     fn replace_with_view(&mut self, range: Range<usize>, replacement: &str) {
@@ -1822,6 +1927,74 @@ Body.
         let out = rw.finish();
         assert!(out.contains("** Evidence\nSafe evidence."));
         assert!(!out.contains("* Phantom"));
+    }
+
+    // orgasmic:task_ZYWZD
+    #[test]
+    fn body_heading_lines_reports_every_column0_heading_outside_blocks() {
+        let payload = concat!(
+            "Free prose.\n",
+            "** The gap\nDetail.\n",
+            "#+begin_src org\n* Not a heading inside src\n#+end_src\n",
+            "*** Deeper\nMore.\n",
+            " * Indented, not a heading\n",
+            "=== Not an org heading\n",
+        );
+        let found = body_heading_lines(payload);
+        assert_eq!(
+            found,
+            vec![
+                (2, "** The gap".to_string()),
+                (7, "*** Deeper".to_string()),
+            ],
+            "only column-0 headings outside blocks count"
+        );
+        assert!(body_heading_lines("Plain prose.\n=== Section\nMore.\n").is_empty());
+    }
+
+    // orgasmic:task_ZYWZD
+    #[test]
+    fn set_section_body_rejects_content_that_would_not_read_back() {
+        // A drawer at the head of the payload is absorbed as the section's
+        // property drawer, so the section body reads back short — a write that
+        // cannot be read back, caught without any heading being added.
+        let f = OrgFile::parse(SAMPLE, "sample.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "sample.org");
+        let err = rw
+            .set_section_body(
+                "TASK-001",
+                "Description",
+                ":PROPERTIES:\n:FOO: bar\n:END:\nOnly this survives.\n",
+            )
+            .unwrap_err();
+        match err {
+            OrgError::BodyRoundTripLoss {
+                submitted, stored, ..
+            } => assert!(
+                submitted > stored,
+                "expected a loss, got submitted {submitted} stored {stored}"
+            ),
+            other => panic!("expected BodyRoundTripLoss, got {other:?}"),
+        }
+        // The rejected edit left nothing behind and the rewriter stays usable.
+        rw.set_section_body("TASK-001", "Description", "Safe body.\n")
+            .unwrap();
+        let out = rw.finish();
+        assert!(!out.contains(":FOO: bar"), "partial write leaked: {out}");
+        assert!(out.contains("** Description\nSafe body."));
+    }
+
+    // orgasmic:task_ZYWZD
+    #[test]
+    fn set_node_body_round_trips_the_submitted_prose() {
+        let f = OrgFile::parse(ARCH_SAMPLE, "architecture.org").unwrap();
+        let mut rw = OrgRewriter::new(&f, "architecture.org");
+        let body = "First paragraph.\n\n=== A sub-heading\nSecond paragraph.";
+        rw.set_node_body("arch_006.3", body).unwrap();
+        let out = rw.finish();
+        let reparsed = OrgFile::parse(out, "architecture.org").unwrap();
+        let leaf = reparsed.find_by_id("arch_006.3").unwrap();
+        assert_eq!(reparsed.slice(leaf.body.clone()).trim(), body);
     }
 
     #[test]

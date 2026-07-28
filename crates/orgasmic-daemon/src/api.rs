@@ -11759,7 +11759,16 @@ pub struct NodeProperty {
 #[derive(Debug, Serialize)]
 pub struct NodeSection {
     pub title: String,
+    /// The section's own free prose, up to its first nested sub-heading. This
+    /// is the exact span `set_section_body` replaces, so `node body append`
+    /// can round-trip it.
     pub body: String,
+    // orgasmic:task_ZYWZD
+    /// Nested sub-sections (`*** Title` under a `** Title`). Present so a
+    /// reader is never shown `body` as if it were the whole section — the
+    /// silence that hid 92% of TASK-ATAXN. Omitted when there are none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<NodeSection>,
 }
 
 #[derive(Debug, Serialize)]
@@ -11802,6 +11811,45 @@ fn prepare_body_edit(body: &str, body_format: BodyFormat) -> String {
         BodyFormat::Default => body.to_string(),
         BodyFormat::Raw => orgasmic_core::wrap_raw_body(body),
     }
+}
+
+// orgasmic:task_ZYWZD
+/// Longest heading line echoed back in a refusal, so a pathological payload
+/// cannot turn the error into a wall of text.
+const REFUSAL_HEADING_MAX_CHARS: usize = 120;
+
+/// Refuse a body write whose payload carries column-0 Org headings, *naming
+/// what would be lost* (TASK-ZYWZD).
+///
+/// These verbs replace the prose span between a drawer and the first nested
+/// heading, so nested `**` sections in a payload can never be read back from
+/// where they were written. The structural invariant guard already fails such a
+/// write closed; this check runs first only so the caller is told which
+/// headings caused it instead of a bare "org file update failed".
+///
+/// Echoes only caller-supplied text (heading lines and counts) — never a path
+/// or any other server-side detail.
+fn reject_body_with_nested_headings(verb: &str, body: &str) -> Result<(), ApiError> {
+    let headings = orgasmic_core::body_heading_lines(body);
+    let Some((line, first)) = headings.first() else {
+        return Ok(());
+    };
+    let count = headings.len();
+    let plural = if count == 1 { "heading" } else { "headings" };
+    let quoted: String = if first.chars().count() > REFUSAL_HEADING_MAX_CHARS {
+        format!(
+            "{}…",
+            first.chars().take(REFUSAL_HEADING_MAX_CHARS).collect::<String>()
+        )
+    } else {
+        first.clone()
+    };
+    Err(ApiError::bad_request(format!(
+        "body contains {count} nested {plural} starting at line {line} `{quoted}`; \
+         `{verb}` replaces prose only, so those sections would not round-trip and \
+         are refused rather than partially written — restructure the sub-headings \
+         with `===`, or write each section separately with `--section <title>`"
+    )))
 }
 
 #[derive(Debug, Deserialize)]
@@ -11926,6 +11974,20 @@ fn recompose_title_line(
     line
 }
 
+// orgasmic:task_ZYWZD
+/// Map nested headings to [`NodeSection`]s, recursively, so no depth of the
+/// node's body is hidden from a reader.
+fn node_sections(file: &OrgFile, sections: &[Heading]) -> Vec<NodeSection> {
+    sections
+        .iter()
+        .map(|s| NodeSection {
+            title: s.title.clone(),
+            body: file.slice(s.body.clone()).trim_end().to_string(),
+            sections: node_sections(file, &s.sections),
+        })
+        .collect()
+}
+
 fn org_node_doc(
     file: &OrgFile,
     heading: &Heading,
@@ -11939,14 +12001,7 @@ fn org_node_doc(
             value: e.value.clone(),
         })
         .collect();
-    let sections = heading
-        .sections
-        .iter()
-        .map(|s| NodeSection {
-            title: s.title.clone(),
-            body: file.slice(s.body.clone()).trim_end().to_string(),
-        })
-        .collect();
+    let sections = node_sections(file, &heading.sections);
     NodeDoc {
         id: heading.property("ID").unwrap_or_default().to_string(),
         kind: layer.layer_name().to_string(),
@@ -12095,6 +12150,7 @@ async fn post_org_node_edit(
         match op {
             NodeEditOp::SetBody { body, body_format } => {
                 let body = prepare_body_edit(&body, body_format);
+                reject_body_with_nested_headings("node body set", &body)?;
                 rw.set_node_body(&id, &body)
                     .map_err(|e| org_rewriter_error("set body", &id, e))?;
                 changed.insert("body".to_string(), body);
@@ -12110,6 +12166,7 @@ async fn post_org_node_edit(
                 body_format,
             } => {
                 let body = prepare_body_edit(&body, body_format);
+                reject_body_with_nested_headings("node body set --section", &body)?;
                 rw.upsert_section_text(&id, &title, &body)
                     .map_err(|e| org_rewriter_error("edit section", &id, e))?;
                 changed.insert(format!("section:{title}"), body);

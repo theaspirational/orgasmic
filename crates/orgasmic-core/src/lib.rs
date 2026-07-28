@@ -52,7 +52,8 @@ pub use members::{
 };
 pub use node_kind::NodeKind;
 pub use org::{
-    wrap_raw_body, Heading, OrgError, OrgFile, OrgRewriter, PropertyDrawer, PropertyEntry,
+    body_heading_lines, wrap_raw_body, Heading, OrgError, OrgFile, OrgRewriter, PropertyDrawer,
+    PropertyEntry,
 };
 pub use paths::{
     dotorg_tasks_dir, goal_file_path, goal_file_rel, handoff_file_path, iter_task_file_paths,
