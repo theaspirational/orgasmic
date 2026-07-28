@@ -1582,6 +1582,17 @@ fn writer_transaction_error(error: impl std::fmt::Display) -> ApiError {
     ApiError::internal("failed to apply changes")
 }
 
+// orgasmic:task_HQ970
+/// Validate a composed tx entry the way the writer will, and turn a refusal
+/// into a 400 the caller can act on. A rejected entry never reaches the writer
+/// queue, so nothing is written and the ledger is untouched.
+fn tx_entry_write_error(entry: &TxEntry) -> Result<(), ApiError> {
+    entry
+        .validate()
+        .and_then(|()| entry.assert_round_trip())
+        .map_err(|error| ApiError::bad_request(error.to_string()))
+}
+
 fn writer_append_error(error: impl std::fmt::Display) -> ApiError {
     tracing::error!(error = %error, "writer append failed");
     ApiError::internal("failed to record transaction")
@@ -2444,6 +2455,13 @@ async fn append_tx_request(
     entry.target = req.target;
     entry.reason = req.reason;
     entry.extra = req.extra;
+    // orgasmic:task_HQ970
+    // Refuse at the boundary, before anything is queued to the writer: a value
+    // the drawer cannot carry (a multi-line `reason`, most of all) used to be
+    // accepted, appended verbatim, and reported back with a tx_id, leaving the
+    // append-only ledger unreadable for every subsequent verb. The writer
+    // repeats this check as its own last line of defence.
+    tx_entry_write_error(&entry)?;
 
     let project_tx = destination.project_tx;
     let destination_project_id = destination.project_id.clone();
