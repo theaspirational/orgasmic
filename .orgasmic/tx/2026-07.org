@@ -32126,3 +32126,17 @@
 :PROJECT:      orgasmic
 :REASON:       TASK-STWVB family grew, two new members observed 2026-07-28 by the TASK-C0XMR worker and worth adding when someone picks that task up. First, post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record failed once in a full cargo test -p orgasmic-daemon --lib run, passed in isolation, passed two subsequent full runs of the same tree, and the clean stashed tree passed 512/512 - same signature as the existing three and not on the changed code path. Second, dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail failed once in cargo test -p orgasmic-daemon --test dispatch_endpoint at 39.4s wall against a normal suite time of about 9s, while the machine was running three concurrent dispatch workers; it passed in isolation and in a full re-run. That second one is a genuine timing flake under CPU contention rather than the cross-test interference pattern, so the two should be recorded distinctly. Manager note on method: this is a consequence of running three fix rounds in parallel on a 10-core machine where each worker runs the full suites, load average was above 6. Contention-induced failures are a cost of that parallelism, and workers should keep classifying them by isolation reruns rather than by rerunning the whole suite until it passes.
 :END:
+
+* TX 2026-07-28 Tue 07:17:57 implementer.reported TASK-WGXKD.2
+:PROPERTIES:
+:TX_ID:        tx-20260728-orgasmic-3107
+:TIME:         [2026-07-28 Tue 07:17:57]
+:TYPE:         implementer.reported
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WGXKD.2
+:RUN_ID:       run-20260728T065513-3297061e468d400ca261564296e1b165
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wgxkd.2/worktree
+:SHA:          ab9baf18286ea5bff40049a8fee456052258f07e
+:END:
