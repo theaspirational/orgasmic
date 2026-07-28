@@ -752,7 +752,17 @@ impl Daemon {
 
         boot_progress.set_phase("starting runtime")?;
         let writer = spawn_writer(events.clone());
-        let supervisor = supervisor::Supervisor::new(writer.clone(), boot.clone());
+        // orgasmic:TASK-AK6EM — externally-held `dispatch-close` guards are
+        // persisted here, so a replacement daemon inherits a fence whose holder
+        // (the CLI) is still deleting files. Declared before the listener binds,
+        // together with the boot-rehydration fence below, so the first request
+        // this daemon ever answers already sees both.
+        let supervisor = supervisor::Supervisor::new(
+            writer.clone(),
+            boot.clone(),
+            supervisor::CloseGuardStore::at(home.close_guards()),
+        );
+        supervisor.begin_boot_reattach();
         let manager_registry = manager_registration::ManagerRegistry::new();
         manager_registration::spawn_liveness_loop(manager_registry.clone(), supervisor.clone());
         index.spawn_tx_listener(events.clone());
@@ -874,8 +884,19 @@ impl Daemon {
         // best-effort recovery, while answering `status` is what an operator
         // needs in order to diagnose anything at all. A project that cannot be
         // read now costs its own runs' reattachment and nothing else.
+        let supervisor_for_boot_reattach = reattach_state.supervisor.clone();
         tokio::spawn(async move {
-            api::reattach_live_runs_on_boot(&reattach_state, &reattach_roots).await;
+            // orgasmic:TASK-AK6EM — a destructive `dispatch-close` waits for
+            // this to resolve, so it must resolve even if the scan panics: an
+            // inner task turns that into a `JoinError` here instead of a fence
+            // nothing ever lifts.
+            let scan = tokio::spawn(async move {
+                api::reattach_live_runs_on_boot(&reattach_state, &reattach_roots).await;
+            });
+            if let Err(error) = scan.await {
+                tracing::error!(error = %error, "boot reattach task failed");
+            }
+            supervisor_for_boot_reattach.finish_boot_reattach();
         });
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let writer_for_shutdown = writer.clone();

@@ -45,6 +45,27 @@ async fn boot(home: Home) -> RunningDaemon {
     boot_with_options(home, test_options()).await
 }
 
+/// A port a replacement daemon can rebind, so a CLI that is mid-command keeps
+/// talking to *the* daemon across a restart — which is what launchd does with
+/// the real one.
+fn reserved_local_port() -> u16 {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve a local port");
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    port
+}
+
+async fn boot_on_port(home: Home, port: u16) -> RunningDaemon {
+    boot_with_options(
+        home,
+        DaemonOptions {
+            port_override: Some(port),
+            ..test_options()
+        },
+    )
+    .await
+}
+
 async fn boot_with_options(home: Home, options: DaemonOptions) -> RunningDaemon {
     // Ensure the home config never defaults to port 4848 to avoid port
     // contention with a real daemon from the main checkout during
@@ -3269,6 +3290,212 @@ async fn recovery_interleaved_between_the_close_verdict_and_removal_cannot_take_
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
+}
+
+/// TASK-AK6EM: the interaction TASK-ATAXN created. The destructive work of a
+/// close runs in the CLI, so the daemon that granted the guard can be replaced
+/// while the holder is still deleting files. A replacement that starts with an
+/// empty reservation map reopens exactly the race TASK-1T3FZ closed.
+///
+/// The pause is a rendezvous, not a sleep: the close parks in
+/// `dispatch_close_pause_after_guard` *after* the guard response, which is the
+/// only window where the holder is out of contact with the daemon. The daemon
+/// is then replaced under it.
+///
+/// Injection-checked: drop the `close_guards.write(..)` in
+/// `Supervisor::reserve_dispatch_close` (or the `restore()` in `Inner::new`)
+/// and the recovery below is admitted by the replacement daemon, into a
+/// worktree the parked close is about to remove.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_daemon_replaced_mid_close_still_refuses_recovery_until_the_holder_finishes() {
+    let _live_guard = live_session_guard();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    seed_project(&home, &project_root);
+    let head = init_git_project(&project_root);
+    let bin_dir = tmp.path().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    write_sleeping_stub_codex(&bin_dir);
+    let path_env = path_with_stub(&bin_dir);
+    let brief = tmp.path().join("codex/task-dispatch-brief.md");
+    let worktree = tmp.path().join("worktrees/task-dispatch");
+
+    let port = reserved_local_port();
+    let running = boot_on_port(home.clone(), port).await;
+    let started_tx = dispatch_sleeping_implementer(
+        &home,
+        &running,
+        &project_root,
+        &path_env,
+        &head,
+        &worktree,
+        &brief,
+    )
+    .await;
+    let origin_run_id = tx_property_for(
+        &tx_log(&project_root),
+        "run.created",
+        "TASK-DISPATCH",
+        "RUN_ID",
+    );
+
+    // Interrupt the origin so the close reaches its guard, and the recovery
+    // below has something real to recover.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    let running = boot_on_port(home.clone(), port).await;
+    assert!(
+        !live_run_ids(&home, &running, &project_root, &path_env).contains(&origin_run_id),
+        "the origin must be gone before the close, or the close never reaches the guard window"
+    );
+
+    let pause = tmp.path().join("close.pause");
+    let reached = pause.with_extension("reached");
+    std::fs::write(&pause, "hold").unwrap();
+
+    let close = {
+        let home = home.clone();
+        let daemon_url = format!("http://{}", running.addr);
+        let project_root = project_root.clone();
+        let path_env = path_env.clone();
+        let started_tx = started_tx.clone();
+        let head = head.clone();
+        let pause = pause.clone();
+        tokio::task::spawn_blocking(move || {
+            run_orgasmic_output_with_daemon_url(
+                &home,
+                &daemon_url,
+                &project_root,
+                &path_env,
+                &[
+                    "manager",
+                    "dispatch-close",
+                    "--task",
+                    "TASK-DISPATCH",
+                    "--started-tx",
+                    &started_tx,
+                    "--status",
+                    "done",
+                    "--merge-sha",
+                    &head,
+                    "--worktree-remove",
+                    "--reason",
+                    "close surviving a daemon replacement",
+                ],
+                &[(
+                    "ORGASMIC_DISPATCH_CLOSE_PAUSE_FILE",
+                    pause.to_str().unwrap(),
+                )],
+            )
+        })
+    };
+
+    // The close holds the guard and is parked before any filesystem mutation.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while !reached.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the close never reached its post-guard pause"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(
+        worktree.is_dir(),
+        "the parked close must not have removed anything yet"
+    );
+
+    // Replace the daemon under the holder — the TASK-ATAXN handoff.
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+    let replacement = boot_on_port(home.clone(), port).await;
+
+    let recover = run_orgasmic_output(
+        &home,
+        &replacement,
+        &project_root,
+        &path_env,
+        &[
+            "run",
+            "recover",
+            &origin_run_id,
+            "--project",
+            "orgasmic",
+            "--action",
+            "start_recovery_run",
+            "--force-inert",
+        ],
+    );
+    let recover_stderr = String::from_utf8_lossy(&recover.stderr).to_string();
+    let recover_stdout = String::from_utf8_lossy(&recover.stdout).to_string();
+    assert!(
+        !recover.status.success(),
+        "the replacement daemon must inherit the in-flight close guard\nstdout={recover_stdout}\nstderr={recover_stderr}"
+    );
+    assert!(
+        recover_stderr.contains("cleanup") || recover_stdout.contains("cleanup"),
+        "the refusal must name the cleanup reservation\nstdout={recover_stdout}\nstderr={recover_stderr}"
+    );
+    assert!(
+        live_run_ids(&home, &replacement, &project_root, &path_env).is_empty(),
+        "the refused recovery must not have left a live run in the worktree"
+    );
+
+    // Let the holder finish its cleanup.
+    std::fs::remove_file(&pause).unwrap();
+    let close = close.await.expect("dispatch-close task");
+    assert!(
+        close.status.success(),
+        "the close must still complete after its daemon was replaced\nstdout={}\nstderr={}",
+        String::from_utf8_lossy(&close.stdout),
+        String::from_utf8_lossy(&close.stderr)
+    );
+    assert!(
+        !worktree.exists(),
+        "the close held the worktree the whole time, so removal must have happened"
+    );
+
+    // The holder process is gone, so the replacement reclaims the guard it
+    // inherited and the worktree is usable again — the reservation is a fence,
+    // not a leak.
+    std::fs::create_dir_all(&worktree).unwrap();
+    let token = std::fs::read_to_string(home.auth_token())
+        .unwrap()
+        .trim()
+        .to_string();
+    let mut regrant = serde_json::Value::Null;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        regrant = reqwest::Client::new()
+            .post(format!(
+                "http://{}/api/projects/orgasmic/tasks/TASK-DISPATCH/dispatch/close-guard",
+                replacement.addr
+            ))
+            .header(AUTHORIZATION, format!("Bearer {token}"))
+            .json(&serde_json::json!({
+                "worktree_path": worktree,
+                "owner_pid": std::process::id(),
+            }))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if regrant["status"] == "reserved" {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        regrant["status"], "reserved",
+        "a guard whose holder has exited must be reclaimed: {regrant}"
+    );
+
+    let _ = replacement.shutdown.send(());
+    let _ = replacement.join.await;
 }
 
 /// TASK-1T3FZ finding 2: an open record with NO `RUN_ID` at all. The real

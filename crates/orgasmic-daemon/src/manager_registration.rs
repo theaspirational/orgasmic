@@ -400,7 +400,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::new(writer, boot);
+        let sup = Supervisor::new(
+            writer,
+            boot,
+            crate::supervisor::CloseGuardStore::ephemeral(),
+        );
         (sup, dir)
     }
 

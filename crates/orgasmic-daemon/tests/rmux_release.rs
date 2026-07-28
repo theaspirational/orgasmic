@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use orgasmic_core::{read_session_file, DriverEvent, SessionEventKind, TextStream};
-use orgasmic_daemon::supervisor::{AcquireRequest, Supervisor};
+use orgasmic_daemon::supervisor::{AcquireRequest, CloseGuardStore, Supervisor};
 use orgasmic_daemon::{spawn_writer, BootIdentity, EventBus};
 use orgasmic_drivers::{
     BabysitterAck, BabysitterRequest, DriverConfig, DriverContext, DriverControl, DriverError,
@@ -118,7 +118,10 @@ fn make_supervisor() -> (Supervisor, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let writer = spawn_writer(EventBus::new());
     let boot = Arc::new(BootIdentity::new());
-    (Supervisor::new(writer, boot), dir)
+    (
+        Supervisor::new(writer, boot, CloseGuardStore::ephemeral()),
+        dir,
+    )
 }
 
 fn request(

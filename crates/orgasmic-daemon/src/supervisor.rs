@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use orgasmic_core::{
     read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,
     ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
@@ -294,23 +294,193 @@ pub struct Supervisor {
     inner: Arc<Mutex<Inner>>,
     writer: WriterHandle,
     boot: Arc<BootIdentity>,
+    /// `false` while boot rehydration is still deciding which runtimes from the
+    /// previous daemon are alive (TASK-AK6EM ask 2). A destructive close waits
+    /// for this rather than reading a run map that is knowingly incomplete.
+    /// Deliberately outside the mutex: the wait must not hold the lock the
+    /// reattach it is waiting for needs.
+    boot_reattach_resolved: Arc<tokio::sync::watch::Sender<bool>>,
 }
 
-struct Inner {
-    acquisition_paused: bool,
-    /// `(project_id, task_id, RunKind)` → run_id. Single-entry guard for AC #2.
-    leases: HashMap<LeaseKey, String>,
-    /// run_id → live run record. Holds the driver control handle so the
-    /// supervisor can call `release` later.
-    runs: HashMap<String, RunRecord>,
-    /// task_id → retry state after babysitter auto-spawn hits a stale
-    /// `(task_id, Babysitter)` lease. Prevents dispatch churn from turning
-    /// one stale babysitter lease into an immediate retry loop.
-    babysitter_auto_spawn_backoff: HashMap<String, BabysitterAutoSpawnBackoff>,
-    /// Active dispatch cleanup reservations held through filesystem mutation
-    /// (TASK-1FV1N). Blocks reuse of the same default worktree path.
-    cleanup_reservations: HashMap<CleanupReservationKey, DispatchCleanupReservation>,
+// orgasmic:TASK-AK6EM
+/// Supervisor state, and the one door every live run comes through.
+///
+/// `Inner` lives in its own module for a single reason: `leases` is private to
+/// it. TASK-1T3FZ installed the cleanup fence in `acquire_impl` and TASK-AK6EM
+/// found the *second* admission path (`reattach`) that had never learned about
+/// it, so the fix cannot be another per-call-site check — the next path added
+/// would forget it the same way. Making a run live means writing `leases`, and
+/// the only code that can write `leases` is [`Inner::admit_live_run`], which
+/// runs the whole admission check. A future fourth path does not get to
+/// forget: it cannot compile without going through this door, and its author
+/// must name which [`AdmissionPath`] it is.
+mod admission {
+    use super::*;
+
+    pub(super) struct Inner {
+        pub(super) acquisition_paused: bool,
+        /// `(project_id, task_id, RunKind)` → run_id. Single-entry guard for
+        /// AC #2.
+        ///
+        /// PRIVATE ON PURPOSE — see the module docs. Read it through
+        /// [`Inner::lease`], drop it through [`Inner::remove_lease`], and take
+        /// one only through [`Inner::admit_live_run`].
+        leases: HashMap<LeaseKey, String>,
+        /// run_id → live run record. Holds the driver control handle so the
+        /// supervisor can call `release` later.
+        pub(super) runs: HashMap<String, RunRecord>,
+        /// task_id → retry state after babysitter auto-spawn hits a stale
+        /// `(task_id, Babysitter)` lease. Prevents dispatch churn from turning
+        /// one stale babysitter lease into an immediate retry loop.
+        pub(super) babysitter_auto_spawn_backoff: HashMap<String, BabysitterAutoSpawnBackoff>,
+        /// Active dispatch cleanup reservations held through filesystem mutation
+        /// (TASK-1FV1N). Blocks reuse of the same default worktree path.
+        pub(super) cleanup_reservations: HashMap<CleanupReservationKey, DispatchCleanupReservation>,
+        /// Where externally-held close guards are persisted so a replacement
+        /// daemon inherits them (dec_NFZY2).
+        pub(super) close_guards: CloseGuardStore,
+    }
+
+    /// Which admission path is asking. Every variant is an entry point that can
+    /// make a run live in this daemon; there are exactly two, and this enum is
+    /// where a third has to declare itself.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub(super) enum AdmissionPath {
+        /// A brand-new run: `acquire`, `acquire_recovery`, babysitter
+        /// auto-spawn. Any held lease for the key is a conflict.
+        Acquire,
+        /// Rehydration of a runtime that outlived a daemon: explicit
+        /// `reattach_tmux`, pending-plan `reattach_existing`, boot rehydration.
+        /// A lease held by *this same run id* is the run itself and is not a
+        /// conflict.
+        Reattach,
+    }
+
+    /// What an admission path must state about the run it wants to make live.
+    pub(super) struct LiveRunAdmission<'a> {
+        pub(super) path: AdmissionPath,
+        pub(super) lease_key: &'a LeaseKey,
+        pub(super) run_id: &'a str,
+        pub(super) task_id: &'a str,
+        pub(super) kind: RunKind,
+        /// The worktree the run will occupy, when it has one. `None` means the
+        /// run touches no dispatch worktree (manager, babysitter, stage runs)
+        /// and no cleanup fence can apply to it.
+        pub(super) worktree: Option<&'a Path>,
+    }
+
+    /// Proof that a lease was taken through [`Inner::admit_live_run`]. The only
+    /// way to build a [`LeaseReservation`], so an admission path that skipped
+    /// the check has nothing to hand it.
+    #[must_use]
+    pub(super) struct AdmittedLease {
+        key: LeaseKey,
+        run_id: String,
+    }
+
+    impl AdmittedLease {
+        pub(super) fn into_parts(self) -> (LeaseKey, String) {
+            (self.key, self.run_id)
+        }
+    }
+
+    impl Inner {
+        pub(super) fn new(close_guards: CloseGuardStore) -> Self {
+            let cleanup_reservations = close_guards.restore();
+            Self {
+                acquisition_paused: false,
+                leases: HashMap::new(),
+                runs: HashMap::new(),
+                babysitter_auto_spawn_backoff: HashMap::new(),
+                cleanup_reservations,
+                close_guards,
+            }
+        }
+
+        pub(super) fn lease(&self, key: &LeaseKey) -> Option<&String> {
+            self.leases.get(key)
+        }
+
+        pub(super) fn remove_lease(&mut self, key: &LeaseKey) -> Option<String> {
+            self.leases.remove(key)
+        }
+
+        /// Whether any lease is held by `run_id`.
+        #[cfg(test)]
+        pub(super) fn holds_lease_for_run(&self, run_id: &str) -> bool {
+            self.leases.values().any(|held| held == run_id)
+        }
+
+        /// The single live-run admission decision.
+        ///
+        /// Order is deliberate and shared by both paths: pause, then lease,
+        /// then the destructive-cleanup fence. The fence is last because it is
+        /// the one that must be read under the *same* lock acquisition that
+        /// installs the lease — `reserve_dispatch_close` installs its
+        /// reservation under this lock, so from that instant no path here can
+        /// admit a run into the reserved worktree.
+        pub(super) fn admit_live_run(
+            &mut self,
+            req: LiveRunAdmission<'_>,
+        ) -> Result<AdmittedLease, SupervisorError> {
+            if self.acquisition_paused {
+                return Err(SupervisorError::AcquisitionPaused);
+            }
+            match req.path {
+                AdmissionPath::Acquire => {
+                    if let Some(existing) = self.leases.get(req.lease_key) {
+                        return Err(SupervisorError::LeaseHeld {
+                            task_id: req.task_id.to_string(),
+                            kind: req.kind,
+                            run_id: existing.clone(),
+                        });
+                    }
+                }
+                AdmissionPath::Reattach => {
+                    if let Some(active) = self.leases.get(req.lease_key) {
+                        if active != req.run_id {
+                            return Err(SupervisorError::ReattachLeaseConflict {
+                                task_id: req.task_id.to_string(),
+                                kind: req.kind,
+                                active_run_id: active.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+            if let Some(worktree) = req.worktree {
+                let worktree_key = normalize_cleanup_worktree(worktree);
+                super::drop_abandoned_cleanup_reservations(self);
+                if self
+                    .cleanup_reservations
+                    .keys()
+                    .any(|reservation| reservation.worktree_key == worktree_key)
+                {
+                    return Err(SupervisorError::CleanupInProgress {
+                        task_id: req.task_id.to_string(),
+                        kind: req.kind,
+                        worktree: worktree.display().to_string(),
+                    });
+                }
+            }
+            self.leases
+                .insert(req.lease_key.clone(), req.run_id.to_string());
+            Ok(AdmittedLease {
+                key: req.lease_key.clone(),
+                run_id: req.run_id.to_string(),
+            })
+        }
+
+        /// Install a lease without an admission decision. Tests only, and named
+        /// so a production caller of it is obvious in review.
+        #[cfg(test)]
+        pub(super) fn insert_lease_for_test(&mut self, key: LeaseKey, run_id: String) {
+            self.leases.insert(key, run_id);
+        }
+    }
 }
+
+use admission::{AdmissionPath, AdmittedLease, Inner, LiveRunAdmission};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct CleanupReservationKey {
@@ -320,7 +490,7 @@ struct CleanupReservationKey {
     worktree_key: PathBuf,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct DispatchCleanupReservation {
     branch: String,
     worktree_path: PathBuf,
@@ -329,13 +499,244 @@ struct DispatchCleanupReservation {
     stdout_path: Option<PathBuf>,
     /// The out-of-process holder, for a reservation the daemon installs on
     /// someone else's behalf (`dispatch-close`, TASK-1T3FZ). Daemon-owned
-    /// reservations leave this `None` and are never swept.
-    owner_pid: Option<u32>,
+    /// reservations leave this `None`: they are held across the daemon's own
+    /// await points, so they are never swept and never persisted.
+    holder: Option<CloseGuardHolder>,
+}
+
+/// Who holds an externally-owned close guard, and how the daemon reclaims it
+/// when they disappear (TASK-AK6EM ask 4).
+///
+/// Two independent reclamation signals, and the guard is abandoned if *either*
+/// fires:
+///
+/// - `owner_pid` — a fast accelerator, and only where the daemon can actually
+///   probe a pid. `subprocess_exited` answers `false` on non-Unix (there is no
+///   portable `kill(pid, 0)`), so on those targets this signal simply never
+///   fires and never reclaims anything on its own.
+/// - `lease_expires_at` — the portable one, and the reason a Windows holder is
+///   reclaimable at all. The holder renews it (`.../close-guard/renew`) while
+///   it is still working; a holder that dies stops renewing and the guard falls
+///   away one TTL later, on every platform, with no platform-specific code.
+///
+/// This is the project's existing PID-less holder primitive (dec_3Y2E1's
+/// `ManagerRegistry`: opaque token plus a TTL that re-registering refreshes),
+/// reused rather than reinvented. Release stays by guard-id UUID, so nothing
+/// here can release someone else's reservation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CloseGuardHolder {
     /// Opaque handle the holder presents to release this reservation. Looked
     /// up by value rather than by recomputed worktree key: cleanup deletes the
     /// directory, so `normalize_cleanup_worktree` can no longer canonicalize
     /// the path by the time the holder is done with it.
-    close_guard_id: Option<String>,
+    close_guard_id: String,
+    owner_pid: Option<u32>,
+    governed_by: HolderIdentity,
+    lease_expires_at: DateTime<Utc>,
+}
+
+/// Which signal decides whether a close guard's holder is gone. Chosen once,
+/// when the guard is taken, so the answer cannot change under a reservation
+/// that is already installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum HolderIdentity {
+    /// The daemon can probe the holder's pid (`kill(pid, 0)`), so pid liveness
+    /// is authoritative and the renewal lease is not consulted at all. This is
+    /// the Unix case, and it is what keeps the reviewer-cleared conservatism
+    /// intact: an alive pid retains the guard no matter how long the holder has
+    /// gone without talking to the daemon — including right across a daemon
+    /// replacement, when there is no daemon to renew against.
+    ProbeablePid,
+    /// No probeable pid: either the caller supplied none, or the daemon runs on
+    /// a target with no portable `kill(pid, 0)` (Windows). The holder proves it
+    /// is alive by renewing; a holder that stops is reclaimed one TTL later.
+    RenewalLease,
+}
+
+impl CloseGuardHolder {
+    fn identity_for(owner_pid: Option<u32>) -> HolderIdentity {
+        // `subprocess_exited` has no non-Unix implementation that can answer
+        // "is this process alive" — it returns `false` unconditionally, which
+        // is why a Windows holder used to be unreclaimable. On those targets
+        // the lease is the identity.
+        if cfg!(unix) && owner_pid.is_some() {
+            HolderIdentity::ProbeablePid
+        } else {
+            HolderIdentity::RenewalLease
+        }
+    }
+
+    /// Whether this holder is provably gone.
+    fn is_abandoned(&self, now: DateTime<Utc>) -> bool {
+        match self.governed_by {
+            HolderIdentity::ProbeablePid => self.owner_pid.is_some_and(subprocess_exited),
+            HolderIdentity::RenewalLease => now > self.lease_expires_at,
+        }
+    }
+}
+
+/// How long a `dispatch-close` guard survives with no renewal from its holder.
+pub const CLOSE_GUARD_LEASE_TTL: Duration = Duration::from_secs(90);
+
+fn close_guard_lease_ttl() -> chrono::Duration {
+    chrono::Duration::from_std(CLOSE_GUARD_LEASE_TTL)
+        .unwrap_or_else(|_| chrono::Duration::seconds(90))
+}
+
+/// The renewal interval the daemon asks holders for. A third of the TTL, so two
+/// consecutive lost renewals still do not drop a live holder's guard.
+pub const CLOSE_GUARD_RENEW_WITHIN: Duration = Duration::from_secs(30);
+
+/// How long `reserve_dispatch_close` waits for boot rehydration to finish
+/// before refusing (TASK-AK6EM ask 2). Boot reattach is a bounded scan plus one
+/// attach attempt per candidate; a close that waits longer than this is looking
+/// at a daemon that is not going to resolve, and refusing is the safe answer.
+pub const CLOSE_GUARD_BOOT_REATTACH_WAIT: Duration = Duration::from_secs(15);
+
+/// A persisted close guard, as it survives daemon replacement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedCloseGuard {
+    project_id: String,
+    task_id: String,
+    kind: RunKind,
+    /// The canonicalized fence key. Persisted rather than recomputed: by the
+    /// time a replacement reads this the directory may already be gone, and the
+    /// fence has to key the same way it did when it was installed.
+    worktree_key: PathBuf,
+    reservation: DispatchCleanupReservation,
+}
+
+// orgasmic:dec_NFZY2
+/// Where externally-held close guards are persisted (dec_NFZY2).
+///
+/// The destructive work of `dispatch-close` runs in the CLI, not the daemon, so
+/// the guard is held by a process the daemon does not own. TASK-ATAXN made
+/// daemon replacement routine; a guard that lives only in one daemon's memory
+/// is dropped by that replacement while its holder is still deleting files.
+/// This makes the guard outlive the daemon that minted it. dec_NFZY2 records
+/// why this boundary owns the handoff and why the other two were rejected.
+#[derive(Debug, Clone, Default)]
+pub struct CloseGuardStore {
+    dir: Option<PathBuf>,
+}
+
+impl CloseGuardStore {
+    /// The production store, under `$ORGASMIC_HOME/state/close-guards`.
+    pub fn at(dir: impl Into<PathBuf>) -> Self {
+        Self {
+            dir: Some(dir.into()),
+        }
+    }
+
+    /// A supervisor whose guards die with it. For tests that never exercise
+    /// daemon replacement; production goes through [`CloseGuardStore::at`].
+    pub fn ephemeral() -> Self {
+        Self { dir: None }
+    }
+
+    fn path_for(&self, guard_id: &str) -> Option<PathBuf> {
+        // Guard ids are daemon-minted `close-guard-<uuidv4>`; refuse anything
+        // else rather than let a caller-supplied id name a path.
+        if !guard_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        {
+            return None;
+        }
+        self.dir.as_ref().map(|dir| dir.join(guard_id))
+    }
+
+    fn write(&self, record: &PersistedCloseGuard) {
+        let Some(holder) = record.reservation.holder.as_ref() else {
+            return;
+        };
+        let Some(path) = self.path_for(&holder.close_guard_id) else {
+            return;
+        };
+        let Some(dir) = path.parent() else {
+            return;
+        };
+        if let Err(error) = std::fs::create_dir_all(dir) {
+            tracing::warn!(error = %error, dir = %dir.display(), "close guard store unwritable");
+            return;
+        }
+        match serde_json::to_vec_pretty(record) {
+            Ok(bytes) => {
+                if let Err(error) = std::fs::write(&path, bytes) {
+                    tracing::warn!(
+                        error = %error,
+                        path = %path.display(),
+                        "persisting close guard failed; it will not survive daemon replacement"
+                    );
+                }
+            }
+            Err(error) => tracing::warn!(error = %error, "serializing close guard failed"),
+        }
+    }
+
+    fn remove(&self, guard_id: &str) {
+        if let Some(path) = self.path_for(guard_id) {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// Reinstate the guards whose holders are still alive, and delete the rest.
+    fn restore(&self) -> HashMap<CleanupReservationKey, DispatchCleanupReservation> {
+        let mut restored = HashMap::new();
+        let Some(dir) = self.dir.as_ref() else {
+            return restored;
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return restored;
+        };
+        let now = Utc::now();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !entry.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                continue;
+            }
+            let record: PersistedCloseGuard = match std::fs::read(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|e| e.to_string()))
+            {
+                Ok(record) => record,
+                Err(error) => {
+                    tracing::warn!(
+                        error = %error,
+                        path = %path.display(),
+                        "unreadable close guard record; discarding"
+                    );
+                    let _ = std::fs::remove_file(&path);
+                    continue;
+                }
+            };
+            let abandoned = record
+                .reservation
+                .holder
+                .as_ref()
+                .is_none_or(|holder| holder.is_abandoned(now));
+            if abandoned {
+                let _ = std::fs::remove_file(&path);
+                continue;
+            }
+            tracing::info!(
+                task_id = %record.task_id,
+                worktree = %record.reservation.worktree_path.display(),
+                "restored an in-flight dispatch-close guard from the previous daemon"
+            );
+            restored.insert(
+                CleanupReservationKey {
+                    project_id: record.project_id,
+                    task_id: record.task_id,
+                    kind: record.kind,
+                    worktree_key: record.worktree_key,
+                },
+                record.reservation,
+            );
+        }
+        restored
+    }
 }
 
 /// Identity bundle for a destructive `dispatch-close` worktree guard
@@ -363,8 +764,16 @@ pub struct DispatchCloseGuardParams {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchCloseGuardOutcome {
     /// The worktree is reserved and no live worker occupies it. The guard is
-    /// held until `finish_dispatch_close(guard_id)`.
-    Reserved { guard_id: String },
+    /// held until `finish_dispatch_close(guard_id)` — or until the holder stops
+    /// renewing it within `renew_within`.
+    Reserved {
+        guard_id: String,
+        renew_within: Duration,
+    },
+    /// Boot rehydration has not finished deciding which runtimes survived the
+    /// previous daemon, so the run map cannot yet answer "is anyone live in
+    /// this worktree". Nothing is reserved; the caller must not clean up.
+    BootReattachPending,
     /// Another cleanup already holds this worktree.
     ReservationHeld,
     /// A live worker occupies the worktree (or an acquire owns the lease
@@ -424,7 +833,10 @@ struct LeaseReservation {
 }
 
 impl LeaseReservation {
-    fn new(inner: Arc<Mutex<Inner>>, key: LeaseKey, run_id: String) -> Self {
+    /// Takes the [`AdmittedLease`] rather than a bare key: a lease this holds
+    /// is one that went through [`Inner::admit_live_run`], by construction.
+    fn new(inner: Arc<Mutex<Inner>>, admitted: AdmittedLease) -> Self {
+        let (key, run_id) = admitted.into_parts();
         Self {
             inner,
             key: Some(key),
@@ -437,9 +849,9 @@ impl LeaseReservation {
     }
 
     fn remove_if_unowned(inner: &mut Inner, key: &LeaseKey, run_id: &str) {
-        let reserved_by_this_run = inner.leases.get(key).is_some_and(|held| held == run_id);
+        let reserved_by_this_run = inner.lease(key).is_some_and(|held| held == run_id);
         if reserved_by_this_run && !inner.runs.contains_key(run_id) {
-            inner.leases.remove(key);
+            inner.remove_lease(key);
         }
     }
 }
@@ -711,8 +1123,12 @@ impl GitDiffSummarizer {
 }
 
 impl Supervisor {
-    pub fn new(writer: WriterHandle, boot: Arc<BootIdentity>) -> Self {
-        let supervisor = Self::unmonitored(writer, boot);
+    pub fn new(
+        writer: WriterHandle,
+        boot: Arc<BootIdentity>,
+        close_guards: CloseGuardStore,
+    ) -> Self {
+        let supervisor = Self::unmonitored(writer, boot, close_guards);
         spawn_run_timeout_monitor(supervisor.clone());
         supervisor
     }
@@ -724,18 +1140,60 @@ impl Supervisor {
     /// threshold and then awaits is therefore racing a second releaser for the
     /// same run, and cannot make a stable claim about what the release it
     /// drives by hand did or did not do.
-    fn unmonitored(writer: WriterHandle, boot: Arc<BootIdentity>) -> Self {
+    fn unmonitored(
+        writer: WriterHandle,
+        boot: Arc<BootIdentity>,
+        close_guards: CloseGuardStore,
+    ) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(Inner {
-                acquisition_paused: false,
-                leases: HashMap::new(),
-                runs: HashMap::new(),
-                babysitter_auto_spawn_backoff: HashMap::new(),
-                cleanup_reservations: HashMap::new(),
-            })),
+            inner: Arc::new(Mutex::new(Inner::new(close_guards))),
             writer,
             boot,
+            // Resolved by default: a supervisor nobody has told about boot
+            // rehydration has none pending. `begin_boot_reattach` is what the
+            // daemon calls, before it binds.
+            boot_reattach_resolved: Arc::new(tokio::sync::watch::channel(true).0),
         }
+    }
+
+    /// Declare that boot rehydration is about to run, so a destructive close
+    /// arriving in the meantime waits for it instead of reading an incomplete
+    /// run map (TASK-AK6EM ask 2). Called before the listener binds.
+    pub fn begin_boot_reattach(&self) {
+        // `send_replace`, not `send`: a `watch::Sender` with no live receiver
+        // fails `send` and leaves the value untouched, and the receivers here
+        // are created on demand by waiters that may not exist yet.
+        self.boot_reattach_resolved.send_replace(false);
+    }
+
+    /// Boot rehydration has finished — every candidate is either live in the
+    /// run map or has been proven not reattachable.
+    pub fn finish_boot_reattach(&self) {
+        self.boot_reattach_resolved.send_replace(true);
+    }
+
+    /// Wait for boot rehydration to resolve. `false` means it did not within
+    /// `budget`, and the caller must not treat the run map as complete.
+    async fn wait_for_boot_reattach(&self, budget: Duration) -> bool {
+        let mut rx = self.boot_reattach_resolved.subscribe();
+        if *rx.borrow_and_update() {
+            return true;
+        }
+        tokio::time::timeout(budget, async move {
+            loop {
+                if rx.changed().await.is_err() {
+                    // Sender gone: nothing will ever resolve it, and the daemon
+                    // it belonged to is going away.
+                    return;
+                }
+                if *rx.borrow_and_update() {
+                    return;
+                }
+            }
+        })
+        .await
+        .is_ok()
+            && *self.boot_reattach_resolved.borrow()
     }
 
     /// Acquire a new run.
@@ -940,36 +1398,18 @@ impl Supervisor {
             )
         };
         let lease_key = lease_key(req.project_id.as_deref(), &req.task_id, req.kind);
-        {
+        let admitted = {
             let mut guard = self.inner.lock().await;
-            if guard.acquisition_paused {
-                return Err(SupervisorError::AcquisitionPaused);
-            }
-            if let Some(existing) = guard.leases.get(&lease_key) {
-                return Err(SupervisorError::LeaseHeld {
-                    task_id: req.task_id.clone(),
-                    kind: req.kind,
-                    run_id: existing.clone(),
-                });
-            }
-            if let Some(worktree) = req.worktree.as_ref() {
-                let worktree_key = normalize_cleanup_worktree(worktree);
-                drop_abandoned_cleanup_reservations(&mut guard);
-                if guard
-                    .cleanup_reservations
-                    .keys()
-                    .any(|reservation| reservation.worktree_key == worktree_key)
-                {
-                    return Err(SupervisorError::CleanupInProgress {
-                        task_id: req.task_id.clone(),
-                        kind: req.kind,
-                        worktree: worktree.display().to_string(),
-                    });
-                }
-            }
-            guard.leases.insert(lease_key.clone(), run_id.clone());
-        }
-        let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
+            guard.admit_live_run(LiveRunAdmission {
+                path: AdmissionPath::Acquire,
+                lease_key: &lease_key,
+                run_id: &run_id,
+                task_id: &req.task_id,
+                kind: req.kind,
+                worktree: req.worktree.as_deref(),
+            })?
+        };
+        let mut lease = LeaseReservation::new(self.inner.clone(), admitted);
 
         // Build the driver context and spawn. If the driver fails, release
         // the lease before returning.
@@ -1663,7 +2103,7 @@ impl Supervisor {
         let run_id = identity.run_id.clone();
         // Lease conflict guard: do not steal an occupied lease.
         let lease_key = lease_key(project_id.as_deref(), &task_id, kind);
-        {
+        let admitted = {
             let mut guard = self.inner.lock().await;
             if guard.acquisition_paused {
                 return Err(SupervisorError::AcquisitionPaused);
@@ -1677,18 +2117,21 @@ impl Supervisor {
                     pid: None,
                 });
             }
-            if let Some(active) = guard.leases.get(&lease_key) {
-                if active != &run_id {
-                    return Err(SupervisorError::ReattachLeaseConflict {
-                        task_id,
-                        kind,
-                        active_run_id: active.clone(),
-                    });
-                }
-            }
-            guard.leases.insert(lease_key.clone(), run_id.clone());
-        }
-        let mut lease = LeaseReservation::new(self.inner.clone(), lease_key, run_id.clone());
+            // orgasmic:TASK-AK6EM — the same door `acquire_impl` uses. This is
+            // the path that used to check the lease by hand and never learned
+            // about the cleanup fence, which let a crash-replay reattach install
+            // a live replacement into a worktree a `dispatch-close` had already
+            // reserved and was about to delete.
+            guard.admit_live_run(LiveRunAdmission {
+                path: AdmissionPath::Reattach,
+                lease_key: &lease_key,
+                run_id: &run_id,
+                task_id: &task_id,
+                kind,
+                worktree: worktree.as_deref(),
+            })?
+        };
+        let mut lease = LeaseReservation::new(self.inner.clone(), admitted);
 
         let ctx = DriverContext {
             identity: identity.clone(),
@@ -2325,7 +2768,7 @@ impl Supervisor {
                 .runs
                 .remove(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
-            g.leases.remove(&lease_key(
+            g.remove_lease(&lease_key(
                 rec.project_id.as_deref(),
                 &rec.task_id,
                 rec.kind,
@@ -2850,7 +3293,7 @@ impl Supervisor {
         let key = lease_key(Some(&params.project_id), &params.task_id, params.kind);
         let run_id = {
             let g = self.inner.lock().await;
-            g.leases.get(&key).cloned()
+            g.lease(&key).cloned()
         };
         let Some(run_id) = run_id else {
             return Ok(None);
@@ -2910,8 +3353,7 @@ impl Supervisor {
             dispatch_attempt_token: params.dispatch_attempt_token.clone(),
             last_path: params.last_path.clone(),
             stdout_path: params.stdout_path.clone(),
-            owner_pid: None,
-            close_guard_id: None,
+            holder: None,
         };
 
         if params.worktree_path.is_dir() {
@@ -2934,8 +3376,7 @@ impl Supervisor {
                 return Ok(DispatchCleanupOutcome::Conflict);
             }
             let active_lease = lease_key(Some(&params.project_id), &params.task_id, params.kind);
-            if g.leases
-                .get(&active_lease)
+            if g.lease(&active_lease)
                 .is_some_and(|run_id| !g.runs.contains_key(run_id))
             {
                 // An acquire owns this lease but has not installed its
@@ -3093,6 +3534,20 @@ impl Supervisor {
         &self,
         params: &DispatchCloseGuardParams,
     ) -> DispatchCloseGuardOutcome {
+        // orgasmic:TASK-AK6EM — ask 2. Before any of the below means anything,
+        // the run map has to be a complete answer to "who is live here". On a
+        // daemon that is still rehydrating the previous daemon's runtimes it is
+        // not: a worker whose mux session outlived the restart is alive in its
+        // worktree and simply not in the map yet. Fencing it out of `reattach`
+        // would only mean deleting its files without it watching. So the close
+        // waits for rehydration to resolve, and refuses if it does not.
+        if !self
+            .wait_for_boot_reattach(CLOSE_GUARD_BOOT_REATTACH_WAIT)
+            .await
+        {
+            return DispatchCloseGuardOutcome::BootReattachPending;
+        }
+
         let worktree_key = normalize_cleanup_worktree(&params.worktree_path);
         let guard_id = format!("close-guard-{}", Uuid::new_v4());
         let reservation_key = CleanupReservationKey {
@@ -3107,8 +3562,12 @@ impl Supervisor {
             dispatch_attempt_token: params.dispatch_attempt_token.clone(),
             last_path: params.last_path.clone(),
             stdout_path: params.stdout_path.clone(),
-            owner_pid: params.owner_pid,
-            close_guard_id: Some(guard_id.clone()),
+            holder: Some(CloseGuardHolder {
+                close_guard_id: guard_id.clone(),
+                owner_pid: params.owner_pid,
+                governed_by: CloseGuardHolder::identity_for(params.owner_pid),
+                lease_expires_at: Utc::now() + close_guard_lease_ttl(),
+            }),
         };
 
         // One lock section, no awaits, from the fence to the verdict.
@@ -3121,14 +3580,74 @@ impl Supervisor {
             return DispatchCloseGuardOutcome::ReservationHeld;
         }
         g.cleanup_reservations
-            .insert(reservation_key.clone(), reservation);
+            .insert(reservation_key.clone(), reservation.clone());
 
         let blocking = blocking_run_for_close(&g, params, &worktree_key);
         if let Some((run_id, worktree)) = blocking {
             g.cleanup_reservations.remove(&reservation_key);
             return DispatchCloseGuardOutcome::BlockedByLiveRun { run_id, worktree };
         }
-        DispatchCloseGuardOutcome::Reserved { guard_id }
+        // Persisted only once the verdict is `Reserved`: a fence that was taken
+        // back is not a guard anyone holds, and must not be inherited.
+        g.close_guards.write(&PersistedCloseGuard {
+            project_id: params.project_id.clone(),
+            task_id: params.task_id.clone(),
+            kind: params.kind,
+            worktree_key,
+            reservation,
+        });
+        DispatchCloseGuardOutcome::Reserved {
+            guard_id,
+            renew_within: CLOSE_GUARD_RENEW_WITHIN,
+        }
+    }
+
+    /// Extend a close guard's holder lease. `false` means no such guard is
+    /// held — it was finished, or reclaimed as abandoned — which the holder
+    /// needs to hear about, because it is still deleting files.
+    pub async fn renew_dispatch_close(&self, guard_id: &str) -> bool {
+        let mut g = self.inner.lock().await;
+        let deadline = Utc::now() + close_guard_lease_ttl();
+        let Some((key, reservation)) = g
+            .cleanup_reservations
+            .iter_mut()
+            .find(|(_, reservation)| {
+                reservation
+                    .holder
+                    .as_ref()
+                    .is_some_and(|holder| holder.close_guard_id == guard_id)
+            })
+            .map(|(key, reservation)| (key.clone(), reservation))
+        else {
+            return false;
+        };
+        if let Some(holder) = reservation.holder.as_mut() {
+            holder.lease_expires_at = deadline;
+        }
+        let record = PersistedCloseGuard {
+            project_id: key.project_id.clone(),
+            task_id: key.task_id.clone(),
+            kind: key.kind,
+            worktree_key: key.worktree_key.clone(),
+            reservation: reservation.clone(),
+        };
+        g.close_guards.write(&record);
+        true
+    }
+
+    /// Move a held guard's renewal lease into the past, as if its holder had
+    /// stopped renewing for a full TTL. Tests only: it simulates elapsed time,
+    /// not the reclamation decision, which still runs for real.
+    #[cfg(test)]
+    pub(crate) async fn expire_close_guard_lease_for_test(&self, guard_id: &str) {
+        let mut g = self.inner.lock().await;
+        for reservation in g.cleanup_reservations.values_mut() {
+            if let Some(holder) = reservation.holder.as_mut() {
+                if holder.close_guard_id == guard_id {
+                    holder.lease_expires_at = Utc::now() - chrono::Duration::seconds(1);
+                }
+            }
+        }
     }
 
     /// Release a `dispatch-close` guard once worktree and branch cleanup has
@@ -3137,8 +3656,13 @@ impl Supervisor {
     /// that never gets here.
     pub async fn finish_dispatch_close(&self, guard_id: &str) {
         let mut g = self.inner.lock().await;
-        g.cleanup_reservations
-            .retain(|_, reservation| reservation.close_guard_id.as_deref() != Some(guard_id));
+        g.cleanup_reservations.retain(|_, reservation| {
+            reservation
+                .holder
+                .as_ref()
+                .is_none_or(|holder| holder.close_guard_id != guard_id)
+        });
+        g.close_guards.remove(guard_id);
     }
 
     /// Clear an *orphaned* lease: one held for `(project_id, task_id, kind)`
@@ -3154,13 +3678,13 @@ impl Supervisor {
     ) -> OrphanedLeaseOutcome {
         let mut g = self.inner.lock().await;
         let key = lease_key(Some(project_id), task_id, kind);
-        let Some(run_id) = g.leases.get(&key).cloned() else {
+        let Some(run_id) = g.lease(&key).cloned() else {
             return OrphanedLeaseOutcome::NoLease;
         };
         if g.runs.contains_key(&run_id) {
             return OrphanedLeaseOutcome::HeldByLiveRun { run_id };
         }
-        g.leases.remove(&key);
+        g.remove_lease(&key);
         OrphanedLeaseOutcome::Released { run_id }
     }
 }
@@ -3710,7 +4234,7 @@ fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
 }
 
 fn remove_record_lease(inner: &mut Inner, rec: &RunRecord) {
-    inner.leases.remove(&lease_key(
+    inner.remove_lease(&lease_key(
         rec.project_id.as_deref(),
         &rec.task_id,
         rec.kind,
@@ -3959,7 +4483,7 @@ fn blocking_run_for_close(
     worktree_key: &Path,
 ) -> Option<(String, Option<PathBuf>)> {
     let active_lease = lease_key(Some(&params.project_id), &params.task_id, params.kind);
-    if let Some(run_id) = inner.leases.get(&active_lease) {
+    if let Some(run_id) = inner.lease(&active_lease) {
         if !inner.runs.contains_key(run_id) {
             return Some((run_id.clone(), None));
         }
@@ -3982,20 +4506,37 @@ fn blocking_run_for_close(
     })
 }
 
-/// Drop cleanup reservations whose out-of-process holder is gone (TASK-1T3FZ).
+/// Drop cleanup reservations whose out-of-process holder is gone (TASK-1T3FZ,
+/// reclamation reworked by TASK-AK6EM).
 ///
 /// A `dispatch-close` guard is held by the CLI across its own filesystem
 /// cleanup, so a CLI that dies mid-cleanup would otherwise reserve that
 /// worktree until the daemon restarts — and the worktree path for a task is
-/// deterministic, so the task would become undispatchable. Daemon-owned
-/// reservations carry no pid and are never swept.
+/// deterministic, so the task would become undispatchable. Reclamation is
+/// [`CloseGuardHolder::is_abandoned`]: a dead pid where a pid can be probed, an
+/// expired holder lease everywhere (which is what makes a Windows holder
+/// reclaimable, and what makes a missing `owner_pid` reclaimable at all).
+/// Daemon-owned reservations carry no holder and are never swept.
 fn drop_abandoned_cleanup_reservations(inner: &mut Inner) {
-    inner
-        .cleanup_reservations
-        .retain(|_, reservation| match reservation.owner_pid {
-            Some(pid) => !subprocess_exited(pid),
-            None => true,
-        });
+    let now = Utc::now();
+    let mut reclaimed: Vec<String> = Vec::new();
+    inner.cleanup_reservations.retain(|_, reservation| {
+        let Some(holder) = reservation.holder.as_ref() else {
+            return true;
+        };
+        if holder.is_abandoned(now) {
+            reclaimed.push(holder.close_guard_id.clone());
+            return false;
+        }
+        true
+    });
+    for guard_id in reclaimed {
+        tracing::warn!(
+            guard_id = %guard_id,
+            "reclaiming a dispatch-close guard whose holder is gone"
+        );
+        inner.close_guards.remove(&guard_id);
+    }
 }
 
 fn dispatch_worktree_checked_out_branch(worktree: &Path) -> Option<String> {
@@ -5654,7 +6195,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::new(writer.clone(), boot);
+        let sup = Supervisor::new(writer.clone(), boot, CloseGuardStore::ephemeral());
         (sup, dir, writer)
     }
 
@@ -5668,7 +6209,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
-        let sup = Supervisor::unmonitored(writer.clone(), boot);
+        let sup = Supervisor::unmonitored(writer.clone(), boot, CloseGuardStore::ephemeral());
         (sup, dir, writer)
     }
 
@@ -5952,6 +6493,542 @@ mod tests {
             max_iterations: None,
             context_budget_chars: None,
             harness_args: Vec::new(),
+        }
+    }
+
+    // orgasmic:TASK-AK6EM
+    // ---------------------------------------------------------------------
+    // Live-run admission fencing, close-guard handoff, and holder reclamation.
+    // ---------------------------------------------------------------------
+
+    /// A driver that always proves a live runtime handle, so an *admitted*
+    /// reattach really does install a live run. Nothing in these tests is
+    /// refused by the driver: every refusal comes from the admission check.
+    struct AlwaysAttachableDriver;
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for AlwaysAttachableDriver {
+        fn transport(&self) -> &'static str {
+            "tmux"
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(AlwaysAttachableControl { _events: tx }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+
+        async fn attach(
+            &self,
+            ctx: DriverContext,
+            config: DriverConfig,
+        ) -> Result<AttachOutcome, DriverError> {
+            let session = self.acquire(ctx, config).await?;
+            Ok(AttachOutcome::Attached(orgasmic_drivers::Attached {
+                session: Box::new(session),
+            }))
+        }
+    }
+
+    struct AlwaysAttachableControl {
+        _events: tokio::sync::mpsc::Sender<DriverEvent>,
+    }
+
+    #[async_trait::async_trait]
+    impl DriverControl for AlwaysAttachableControl {
+        async fn transition_state(
+            &mut self,
+            _req: TransitionRequest,
+        ) -> Result<TransitionAck, DriverError> {
+            Err(DriverError::Unsupported("transition_state"))
+        }
+
+        async fn babysitter_action(
+            &mut self,
+            _req: BabysitterRequest,
+        ) -> Result<BabysitterAck, DriverError> {
+            Err(DriverError::Unsupported("babysitter_action"))
+        }
+
+        async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            Ok(())
+        }
+    }
+
+    fn close_guard_params(
+        task_id: &str,
+        worktree: &Path,
+        owner_pid: Option<u32>,
+    ) -> DispatchCloseGuardParams {
+        DispatchCloseGuardParams {
+            project_id: "orgasmic".into(),
+            task_id: task_id.into(),
+            kind: RunKind::Worker,
+            branch: "task-fence-impl".into(),
+            worktree_path: worktree.to_path_buf(),
+            dispatch_attempt_token: None,
+            last_path: None,
+            stdout_path: None,
+            owner_pid,
+            releasing_run_id: None,
+            owned_run_ids: Vec::new(),
+        }
+    }
+
+    fn reserved_guard_id(outcome: DispatchCloseGuardOutcome) -> String {
+        match outcome {
+            DispatchCloseGuardOutcome::Reserved { guard_id, .. } => guard_id,
+            other => panic!("expected a reserved close guard, got {other:?}"),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn reattach_into(
+        sup: &Supervisor,
+        run_id: &str,
+        task_id: &str,
+        worktree: &Path,
+        session_path: &Path,
+    ) -> Result<AcquireResponse, SupervisorError> {
+        sup.reattach(
+            &AlwaysAttachableDriver,
+            RuntimeIdentity::new(run_id, "boot-previous"),
+            RunKind::Worker,
+            task_id.to_string(),
+            "implementer-claude-acp".to_string(),
+            "implementer".to_string(),
+            true,
+            Some("orgasmic".to_string()),
+            Some(worktree.to_path_buf()),
+            session_path.to_path_buf(),
+            tmux::inert_config(),
+            false,
+            None,
+        )
+        .await
+    }
+
+    fn worktree_req(task_id: &str, dir: &Path, worktree: &Path) -> AcquireRequest {
+        let mut req = impl_req(task_id, dir);
+        req.worktree = Some(worktree.to_path_buf());
+        req
+    }
+
+    /// The P0 this task exists for: `reattach` is a live-run admission path and
+    /// must observe the same worktree reservation `acquire` does.
+    ///
+    /// Injection: delete the `worktree` field from the `LiveRunAdmission` the
+    /// reattach path builds (or the whole reservation block in
+    /// `Inner::admit_live_run`) and this reattach is admitted — a live run
+    /// installed into a worktree a destructive close is holding.
+    #[tokio::test]
+    async fn a_held_close_guard_fences_reattach_out_of_the_reserved_worktree() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("worktrees/task-fence");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let guard_id = reserved_guard_id(
+            sup.reserve_dispatch_close(&close_guard_params(
+                "TASK-FENCE",
+                &worktree,
+                Some(std::process::id()),
+            ))
+            .await,
+        );
+
+        let error = reattach_into(
+            &sup,
+            "run-reattach-fenced",
+            "TASK-FENCE",
+            &worktree,
+            &dir.path().join("run-reattach-fenced.jsonl"),
+        )
+        .await
+        .expect_err("a reattach into a reserved worktree must be refused");
+        assert!(
+            matches!(error, SupervisorError::CleanupInProgress { .. }),
+            "the refusal must name the cleanup reservation, got {error:?}"
+        );
+        assert!(
+            sup.snapshot().await.runs.is_empty(),
+            "a refused reattach must leave no live run behind"
+        );
+
+        // And it is the guard doing it: release it and the identical reattach
+        // is admitted.
+        sup.finish_dispatch_close(&guard_id).await;
+        let admitted = reattach_into(
+            &sup,
+            "run-reattach-fenced",
+            "TASK-FENCE",
+            &worktree,
+            &dir.path().join("run-reattach-fenced.jsonl"),
+        )
+        .await
+        .expect("the same reattach is admitted once the guard is released");
+        assert_eq!(admitted.run_id, "run-reattach-fenced");
+    }
+
+    /// The ATAXN handoff P0: the guard is held by the CLI, across a daemon
+    /// replacement. A replacement that starts with an empty reservation map
+    /// admits work into a worktree the original CLI is still deleting.
+    ///
+    /// Injection: drop the `close_guards.write(..)` call in
+    /// `reserve_dispatch_close`, or make `Inner::new` ignore
+    /// `CloseGuardStore::restore`, and the replacement admits both the acquire
+    /// and the reattach below.
+    #[tokio::test]
+    async fn a_close_guard_survives_daemon_replacement_until_its_holder_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("state/close-guards");
+        let writer = spawn_writer(EventBus::new());
+        let worktree = dir.path().join("worktrees/task-handoff");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let predecessor = Supervisor::unmonitored(
+            writer.clone(),
+            Arc::new(BootIdentity::new()),
+            CloseGuardStore::at(&store),
+        );
+        let guard_id = reserved_guard_id(
+            predecessor
+                .reserve_dispatch_close(&close_guard_params(
+                    "TASK-HANDOFF",
+                    &worktree,
+                    Some(std::process::id()),
+                ))
+                .await,
+        );
+        // The whole daemon goes away while the CLI holder is still working.
+        drop(predecessor);
+
+        let replacement = Supervisor::unmonitored(
+            writer.clone(),
+            Arc::new(BootIdentity::new()),
+            CloseGuardStore::at(&store),
+        );
+        let acquire_error = replacement
+            .acquire(
+                &AlwaysAttachableDriver,
+                worktree_req("TASK-HANDOFF", dir.path(), &worktree),
+            )
+            .await
+            .expect_err("the replacement must inherit the in-flight close guard");
+        assert!(
+            matches!(acquire_error, SupervisorError::CleanupInProgress { .. }),
+            "got {acquire_error:?}"
+        );
+        let reattach_error = reattach_into(
+            &replacement,
+            "run-handoff-replacement",
+            "TASK-HANDOFF",
+            &worktree,
+            &dir.path().join("run-handoff-replacement.jsonl"),
+        )
+        .await
+        .expect_err("recovery must stay refused across the replacement too");
+        assert!(
+            matches!(reattach_error, SupervisorError::CleanupInProgress { .. }),
+            "got {reattach_error:?}"
+        );
+
+        // The holder finishes against the replacement, using the guard id the
+        // predecessor minted.
+        replacement.finish_dispatch_close(&guard_id).await;
+        replacement
+            .acquire(
+                &AlwaysAttachableDriver,
+                worktree_req("TASK-HANDOFF", dir.path(), &worktree),
+            )
+            .await
+            .expect("the worktree is acquirable once the holder is done");
+        assert!(
+            !store.join(&guard_id).exists(),
+            "a finished guard must not be left on disk for the next daemon"
+        );
+    }
+
+    /// A holder that died is reclaimed, so a task whose worktree path is
+    /// deterministic does not become permanently undispatchable.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dead_pid_holder_is_reclaimed_on_the_next_admission() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("worktrees/task-dead-holder");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let mut child = std::process::Command::new("true")
+            .spawn()
+            .expect("spawn a throwaway holder");
+        let dead_pid = child.id();
+        child.wait().expect("reap the throwaway holder");
+
+        let _guard_id = reserved_guard_id(
+            sup.reserve_dispatch_close(&close_guard_params(
+                "TASK-DEAD-HOLDER",
+                &worktree,
+                Some(dead_pid),
+            ))
+            .await,
+        );
+        sup.acquire(
+            &AlwaysAttachableDriver,
+            worktree_req("TASK-DEAD-HOLDER", dir.path(), &worktree),
+        )
+        .await
+        .expect("a guard whose pid is gone must not fence anyone out");
+    }
+
+    /// A live pid holds its guard however long it works, and specifically
+    /// however long it goes without renewing — the reviewer-cleared Unix
+    /// conservatism. A recycled pid reads as alive here and *retains*.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_live_pid_holder_is_never_reclaimed_by_lease_expiry() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("worktrees/task-live-holder");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let guard_id = reserved_guard_id(
+            sup.reserve_dispatch_close(&close_guard_params(
+                "TASK-LIVE-HOLDER",
+                &worktree,
+                Some(std::process::id()),
+            ))
+            .await,
+        );
+        // No renewal for a full TTL — the daemon-replacement window, where
+        // there is no daemon to renew against.
+        sup.expire_close_guard_lease_for_test(&guard_id).await;
+
+        let error = sup
+            .acquire(
+                &AlwaysAttachableDriver,
+                worktree_req("TASK-LIVE-HOLDER", dir.path(), &worktree),
+            )
+            .await
+            .expect_err("an alive holder keeps its guard regardless of the lease");
+        assert!(
+            matches!(error, SupervisorError::CleanupInProgress { .. }),
+            "got {error:?}"
+        );
+    }
+
+    /// The P1: a holder the daemon cannot probe. `owner_pid: None` used to be
+    /// retained forever — a permanent denial of service on that worktree — and
+    /// it is also exactly the identity a Windows daemon has for every holder,
+    /// because `subprocess_exited` cannot answer there.
+    ///
+    /// Injection: make `is_abandoned` return `false` for `RenewalLease` and
+    /// this acquire is refused forever.
+    #[tokio::test]
+    async fn a_holder_with_no_probeable_pid_is_reclaimed_when_its_lease_expires() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("worktrees/task-no-pid-holder");
+        std::fs::create_dir_all(&worktree).unwrap();
+
+        let guard_id = reserved_guard_id(
+            sup.reserve_dispatch_close(&close_guard_params("TASK-NO-PID-HOLDER", &worktree, None))
+                .await,
+        );
+
+        // While it renews, it holds.
+        let refused = sup
+            .acquire(
+                &AlwaysAttachableDriver,
+                worktree_req("TASK-NO-PID-HOLDER", dir.path(), &worktree),
+            )
+            .await
+            .expect_err("a renewing holder keeps its guard");
+        assert!(
+            matches!(refused, SupervisorError::CleanupInProgress { .. }),
+            "got {refused:?}"
+        );
+        assert!(
+            sup.renew_dispatch_close(&guard_id).await,
+            "the daemon must renew a guard it holds"
+        );
+
+        // It stops renewing; one TTL later the guard is reclaimable.
+        sup.expire_close_guard_lease_for_test(&guard_id).await;
+        sup.acquire(
+            &AlwaysAttachableDriver,
+            worktree_req("TASK-NO-PID-HOLDER", dir.path(), &worktree),
+        )
+        .await
+        .expect("an expired unprobeable holder must be reclaimed");
+        assert!(
+            !sup.renew_dispatch_close(&guard_id).await,
+            "a reclaimed guard must tell its holder it is gone"
+        );
+    }
+
+    /// The reclamation rule itself, both governance modes, without a daemon.
+    #[test]
+    fn holder_identity_decides_which_reclamation_signal_applies() {
+        let past = Utc::now() - chrono::Duration::seconds(1);
+        let future = Utc::now() + chrono::Duration::seconds(60);
+        let now = Utc::now();
+
+        // Windows / no-pid: the lease is the only signal, and it works.
+        let unprobeable = CloseGuardHolder {
+            close_guard_id: "close-guard-a".into(),
+            owner_pid: Some(4242),
+            governed_by: HolderIdentity::RenewalLease,
+            lease_expires_at: past,
+        };
+        assert!(unprobeable.is_abandoned(now));
+        assert!(!CloseGuardHolder {
+            lease_expires_at: future,
+            ..unprobeable.clone()
+        }
+        .is_abandoned(now));
+
+        // Unix: a live pid retains no matter how stale the lease is.
+        let probeable = CloseGuardHolder {
+            close_guard_id: "close-guard-b".into(),
+            owner_pid: Some(std::process::id()),
+            governed_by: HolderIdentity::ProbeablePid,
+            lease_expires_at: past,
+        };
+        assert!(
+            !probeable.is_abandoned(now),
+            "an alive pid retains its guard however stale the lease is"
+        );
+
+        // And which signal governs is chosen by what the daemon can actually
+        // probe, not by hope: a holder with no pid is lease-governed on every
+        // platform, and a holder with one is pid-governed only where
+        // `subprocess_exited` can answer.
+        assert_eq!(
+            CloseGuardHolder::identity_for(None),
+            HolderIdentity::RenewalLease
+        );
+        assert_eq!(
+            CloseGuardHolder::identity_for(Some(4242)),
+            if cfg!(unix) {
+                HolderIdentity::ProbeablePid
+            } else {
+                HolderIdentity::RenewalLease
+            }
+        );
+    }
+
+    /// A guard whose holder died while the daemon was down must not be
+    /// inherited: reclamation runs at restore, not only at admission.
+    #[tokio::test]
+    async fn an_expired_persisted_guard_is_not_inherited_by_the_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = dir.path().join("state/close-guards");
+        std::fs::create_dir_all(&store).unwrap();
+        let worktree = dir.path().join("worktrees/task-expired");
+        std::fs::create_dir_all(&worktree).unwrap();
+        let guard_id = "close-guard-expired-holder";
+        let record = serde_json::json!({
+            "project_id": "orgasmic",
+            "task_id": "TASK-EXPIRED",
+            "kind": "worker",
+            "worktree_key": normalize_cleanup_worktree(&worktree),
+            "reservation": {
+                "branch": "task-expired-impl",
+                "worktree_path": worktree,
+                "dispatch_attempt_token": null,
+                "last_path": null,
+                "stdout_path": null,
+                "holder": {
+                    "close_guard_id": guard_id,
+                    "owner_pid": null,
+                    "governed_by": "renewal_lease",
+                    "lease_expires_at": Utc::now() - chrono::Duration::seconds(5),
+                }
+            }
+        });
+        std::fs::write(
+            store.join(guard_id),
+            serde_json::to_vec_pretty(&record).unwrap(),
+        )
+        .unwrap();
+
+        let writer = spawn_writer(EventBus::new());
+        let replacement = Supervisor::unmonitored(
+            writer,
+            Arc::new(BootIdentity::new()),
+            CloseGuardStore::at(&store),
+        );
+        replacement
+            .acquire(
+                &AlwaysAttachableDriver,
+                worktree_req("TASK-EXPIRED", dir.path(), &worktree),
+            )
+            .await
+            .expect("a guard whose holder is gone must not survive the handoff");
+        assert!(
+            !store.join(guard_id).exists(),
+            "the reclaimed guard record must be deleted, not left to be re-read"
+        );
+    }
+
+    /// Ask 2: a close must not read the run map while boot rehydration is still
+    /// deciding which of the previous daemon's runtimes are alive.
+    #[tokio::test]
+    async fn a_close_waits_for_boot_rehydration_before_it_reserves() {
+        let (sup, dir, _w) = make_supervisor();
+        let worktree = dir.path().join("worktrees/task-boot-wait");
+        std::fs::create_dir_all(&worktree).unwrap();
+        sup.begin_boot_reattach();
+
+        let close = {
+            let sup = sup.clone();
+            let worktree = worktree.clone();
+            tokio::spawn(async move {
+                sup.reserve_dispatch_close(&close_guard_params(
+                    "TASK-BOOT-WAIT",
+                    &worktree,
+                    Some(std::process::id()),
+                ))
+                .await
+            })
+        };
+        // It is parked, not deciding: give it room to have decided wrongly.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        if close.is_finished() {
+            panic!(
+                "the close must not reserve while rehydration is unresolved; it returned {:?}",
+                close.await
+            );
+        }
+
+        // Rehydration finds the worktree occupied by a run that outlived the
+        // previous daemon.
+        reattach_into(
+            &sup,
+            "run-rehydrated",
+            "TASK-BOOT-WAIT",
+            &worktree,
+            &dir.path().join("run-rehydrated.jsonl"),
+        )
+        .await
+        .expect("boot rehydration installs the surviving run");
+        sup.finish_boot_reattach();
+
+        let outcome = close.await.expect("close task");
+        match outcome {
+            DispatchCloseGuardOutcome::BlockedByLiveRun { run_id, .. } => {
+                assert_eq!(run_id, "run-rehydrated");
+            }
+            other => {
+                panic!("a close that waited for rehydration must see the rehydrated run: {other:?}")
+            }
         }
     }
 
@@ -7766,8 +8843,7 @@ mod tests {
             .inner
             .lock()
             .await
-            .leases
-            .get(&lease_key(
+            .lease(&lease_key(
                 Some("orgasmic"),
                 "TASK-NO-PID-EARLY",
                 RunKind::Worker,
@@ -8793,7 +9869,7 @@ mod tests {
     async fn supervisor_no_spin_on_stale_babysitter_lease() {
         let (sup, dir, _w) = make_supervisor();
         let driver = TmuxTuiDriver;
-        sup.inner.lock().await.leases.insert(
+        sup.inner.lock().await.insert_lease_for_test(
             lease_key(Some("orgasmic"), "TASK-SPIN", RunKind::Babysitter),
             "bs-stale-lease".to_string(),
         );
@@ -9348,13 +10424,7 @@ mod tests {
 
     #[tokio::test]
     async fn explicit_release_in_progress_blocks_stream_end_take() {
-        let mut inner = Inner {
-            acquisition_paused: false,
-            runs: HashMap::new(),
-            leases: HashMap::new(),
-            babysitter_auto_spawn_backoff: HashMap::new(),
-            cleanup_reservations: HashMap::new(),
-        };
+        let mut inner = Inner::new(CloseGuardStore::ephemeral());
         let run_id = "run-explicit-release".to_string();
         inner.runs.insert(
             run_id.clone(),
@@ -9370,13 +10440,7 @@ mod tests {
 
     #[tokio::test]
     async fn stream_end_release_defers_until_channel_closure_when_pid_watched() {
-        let mut inner = Inner {
-            acquisition_paused: false,
-            runs: HashMap::new(),
-            leases: HashMap::new(),
-            babysitter_auto_spawn_backoff: HashMap::new(),
-            cleanup_reservations: HashMap::new(),
-        };
+        let mut inner = Inner::new(CloseGuardStore::ephemeral());
         let run_id = "run-quiescence".to_string();
         inner.runs.insert(
             run_id.clone(),
@@ -9430,7 +10494,7 @@ mod tests {
         );
         let g = sup.inner.lock().await;
         assert!(!g.runs.contains_key(&resp.run_id));
-        assert!(!g.leases.values().any(|owner| owner == &resp.run_id));
+        assert!(!g.holds_lease_for_run(&resp.run_id));
     }
 
     #[tokio::test]
@@ -9592,7 +10656,7 @@ mod tests {
             last_path: Some(dir.path().join("gap-last.txt")),
             stdout_path: Some(dir.path().join("gap-stdout.log")),
         };
-        sup.inner.lock().await.leases.insert(
+        sup.inner.lock().await.insert_lease_for_test(
             lease_key(Some("project-a"), "TASK-ACQUIRE-GAP", RunKind::Worker),
             "run-in-acquire-gap".into(),
         );
