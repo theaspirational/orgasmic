@@ -1,0 +1,20 @@
+# Pinned from the red run of 2026-07-29 with the injection applied.
+#
+# The injection removes the post-release drain and nothing else, restoring the
+# pre-fix loop exactly: `break` on the command branch, then straight to
+# `finalize_subprocess_exit` with whatever the loop happened to have read.
+exit: 101
+
+# THE PROPERTY — the transcript. Not "fewer lines than expected": *zero*. The
+# release is queued before the producer task's first poll, so the command branch
+# is ready on that first poll while stdout still has to register readiness, and
+# the loop leaves before it has read one line. Measured 8/8 identical, which is
+# why the count is pinned rather than the phrase alone.
+contains: a fast-exiting harness lost stdout to the release race: the session holds 0 of 32 lines
+
+# The consequence TASK-Z7VQK measured in the daemon: an empty transcript
+# distills to nothing, so no run_complete is synthesized and the run is orphaned
+# as protocol_end_without_finalize. `left: []` is that empty transcript.
+contains: left: []
+
+contains: test result: FAILED. 0 passed; 1 failed

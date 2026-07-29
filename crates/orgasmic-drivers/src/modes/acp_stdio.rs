@@ -17,13 +17,16 @@ use tokio::sync::{mpsc, oneshot};
 
 use orgasmic_core::DriverEvent;
 
+use tracing::warn;
+
 use crate::catalog::TransportInteraction;
 use crate::modes::jsonrpc::{
     dispatch_incoming_json, emit_events, request_response, run_jsonrpc_handshake,
     send_driver_error, JsonRpcTransport, RpcIds,
 };
 use crate::modes::subprocess_stream_json::{
-    finalize_subprocess_exit, reap_process_group, SubprocessExitSummary, SubprocessStreamJsonDriver,
+    finalize_subprocess_exit, reap_process_group, SubprocessExitSummary,
+    SubprocessStreamJsonDriver, RELEASE_DRAIN_BUDGET,
 };
 use crate::r#trait::{
     preflight_via_adapter, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
@@ -691,6 +694,10 @@ async fn run_acp_stdio(runtime: AcpStdioRuntime) {
     let mut stderr = BufReader::new(stderr).lines();
     let mut stderr_open = true;
     let mut released = false;
+    // orgasmic:TASK-SVKPN — set only on the command-channel close, the one exit
+    // from this loop that can leave readable peer output behind. See the drain
+    // below the loop.
+    let mut drain_on_exit = false;
     let mut exit_summary = SubprocessExitSummary::default();
 
     // Liveness heartbeats (TASK-100.3). The ticker is a branch of this select
@@ -736,6 +743,7 @@ async fn run_acp_stdio(runtime: AcpStdioRuntime) {
                     }
                     None => {
                         released = true;
+                        drain_on_exit = true;
                         break;
                     }
                 }
@@ -840,6 +848,71 @@ async fn run_acp_stdio(runtime: AcpStdioRuntime) {
     } else {
         child.wait().await
     };
+
+    // orgasmic:TASK-SVKPN — the driver-side sibling of the drain in
+    // `subprocess_stream_json` (see `drain_child_streams` there for the measured
+    // mechanism and the bound's derivation). This loop is only *partly* exposed
+    // to it: an explicit release sets `released` without breaking, so the loop
+    // keeps reading the peer. But the supervisor drops the control immediately
+    // after the release ack, and that close *does* break the loop — with
+    // whatever the peer wrote in between still unread. That is the same lost
+    // tail, one step later.
+    //
+    // Guarded on `terminal_emitted` because unlike the subprocess loop this one
+    // stops at the run's terminal event by design; draining past it would append
+    // events after `RunComplete`.
+    if drain_on_exit && !adapter.terminal_emitted() {
+        let drained = tokio::time::timeout(RELEASE_DRAIN_BUDGET, async {
+            loop {
+                tokio::select! {
+                    biased;
+                    value = transport.recv_json() => {
+                        let Ok(Some(value)) = value else { break };
+                        let outgoing = match dispatch_incoming_json(
+                            value,
+                            &mut transport,
+                            adapter.as_mut(),
+                            &events,
+                            &allowlist,
+                        )
+                        .await
+                        {
+                            Ok(outgoing) => outgoing,
+                            Err(_) => break,
+                        };
+                        for event in &outgoing {
+                            exit_summary.record(event);
+                        }
+                        emit_events(&events, outgoing).await;
+                        if adapter.terminal_emitted() {
+                            break;
+                        }
+                    }
+                    line = stderr.next_line(), if stderr_open => {
+                        match line {
+                            Ok(Some(line)) => {
+                                if adapter.ignores_stderr_line(&line) {
+                                    continue;
+                                }
+                                let event = adapter.stderr_event(line);
+                                let _ = events.send(event).await;
+                            }
+                            _ => stderr_open = false,
+                        }
+                    }
+                }
+            }
+        })
+        .await;
+        if drained.is_err() {
+            warn!(
+                binary,
+                budget_ms = RELEASE_DRAIN_BUDGET.as_millis() as u64,
+                "acp-stdio peer streams did not end within the post-release \
+                 drain budget; synthesizing the exit from what was drained"
+            );
+        }
+    }
 
     finalize_subprocess_exit(
         &binary,

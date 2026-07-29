@@ -1,0 +1,49 @@
+diff --git a/crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs b/crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs
+index b36699e..50d7eb3 100644
+--- a/crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs
++++ b/crates/orgasmic-drivers/src/modes/subprocess_stream_json.rs
+@@ -536,35 +536,6 @@ async fn run_subprocess_stream_json(runtime: SubprocessRuntime) {
+         child.wait().await
+     };
+ 
+-    // orgasmic:TASK-SVKPN — recover whatever the harness wrote before the break.
+-    // Only the release path needs this: the loop's own exit condition is "both
+-    // pipes are at EOF", so a loop that ended on its own has nothing left.
+-    if released
+-        && (stdout_open || stderr_open)
+-        && tokio::time::timeout(
+-            RELEASE_DRAIN_BUDGET,
+-            drain_child_streams(
+-                &binary,
+-                &mut stdout,
+-                &mut stdout_open,
+-                &mut stderr,
+-                &mut stderr_open,
+-                adapter.as_mut(),
+-                &events,
+-                &mut exit_summary,
+-            ),
+-        )
+-        .await
+-        .is_err()
+-    {
+-        warn!(
+-            binary,
+-            budget_ms = RELEASE_DRAIN_BUDGET.as_millis() as u64,
+-            "harness pipes did not reach EOF within the post-release drain \
+-             budget; synthesizing the exit from what was drained"
+-        );
+-    }
+-
+     finalize_subprocess_exit(
+         &binary,
+         wait_status,
+@@ -604,7 +575,7 @@ async fn run_subprocess_stream_json(runtime: SubprocessRuntime) {
+ /// inherited the write end. Data already in the pipe outlives its writer, so
+ /// reaping first costs nothing and additionally captures whatever the harness
+ /// flushed on the group TERM.
+-#[allow(clippy::too_many_arguments)]
++#[allow(clippy::too_many_arguments, dead_code)]
+ async fn drain_child_streams(
+     binary: &str,
+     stdout: &mut tokio::io::Lines<BufReader<ChildStdout>>,
