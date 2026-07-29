@@ -1,0 +1,16 @@
+# One line. Run from the repo root by `orgasmic verify TASK-VSWZT`.
+#
+# Two crates, because the defect is one dead end with two faces and neither
+# alone is the incident. The daemon half is the missing verb: `run recover`
+# resolves every action out of the crash-recovery inventory, whose recoverable
+# buckets by construction never hold a live run, so the runs `orgasmic update`
+# refuses on have no recovery action able to reach them. The CLI half is what
+# the operator actually reads: a refusal that names the runs and then says
+# "close them" without naming anything that can.
+#
+# `;` not `&&`: both halves must run and both signatures must appear, and the
+# compound's exit status is the CLI half's — 101 red, 0 green.
+#
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build and drive a supervisor and a Home that must see neither.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_live_run_no_rescue_can_reach_is_cleared_by_the_abandon_judgment abandon_on_a_run_that_is_not_live_says_so_instead_of_not_found; env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bins -- the_update_fence_names_the_verb_that_clears_a_live_run

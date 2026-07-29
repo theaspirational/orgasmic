@@ -1,0 +1,60 @@
+diff --git a/crates/orgasmic-cli/src/update.rs b/crates/orgasmic-cli/src/update.rs
+index a59c57d..f09db26 100644
+--- a/crates/orgasmic-cli/src/update.rs
++++ b/crates/orgasmic-cli/src/update.rs
+@@ -483,26 +483,18 @@ fn refuse_if_live_runs(home: &Home) -> Result<()> {
+ /// prints the exact command per run, because the fence already knows both the
+ /// run id and its project from `/runs/live`.
+ fn live_run_refusal(live: &[(String, Option<String>)]) -> String {
++    // TASK-VSWZT injection: the pre-fix refusal. It names the live runs and
++    // then tells the operator to "close them" without naming anything that
++    // can — which is what sent the 2026-07-26 session looking for a verb that
++    // did not exist.
+     let ids = live
+         .iter()
+         .map(|(id, _)| id.as_str())
+         .collect::<Vec<_>>()
+         .join(", ");
+-    let mut message = format!("refusing runtime update while live run(s) exist: {ids}.\n");
+-    message.push_str(
+-        "A live worker ends its own run with `orgasmic dispatch finalize`. \
+-         For a run whose worker is gone, the manager judgment that clears it is \
+-         `run recover --action abandon`, which releases the run with a tombstone \
+-         naming the judgment:\n",
+-    );
+-    for (id, project) in live {
+-        let project = project.as_deref().unwrap_or("<project-id>");
+-        message.push_str(&format!(
+-            "  orgasmic run recover {id} --project {project} --action abandon\n"
+-        ));
+-    }
+-    message.push_str("Or use the existing force path deliberately.");
+-    message
++    format!(
++        "refusing runtime update while live run(s) exist: {ids}. Close them or use the existing force path deliberately."
++    )
+ }
+ 
+ fn install_bundle_payload(
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index 8746d05..beab979 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -8132,12 +8132,11 @@ async fn post_run_recover(
+     Path(id): Path<String>,
+     Json(req): Json<RunRecoverRequest>,
+ ) -> Result<Json<RunRecoverResponse>, ApiError> {
+-    // orgasmic:task_VSWZT — abandon is resolved before the inventory lookup
+-    // below, because its subject is a live run and the inventory's recoverable
+-    // buckets never contain one.
+-    if req.action.as_deref() == Some(RECOVERY_ACTION_ABANDON) {
+-        return abandon_live_run(&state, &id, &req).await;
+-    }
++    // TASK-VSWZT injection: the pre-fix state. Every recovery action is
++    // resolved out of the crash-recovery inventory below, whose recoverable
++    // buckets by construction never contain a live run — so the runs the update
++    // fence refuses on have no recover action able to reach them at all, and
++    // `--action abandon` gets `404 recoverable run <id>` like anything else.
+     let project_id = req
+         .project
+         .clone()

@@ -450,10 +450,16 @@ fn refuse_if_live_runs(home: &Home) -> Result<()> {
             .map(|runs| {
                 runs.iter()
                     .filter_map(|run| {
-                        run.get("run_id")
+                        let id = run
+                            .get("run_id")
                             .or_else(|| run.get("id"))
-                            .and_then(|id| id.as_str())
-                            .map(str::to_string)
+                            .and_then(|id| id.as_str())?
+                            .to_string();
+                        let project = run
+                            .get("project_id")
+                            .and_then(|project| project.as_str())
+                            .map(str::to_string);
+                        Some((id, project))
                     })
                     .collect::<Vec<_>>()
             })
@@ -463,10 +469,40 @@ fn refuse_if_live_runs(home: &Home) -> Result<()> {
     if live.is_empty() {
         return Ok(());
     }
-    bail!(
-        "refusing runtime update while live run(s) exist: {}. Close them or use the existing force path deliberately.",
-        live.join(", ")
-    )
+    bail!("{}", live_run_refusal(&live))
+}
+
+/// The refusal text for [`refuse_if_live_runs`], split out so it can be
+/// asserted without a daemon.
+///
+/// orgasmic:task_VSWZT — this used to end "Close them or use the existing force
+/// path deliberately", which names no verb. An operator holding a live run
+/// whose worker was gone read that, went looking for the surface that clears
+/// one, and found none — `run recover` offered only the three rescue actions
+/// and `POST /runs/:id/release` is not an operator surface. The refusal now
+/// prints the exact command per run, because the fence already knows both the
+/// run id and its project from `/runs/live`.
+fn live_run_refusal(live: &[(String, Option<String>)]) -> String {
+    let ids = live
+        .iter()
+        .map(|(id, _)| id.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut message = format!("refusing runtime update while live run(s) exist: {ids}.\n");
+    message.push_str(
+        "A live worker ends its own run with `orgasmic dispatch finalize`. \
+         For a run whose worker is gone, the manager judgment that clears it is \
+         `run recover --action abandon`, which releases the run with a tombstone \
+         naming the judgment:\n",
+    );
+    for (id, project) in live {
+        let project = project.as_deref().unwrap_or("<project-id>");
+        message.push_str(&format!(
+            "  orgasmic run recover {id} --project {project} --action abandon\n"
+        ));
+    }
+    message.push_str("Or use the existing force path deliberately.");
+    message
 }
 
 fn install_bundle_payload(
@@ -1048,6 +1084,38 @@ mod tests {
             daemon.paths(),
             vec!["/api/runs/live".to_string()],
             "the update fence must ask the live source and never the recovery inventory"
+        );
+    }
+
+    // orgasmic:task_VSWZT
+    /// The fence is the surface an operator meets first, and for 80 minutes on
+    /// 2026-07-26 it was the only one that said anything at all — while saying
+    /// nothing usable. "Close them or use the existing force path deliberately"
+    /// names no verb, and the operator who went looking for one found that
+    /// `run recover` had three actions and none of them ended a run. The
+    /// refusal now prints the command, per run, with the project the fence
+    /// already learned from `/runs/live`.
+    #[test]
+    fn the_update_fence_names_the_verb_that_clears_a_live_run() {
+        let refusal = live_run_refusal(&[
+            ("run-stranded".to_string(), Some("orgasmic".to_string())),
+            ("run-anonymous".to_string(), None),
+        ]);
+
+        assert!(
+            refusal.contains("run-stranded") && refusal.contains("run-anonymous"),
+            "the refusal must still name every live run: {refusal}"
+        );
+        assert!(
+            refusal
+                .contains("orgasmic run recover run-stranded --project orgasmic --action abandon"),
+            "the refusal must print the runnable escape, not describe it: {refusal}"
+        );
+        assert!(
+            refusal.contains(
+                "orgasmic run recover run-anonymous --project <project-id> --action abandon"
+            ),
+            "a run that declares no project still gets the command shape: {refusal}"
         );
     }
 

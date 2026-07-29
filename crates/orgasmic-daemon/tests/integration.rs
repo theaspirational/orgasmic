@@ -3362,3 +3362,51 @@ async fn task_update_default_output_is_compact() {
     let _ = running.shutdown.send(());
     let _ = running.join.await;
 }
+
+// orgasmic:task_VSWZT
+/// The abandon judgment, over the wire.
+///
+/// The unit tests call `post_run_recover` directly. This one drives a real
+/// booted daemon over HTTP with real auth, because the fix is partly an
+/// *ordering* claim about the handler: `action: "abandon"` must be resolved
+/// before the crash-recovery inventory lookup, or it gets that lookup's
+/// `recoverable run <id>` — the 2026-07-26 dead end — instead of an answer
+/// about liveness.
+///
+/// It probes with a run id the supervisor is not holding, which is the cheap
+/// half of the claim and the half a wire test can make on its own: route
+/// registration, request deserialization of the new action, and branch order.
+/// The release itself is asserted in `api::tests` against a real live run.
+#[tokio::test]
+async fn run_recover_abandon_is_reachable_over_the_wire() {
+    let ctx = SparseProject::boot("orgasmic").await;
+
+    let resp = ctx
+        .client
+        .post(format!(
+            "http://{}/api/runs/run-not-held/recover",
+            ctx.running.addr
+        ))
+        .bearer_auth(&ctx.token)
+        .json(&serde_json::json!({
+            "action": "abandon",
+            "project": ctx.project_id,
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 404, "abandon must reach the handler");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let error = body["error"].as_str().unwrap_or_default();
+    assert!(
+        error.contains("is not live") && error.contains("release tombstone"),
+        "abandon must answer about liveness: {body}"
+    );
+    assert!(
+        !error.contains("recoverable run"),
+        "abandon must not fall through to the crash-recovery inventory lookup, \
+         whose buckets never contain a live run: {body}"
+    );
+
+    ctx.shutdown().await;
+}
