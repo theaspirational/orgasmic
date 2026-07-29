@@ -1723,7 +1723,26 @@ mod tests {
         const DRAIN: std::time::Duration = std::time::Duration::from_millis(1200);
         /// The phases after the drain: present, so the shutdown is the whole
         /// composition, but not the term under test.
-        const TAIL: std::time::Duration = std::time::Duration::from_millis(100);
+        ///
+        /// orgasmic:TASK-J1XCB — and *unspent*, which is what makes this number
+        /// the right place to buy the margin this test needs. `graceful_shutdown`
+        /// passes `release_drain` to `ReleaseTaskTracker::wait_idle` and
+        /// `writer_shutdown` to `WriterHandle::shutdown_within`; both are
+        /// ceilings that return the moment their subject is idle, and this
+        /// predecessor has no release in flight and a quiet writer. So the
+        /// predecessor's real cost stays `DRAIN` plus teardown no matter what
+        /// this is, while the replacement's ceiling — `marker.budget()`, i.e.
+        /// `DRAIN + 2 * TAIL` — grows with it.
+        ///
+        /// At 100ms the entire margin was the ~375ms head start (the test's own
+        /// `DAEMON_LOCK_RETRY_BUDGET * 2` sleep plus the transient retry inside
+        /// `acquire_daemon_lock`) against a predecessor whose 1200ms connection
+        /// drain is enforced by a timer that a loaded machine fires late. One
+        /// measured 2026-07-29 failure: `waited 1.50062225s, its own whole
+        /// shutdown budget`. At 2s the replacement can absorb ~4.3s of overrun,
+        /// and the test costs the same wall clock as before, because the
+        /// predecessor still never spends these two phases.
+        const TAIL: std::time::Duration = std::time::Duration::from_secs(2);
 
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
@@ -1777,6 +1796,34 @@ mod tests {
         // Arrive after the transient budget would already have expired, the way
         // a `daemon restart` replacement does.
         tokio::time::sleep(DAEMON_LOCK_RETRY_BUDGET * 2).await;
+
+        // orgasmic:TASK-J1XCB — wait for the departure record, do not assume
+        // the sleep above produced it.
+        //
+        // `publish_shutdown_marker` runs on the daemon's shutdown task, after
+        // `drain_started_rx` resolves. Whether that task has been scheduled
+        // 250ms after `shutdown.send` is a fact about the host, not about the
+        // protocol under test, and a `read_shutdown_marker(..).expect(..)` on
+        // the far side of a fixed sleep asserts the former while claiming to
+        // assert the latter. Measured red here 2026-07-29, 1 of 12 runs with
+        // four copies of this binary running at `--test-threads=64`: `the
+        // predecessor published its departure`, lib.rs:1808.
+        //
+        // The loop's exit condition is the marker itself; the liveness check
+        // inside it is the original assertion, and still fires — a predecessor
+        // that finished before publishing anything ends the loop by finishing,
+        // not by spinning.
+        let marker = loop {
+            if let Some(marker) = read_shutdown_marker(&home) {
+                break marker;
+            }
+            assert!(
+                !running.join.is_finished(),
+                "the predecessor finished shutting down before the replacement even \
+                 started; this test is not producing the overlap it is about"
+            );
+            tokio::time::sleep(DAEMON_LOCK_RETRY_STEP).await;
+        };
         assert!(
             !running.join.is_finished(),
             "the predecessor finished shutting down before the replacement even \
@@ -1786,7 +1833,6 @@ mod tests {
         // The wait is derived, not a literal: the predecessor publishes the
         // budget it is actually spending, so an injected budget describes
         // itself and a production one carries `ShutdownBudgets::default`.
-        let marker = read_shutdown_marker(&home).expect("the predecessor published its departure");
         assert_eq!(
             marker.budget_ms,
             budgets.total().as_millis() as u64,

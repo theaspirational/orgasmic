@@ -336,6 +336,13 @@ pub struct Supervisor {
     /// milliseconds and still drive the real code path (TASK-HAREX). Read once
     /// per run, when `acquire` spawns that run's drain.
     release_drain_budget_ms: Arc<AtomicU64>,
+    /// [`DRIVER_RELEASE_TIMEOUT`] in milliseconds, in a cell for the same
+    /// reason the field above is one (TASK-J1XCB). `stop_and_join_driver_producer`
+    /// spends this budget *twice* — once waiting on `control.release()` and
+    /// once joining the producer — so a test whose driver hangs in both, which
+    /// is the only way to exercise the abort path, sits through 10s of real
+    /// time before it can observe anything. Read once per teardown.
+    driver_release_timeout_ms: Arc<AtomicU64>,
 }
 
 // orgasmic:TASK-AK6EM
@@ -1208,6 +1215,9 @@ impl Supervisor {
             release_drain_budget_ms: Arc::new(AtomicU64::new(
                 RELEASE_DRAIN_BUDGET.as_millis() as u64
             )),
+            driver_release_timeout_ms: Arc::new(AtomicU64::new(
+                DRIVER_RELEASE_TIMEOUT.as_millis() as u64,
+            )),
         }
     }
 
@@ -1225,6 +1235,26 @@ impl Supervisor {
 
     fn release_drain_budget(&self) -> Duration {
         Duration::from_millis(self.release_drain_budget_ms.load(Ordering::SeqCst))
+    }
+
+    /// Override [`DRIVER_RELEASE_TIMEOUT`] for this supervisor (TASK-J1XCB).
+    ///
+    /// Test-only, and deliberately narrower than
+    /// [`Supervisor::set_release_drain_budget`]: no production caller sets it,
+    /// because production has no shorter honest answer than the constant. A
+    /// test that needs the driver-stop path to *reach* its abort must give the
+    /// driver something that never returns, and then the two 5s waits are pure
+    /// wall clock the test can neither shorten nor skip. Compressing them here
+    /// keeps every line of the real teardown on the executed path and takes the
+    /// test's dependence on a loaded machine's timer accuracy with it.
+    #[cfg(test)]
+    fn set_driver_release_timeout(&self, timeout: Duration) {
+        self.driver_release_timeout_ms
+            .store(timeout.as_millis() as u64, Ordering::SeqCst);
+    }
+
+    fn driver_release_timeout(&self) -> Duration {
+        Duration::from_millis(self.driver_release_timeout_ms.load(Ordering::SeqCst))
     }
 
     /// Declare that boot rehydration is about to run, so a destructive close
@@ -1603,6 +1633,7 @@ impl Supervisor {
         // run map.
         let release_requested = Arc::new(tokio::sync::Notify::new());
         let release_drain_budget = self.release_drain_budget();
+        let driver_release_timeout = self.driver_release_timeout();
         // Insert the run record before the drain task starts so stream-end and
         // early-exit coordination always find a resolvable lease owner.
         {
@@ -1781,7 +1812,8 @@ impl Supervisor {
                     }
                 }
                 if let Some(release) = terminal_release {
-                    finish_driver_terminal_release(&writer, release).await;
+                    finish_driver_terminal_release(&writer, release, driver_release_timeout)
+                        .await;
                 }
             }
             // Stream end: driver dropped its sender without an explicit
@@ -2309,6 +2341,7 @@ impl Supervisor {
         // the driver on the other end may already be gone.
         let release_requested = Arc::new(tokio::sync::Notify::new());
         let release_drain_budget = self.release_drain_budget();
+        let driver_release_timeout = self.driver_release_timeout();
         let record = RunRecord {
             task_id: task_id.clone(),
             kind,
@@ -2426,7 +2459,8 @@ impl Supervisor {
                     }
                 };
                 if let Some(release) = terminal_release {
-                    finish_driver_terminal_release(&writer, release).await;
+                    finish_driver_terminal_release(&writer, release, driver_release_timeout)
+                        .await;
                 }
             }
             finish_stream_end_terminal_drain(&writer, &inner_for_drain, &run_id_for_drain).await;
@@ -2847,7 +2881,15 @@ impl Supervisor {
         // we freeze one terminal outcome. A legitimate terminal event racing
         // timeout/cancel therefore wins; no pre-stop snapshot can overwrite
         // an event that was durably drained during shutdown.
-        stop_and_join_driver_producer(run_id, &transport, control, producer, reason).await;
+        stop_and_join_driver_producer(
+            run_id,
+            &transport,
+            control,
+            producer,
+            reason,
+            self.driver_release_timeout(),
+        )
+        .await;
         if let Some(watcher) = watcher {
             watcher.abort();
             let _ = watcher.await;
@@ -3947,6 +3989,7 @@ fn spawn_early_exit_watcher(
     pid: u32,
 ) -> tokio::task::JoinHandle<()> {
     let inner = supervisor.inner.clone();
+    let driver_release_timeout = supervisor.driver_release_timeout();
     tokio::spawn(async move {
         loop {
             let still_watching = {
@@ -4001,6 +4044,7 @@ fn spawn_early_exit_watcher(
                         control,
                         producer,
                         "observed subprocess exit",
+                        driver_release_timeout,
                     )
                     .await;
                 }
@@ -4980,13 +5024,18 @@ async fn write_terminal_release_from_record(
     append_terminal_release(writer, rec, resolved).await;
 }
 
-async fn finish_driver_terminal_release(_writer: &WriterHandle, release: TerminalRelease) {
+async fn finish_driver_terminal_release(
+    _writer: &WriterHandle,
+    release: TerminalRelease,
+    driver_release_timeout: Duration,
+) {
     stop_and_join_driver_producer(
         &release.run_id,
         &release.transport,
         release.control,
         release.producer,
         "driver terminal event",
+        driver_release_timeout,
     )
     .await;
     // The receiver owns the terminal boundary. Dropping the producer closes
@@ -5000,8 +5049,9 @@ async fn stop_and_join_driver_producer(
     mut control: Box<dyn DriverControl>,
     producer: Option<tokio::task::JoinHandle<()>>,
     reason: &str,
+    budget: Duration,
 ) {
-    match tokio::time::timeout(DRIVER_RELEASE_TIMEOUT, control.release(reason)).await {
+    match tokio::time::timeout(budget, control.release(reason)).await {
         Ok(Ok(())) => {}
         Ok(Err(release_error)) => {
             error!(
@@ -5017,7 +5067,7 @@ async fn stop_and_join_driver_producer(
                 run_id,
                 transport,
                 reason,
-                timeout = ?DRIVER_RELEASE_TIMEOUT,
+                timeout = ?budget,
                 "driver release timed out; continuing unconditional producer and lifecycle cleanup"
             );
         }
@@ -5025,10 +5075,7 @@ async fn stop_and_join_driver_producer(
     drop(control);
 
     if let Some(mut producer) = producer {
-        if tokio::time::timeout(DRIVER_RELEASE_TIMEOUT, &mut producer)
-            .await
-            .is_err()
-        {
+        if tokio::time::timeout(budget, &mut producer).await.is_err() {
             producer.abort();
             let _ = producer.await;
         }
@@ -5773,7 +5820,24 @@ mod tests {
         }
     }
 
-    struct HungReleaseControl;
+    /// orgasmic:TASK-J1XCB — the "racing terminal" both `HungProducerDriver`
+    /// tests are named after, made an ordering instead of a coincidence.
+    ///
+    /// The event used to be sent by the producer after a 6s sleep, which landed
+    /// inside the join window only because `DRIVER_RELEASE_TIMEOUT` happened to
+    /// be 5s: the window is `[budget, 2 * budget]` and 6s sat in it. That made
+    /// the asserted release — `driver stream closed` / `completed` — a function
+    /// of two timers on a machine under load, and it is why compressing the
+    /// budget alone turned the release into `early-exit subprocess with no work
+    /// envelopes`. Sending it from `release` puts it exactly where the tests say
+    /// it is, at the moment the forced stop begins, for any budget.
+    ///
+    /// The sender is taken and dropped here rather than cloned and kept: a
+    /// clone that outlives this call is the TASK-HAREX stray-sender wedge, and
+    /// these tests need the producer abort to really close the channel.
+    struct HungReleaseControl {
+        events: Option<tokio::sync::mpsc::Sender<DriverEvent>>,
+    }
 
     struct FailingRmuxReapDriver {
         producer_dropped: Arc<std::sync::atomic::AtomicBool>,
@@ -5896,6 +5960,13 @@ mod tests {
         }
 
         async fn release(&mut self, _reason: &str) -> Result<(), DriverError> {
+            if let Some(events) = self.events.take() {
+                let _ = events
+                    .send(DriverEvent::RunComplete {
+                        summary: Some("terminal event raced forced producer stop".into()),
+                    })
+                    .await;
+            }
             std::future::pending().await
         }
     }
@@ -5931,21 +6002,22 @@ mod tests {
             .await
             .unwrap();
             let dropped = Arc::clone(&self.producer_dropped);
+            let terminal_tx = tx.clone();
             let producer = tokio::spawn(async move {
                 let _drop_probe = ProducerDropProbe(dropped);
-                tokio::time::sleep(Duration::from_secs(6)).await;
-                let _ = tx
-                    .send(DriverEvent::RunComplete {
-                        summary: Some("terminal event raced forced producer stop".into()),
-                    })
-                    .await;
+                // Hung, and nothing else. The terminal event that races the
+                // forced stop is emitted by the control below, at the instant
+                // the stop begins — see `HungReleaseControl`.
+                let _tx = tx;
                 std::future::pending::<()>().await;
             });
             Ok(DriverSession {
                 identity: ctx.identity,
                 pid,
                 events: rx,
-                control: Box::new(HungReleaseControl),
+                control: Box::new(HungReleaseControl {
+                    events: Some(terminal_tx),
+                }),
                 producer: Some(producer),
                 native_runtime: None,
             })
@@ -11023,6 +11095,11 @@ mod tests {
     #[tokio::test]
     async fn timeout_aborts_joins_hung_producer_then_drains_racing_terminal() {
         let (sup, dir, _w) = make_supervisor();
+        // orgasmic:TASK-J1XCB — the same two unavoidable `DRIVER_RELEASE_TIMEOUT`
+        // waits its dead-pid sibling below pays, for the same reason, and the
+        // same compression. This one asserts no wall clock, so it was never
+        // flaky — it just cost the suite 10s per run.
+        sup.set_driver_release_timeout(Duration::from_millis(150));
         let driver = HungProducerDriver::new(false);
         let mut req = dispatch_impl_req("TASK-TIMEOUT-HUNG", dir.path());
         req.stall_timeout_secs = Some(1);
@@ -11037,9 +11114,25 @@ mod tests {
         assert_eq!(release_count(&session_path), 1);
     }
 
+    /// orgasmic:TASK-J1XCB — the injected budget is what keeps this test off
+    /// the wall clock.
+    ///
+    /// `HungProducerDriver` hangs in *both* halves of the driver stop:
+    /// `HungReleaseControl::release` is `pending()` forever and the producer
+    /// parks for 6s. `stop_and_join_driver_producer` therefore spends
+    /// `DRIVER_RELEASE_TIMEOUT` twice before the abort that closes the channel,
+    /// so pre-TASK-J1XCB this test took a measured 10.08s on an idle machine
+    /// against a 12s assertion — a 1.19x margin that a loaded machine's late
+    /// timers ate, and `run <id> did not release within 12s` was the third most
+    /// common failure in this repo's gate runs. Both hangs are the point: they
+    /// are the only way to reach the abort path this test is named after.
+    /// Compressing the budget keeps every one of those lines executed and makes
+    /// the whole test cost ~0.3s, so the 12s bound stops being a race and goes
+    /// back to being what it was written as — a hang detector.
     #[tokio::test]
     async fn dead_pid_aborts_joins_hung_producer_then_receiver_releases() {
         let (sup, dir, _w) = make_supervisor();
+        sup.set_driver_release_timeout(Duration::from_millis(150));
         let driver = HungProducerDriver::new(true);
         let req = impl_req("TASK-DEAD-PID-HUNG", dir.path());
         let session_path = req.session_path.clone();

@@ -1,0 +1,6 @@
+# One line. Run from the repo root by `orgasmic verify TASK-J1XCB`.
+# Only the two tests this task fixed, serially: the injection is deterministic,
+# so the proof must not depend on the 561-test suite or on the ambient load
+# that originally exposed these two. `--test-threads=1` also keeps the injected
+# 3s delay in `stop_and_join_driver_producer` from being paid by anything else.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- --exact supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases tests::replacement_start_waits_out_a_shutting_down_predecessor --test-threads=1

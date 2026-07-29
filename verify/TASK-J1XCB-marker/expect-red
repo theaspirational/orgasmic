@@ -1,0 +1,28 @@
+# Pinned from the injected red run of 2026-07-29.
+#
+# `replacement_start_waits_out_a_shutting_down_predecessor` read the
+# predecessor's shutdown marker exactly once, on the far side of a fixed 250ms
+# sleep, and `.expect()`ed it to be there. `publish_shutdown_marker` runs on the
+# daemon's shutdown task after `drain_started_rx` resolves, so that assertion is
+# about whether the host scheduled a task within 250ms — not about the departure
+# protocol the test is named for.
+#
+# Measured red here 2026-07-29, 1 of 12 runs with four copies of the daemon
+# `--lib` binary running concurrently at `--test-threads=64`, verbatim:
+#
+#   thread 'tests::replacement_start_waits_out_a_shutting_down_predecessor'
+#   panicked at crates/orgasmic-daemon/src/lib.rs:1808:50:
+#   the predecessor published its departure
+#
+# The injection restores the single blind read and delays
+# `publish_shutdown_marker` by 600ms, past the test's 250ms sleep. Load produced
+# this in 1 run of 12; the injection produces it in every run.
+exit: 101
+
+# The panic measured under concurrency, verbatim.
+contains: the predecessor published its departure
+
+# And it must be THAT test, not some other daemon-boot failure that also panics.
+contains: replacement_start_waits_out_a_shutting_down_predecessor
+
+contains: 1 failed

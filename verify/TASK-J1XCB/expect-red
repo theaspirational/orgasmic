@@ -1,0 +1,41 @@
+# Pinned from the injected red run of 2026-07-29 (see README.md in this
+# directory for what this proof does and does not replay).
+#
+# Both tests measured a fixed amount of wall clock against work whose real cost
+# is a timer, and a timer on a loaded host fires late.
+#
+#   dead_pid_aborts_joins_hung_producer_then_receiver_releases spent two real
+#   DRIVER_RELEASE_TIMEOUTs (10.08s measured alone on an idle machine) inside a
+#   12s assertion, a 1.19x margin.
+#
+#   replacement_start_waits_out_a_shutting_down_predecessor gave the replacement
+#   a ceiling of DRAIN + 2 x 100ms starting ~375ms after the predecessor began,
+#   so its entire margin against a 1200ms drain enforced by a timer was that
+#   head start.
+#
+# The injection removes both fixes and makes each loss deterministic by adding
+# the lateness the load supplied: 3s before the driver stop, 1.5s before the
+# predecessor's post-drain teardown. Load produced these panics in some runs;
+# the injection produces them in every run.
+exit: 101
+
+# The dead-pid teardown now costs 13s against the unchanged 12s bound. This is
+# the panic measured under load, verbatim, at supervisor.rs:8382 (8077/8065 in
+# older trees).
+contains: did not release within 12s
+
+# The replacement is refused while its predecessor is leaving normally — the
+# TASK-ATAXN outage this test exists to keep fixed. The measured 2026-07-29
+# panic named `waited 1.50062225s`; the injected one names `waited
+# 1.402445459s`. The duration is the load-dependent part, so the signature is
+# the assertion, not the number.
+contains: a replacement start refused while its predecessor was shutting down
+
+# The refusal must still be the departing-predecessor classification, not a
+# different lock holder: pinning this keeps a green replay from being bought by
+# some unrelated instance-lock failure.
+contains: its own whole shutdown budget
+
+# Both, not one: a single red would leave the other fix unproven, and the two
+# defects are independent.
+contains: 2 failed

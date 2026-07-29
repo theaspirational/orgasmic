@@ -1,0 +1,59 @@
+diff --git a/crates/orgasmic-daemon/src/lib.rs b/crates/orgasmic-daemon/src/lib.rs
+--- a/crates/orgasmic-daemon/src/lib.rs
++++ b/crates/orgasmic-daemon/src/lib.rs
+@@ -947,6 +947,10 @@
+             // budgets below take. Say so on disk, before spending any of them,
+             // so a replacement start inside this window can tell a predecessor
+             // that is leaving from a lock it must refuse.
++            // INJECTED (TASK-J1XCB): the loaded machine, made deterministic.
++            // The shutdown task is not scheduled the instant the signal fires;
++            // this is that scheduling delay, pinned past the test's 250ms sleep.
++            tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+             publish_shutdown_marker(&home_for_shutdown, &boot_id_for_shutdown, budgets);
+             // orgasmic:TASK-Q07Y5 — the connection drain is bounded for the
+             // same reason the writer shutdown now is: a still-connected client
+@@ -1797,33 +1801,9 @@
+         // a `daemon restart` replacement does.
+         tokio::time::sleep(DAEMON_LOCK_RETRY_BUDGET * 2).await;
+ 
+-        // orgasmic:TASK-J1XCB — wait for the departure record, do not assume
+-        // the sleep above produced it.
+-        //
+-        // `publish_shutdown_marker` runs on the daemon's shutdown task, after
+-        // `drain_started_rx` resolves. Whether that task has been scheduled
+-        // 250ms after `shutdown.send` is a fact about the host, not about the
+-        // protocol under test, and a `read_shutdown_marker(..).expect(..)` on
+-        // the far side of a fixed sleep asserts the former while claiming to
+-        // assert the latter. Measured red here 2026-07-29, 1 of 12 runs with
+-        // four copies of this binary running at `--test-threads=64`: `the
+-        // predecessor published its departure`, lib.rs:1808.
+-        //
+-        // The loop's exit condition is the marker itself; the liveness check
+-        // inside it is the original assertion, and still fires — a predecessor
+-        // that finished before publishing anything ends the loop by finishing,
+-        // not by spinning.
+-        let marker = loop {
+-            if let Some(marker) = read_shutdown_marker(&home) {
+-                break marker;
+-            }
+-            assert!(
+-                !running.join.is_finished(),
+-                "the predecessor finished shutting down before the replacement even \
+-                 started; this test is not producing the overlap it is about"
+-            );
+-            tokio::time::sleep(DAEMON_LOCK_RETRY_STEP).await;
+-        };
++        // INJECTED (TASK-J1XCB): the fix removed. The marker is read once, on
++        // the far side of a fixed sleep, so whether the predecessor's shutdown
++        // task has been scheduled yet decides the test.
+         assert!(
+             !running.join.is_finished(),
+             "the predecessor finished shutting down before the replacement even \
+@@ -1833,6 +1813,7 @@
+         // The wait is derived, not a literal: the predecessor publishes the
+         // budget it is actually spending, so an injected budget describes
+         // itself and a production one carries `ShutdownBudgets::default`.
++        let marker = read_shutdown_marker(&home).expect("the predecessor published its departure");
+         assert_eq!(
+             marker.budget_ms,
+             budgets.total().as_millis() as u64,

@@ -1,0 +1,52 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -5051,6 +5051,11 @@
+     reason: &str,
+     budget: Duration,
+ ) {
++    // INJECTED (TASK-J1XCB): the loaded machine, made deterministic. Every
++    // wait below is a timer, and a host running four copies of this binary at
++    // --test-threads=64 fires timers late; this is that lateness, pinned.
++    // See verify/TASK-J1XCB/README.md.
++    tokio::time::sleep(Duration::from_secs(3)).await;
+     match tokio::time::timeout(budget, control.release(reason)).await {
+         Ok(Ok(())) => {}
+         Ok(Err(release_error)) => {
+@@ -11132,7 +11137,9 @@
+     #[tokio::test]
+     async fn dead_pid_aborts_joins_hung_producer_then_receiver_releases() {
+         let (sup, dir, _w) = make_supervisor();
+-        sup.set_driver_release_timeout(Duration::from_millis(150));
++        // INJECTED (TASK-J1XCB): the fix removed, so the teardown spends two
++        // real `DRIVER_RELEASE_TIMEOUT` waits again and the 12s assertion is
++        // back to being a bet on the machine.
+         let driver = HungProducerDriver::new(true);
+         let req = impl_req("TASK-DEAD-PID-HUNG", dir.path());
+         let session_path = req.session_path.clone();
+diff --git a/crates/orgasmic-daemon/src/lib.rs b/crates/orgasmic-daemon/src/lib.rs
+--- a/crates/orgasmic-daemon/src/lib.rs
++++ b/crates/orgasmic-daemon/src/lib.rs
+@@ -1113,6 +1113,11 @@
+     // the writer. Doing this after the writer shutdown (or not at all) loses
+     // the terminal tx of any finalize that was mid-teardown when the restart
+     // landed.
++    // INJECTED (TASK-J1XCB): the loaded machine, made deterministic. The
++    // predecessor's shutdown overruns its published budget by a fixed amount,
++    // which is what a loaded host does to a `timeout`-bounded drain and the
++    // teardown after it. See verify/TASK-J1XCB/README.md.
++    tokio::time::sleep(std::time::Duration::from_millis(1_500)).await;
+     release_tasks.close();
+     let outstanding = match release_tasks.wait_idle(budgets.release_drain).await {
+         Ok(()) => Vec::new(),
+@@ -1742,7 +1747,9 @@
+         /// shutdown budget`. At 2s the replacement can absorb ~4.3s of overrun,
+         /// and the test costs the same wall clock as before, because the
+         /// predecessor still never spends these two phases.
+-        const TAIL: std::time::Duration = std::time::Duration::from_secs(2);
++        // INJECTED (TASK-J1XCB): the fix removed. The replacement's ceiling
++        // goes back to `DRAIN + 200ms`, so its whole margin is the head start.
++        const TAIL: std::time::Duration = std::time::Duration::from_millis(100);
+ 
+         let tmp = tempfile::tempdir().unwrap();
+         let home = Home::at(tmp.path().join("home"));
