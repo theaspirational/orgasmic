@@ -831,7 +831,7 @@ async fn writer_loop(
                         // catalog entry that predates the write it was told
                         // about.
                         if let Some(catalog) = catalog.as_ref() {
-                            catalog.invalidate_session(&session_path).await;
+                            catalog.invalidate_session(&session_path);
                         }
                         events.publish(
                             Topic::Run,

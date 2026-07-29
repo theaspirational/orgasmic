@@ -7177,32 +7177,28 @@ async fn get_run_history(
     let catalog = state.run_catalog.clone();
     let started = std::time::Instant::now();
     let report = tokio::task::spawn_blocking(move || {
-        tokio::runtime::Handle::current().block_on(async move {
-            let mut entries = Vec::new();
-            let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
-            for root in &roots {
-                let Ok(canonical) = root.canonicalize() else {
-                    continue;
-                };
-                if !seen.insert(canonical.clone()) {
-                    continue;
-                }
-                let project_id =
-                    read_existing_project_identity(&canonical.join(".orgasmic/project.org"))
-                        .ok()
-                        .map(|identity| identity.project_id);
-                catalog
-                    .refresh_dir(
-                        &project_sessions_dir(&canonical),
-                        project_id.as_deref(),
-                        &canonical,
-                        SessionScanBudget::DEFAULT,
-                    )
-                    .await;
-                entries.extend(catalog.entries_for_project(&canonical).await);
+        let mut entries = Vec::new();
+        let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+        for root in &roots {
+            let Ok(canonical) = root.canonicalize() else {
+                continue;
+            };
+            if !seen.insert(canonical.clone()) {
+                continue;
             }
-            crate::run_catalog::inspect_history(&entries)
-        })
+            let project_id =
+                read_existing_project_identity(&canonical.join(".orgasmic/project.org"))
+                    .ok()
+                    .map(|identity| identity.project_id);
+            catalog.refresh_dir(
+                &project_sessions_dir(&canonical),
+                project_id.as_deref(),
+                &canonical,
+                SessionScanBudget::DEFAULT,
+            );
+            entries.extend(catalog.entries_for_project(&canonical));
+        }
+        crate::run_catalog::inspect_history(&entries)
     })
     .await
     .map_err(|error| ApiError::internal(format!("run history inspection failed: {error}")))?;
@@ -9714,7 +9710,7 @@ fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Res
 /// on a restart is the live runs and nothing else.
 ///
 /// Blocking by nature; callers must keep it off the async runtime's threads.
-async fn collect_boot_reattach_candidates(
+fn collect_boot_reattach_candidates(
     catalog: &crate::run_catalog::RunCatalog,
     project_roots: &[PathBuf],
 ) -> Vec<BootReattachCandidate> {
@@ -9735,7 +9731,7 @@ async fn collect_boot_reattach_candidates(
         // Derived state: an absent, corrupt, or foreign-version snapshot is
         // discarded and the refresh below rebuilds the whole project. Boot must
         // not be able to fail on a file that only ever saved work.
-        let load = catalog.load_snapshot(&canonical_root).await;
+        let load = catalog.load_snapshot(&canonical_root);
         snapshot_entries += load.loaded_entries();
         if !matches!(load, crate::run_catalog::SnapshotLoad::Loaded { .. }) {
             tracing::info!(
@@ -9748,14 +9744,12 @@ async fn collect_boot_reattach_candidates(
             read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
                 .ok()
                 .map(|identity| identity.project_id);
-        let refreshed = catalog
-            .refresh_dir(
-                &dir,
-                project_id.as_deref(),
-                &canonical_root,
-                SessionScanBudget::DEFAULT,
-            )
-            .await;
+        let refreshed = catalog.refresh_dir(
+            &dir,
+            project_id.as_deref(),
+            &canonical_root,
+            SessionScanBudget::DEFAULT,
+        );
         stats.session_files += refreshed.session_files;
         stats.session_file_bytes += refreshed.session_file_bytes;
         stats.bytes_inspected += refreshed.bytes_inspected;
@@ -9763,7 +9757,7 @@ async fn collect_boot_reattach_candidates(
         stats.rebuilt += refreshed.rebuilt;
         stats.truncated_scans += refreshed.truncated_scans;
 
-        for entry in catalog.entries_for_project(&canonical_root).await {
+        for entry in catalog.entries_for_project(&canonical_root) {
             if let Some(candidate) = boot_reattach_candidate(&entry) {
                 candidates.push(candidate);
             }
@@ -9798,8 +9792,7 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
     let catalog = state.run_catalog.clone();
     let roots: Vec<PathBuf> = project_roots.to_vec();
     let mut candidates: Vec<BootReattachCandidate> = match tokio::task::spawn_blocking(move || {
-        tokio::runtime::Handle::current()
-            .block_on(async move { collect_boot_reattach_candidates(&catalog, &roots).await })
+        collect_boot_reattach_candidates(&catalog, &roots)
     })
     .await
     {
@@ -10070,14 +10063,12 @@ async fn classify_session_files(
             read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
                 .ok()
                 .map(|identity| identity.project_id);
-        let stats = catalog
-            .refresh_dir(
-                &dir,
-                project_id.as_deref(),
-                &canonical_root,
-                SessionScanBudget::DEFAULT,
-            )
-            .await;
+        let stats = catalog.refresh_dir(
+            &dir,
+            project_id.as_deref(),
+            &canonical_root,
+            SessionScanBudget::DEFAULT,
+        );
         metrics.session_files += stats.session_files;
         metrics.session_file_bytes += stats.session_file_bytes;
         metrics.bytes_inspected += stats.bytes_inspected;
@@ -10097,7 +10088,7 @@ async fn classify_session_files(
         // written, so the next caller that does have a writer would persist
         // nothing.
         if let Some(writer) = writer {
-            if let Some(bytes) = catalog.snapshot_bytes(&canonical_root).await {
+            if let Some(bytes) = catalog.snapshot_bytes(&canonical_root) {
                 let path = canonical_root.join(crate::run_catalog::CATALOG_REL_PATH);
                 if let Err(error) = writer
                     .rewrite_file(
@@ -10121,7 +10112,7 @@ async fn classify_session_files(
         classify_catalog_entries(
             home,
             trusted_claude_binary,
-            &catalog.entries_for_project(&canonical_root).await,
+            &catalog.entries_for_project(&canonical_root),
             &live_ids,
             &attach_limit,
             &mut attach_probes,
@@ -20217,22 +20208,19 @@ pub(crate) mod tests {
 
         // First boot: cold. This is what every boot cost before the catalog.
         let first = crate::run_catalog::RunCatalog::new();
-        let cold_candidates = collect_boot_reattach_candidates(&first, roots).await;
-        let cold_stats = first
-            .refresh_dir(
-                &board.sessions,
-                Some("proj"),
-                &board.root,
-                SessionScanBudget::DEFAULT,
-            )
-            .await;
+        let cold_candidates = collect_boot_reattach_candidates(&first, roots);
+        let cold_stats = first.refresh_dir(
+            &board.sessions,
+            Some("proj"),
+            &board.root,
+            SessionScanBudget::DEFAULT,
+        );
         assert_eq!(
             cold_stats.cache_hits, 197,
             "the first boot indexed the board"
         );
         let snapshot = first
             .snapshot_bytes(&board.root)
-            .await
             .expect("the first boot has something to persist");
         std::fs::write(
             board.root.join(crate::run_catalog::CATALOG_REL_PATH),
@@ -20242,15 +20230,13 @@ pub(crate) mod tests {
 
         // Second boot: the snapshot is the index.
         let second = crate::run_catalog::RunCatalog::new();
-        let warm_candidates = collect_boot_reattach_candidates(&second, roots).await;
-        let warm_stats = second
-            .refresh_dir(
-                &board.sessions,
-                Some("proj"),
-                &board.root,
-                SessionScanBudget::DEFAULT,
-            )
-            .await;
+        let warm_candidates = collect_boot_reattach_candidates(&second, roots);
+        let warm_stats = second.refresh_dir(
+            &board.sessions,
+            Some("proj"),
+            &board.root,
+            SessionScanBudget::DEFAULT,
+        );
         assert_eq!(
             warm_stats.rebuilt, 0,
             "a restart re-reads only session files written since the last index"
@@ -20281,11 +20267,7 @@ pub(crate) mod tests {
         let (expected, _) =
             classify_session_files(&home, None, "boot-1", &[], roots, &sound, None).await;
         let snapshot_path = board.root.join(crate::run_catalog::CATALOG_REL_PATH);
-        std::fs::write(
-            &snapshot_path,
-            sound.snapshot_bytes(&board.root).await.unwrap(),
-        )
-        .unwrap();
+        std::fs::write(&snapshot_path, sound.snapshot_bytes(&board.root).unwrap()).unwrap();
 
         // Three ways a derived index goes wrong on disk. Each must produce the
         // same classifications as a board with no snapshot at all.
@@ -20301,7 +20283,7 @@ pub(crate) mod tests {
         for (name, contents) in corruptions {
             std::fs::write(&snapshot_path, &contents).unwrap();
             let catalog = crate::run_catalog::RunCatalog::new();
-            let load = catalog.load_snapshot(&board.root).await;
+            let load = catalog.load_snapshot(&board.root);
             assert!(
                 !matches!(load, crate::run_catalog::SnapshotLoad::Loaded { .. }),
                 "{name}: a catalog this daemon cannot vouch for must not load: {load:?}"
@@ -20395,14 +20377,12 @@ pub(crate) mod tests {
     async fn run_history_inspect_accounts_exactly_and_changes_nothing() {
         let board = catalog_board(1);
         let catalog = crate::run_catalog::RunCatalog::new();
-        catalog
-            .refresh_dir(
-                &board.sessions,
-                Some("proj"),
-                &board.root,
-                SessionScanBudget::DEFAULT,
-            )
-            .await;
+        catalog.refresh_dir(
+            &board.sessions,
+            Some("proj"),
+            &board.root,
+            SessionScanBudget::DEFAULT,
+        );
 
         let before: std::collections::BTreeMap<PathBuf, (u64, Vec<u8>)> =
             std::fs::read_dir(&board.sessions)
@@ -20416,7 +20396,7 @@ pub(crate) mod tests {
                 .collect();
         let on_disk: u64 = before.values().map(|(len, _)| len).sum();
 
-        let report = crate::run_catalog::inspect_history(&catalog.entries().await);
+        let report = crate::run_catalog::inspect_history(&catalog.entries());
         assert!(report.dry_run);
         assert_eq!(report.session_files, 197);
         assert_eq!(report.unreadable_files, 0);
@@ -20469,10 +20449,8 @@ pub(crate) mod tests {
             .block_on(async {
                 let mut out = Vec::new();
                 for dir in dirs {
-                    catalog
-                        .refresh_dir(dir, None, dir, SessionScanBudget::DEFAULT)
-                        .await;
-                    for entry in catalog.entries_for_project(dir).await {
+                    catalog.refresh_dir(dir, None, dir, SessionScanBudget::DEFAULT);
+                    for entry in catalog.entries_for_project(dir) {
                         if let Some(candidate) = boot_reattach_candidate(&entry) {
                             out.push(candidate);
                         }

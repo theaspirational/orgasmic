@@ -44,7 +44,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, Utc};
 use orgasmic_core::session::{
@@ -53,7 +53,6 @@ use orgasmic_core::session::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tokio::sync::Mutex;
 
 /// Snapshot format version. Bumped whenever an entry's meaning changes in a way
 /// an older daemon would misread. A snapshot whose version is not exactly this
@@ -432,6 +431,15 @@ struct CatalogState {
 }
 
 /// The daemon-lifetime run catalog.
+/// The lock is a `std::sync::Mutex`, not a tokio one, and the methods are
+/// synchronous. Every critical section is a map lookup or insert with no
+/// `.await` inside it, and the blocking filesystem work these methods do belongs
+/// on a blocking thread anyway — the boot pass and `run history inspect` both
+/// call them from inside `spawn_blocking`, exactly as the pre-catalog code did.
+///
+/// An async API here would have forced those callers to `block_on` a handle
+/// from inside a blocking thread, which deadlocks against a current-thread
+/// runtime whose only thread is parked awaiting that very `JoinHandle`.
 #[derive(Clone, Default)]
 pub struct RunCatalog {
     state: Arc<Mutex<CatalogState>>,
@@ -448,13 +456,19 @@ impl RunCatalog {
         Self::default()
     }
 
+    /// Poisoning cannot corrupt derived state: a panic mid-update leaves at
+    /// worst a stale entry, which the next fingerprint check re-derives.
+    fn lock(&self) -> std::sync::MutexGuard<'_, CatalogState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// Load a project's durable snapshot into the catalog.
     ///
     /// Never fails: an absent, unreadable, corrupt, or foreign-version snapshot
     /// is discarded and the next [`Self::refresh_dir`] rebuilds from the session
     /// files. The catalog is derived state; there is nothing here that a rebuild
     /// cannot reproduce.
-    pub async fn load_snapshot(&self, project_root: &Path) -> SnapshotLoad {
+    pub fn load_snapshot(&self, project_root: &Path) -> SnapshotLoad {
         let path = project_root.join(CATALOG_REL_PATH);
         let source = match std::fs::read_to_string(&path) {
             Ok(source) => source,
@@ -497,7 +511,7 @@ impl RunCatalog {
                 }
             }
         };
-        let mut state = self.state.lock().await;
+        let mut state = self.lock();
         let mut loaded = 0;
         for entry in snapshot.entries {
             // A snapshot entry naming a file outside the project it was loaded
@@ -519,19 +533,18 @@ impl RunCatalog {
     ///
     /// Calling this CONSUMES the dirty flag: the caller is expected to persist
     /// the bytes it returns.
-    pub async fn snapshot_bytes(&self, project_root: &Path) -> Option<Vec<u8>> {
+    pub fn snapshot_bytes(&self, project_root: &Path) -> Option<Vec<u8>> {
         self.snapshot_bytes_after(project_root, SNAPSHOT_MIN_INTERVAL)
-            .await
     }
 
     /// [`Self::snapshot_bytes`] with an explicit floor. `Duration::ZERO` forces
     /// a save; tests and the boot path use it.
-    pub async fn snapshot_bytes_after(
+    pub fn snapshot_bytes_after(
         &self,
         project_root: &Path,
         min_interval: std::time::Duration,
     ) -> Option<Vec<u8>> {
-        let mut state = self.state.lock().await;
+        let mut state = self.lock();
         if !state.dirty {
             return None;
         }
@@ -561,7 +574,7 @@ impl RunCatalog {
     ///
     /// Blocking filesystem work; callers must keep it off the async runtime's
     /// hot threads the same way the boot scan does.
-    pub async fn refresh_dir(
+    pub fn refresh_dir(
         &self,
         dir: &Path,
         project_id: Option<&str>,
@@ -569,7 +582,7 @@ impl RunCatalog {
         budget: SessionScanBudget,
     ) -> CatalogRefreshStats {
         let mut stats = CatalogRefreshStats::default();
-        let mut state = self.state.lock().await;
+        let mut state = self.lock();
         let mut seen: Vec<PathBuf> = Vec::new();
 
         let entries = match std::fs::read_dir(dir) {
@@ -661,15 +674,13 @@ impl RunCatalog {
     }
 
     /// Every entry, ordered by session path.
-    pub async fn entries(&self) -> Vec<RunCatalogEntry> {
-        self.state.lock().await.by_path.values().cloned().collect()
+    pub fn entries(&self) -> Vec<RunCatalogEntry> {
+        self.lock().by_path.values().cloned().collect()
     }
 
     /// Entries under one project root, ordered by session path.
-    pub async fn entries_for_project(&self, project_root: &Path) -> Vec<RunCatalogEntry> {
-        self.state
-            .lock()
-            .await
+    pub fn entries_for_project(&self, project_root: &Path) -> Vec<RunCatalogEntry> {
+        self.lock()
             .by_path
             .values()
             .filter(|entry| entry.session_path.starts_with(project_root))
@@ -687,16 +698,16 @@ impl RunCatalog {
     /// would catch it anyway on the next refresh — this makes the update
     /// promptness a property of the write path rather than of mtime
     /// granularity.
-    pub async fn invalidate_session(&self, session_path: &Path) {
-        let mut state = self.state.lock().await;
+    pub fn invalidate_session(&self, session_path: &Path) {
+        let mut state = self.lock();
         if state.by_path.remove(session_path).is_some() {
             state.dirty = true;
         }
     }
 
     #[cfg(test)]
-    pub(crate) async fn len(&self) -> usize {
-        self.state.lock().await.by_path.len()
+    pub(crate) fn len(&self) -> usize {
+        self.lock().by_path.len()
     }
 }
 
@@ -1360,16 +1371,14 @@ mod tests {
         }
 
         let catalog = RunCatalog::new();
-        let first = catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
+        let first =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert_eq!(first.session_files, 8);
         assert_eq!(first.rebuilt, 8);
         assert!(first.bytes_inspected > 0);
 
-        let second = catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
+        let second =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert_eq!(second.cache_hits, 8);
         assert_eq!(second.rebuilt, 0);
         assert_eq!(
@@ -1396,9 +1405,7 @@ mod tests {
         }
         let live = write_session(&sessions, "run-live", 8 * 1024, None, &root, "proj-1");
         let catalog = RunCatalog::new();
-        catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
 
         // The live run appends. Its mtime granularity is not the mechanism —
         // length changes, and length is part of the fingerprint.
@@ -1424,12 +1431,11 @@ mod tests {
         .unwrap();
         drop(file);
 
-        let stats = catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
+        let stats =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert_eq!(stats.rebuilt, 1, "only the file that changed is re-read");
         assert_eq!(stats.cache_hits, 4);
-        let entries = catalog.entries().await;
+        let entries = catalog.entries();
         let live_entry = entries
             .iter()
             .find(|entry| entry.run_id == "run-live")
@@ -1451,10 +1457,8 @@ mod tests {
         let sessions = root.join(".orgasmic/tmp/sessions");
         write_session(&sessions, "run-a", 4096, None, &root, "proj-1");
         let catalog = RunCatalog::new();
-        catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
-        let bytes = catalog.snapshot_bytes(&root).await.unwrap();
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let bytes = catalog.snapshot_bytes(&root).unwrap();
         let text = String::from_utf8(bytes).unwrap();
         assert!(
             !text.contains("zzzz"),
@@ -1481,19 +1485,16 @@ mod tests {
         write_session(&sessions, "run-wt", 4096, None, &worktree, "proj-1");
 
         let catalog = RunCatalog::new();
-        catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
-        let entry = catalog.entries().await.remove(0);
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let entry = catalog.entries().remove(0);
         assert!(entry.worktree_authority.verified_worktree().is_some());
 
         std::fs::remove_dir_all(&worktree).unwrap();
-        let stats = catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
+        let stats =
+            catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
         assert_eq!(stats.rebuilt, 0, "the session file did not change");
         assert_eq!(stats.authority_reverified, 1);
-        let entry = catalog.entries().await.remove(0);
+        let entry = catalog.entries().remove(0);
         assert!(
             entry.worktree_authority.is_tombstoned(),
             "a pruned worktree must become a stable tombstone: {:?}",
@@ -1517,16 +1518,15 @@ mod tests {
         );
 
         let good = RunCatalog::new();
-        good.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
-        let bytes = good.snapshot_bytes(&root).await.unwrap();
+        good.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let bytes = good.snapshot_bytes(&root).unwrap();
         let snapshot_path = root.join(CATALOG_REL_PATH);
         std::fs::write(&snapshot_path, &bytes).unwrap();
 
         // Sound snapshot: loads.
         let loaded = RunCatalog::new();
         assert_eq!(
-            loaded.load_snapshot(&root).await,
+            loaded.load_snapshot(&root),
             SnapshotLoad::Loaded { entries: 1 }
         );
 
@@ -1534,15 +1534,14 @@ mod tests {
         std::fs::write(&snapshot_path, &bytes[..bytes.len() / 2]).unwrap();
         let torn = RunCatalog::new();
         assert!(matches!(
-            torn.load_snapshot(&root).await,
+            torn.load_snapshot(&root),
             SnapshotLoad::Corrupt { .. }
         ));
-        assert_eq!(torn.len().await, 0);
+        assert_eq!(torn.len(), 0);
         // And the rebuild produces the same verdict the sound snapshot held.
-        torn.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
-        let rebuilt = torn.entries().await;
-        let original = good.entries().await;
+        torn.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let rebuilt = torn.entries();
+        let original = good.entries();
         assert_eq!(rebuilt.len(), original.len());
         assert_eq!(rebuilt[0].run_id, original[0].run_id);
         assert_eq!(
@@ -1578,10 +1577,8 @@ mod tests {
             "proj-1",
         );
         let source = RunCatalog::new();
-        source
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
-        let bytes = source.snapshot_bytes(&root).await.unwrap();
+        source.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let bytes = source.snapshot_bytes(&root).unwrap();
         let mut snapshot: Value = serde_json::from_slice(&bytes).unwrap();
         let path = root.join(CATALOG_REL_PATH);
 
@@ -1590,20 +1587,19 @@ mod tests {
             std::fs::write(&path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
             let catalog = RunCatalog::new();
             assert_eq!(
-                catalog.load_snapshot(&root).await,
+                catalog.load_snapshot(&root),
                 SnapshotLoad::VersionMismatch {
                     found: foreign as u32,
                     expected: CATALOG_VERSION,
                 },
                 "a catalog version this build does not know must be refused, not read"
             );
-            assert_eq!(catalog.len().await, 0);
+            assert_eq!(catalog.len(), 0);
             // Still fully functional: the rebuild is the rollback.
-            let stats = catalog
-                .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-                .await;
+            let stats =
+                catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
             assert_eq!(stats.rebuilt, 1);
-            assert_eq!(catalog.len().await, 1);
+            assert_eq!(catalog.len(), 1);
         }
     }
 
@@ -1627,20 +1623,18 @@ mod tests {
             "proj-2",
         );
         let source = RunCatalog::new();
-        source
-            .refresh_dir(
-                &sessions,
-                Some("proj-2"),
-                &other,
-                SessionScanBudget::DEFAULT,
-            )
-            .await;
-        let bytes = source.snapshot_bytes(&other).await.unwrap();
+        source.refresh_dir(
+            &sessions,
+            Some("proj-2"),
+            &other,
+            SessionScanBudget::DEFAULT,
+        );
+        let bytes = source.snapshot_bytes(&other).unwrap();
         std::fs::write(root.join(CATALOG_REL_PATH), bytes).unwrap();
 
         let catalog = RunCatalog::new();
         assert_eq!(
-            catalog.load_snapshot(&root).await,
+            catalog.load_snapshot(&root),
             SnapshotLoad::Loaded { entries: 0 }
         );
     }
@@ -1699,10 +1693,8 @@ mod tests {
         let before_meta = std::fs::metadata(&path).unwrap();
 
         let catalog = RunCatalog::new();
-        catalog
-            .refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT)
-            .await;
-        let report = inspect_history(&catalog.entries().await);
+        catalog.refresh_dir(&sessions, Some("proj-1"), &root, SessionScanBudget::DEFAULT);
+        let report = inspect_history(&catalog.entries());
 
         assert!(report.dry_run);
         assert_eq!(report.unreadable_files, 0);
