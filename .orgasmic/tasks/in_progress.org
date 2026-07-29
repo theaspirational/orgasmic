@@ -846,3 +846,106 @@ rather than timing — diagnose before assuming it's the same class.
 
 FOURTH ENTRY [2026-07-29, from TASK-EP3H1's gate run]: `recovery_faults_kill_real_daemon_and_preserve_original_pane` (crates/orgasmic-daemon/tests/recovery_fault_restart.rs:308) — `called Result::unwrap() on an Err value: AddrParseError(Socket)`. The test harness reads the child daemon's address file and parse().unwrap()s it; under load it reads mid-write and parses a truncated address. Fix is in the harness (retry on parse failure inside the existing 20s deadline loop), not product code. Green in isolation.
 
+* IN_PROGRESS TASK-Z7VQK dispatch_endpoint.rs installs a fresh fake agent per test; first-exec Gatekeeper queue eats wait budgets under load — pre-warm one shared executable
+:PROPERTIES:
+:ID: TASK-Z7VQK
+:PRIORITY: P2
+:END:
+
+From TASK-5FEN5's report (2026-07-29): every test in
+crates/orgasmic-daemon/tests/dispatch_endpoint.rs installs a FRESH fake agent
+executable, and on macOS its first exec queues behind a system-wide serialized
+Gatekeeper evaluation (recorded in .orgasmic/gotchas.org). Under
+suite-concurrent load that queue eats fixed wait budgets and the file's tests
+time out in a family:
+
+- `dispatch_system_only_session_without_finalize_orphans_not_scrapes` —
+  "timed out waiting for session ready" (dispatch_endpoint.rs:1395). 5FEN5
+  reproduced it suite-concurrently (RED 1 of 3 loaded) and raised its 5s bound
+  to the file's 30s convention as a MITIGATION, explicitly labelled a bound
+  change, not a fix.
+- Five siblings seen red with the same fixed-budget shape, "timed out waiting
+  for synthetic run_complete in <session>" (dispatch_endpoint.rs:2449):
+  `dispatch_subprocess_exit_synthesizes_run_complete_from_system_tail`,
+  `dispatch_clean_worktree_protocol_end_without_finalize_orphans`,
+  `dispatch_delayed_protocol_end_without_finalize_orphans`,
+  `dispatch_cursor_shaped_session_without_finalize_orphans_not_scrapes`,
+  `dispatch_early_exit_auto_releases_stuck_lease`.
+
+TASK-STWVB already removed this exact cost from the daemon UNIT tests with one
+pre-warmed shared fixture; this file never got the treatment.
+
+=== Ask
+
+Rework dispatch_endpoint.rs fixture installation to use ONE pre-warmed shared
+fake-agent executable (exec'd once at fixture setup so Gatekeeper evaluation is
+paid before any test budget starts), instead of a fresh executable per test.
+This is the durable fix 5FEN5 declined to smuggle into its scope.
+
+=== Acceptance
+
+- One shared, pre-warmed executable serves the file; no per-test first-exec
+  remains on any timed path.
+- The named family runs green suite-concurrently (dispatch_endpoint beside a
+  looping `orgasmic-daemon --lib --test-threads=64` plus cpu hogs — 5FEN5's
+  recipe; hogs alone do NOT reproduce this class).
+- The 30s bound on wait_for_session_ready may stay as a hang guard; the point
+  is that Gatekeeper no longer spends it.
+- Injection per TCTTD standard if patch-expressible; if the trigger is load
+  itself, pin A/B counts in the report per the 5FEN5 precedent and say so in
+  the artifact README.
+
+* IN_PROGRESS TASK-D1Z87 Probe-timeout mechanism in the remaining stub-then-probe test families (claude.rs adapter, dispatch_credential_plan) needs an un-recorded warm-up
+:PROPERTIES:
+:ID: TASK-D1Z87
+:PRIORITY: P2
+:END:
+
+From TASK-GEZHQ (2026-07-29). The probe-timeout mechanism GEZHQ fixed in
+dispatch_preflight.rs (first exec of a freshly written stub pays macOS's
+one-time evaluation under load, eating the 5s STATUS_TIMEOUT; probe answers
+Unknown; dispatch admitted per dec_7P79C) has UNFIXED siblings that share the
+stub-then-probe shape:
+
+1. `crates/orgasmic-drivers/src/adapters/claude.rs` — the auth-stub family via
+   `make_auth_status_stub` (:2564 at GEZHQ's HEAD):
+   - `the_launch_uses_the_credential_the_preflight_admitted` (:2943) — FIRED in
+     GEZHQ's gate run 2 of 5: `left: "native_login" / right: "bare_api_key"`.
+     Reads as a credential-precedence bug; is actually a probe timeout (rule 5
+     taken instead of rule 4). This mask cost is the point: without the WARN
+     the diagnosis is expensive.
+   - Same shape, not yet observed red:
+     `acp_stdio_rejects_a_dispatch_for_a_logged_out_claude` (:2231),
+     `an_empty_endpoint_still_gets_a_verdict_because_it_still_spawns_claude`
+     (:2263), `acp_stdio_accepts_a_dispatch_for_a_logged_in_claude` (:2290).
+2. `crates/orgasmic-daemon/tests/dispatch_credential_plan.rs` — same shape;
+   breaks at `plan["native_login"] == "present"` and a timeout still yields
+   200, so it fails LATER and reads as a plan-pinning defect.
+
+WHY GEZHQ's warm-up does not transplant naively (its stated reason for not
+fixing these): `make_recording_stub` (:2838) logs EVERY invocation to a file
+the test then counts ("one auth status per dispatch" is an asserted property),
+and its `--version` arm sleeps 60s — a naive warm-up corrupts the count and
+hangs. The family needs a warm-up that execs without being recorded (separate
+warm-up entrypoint in the stub script, or exec of a sibling binary written from
+the same bytes, or count-exempt marker) — a design decision for whoever owns
+those assertions.
+
+=== Ask
+
+1. Design the un-recorded warm-up (state the chosen mechanism and why it
+   cannot mask the one-probe-per-dispatch property the recording stub guards).
+2. Apply to both files' stub families.
+3. Keep GEZHQ's rule intact: warm-up failures must fail AS STUB failures, not
+   surface as downstream verdict mysteries.
+
+=== Acceptance
+
+- The named tests survive >=5 consecutive loaded runs (GEZHQ's load harness
+  recipe: 18-19 sibling test binaries looping at --test-threads 16), pre-fix
+  red counts pinned where reproducible.
+- The one-auth-status-per-dispatch count property still proven.
+- Injection per TCTTD standard, self-tested with `orgasmic verify --artifact`
+  before reporting (GEZHQ-retry's deterministic slow-once stub is the
+  template).
+
