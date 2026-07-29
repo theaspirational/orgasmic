@@ -44383,3 +44383,119 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-29 Wed 06:23:34 manager.dispatch_orphaned TASK-RB1ZN
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3848
+:TIME:         [2026-07-29 Wed 06:23:34]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RB1ZN
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-RB1ZN-implementer-20260729T060634.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260729T060634-81cd49d1b87b4e4db29b04644bd0d384
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rb1zn/worktree
+:END:
+
+* TX 2026-07-29 Wed 06:25:51 manager.dispatch_aborted TASK-RB1ZN
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3849
+:TIME:         [2026-07-29 Wed 06:25:51]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RB1ZN
+:REASON:       stall-released by the new evidence clock (VZMZE wedge profile: 0.3% cpu, no output, 600s); first field kill, reads as true positive; re-dispatching
+:CLOSED_TX:    tx-20260729-orgasmic-3843
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rb1zn/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:SALVAGE_SHA:  c25e8c5ee468feb160d24eeb666df52ef0f6dfac
+:SALVAGE_REF:  refs/orgasmic/salvage/c25e8c5ee468feb160d24eeb666df52ef0f6dfac
+:SALVAGE_FILE_COUNT: 1
+:END:
+
+* TX 2026-07-29 Wed 06:25:51 task.state_transitioned TASK-RB1ZN
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3850
+:TIME:         [2026-07-29 Wed 06:25:51]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RB1ZN
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-RB1ZN to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-29 Wed 06:25:52 task.state_transitioned TASK-RB1ZN
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3851
+:TIME:         [2026-07-29 Wed 06:25:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RB1ZN
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-RB1ZN to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-29 Wed 06:25:53 manager.dispatch_started TASK-RB1ZN
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3852
+:TIME:         [2026-07-29 Wed 06:25:53]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RB1ZN
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rb1zn/worktree
+:BRANCH:       task-rb1zn-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-rb1zn/brief-rb1zn.md
+:STARTED_AT:   [2026-07-29 Wed 06:25:53]
+:LIVENESS:     c3a7caf46ec21d7496e0cb1913c1a0c6ef8de7dd
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P2 retry after wedged-harness stall release (true-positive kill by the new clock)
+:END:
+
+* TX 2026-07-29 Wed 06:25:53 run.created TASK-RB1ZN
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3853
+:TIME:         [2026-07-29 Wed 06:25:53]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-RB1ZN
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-RB1ZN-implementer-20260729T062553.jsonl
+:REASON:       P2 retry after wedged-harness stall release (true-positive kill by the new clock)
+:RUN_ID:       run-20260729T062553-67f75fb8432549878eaac62b50ff6160
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-rb1zn/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-rb1zn/brief-rb1zn.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-rb1zn/brief-rb1zn-cbc0c7db666d48b49dbf6308f02a0e15-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-rb1zn/brief-rb1zn-cbc0c7db666d48b49dbf6308f02a0e15-stdout.log
+:DISPATCH_ATTEMPT: cbc0c7db666d48b49dbf6308f02a0e15
+:DISPATCH_TX:  tx-20260729-orgasmic-3852
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
