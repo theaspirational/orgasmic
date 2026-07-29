@@ -1273,6 +1273,23 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
         {
             args.push("--dangerously-skip-permissions".to_string());
         }
+        // A dispatched worker gets none of the operator's MCP servers. The acp
+        // path has isolated its worker since it was written (adapters/claude.rs,
+        // `ClaudeCredentialMode::NativeLogin`) and the TUI path did not, so the
+        // same persona ran with a different blast radius depending only on which
+        // mode carried it. This machine configures nine servers — Gmail, Drive,
+        // Calendar and Notion among them — and the pane runs
+        // --dangerously-skip-permissions unattended.
+        //
+        // `--strict-mcp-config` alone, deliberately: rmux launches are
+        // `NativeLogin` (they resolve no credential mode at all), so `--bare`
+        // would restrict auth to ANTHROPIC_API_KEY/apiKeyHelper and break every
+        // subscription-auth worker. `--safe-mode` is the acp path's separate
+        // claim about hooks/plugins/CLAUDE.md and is not this task's argument.
+        // orgasmic:TASK-NYF7Z
+        if !args.iter().any(|arg| arg == "--strict-mcp-config") {
+            args.push("--strict-mcp-config".to_string());
+        }
         if let Some(model) = cfg.model.as_ref() {
             if !args.iter().any(|arg| arg == "--model") {
                 args.push("--model".to_string());
@@ -1293,6 +1310,17 @@ fn build_spawn_plan(cfg: &RmuxConfig, ctx: &DriverContext, harness: &str) -> Rmu
             args.push(session_id);
         }
     }
+    // No MCP-isolation counterpart exists for codex, so the reviewer stage runs
+    // with the operator's servers by design-gap rather than by choice. Measured
+    // against codex-cli 0.144.5 (TASK-NYF7Z), reading help text only:
+    // `codex --help` exposes no `--strict-mcp-config` equivalent (`--strict-config`
+    // is unrelated — it errors on unrecognised config.toml fields). `-c` cannot
+    // stand in for one either: it deep-merges, so `-c mcp_servers={}` leaves every
+    // server in place while `-c mcp_servers.<name>.command=...` still edits and
+    // adds entries. Only `CODEX_HOME=<empty dir>` yields "No MCP servers
+    // configured", and CODEX_HOME also holds `auth.json` — the same auth-breaking
+    // trade `--bare` makes for claude, rejected on the same grounds.
+    // orgasmic:TASK-NYF7Z
     if matches!(harness, "codex" | "cursor-agent" | "hermes") {
         if let Some(model) = cfg.model.as_ref() {
             if !args.iter().any(|arg| arg == "--model" || arg == "-m") {
@@ -3885,6 +3913,108 @@ mod tests {
             .args
             .windows(2)
             .any(|pair| pair == ["--betas", "context-1m"]));
+    }
+
+    /// A dispatched rmux/claude worker is MCP-isolated by default, and an
+    /// operator who names the flag in `harness_args` opts that pane back in
+    /// (the guarded push must not duplicate it).
+    // orgasmic:TASK-NYF7Z
+    #[test]
+    fn claude_argv_is_mcp_isolated_by_default_and_operator_supplied_wins() {
+        let base = json!({
+            "command": "sh",
+            "args": ["-lc", "echo orgasmic pipeline stage acquired; exec sh"],
+            "harness": "claude",
+            "model": "claude-opus-5",
+            "prompt_bundle_text": "do the task",
+        });
+        let ctx = ctx("run-dispatch-mcp", RunKind::Worker);
+
+        let cfg: RmuxConfig = serde_json::from_value(base.clone()).unwrap();
+        let plan = build_spawn_plan(&cfg, &ctx, "claude");
+        assert_eq!(plan.command, "claude");
+        assert_eq!(
+            plan.args
+                .iter()
+                .filter(|arg| *arg == "--strict-mcp-config")
+                .count(),
+            1,
+            "default rmux/claude argv must isolate MCP exactly once: {:?}",
+            plan.args
+        );
+        // The flag this task explicitly refused: rmux is NativeLogin, and
+        // `--bare` would break subscription auth.
+        assert!(!plan.args.iter().any(|arg| arg == "--bare"), "{:?}", plan.args);
+        // The RECORDED argv carries it too. `native_runtime.launch_argv` is what
+        // run state surfaces after the process is gone, so this is the surface a
+        // manager reads to confirm "a live dispatch shows the flag in its argv"
+        // — the acceptance criterion no test can reach by spawning a real pane.
+        let native = plan.native_runtime.expect("claude native runtime");
+        assert!(
+            native
+                .launch_argv
+                .iter()
+                .any(|arg| arg == "--strict-mcp-config"),
+            "recorded launch argv must show the flag: {:?}",
+            native.launch_argv
+        );
+
+        let mut opted_back_in = base;
+        opted_back_in["harness_args"] = json!(["--strict-mcp-config"]);
+        let cfg: RmuxConfig = serde_json::from_value(opted_back_in).unwrap();
+        let plan = build_spawn_plan(&cfg, &ctx, "claude");
+        assert_eq!(
+            plan.args
+                .iter()
+                .filter(|arg| *arg == "--strict-mcp-config")
+                .count(),
+            1,
+            "operator-supplied flag must suppress the guarded push: {:?}",
+            plan.args
+        );
+    }
+
+    /// The recorded codex answer, pinned as an assertion: codex-cli has no
+    /// `--strict-mcp-config` counterpart (see the comment in `build_spawn_plan`),
+    /// so orgasmic composes no isolation flag for it and `harness_args` stays the
+    /// only channel by which an operator could add one.
+    // orgasmic:TASK-NYF7Z
+    #[test]
+    fn codex_argv_composes_no_mcp_isolation_flag_because_none_exists() {
+        let base = json!({
+            "command": "sh",
+            "args": ["-lc", "echo orgasmic pipeline stage acquired; exec sh"],
+            "harness": "codex",
+            "model": "gpt-5.1-codex-max",
+            "prompt_bundle_text": "do the task",
+        });
+        let ctx = ctx("run-dispatch-codex-mcp", RunKind::Worker);
+
+        let cfg: RmuxConfig = serde_json::from_value(base.clone()).unwrap();
+        let plan = build_spawn_plan(&cfg, &ctx, "codex");
+        assert_eq!(plan.command, "codex");
+        assert!(
+            !plan
+                .args
+                .iter()
+                .any(|arg| arg == "--strict-mcp-config" || arg == "--strict-config"),
+            "codex has no MCP-isolation flag; orgasmic must not invent one: {:?}",
+            plan.args
+        );
+
+        // Operator-supplied argv still rides along, so a pane can carry whatever
+        // codex-side isolation a future codex-cli grows.
+        let mut supplied = base;
+        supplied["harness_args"] = json!(["-c", "mcp_servers={}"]);
+        let cfg: RmuxConfig = serde_json::from_value(supplied).unwrap();
+        let plan = build_spawn_plan(&cfg, &ctx, "codex");
+        assert!(
+            plan.args
+                .windows(2)
+                .any(|pair| pair == ["-c", "mcp_servers={}"]),
+            "{:?}",
+            plan.args
+        );
     }
 
     /// Custom-harness dispatch: the staged placeholder is swapped for the
