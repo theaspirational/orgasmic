@@ -2198,7 +2198,10 @@ fn print_dispatch_plan(plan: &DispatchPlan) {
 /// the recovery inventory's, and must not be blocked by unrelated durable
 /// history the inventory cannot read.
 async fn fetch_live_runs(client: &DaemonClient) -> Result<Vec<RunSummary>> {
-    Ok(client.get::<LiveRunsSummaryResponse>("/runs/live").await?.live)
+    Ok(client
+        .get::<LiveRunsSummaryResponse>("/runs/live")
+        .await?
+        .live)
 }
 
 #[derive(Debug, Serialize)]

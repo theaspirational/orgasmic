@@ -137,9 +137,12 @@ impl RecordingDaemon {
                 if path == SHUTDOWN_PATH {
                     break;
                 }
-                recorded.lock().unwrap_or_else(|p| p.into_inner()).push(path.to_string());
-                let (status, body) = respond(path)
-                    .unwrap_or_else(|| (404, "{\"error\":\"not found\"}".to_string()));
+                recorded
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .push(path.to_string());
+                let (status, body) =
+                    respond(path).unwrap_or_else(|| (404, "{\"error\":\"not found\"}".to_string()));
                 let reason = match status {
                     200 => "OK",
                     404 => "Not Found",
@@ -168,10 +171,7 @@ impl RecordingDaemon {
 
     /// Every path requested so far, in order.
     pub(crate) fn paths(&self) -> Vec<String> {
-        self.paths
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .clone()
+        self.paths.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 }
 

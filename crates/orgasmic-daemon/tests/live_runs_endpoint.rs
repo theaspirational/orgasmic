@@ -84,7 +84,8 @@ async fn get_json(addr: std::net::SocketAddr, token: &str, path: &str) -> (u16, 
     let body = response.text().await.unwrap();
     (
         status,
-        serde_json::from_str(&body).unwrap_or_else(|error| panic!("GET {path} body {body}: {error}")),
+        serde_json::from_str(&body)
+            .unwrap_or_else(|error| panic!("GET {path} body {body}: {error}")),
     )
 }
 
@@ -149,7 +150,13 @@ async fn live_runs_answers_from_the_supervisor_when_no_session_file_can_be_read(
         "liveness answer must carry run identity the fence filters on: {live}"
     );
     // The liveness answer is not the inventory: no classifications, no scan.
-    for absent in ["interrupted", "reattached", "failed_recoverable", "ambiguous", "inventory"] {
+    for absent in [
+        "interrupted",
+        "reattached",
+        "failed_recoverable",
+        "ambiguous",
+        "inventory",
+    ] {
         assert!(
             live.get(absent).is_none(),
             "liveness answer must not carry `{absent}`: {live}"
