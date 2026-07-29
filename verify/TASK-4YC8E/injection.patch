@@ -1,0 +1,34 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+index ef6dc71..04e6e08 100644
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -1714,9 +1714,9 @@ fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiErr
+ // orgasmic:TASK-4YC8E
+ fn driver_validate_error(driver: &str, harness: &str, error: impl std::fmt::Display) -> ApiError {
+     tracing::warn!(driver = driver, harness = harness, error = %error, "driver validation failed");
+-    ApiError::bad_request(format!(
+-        "driver configuration is invalid for {driver}/{harness}: {error}"
+-    ))
++    // TASK-4YC8E injection: the pre-fix 400, which named neither the adapter
++    // nor the field and sent the operator to grep this file instead.
++    ApiError::bad_request("driver configuration is invalid")
+ }
+ 
+ fn org_input_parse_error(path: &FsPath, error: impl std::fmt::Display) -> ApiError {
+diff --git a/crates/orgasmic-drivers/src/adapters/hermes.rs b/crates/orgasmic-drivers/src/adapters/hermes.rs
+index bb1c355..ef457d7 100644
+--- a/crates/orgasmic-drivers/src/adapters/hermes.rs
++++ b/crates/orgasmic-drivers/src/adapters/hermes.rs
+@@ -91,7 +91,11 @@ struct HermesConfig {
+     /// reasoning_effort`. TASK-4YC8E dropped the alias here and the second key
+     /// at the writer; the registry-wide test in `lib.rs` holds both ends.
+     // orgasmic:TASK-4YC8E
+-    #[serde(default)]
++    // TASK-4YC8E injection: the alias, verbatim as hermes carried it pre-fix.
++    // The daemon composed one effort value under both `effort` and
++    // `reasoning_effort`, so serde sees this one field populated twice and
++    // rejects the whole config with `duplicate field`.
++    #[serde(default, alias = "effort")]
+     reasoning_effort: Option<String>,
+     #[serde(default)]
+     speed: Option<RuntimeSpeed>,

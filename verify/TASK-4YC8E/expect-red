@@ -1,0 +1,43 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied, in
+# this dispatch worktree.
+#
+# WHY THIS RED
+#
+# The harm was a dispatch that died on `400 Bad Request: {"error":"driver
+# configuration is invalid"}` — a message that named neither the field nor the
+# adapter — whenever a hermes dispatch set a reasoning effort. The cause was two
+# ordinary decisions meeting: `HermesConfig` declared
+# `#[serde(default, alias = "effort")] reasoning_effort`, and `api.rs` composed
+# the driver config with the same value under BOTH `effort` and
+# `reasoning_effort`. Serde then saw one field populated twice and refused the
+# whole config with `duplicate field \`reasoning_effort\``, before the dispatch
+# owned anything.
+#
+# A behavioural replay would mean a real hermes acp-stdio dispatch, i.e. a real
+# provider and real spend, to observe a failure that is pure local
+# deserialization. So the proof drives the production validation path directly —
+# `driver_for_mode_harness(mode, harness).validate(config)`, the same call
+# `api.rs` makes before it commits a run — with the config `api.rs` composes.
+#
+# The injection restores both halves: the alias on `HermesConfig`, and the
+# message-free 400.
+
+exit: 101
+
+# Half one: the collision itself, on the pair that carried it, with serde's
+# verdict verbatim. `acp-stdio/claude`, `acp-stdio/codex` and
+# `acp-stdio/cursor-agent` are validated before hermes in the same loop and
+# pass — the alias was hermes's alone.
+contains: acp-stdio/hermes rejected the daemon's dual-key effort config: InvalidConfig("duplicate field `reasoning_effort`")
+contains: every_supported_pair_accepts_the_daemons_dual_key_effort_config
+
+# Half two: the 400 as it read pre-fix. The assertion prints the message it
+# rejected, so the pinned text IS the useless message.
+contains: driver_validate_400_carries_the_drivers_own_message
+contains: driver configuration is invalid
+
+# Exactly these two tests, in exactly these two binaries. A suite that collapses
+# wholesale is a different failure and has not reproduced this defect.
+contains: 2 targets failed:
+contains: `-p orgasmic-daemon --lib`
+contains: `-p orgasmic-drivers --lib`

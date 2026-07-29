@@ -179,12 +179,15 @@ struct ClaudeAcpConfig {
     model: Option<String>,
     /// Reasoning effort, forwarded as `claude --effort <level>`.
     ///
-    /// Deliberately NOT `alias = "effort"`. The daemon writes the value under
-    /// BOTH keys (`api.rs`: `"effort"` and `"reasoning_effort"`), so an alias
-    /// makes serde see one field twice and the whole dispatch fails with
-    /// "driver configuration is invalid" — a 400 that names nothing useful.
-    /// Hermes carries that alias today and is presumably broken the same way
-    /// whenever an effort is set; filed separately.
+    /// Deliberately NOT `alias = "effort"`. The daemon used to write the value
+    /// under BOTH keys (`api.rs`: `"effort"` and `"reasoning_effort"`), so an
+    /// alias made serde see one field twice and the whole dispatch failed with
+    /// "driver configuration is invalid" — a 400 that named nothing useful.
+    /// Hermes carried that alias and reproduced it exactly; TASK-4YC8E dropped
+    /// the alias there and collapsed the write to one key. The alias stays out
+    /// of every adapter, and `lib.rs` has a registry-wide test that replays the
+    /// dual-key config against all supported pairs.
+    // orgasmic:TASK-4YC8E
     #[serde(default)]
     reasoning_effort: Option<String>,
     #[serde(default)]

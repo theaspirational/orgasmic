@@ -329,4 +329,42 @@ mod tests {
         assert!(driver_for_mode_harness("unknown", "claude").is_none());
         assert!(driver_for_mode_harness("tmux", "unknown").is_none());
     }
+
+    /// The daemon writes the chosen reasoning effort under BOTH `effort` and
+    /// `reasoning_effort` in one driver config (`api.rs`, dispatch spawn and
+    /// manager launch). Any adapter that declares `#[serde(alias = "effort")]`
+    /// on its `reasoning_effort` field therefore sees one field twice, serde
+    /// fails with `duplicate field`, and the whole dispatch dies on a 400 that
+    /// names nothing. TASK-4YC8E; claude carried the same alias and reproduced
+    /// it exactly.
+    ///
+    /// This is the production validation path: `driver_for_mode_harness(..)
+    /// .validate(..)` is what `api.rs` calls before it commits a run.
+    #[test]
+    fn every_supported_pair_accepts_the_daemons_dual_key_effort_config() {
+        for &(mode, harness) in SUPPORTED {
+            let driver = driver_for_mode_harness(mode, harness).expect("known mode/harness");
+            // The dispatch-spawn config verbatim, minus the keys that vary per
+            // run. Both effort keys carry the same value, as the daemon writes
+            // them.
+            let config = DriverConfig::from_value(serde_json::json!({
+                "transport": mode,
+                "harness": harness,
+                "endpoint": "",
+                "provider": serde_json::Value::Null,
+                "model": "some-model",
+                "effort": "high",
+                "reasoning_effort": "high",
+                "harness_args": Vec::<String>::new(),
+                "command": "sh",
+                "args": ["-lc", "echo hi"],
+                "auto_start_turn": false,
+            }));
+            assert!(
+                driver.validate(&config).is_ok(),
+                "{mode}/{harness} rejected the daemon's dual-key effort config: {:?}",
+                driver.validate(&config).unwrap_err()
+            );
+        }
+    }
 }
