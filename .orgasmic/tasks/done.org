@@ -18835,3 +18835,41 @@ guard TASK-Z3093 established (`orgasmic_drivers::modes::rmux::test_tooling`).
   daemon on the production release path; this is a test fixture's own process
   tree and involves no rmux at all.
 
+* DONE TASK-7QM8M Bound the bytes boot auto-reattach reads per session file :daemon:boot:performance:
+:PROPERTIES:
+:ID: TASK-7QM8M
+:PRIORITY: P1
+:END:
+
+Boot auto-reattach reads every session file whole. It calls
+=read_session_file= -> =std::fs::read_to_string=, so a project with large TUI
+transcripts pays their full size at every daemon start. This is the same
+unbounded read TASK-KWSTJ removed from =GET /api/runs=, still present on the
+boot path; measured there, a 2.4 GB board cost 24.7 s and the bounded scanner
+reduced it to 28 MB inspected.
+
+TASK-KKGKM moved this scan after bind and onto a blocking thread, so it can no
+longer stop the daemon serving, and it is no longer on the critical path. What
+remains is cost and latency: reattachment of the operator's live manager
+terminal is delayed by however long the read takes.
+
+=boot_reattach_candidate= consumes only lifecycle-class events — acquire,
+run_meta, release, the terminal driver event, and the external-registration
+marker — which is exactly what =scan_session_lifecycle= retains, so the
+substitution should be direct.
+
+One correctness subtlety must be handled explicitly rather than assumed. The
+function calls =latest_run_segment=, which picks the newest contiguous run
+segment by run_id. On a truncated scan the prefix may hold one segment's
+acquire while the tail holds a later segment's end, so the two windows can
+describe different runs. =classify_session_files= already guards this with
+=scan.final_envelope_retained= before trusting =release_outcome=; reattach needs
+an equivalent rule. Getting it wrong means a live run is silently not
+reattached, which looks like the run vanished.
+
+Acceptance:
+- boot reattach inspects bounded bytes per session file, not file size
+- a truncated scan cannot combine two run segments into one candidate
+- a still-live run in a multi-segment session file is still reattached
+- measured against a production-shaped board, as TASK-KWSTJ was
+
