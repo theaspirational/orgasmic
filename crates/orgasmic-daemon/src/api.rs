@@ -16821,7 +16821,8 @@ pub(crate) mod tests {
     use futures::{SinkExt as _, StreamExt as _};
     use orgasmic_drivers::{
         modes::rmux::test_tooling::{
-            live_session_guard, rmux_session_names, skip_test_if_missing, test_environment_lock,
+            live_session_guard, rmux_session_names, shared_rmux_session_names,
+            skip_test_if_missing, test_environment_lock, LiveSessionGuard,
         },
         HarnessEventAdapter,
     };
@@ -29852,6 +29853,49 @@ pub(crate) mod tests {
         orgasmic_drivers::modes::rmux::probe_rmux_binary().found
     }
 
+    // orgasmic:task_SZJ2B
+    /// The isolation every artifact-generation test takes before it drives a
+    /// real `Supervisor::acquire`, and the reason the family is safe to run on
+    /// a machine that is also hosting live dispatch.
+    ///
+    /// These tests launch the production rmux path with a production run id, so
+    /// what they create is a session named exactly like a dispatched worker's:
+    /// `orgasmic-rmux-run-<...>`. Unpinned, that session lands on whichever
+    /// server the environment selects — inside an orgasmic worker, the server
+    /// hosting live dispatch panes, where the manager reaped one such orphan on
+    /// 2026-07-29. `own_rmux_server_for_tests` moves the whole family onto a
+    /// server this test process started, so nothing it creates can reach the
+    /// shared one.
+    ///
+    /// It also closes the registration window, which the owned server alone
+    /// does not: `live_guard.owns(&run_id)` can only run *after* the awaited
+    /// call that already created the session, so an `Err` (the `.expect` panics
+    /// with the id unknown to the guard) or a cancelled future leaks it.
+    /// `owns_runs_on` needs no run id and goes in first.
+    ///
+    /// Call it immediately after `live_session_guard()` and hold the returned
+    /// value for the whole test: it carries the environment lock, and the lock
+    /// order in this workspace is flock-then-environment. The lock is not
+    /// reentrant — a test that also wants a [`TestEnvGuard`] must not take both.
+    #[cfg(unix)]
+    async fn claim_owned_rmux_endpoint(
+        live_guard: &LiveSessionGuard,
+    ) -> tokio::sync::MutexGuard<'static, ()> {
+        let environment = test_environment_lock().lock().await;
+        let server = orgasmic_drivers::modes::rmux::test_tooling::own_rmux_server_for_tests();
+        live_guard.owns_runs_on(server);
+        environment
+    }
+
+    /// No socket-root override exists off unix, so there is no owned server to
+    /// claim; the family runs against whatever endpoint the SDK resolves.
+    #[cfg(not(unix))]
+    async fn claim_owned_rmux_endpoint(
+        _live_guard: &LiveSessionGuard,
+    ) -> tokio::sync::MutexGuard<'static, ()> {
+        test_environment_lock().lock().await
+    }
+
     /// Like `seed_test_artifactor_harness` but the harness sleeps before showing
     /// its composer prompt so an immediate followup hits the busy gate.
     fn seed_busy_artifactor_harness(_home: &Home) -> Vec<String> {
@@ -29861,6 +29905,58 @@ pub(crate) mod tests {
                 .to_string(),
             "artifact-busy".into(),
         ]
+    }
+
+    // orgasmic:task_SZJ2B
+    /// The durable half of TASK-SZJ2B: a thirteenth artifact-generation test
+    /// cannot be added without the isolation the twelve now take.
+    ///
+    /// A source scan and not a runtime check because the failure it guards is
+    /// invisible at runtime on the machine that matters: an unpinned test
+    /// *passes*, and the only trace is a production-named session left on the
+    /// server hosting live dispatch panes. Needles are assembled from fragments
+    /// so this test does not match its own source (the
+    /// `start_recovery_run_never_uses_placeholder_shell` convention).
+    #[test]
+    fn every_artifact_generation_test_claims_the_owned_rmux_endpoint() {
+        let source = include_str!("api.rs");
+        let seeds = [
+            ["seed_test", "artifactor_harness("].join("_"),
+            ["seed_busy", "artifactor_harness("].join("_"),
+        ];
+        let claim = ["claim_owned", "rmux_endpoint(&live_guard)"].join("_");
+
+        const HEAD: &str = "\n    async fn ";
+        let mut checked = Vec::new();
+        for (offset, _) in source.match_indices(HEAD) {
+            let body_start = offset + HEAD.len();
+            let name = source[body_start..]
+                .split('(')
+                .next()
+                .unwrap_or_default()
+                .to_string();
+            let body_end = source[body_start..]
+                .find("\n    }\n")
+                .map_or(source.len(), |end| body_start + end);
+            let body = &source[body_start..body_end];
+            let Some(seed_at) = seeds.iter().filter_map(|seed| body.find(seed)).min() else {
+                continue;
+            };
+            assert!(
+                body.find(&claim).is_some_and(|claim_at| claim_at < seed_at),
+                "{name} drives a real rmux run without first claiming the process-owned \
+                 endpoint: it creates a production-named orgasmic-rmux-run-* session on the \
+                 SHARED rmux server, the one hosting live dispatch panes"
+            );
+            checked.push(name);
+        }
+
+        assert!(
+            checked.len() >= 12,
+            "the artifact-generation family scan found only {} tests ({checked:?}); \
+             the scan has stopped matching and is no longer guarding anything",
+            checked.len()
+        );
     }
 
     #[test]
@@ -30126,6 +30222,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -30190,6 +30287,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_generate_with_empty_nodes_succeeds_end_to_end() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -30255,6 +30353,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_generate_empty_nodes_excluded_from_node_rollups() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -30359,6 +30458,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_on_nodeless_artifact_succeeds() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -30417,6 +30517,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_reuses_live_run_id() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "post_artifact_regenerate_hot_path_reuses_live_run_id",
             &[("rmux", rmux_available_for_test())],
@@ -30626,6 +30727,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "post_artifact_regenerate_hot_path_rejects_busy_harness_without_mutation",
             &[("rmux", rmux_available_for_test())],
@@ -30786,6 +30888,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_cold_spawns_after_forgotten_run() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "post_artifact_regenerate_cold_spawns_after_forgotten_run",
             &[("rmux", rmux_available_for_test())],
@@ -30924,6 +31027,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "post_artifact_regenerate_cold_empty_request_reuses_saved_launch_address",
             &[("rmux", rmux_available_for_test())],
@@ -31033,6 +31137,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "post_artifact_regenerate_cold_changed_address_replaces_whole_launch_record",
             &[("rmux", rmux_available_for_test())],
@@ -31185,6 +31290,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn launch_artifact_generation_persistence_failure_releases_run() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "launch_artifact_generation_persistence_failure_releases_run",
             &[("rmux", rmux_available_for_test())],
@@ -31288,6 +31394,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         if skip_test_if_missing(
             "artifact_release_watcher_reverts_to_submitted_at_current_version_mid_round",
             &[("rmux", rmux_available_for_test())],
@@ -31462,6 +31569,7 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn artifact_release_watcher_reverts_regenerating_state_when_run_ends_without_submit() {
         let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
         let tmp = tempfile::tempdir().unwrap();
         let home = Home::at(tmp.path().join("home"));
         home.ensure().unwrap();
@@ -31523,6 +31631,77 @@ pub(crate) mod tests {
             .join(format!("{}.org", Utc::now().format("%Y-%m")));
         let tx = std::fs::read_to_string(&tx_path).unwrap();
         assert!(tx.contains("artifact.generation.failed"));
+    }
+
+    // orgasmic:task_SZJ2B
+    /// The behavioural half: a real generate, bracketed by read-only listings
+    /// of the SHARED rmux server, proving the session it created went to the
+    /// owned server and nothing of this test's making reached the shared one.
+    ///
+    /// The bracket is filtered to this run's own id on purpose. A dispatched
+    /// worker really can start on the shared server while this runs — one was
+    /// live throughout the work that added this test — and a bare
+    /// before/after diff would call that a leak. Nothing here ever kills a
+    /// name it read from the shared listing.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn artifact_generation_lands_no_session_on_the_shared_rmux_server() {
+        const TEST: &str = "artifact_generation_lands_no_session_on_the_shared_rmux_server";
+        let live_guard = live_session_guard();
+        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
+        if skip_test_if_missing(TEST, &[("rmux", rmux_available_for_test())]) {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("myproject");
+        seed_project(&home, &project_root, "test-proj");
+        let harness_args = seed_test_artifactor_harness(&home);
+        let state = direct_stage_test_state(home.clone()).await;
+
+        let shared_before = shared_rmux_session_names();
+        let resp = post_artifact_generate(
+            State(state.clone()),
+            Extension(Identity::Admin),
+            Query(artifact_query("test-proj")),
+            Json(ArtifactGenerateRequest {
+                nodes: vec!["TASK-PRE".to_string()],
+                prompt: "prove the session lands on the owned server".to_string(),
+                mode: "rmux".into(),
+                harness: "custom".into(),
+                harness_args: harness_args.clone(),
+                ..Default::default()
+            }),
+        )
+        .await
+        .expect("generate should succeed");
+        live_guard.owns(&resp.0.run_id);
+        let run_id = resp.0.run_id.clone();
+
+        let owned = orgasmic_drivers::modes::rmux::test_tooling::own_rmux_server_for_tests()
+            .session_names();
+        assert!(
+            owned.iter().any(|name| name.contains(&run_id)),
+            "the run's session must be live on the owned rmux server; it holds {owned:?}"
+        );
+
+        let shared_after = shared_rmux_session_names();
+        let leaked = shared_after
+            .iter()
+            .filter(|name| name.contains(&run_id))
+            .collect::<Vec<_>>();
+        assert!(
+            leaked.is_empty(),
+            "artifact generation put {leaked:?} on the SHARED rmux server, which hosts live \
+             dispatch panes (it held {} session(s) before this test)",
+            shared_before.len()
+        );
+
+        let _ = state
+            .supervisor
+            .release(&resp.0.run_id, "test cleanup", ReleaseOutcome::Completed)
+            .await;
     }
 
     // ---- authorization wiring (arch_Z8CW2 / dec_KF2MR) ---------------------
