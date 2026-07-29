@@ -180,7 +180,10 @@ impl TxEntry {
             [only] => only,
             other => {
                 return Err(TxError::RoundTripLoss {
-                    detail: format!("composed entry parsed as {} entries, expected 1", other.len()),
+                    detail: format!(
+                        "composed entry parsed as {} entries, expected 1",
+                        other.len()
+                    ),
                 })
             }
         };
@@ -254,9 +257,15 @@ fn trimmed_properties(entry: &TxEntry) -> Vec<(String, String)> {
 // orgasmic:task_HQ970
 /// Name what the reader would not have given back. The refusal has to say
 /// which property was lost, not just that something was.
-fn describe_property_loss(submitted: &[(String, String)], read_back: &[(String, String)]) -> String {
+fn describe_property_loss(
+    submitted: &[(String, String)],
+    read_back: &[(String, String)],
+) -> String {
     for (key, value) in submitted {
-        if read_back.iter().any(|pair| pair == &(key.clone(), value.clone())) {
+        if read_back
+            .iter()
+            .any(|pair| pair == &(key.clone(), value.clone()))
+        {
             continue;
         }
         return match read_back.iter().find(|(got_key, _)| got_key == key) {
@@ -313,7 +322,11 @@ fn validate_property_value(key: &str, value: &str) -> Result<(), TxError> {
                     "value must be a single line, but it contains a {}. A tx entry is a \
                      property drawer and nothing else, so a newline ends the drawer and \
                      leaves the append-only ledger unparseable for every reader; {PROSE_HINT}.",
-                    if ch == '\n' { "line break" } else { "carriage return" }
+                    if ch == '\n' {
+                        "line break"
+                    } else {
+                        "carriage return"
+                    }
                 ),
             });
         }
@@ -688,7 +701,9 @@ mod tests {
         // line — but the reader keeps the first `:REASON:` and drops the
         // second, so the entry does not read back as written.
         let mut entry = sample_entry();
-        entry.extra.push(("REASON".into(), "a second reason".into()));
+        entry
+            .extra
+            .push(("REASON".into(), "a second reason".into()));
         entry.validate().unwrap();
         let err = entry.assert_round_trip().unwrap_err();
         assert!(matches!(err, TxError::RoundTripLoss { .. }), "{err:?}");

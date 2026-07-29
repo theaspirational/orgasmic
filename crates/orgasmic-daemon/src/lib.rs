@@ -757,25 +757,21 @@ async fn acquire_daemon_lock(
     // ceiling below runs out.
     let undeclared_deadline = std::time::Instant::now() + undeclared_holder_budget(opts);
     let mut last_probe = None::<std::time::Instant>;
-    let mut last_detail =
-        "the holder was never reachable for a health probe at all".to_string();
+    let mut last_detail = "the holder was never reachable for a health probe at all".to_string();
     let mut announced = false;
 
     loop {
         // The lock itself. This is the step the old code never took again, and
         // it is the only outcome anyone actually wants.
-        match open_and_try_lock_daemon(home)? {
-            Ok(file) => {
-                discard_stale_shutdown_marker(home);
-                if announced {
-                    info!(
-                        waited_ms = started.elapsed().as_millis() as u64,
-                        "the undeclared lock holder released; took the daemon instance lock"
-                    );
-                }
-                return Ok(Ok(file));
+        if let Ok(file) = open_and_try_lock_daemon(home)? {
+            discard_stale_shutdown_marker(home);
+            if announced {
+                info!(
+                    waited_ms = started.elapsed().as_millis() as u64,
+                    "the undeclared lock holder released; took the daemon instance lock"
+                );
             }
-            Err(_) => {}
+            return Ok(Ok(file));
         }
 
         // A departure record beats every other kind of evidence: the holder

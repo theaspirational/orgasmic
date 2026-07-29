@@ -638,7 +638,10 @@ mod append_round_trip {
         let err = append_base_body(&doc, Some("Evidence"), "TASK-001")
             .unwrap_err()
             .to_string();
-        assert!(err.contains("has no section") && err.contains("Description"), "{err}");
+        assert!(
+            err.contains("has no section") && err.contains("Description"),
+            "{err}"
+        );
     }
 }
 

@@ -1442,13 +1442,9 @@ mod tests {
         let healthy_drain = orgasmic_daemon::ShutdownBudgets::default().total() / TIME_SCALE;
 
         let gone_at = Instant::now() + healthy_drain;
-        let err = wait_until_unloaded(
-            || Instant::now() < gone_at,
-            OLD_LITERAL / TIME_SCALE,
-            poll,
-        )
-        .expect_err("the 5s literal must expire inside a healthy drain — that is the defect")
-        .to_string();
+        let err = wait_until_unloaded(|| Instant::now() < gone_at, OLD_LITERAL / TIME_SCALE, poll)
+            .expect_err("the 5s literal must expire inside a healthy drain — that is the defect")
+            .to_string();
         assert!(err.contains("timed out"), "{err}");
 
         let gone_at = Instant::now() + healthy_drain;

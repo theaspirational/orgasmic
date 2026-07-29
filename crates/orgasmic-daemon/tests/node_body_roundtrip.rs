@@ -526,9 +526,7 @@ async fn task_created_with_nested_headings_reads_back_whole() {
     let task_id = created["id"].as_str().expect("minted task id");
 
     let detail: serde_json::Value = client
-        .get(format!(
-            "{base}/api/projects/rtcreatetest/tasks/{task_id}"
-        ))
+        .get(format!("{base}/api/projects/rtcreatetest/tasks/{task_id}"))
         .bearer_auth(&token)
         .send()
         .await

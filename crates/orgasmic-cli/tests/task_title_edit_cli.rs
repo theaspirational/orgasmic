@@ -108,7 +108,8 @@ fn run_cli_json(
     args: &[&str],
 ) -> serde_json::Value {
     let stdout = run_cli(home, running, project_root, args);
-    serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("orgasmic {args:?} json: {e}\n{stdout}"))
+    serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("orgasmic {args:?} json: {e}\n{stdout}"))
 }
 
 fn repo_root() -> PathBuf {
@@ -160,9 +161,12 @@ fn wait_for_project_loaded(
 /// The one heading line carrying `task_id`, read straight off disk. The
 /// assertions below are about the *line*, not the daemon's view of it.
 fn heading_line(project_root: &Path, stage_file: &str, task_id: &str) -> String {
-    let path = project_root.join(".orgasmic").join("tasks").join(stage_file);
-    let text = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+    let path = project_root
+        .join(".orgasmic")
+        .join("tasks")
+        .join(stage_file);
+    let text =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     text.lines()
         .find(|line| line.starts_with('*') && line.contains(task_id))
         .unwrap_or_else(|| panic!("no heading for {task_id} in {}\n{text}", path.display()))
@@ -174,7 +178,10 @@ fn heading_line(project_root: &Path, stage_file: &str, task_id: &str) -> String 
 /// evidence a reviewer wants is the artifact itself rather than a summary of
 /// assertions that passed.
 fn heading_subtree(project_root: &Path, stage_file: &str, task_id: &str) -> String {
-    let path = project_root.join(".orgasmic").join("tasks").join(stage_file);
+    let path = project_root
+        .join(".orgasmic")
+        .join("tasks")
+        .join(stage_file);
     let text =
         std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let mut out = String::new();

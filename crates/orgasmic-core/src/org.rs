@@ -1419,12 +1419,14 @@ impl OrgRewriter {
     ) -> Result<(), OrgError> {
         let after_text = self.current_text();
         let stored = match OrgFile::parse(&after_text, &self.file_name) {
-            Ok(view) => view.find_by_id(heading_id).and_then(|heading| match target {
-                BodyTarget::Node => Some(view.slice(heading.body.clone()).trim().to_string()),
-                BodyTarget::Section(title) => heading
-                    .section(title)
-                    .map(|section| view.slice(section.body.clone()).trim().to_string()),
-            }),
+            Ok(view) => view
+                .find_by_id(heading_id)
+                .and_then(|heading| match target {
+                    BodyTarget::Node => Some(view.slice(heading.body.clone()).trim().to_string()),
+                    BodyTarget::Section(title) => heading
+                        .section(title)
+                        .map(|section| view.slice(section.body.clone()).trim().to_string()),
+                }),
             Err(_) => None,
         };
         let expected = submitted.trim();
@@ -2081,10 +2083,7 @@ Body.
         let found = body_heading_lines(payload);
         assert_eq!(
             found,
-            vec![
-                (2, "** The gap".to_string()),
-                (7, "*** Deeper".to_string()),
-            ],
+            vec![(2, "** The gap".to_string()), (7, "*** Deeper".to_string()),],
             "only column-0 headings outside blocks count"
         );
         assert!(body_heading_lines("Plain prose.\n=== Section\nMore.\n").is_empty());

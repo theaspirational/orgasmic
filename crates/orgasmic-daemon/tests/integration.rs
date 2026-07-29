@@ -3395,7 +3395,11 @@ async fn run_recover_abandon_is_reachable_over_the_wire() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status().as_u16(), 404, "abandon must reach the handler");
+    assert_eq!(
+        resp.status().as_u16(),
+        404,
+        "abandon must reach the handler"
+    );
     let body: serde_json::Value = resp.json().await.unwrap();
     let error = body["error"].as_str().unwrap_or_default();
     assert!(
