@@ -798,38 +798,39 @@ SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tes
 
 LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
 
-* IN_PROGRESS TASK-WKJX4 Format the tree (17 hunks, 9 files) in a no-live-worker window; unblocks marking the CI fmt job required
+* IN_PROGRESS TASK-FZB6T P1 compact run catalog and bounded semantic session retention :storage:recovery:sessions:
 :PROPERTIES:
-:ID: TASK-WKJX4
+:DEPENDS_ON: TASK-KWSTJ
+:ID: TASK-FZB6T
+:PRIORITY: P1
+:END:
+
+Separate operational lifecycle inventory from transcript/evidence storage so run enumeration and daemon recovery scale with record count, not transcript bytes. This task follows the P0 wire repair and owns the durable shape rather than adding more per-request scans.
+
+Design and implementation:
+1. Maintain a compact per-run catalog entry containing identity, project/task/kind, driver/harness, verified native metadata reference, worktree authority state, lifecycle classification, terminal outcome/time, and replacement/claim link. Update it through the existing session writer/supervisor boundary; rebuild legacy entries once with bounded prefix/tail parsing and cache them by file identity.
+2. `/api/runs` serves actionable live/recoverable records plus a bounded recent terminal window from the catalog. Older terminal history is paged or queried explicitly; it is never reclassified on every poll. Missing/pruned worktrees become a stable tombstoned authority state, not an eternal ambiguous attach candidate.
+3. Lock future storage: rendered tmux/rmux redraw or scrollback events remain forbidden; add a regression proving a long TUI session does not grow orgasmic JSONL from screen repaint traffic. For structured ACP/subprocess events, retain lifecycle and compact semantic tool/progress events needed for recovery and retrospective analysis, but cap individual text/tool-result/thinking payloads and replace overflow with digest, byte count, and source reference. Never copy harness-native JSONL automatically.
+4. Add `run history inspect` and an explicit dry-run-first maintenance command to compact or archive legacy rendered-TUI payloads. It must report files/bytes by driver+harness+event class, preserve lifecycle/native correlation, write recoverably, and require explicit operator confirmation before deletion or irreversible compaction. No automatic cleanup of existing 2.239 GiB.
+5. Define default retention by authority: lifecycle/catalog kept; compact semantic events retained within a documented budget; derived retro evidence cache is disposable; vendor-native history remains vendor-owned.
+
+Acceptance: inventory latency and boot reconciliation are independent of payload bytes after the one-time legacy index; 197-file production-shaped history yields the same actionable classifications before/after catalog migration; current TUI generates zero persisted redraw chunks; ACP/tool evidence remains sufficient to count calls/results/retries/latencies while oversized outputs are bounded; dry run exactly accounts for reclaimable legacy bytes and changes nothing. Include migration rollback and corruption tests.
+** Notes
+Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls for already exists as `orgasmic_core::scan_session_lifecycle` (prefix/tail byte window, transcript lines rejected from raw bytes without parsing, `truncated` and `final_envelope_retained` flags for conservative classification). Measured on the real 198-file / 2.239 GiB board: 26.67 MiB inspected in 95.3 ms versus 3.08 s for a full read. The durable catalog can be built by caching that scan's result by file identity rather than by inventing a second reader. `InventoryStageMetrics` on `GET /api/runs` gives the before/after signal for the catalog work.
+
+* IN_PROGRESS TASK-RB1ZN Split release_one's overloaded RunNotFound: 'record gone' and 'release already running' are opposite states sharing one error
+:PROPERTIES:
+:ID: TASK-RB1ZN
 :PRIORITY: P2
 :END:
 
-From TASK-S2KM0 (2026-07-29): the tree has never had a fmt gate and is not
-rustfmt-clean — `cargo fmt --all --check` fails with 17 hunks across 9 files at
-e432632, all whitespace, no behaviour. The new CI lane's `fmt` job is therefore
-RED at HEAD by design (it prints the measured baseline and the remediation
-rather than shipping a silently-green gate), and the operator activation
-checklist requires formatting the tree BEFORE marking the job required.
+From TASK-VSWZT (2026-07-29): Supervisor::release_one answers RunNotFound both when the record is absent AND when it is present with explicit_release_in_progress/early_exit_release_taken set — the exact collapse behind the original 404-vs-live incident. VSWZT's abandon action un-collapses it at ITS layer (re-reads liveness on RunNotFound: 409 release-in-progress naming the HAREX budget vs a 404 that says the run carries its own tombstone), but post_run_release retains the original shape for up to one drain budget, and the structural TOCTOU close (liveness read under the supervisor lock with the action — the 1T3FZ close-guard pattern) needs a new SupervisorError::ReleaseInProgress variant. Deferred by VSWZT because supervisor.rs had a live worker. Ask: add the variant, map it to 409 at both release surfaces, and fold VSWZT's re-read into the lock where cheap. VSWZT's residual: its 409 branch is reasoned, not exercised — HAREX's StraySenderDriver harness can build the wedged-mid-release state; add that test here. Injection per TCTTD standard.
 
-S2KM0 deliberately did not bundle the reformat: 3 of the 17 hunks are in
-crates/orgasmic-daemon/src/api.rs, where another worker was live, and a
-whitespace reformat would have buried the reviewable lane diff.
+* IN_PROGRESS TASK-SZJ2B Artifact-generation tests create production-named sessions on the LIVE default rmux endpoint; an Err or cancellation leaks one
+:PROPERTIES:
+:ID: TASK-SZJ2B
+:PRIORITY: P2
+:END:
 
-=== Ask
-
-1. Run `cargo fmt --all`, commit the reformat as its own commit (nothing else
-   in it), after confirming no live worker holds api.rs/manager.rs/tmux.rs.
-2. Verify `cargo fmt --all --check` exits 0 and the suite still passes through
-   scripts/run-tests.sh.
-3. This unblocks activation step 1 of the CI lane (marking fmt required).
-
-=== Acceptance
-
-- `cargo fmt --all --check` exit 0.
-- The reformat commit contains zero non-whitespace changes (reviewed
-  mechanically, e.g. `git diff -w` is empty).
-- Timing note: coordinate with the manager for a no-live-worker window; a
-  reformat under an active worker's feet is the collision S2KM0 avoided.
-
-DRIFT UPDATE [2026-07-29]: the count keeps growing as merges land — latest measurements: 16 spots across 10 files (37TAF), 15/7 (QRTT8), 11 files (VSWZT). Multiple workers hand-reverted fmt churn this session. NEW ANGLE from 37TAF: cargo fmt --all is not idempotent against main on this toolchain (rustfmt 1.8.0 / rustc 1.94.x) — consider pinning rustfmt via rustfmt.toml or a toolchain file as PART of this task, so the sweep cannot immediately re-drift. Re-measure at execution time; coordinate with ZVZ4F (clippy debt) for one hygiene window.
+From TASK-BCYMM's §5 verdict (2026-07-29), the confirmed source of the orphan orgasmic-rmux-run-* session the manager reaped: 12 tests in api.rs (seed_test_artifactor_harness / seed_busy_artifactor_harness, mode rmux, 4 ungated) drive real Supervisor::acquire on the rmux driver against RmuxEndpoint::Default — the server hosting live dispatch panes. All 12 register live_guard.owns(&run_id), but only AFTER the awaited call that already created the session returns — so a handler Err (the .expect panics with the id unknown to the guard) or a cancelled/timed-out future leaks one production-named session onto the live server. The run-id shape (make_run_id output) is what proved the class. Fix: the owned-endpoint treatment — move the family onto a per-test/private RmuxEndpoint so nothing it creates can land on the default server (the 0RCRY-for-rmux move; check what RmuxEndpoint variants exist and what the rmux SDK needs for a private socket — the shim measurement says -L works for rmux). DO NOT take the snapshot-and-reap-the-difference shortcut: reap_owned_sessions_blocking's standing warning applies — a real dispatch's session is live on the same endpoint. Injection per TCTTD standard (natural red: a session appearing on the default endpoint during the family's run).
 

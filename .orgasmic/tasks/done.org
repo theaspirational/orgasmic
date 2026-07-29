@@ -18873,3 +18873,48 @@ Acceptance:
 - a still-live run in a multi-segment session file is still reattached
 - measured against a production-shaped board, as TASK-KWSTJ was
 
+* DONE TASK-WKJX4 Format the tree (17 hunks, 9 files) in a no-live-worker window; unblocks marking the CI fmt job required
+:PROPERTIES:
+:ID: TASK-WKJX4
+:PRIORITY: P2
+:END:
+
+From TASK-S2KM0 (2026-07-29): the tree has never had a fmt gate and is not
+rustfmt-clean — `cargo fmt --all --check` fails with 17 hunks across 9 files at
+e432632, all whitespace, no behaviour. The new CI lane's `fmt` job is therefore
+RED at HEAD by design (it prints the measured baseline and the remediation
+rather than shipping a silently-green gate), and the operator activation
+checklist requires formatting the tree BEFORE marking the job required.
+
+S2KM0 deliberately did not bundle the reformat: 3 of the 17 hunks are in
+crates/orgasmic-daemon/src/api.rs, where another worker was live, and a
+whitespace reformat would have buried the reviewable lane diff.
+
+=== Ask
+
+1. Run `cargo fmt --all`, commit the reformat as its own commit (nothing else
+   in it), after confirming no live worker holds api.rs/manager.rs/tmux.rs.
+2. Verify `cargo fmt --all --check` exits 0 and the suite still passes through
+   scripts/run-tests.sh.
+3. This unblocks activation step 1 of the CI lane (marking fmt required).
+
+=== Acceptance
+
+- `cargo fmt --all --check` exit 0.
+- The reformat commit contains zero non-whitespace changes (reviewed
+  mechanically, e.g. `git diff -w` is empty).
+- Timing note: coordinate with the manager for a no-live-worker window; a
+  reformat under an active worker's feet is the collision S2KM0 avoided.
+
+DRIFT UPDATE [2026-07-29]: the count keeps growing as merges land — latest measurements: 16 spots across 10 files (37TAF), 15/7 (QRTT8), 11 files (VSWZT). Multiple workers hand-reverted fmt churn this session. NEW ANGLE from 37TAF: cargo fmt --all is not idempotent against main on this toolchain (rustfmt 1.8.0 / rustc 1.94.x) — consider pinning rustfmt via rustfmt.toml or a toolchain file as PART of this task, so the sweep cannot immediately re-drift. Re-measure at execution time; coordinate with ZVZ4F (clippy debt) for one hygiene window.
+
+* DONE TASK-ZVZ4F clippy -D warnings is red on main: single_match (lib.rs:748, TZKAC) and doc_lazy_continuation (claude.rs:2877) tax every worker's lint gate
+:PROPERTIES:
+:ID: TASK-ZVZ4F
+:PRIORITY: P2
+:END:
+
+Two clippy warnings on merged main make cargo clippy --workspace --all-targets -D warnings fail for every worker, forcing per-worker allow-flag workarounds (TASK-KPMFK's report documents the incantation): clippy::single_match at crates/orgasmic-daemon/src/lib.rs:748 (landed with TASK-TZKAC 5c97409) and clippy::doc_lazy_continuation at crates/orgasmic-drivers/src/adapters/claude.rs:2877. Fix both (trivial), then run the workspace lint clean to confirm nothing else hides behind the early abort (-D warnings stops at the first crate, so the full surface has not been linted end-to-end since these landed). Coordinate with TASK-WKJX4 (the fmt window) — one no-live-worker hygiene window can land both.
+
+LINE SHIFT [2026-07-29, TASK-5P60H]: the single_match finding moved from lib.rs:748 to lib.rs:767 (5P60H's additions above it). Re-locate before fixing.
+

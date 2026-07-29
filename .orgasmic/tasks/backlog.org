@@ -47,26 +47,6 @@ Execute the child tasks independently in priority order. P0 restores and proves 
 
 Done only when the production-shaped wire regression completes inside its deadline, exact-run close/finalize do not enumerate history, run enumeration cost is independent of historical transcript bytes, default storage cannot recreate rendered-TUI growth, stale/missing records stop producing recurring warnings, and an explicit multi-run retro can analyze selected Claude sessions through derived bounded evidence.
 
-* BACKLOG TASK-FZB6T P1 compact run catalog and bounded semantic session retention    :storage:recovery:sessions:
-:PROPERTIES:
-:DEPENDS_ON: TASK-KWSTJ
-:ID: TASK-FZB6T
-:PRIORITY: P1
-:END:
-
-Separate operational lifecycle inventory from transcript/evidence storage so run enumeration and daemon recovery scale with record count, not transcript bytes. This task follows the P0 wire repair and owns the durable shape rather than adding more per-request scans.
-
-Design and implementation:
-1. Maintain a compact per-run catalog entry containing identity, project/task/kind, driver/harness, verified native metadata reference, worktree authority state, lifecycle classification, terminal outcome/time, and replacement/claim link. Update it through the existing session writer/supervisor boundary; rebuild legacy entries once with bounded prefix/tail parsing and cache them by file identity.
-2. `/api/runs` serves actionable live/recoverable records plus a bounded recent terminal window from the catalog. Older terminal history is paged or queried explicitly; it is never reclassified on every poll. Missing/pruned worktrees become a stable tombstoned authority state, not an eternal ambiguous attach candidate.
-3. Lock future storage: rendered tmux/rmux redraw or scrollback events remain forbidden; add a regression proving a long TUI session does not grow orgasmic JSONL from screen repaint traffic. For structured ACP/subprocess events, retain lifecycle and compact semantic tool/progress events needed for recovery and retrospective analysis, but cap individual text/tool-result/thinking payloads and replace overflow with digest, byte count, and source reference. Never copy harness-native JSONL automatically.
-4. Add `run history inspect` and an explicit dry-run-first maintenance command to compact or archive legacy rendered-TUI payloads. It must report files/bytes by driver+harness+event class, preserve lifecycle/native correlation, write recoverably, and require explicit operator confirmation before deletion or irreversible compaction. No automatic cleanup of existing 2.239 GiB.
-5. Define default retention by authority: lifecycle/catalog kept; compact semantic events retained within a documented budget; derived retro evidence cache is disposable; vendor-native history remains vendor-owned.
-
-Acceptance: inventory latency and boot reconciliation are independent of payload bytes after the one-time legacy index; 197-file production-shaped history yields the same actionable classifications before/after catalog migration; current TUI generates zero persisted redraw chunks; ACP/tool evidence remains sufficient to count calls/results/retries/latencies while oversized outputs are bounded; dry run exactly accounts for reclaimable legacy bytes and changes nothing. Include migration rollback and corruption tests.
-** Notes
-Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls for already exists as `orgasmic_core::scan_session_lifecycle` (prefix/tail byte window, transcript lines rejected from raw bytes without parsing, `truncated` and `final_envelope_retained` flags for conservative classification). Measured on the real 198-file / 2.239 GiB board: 26.67 MiB inspected in 95.3 ms versus 3.08 s for a full read. The durable catalog can be built by caching that scan's result by file identity rather than by inventing a second reader. `InventoryStageMetrics` on `GET /api/runs` gives the before/after signal for the catalog work.
-
 * BACKLOG TASK-VBSG2 Add explicit Claude evidence materialization and manual multi-run retro dispatch    :retro:claude:evidence:
 :PROPERTIES:
 :DEPENDS_ON: TASK-FZB6T
@@ -1454,24 +1434,6 @@ From TASK-K5NDR (2026-07-29): with the deny-by-default fixture merged, scripts/r
 
 From TASK-SVKPN's driver audit (2026-07-29): acp_ws.rs:277 (commands / ws.next() select) breaks on channel close and on release-done without draining the socket — the same break-without-drain shape SVKPN fixed in subprocess_stream_json and acp_stdio. Deliberately NOT fixed there: no child process, no SubprocessExitSummary, no empty-run_complete synthesis (the product harm SVKPN was about), and the release path closes the socket first — a fix would drain a just-closed socket on an unmeasured path. The loss, if any, is transcript events only. Measure before fixing: construct a fast-closing ws peer and check whether produced frames are lost; if yes, apply the SVKPN bounded-drain pattern (RELEASE_DRAIN_BUDGET derivation, drain after close-initiation, biased select inside the drain); if no, record the negative result and close.
 
-* BACKLOG TASK-RB1ZN Split release_one's overloaded RunNotFound: 'record gone' and 'release already running' are opposite states sharing one error
-:PROPERTIES:
-:ID: TASK-RB1ZN
-:PRIORITY: P2
-:END:
-
-From TASK-VSWZT (2026-07-29): Supervisor::release_one answers RunNotFound both when the record is absent AND when it is present with explicit_release_in_progress/early_exit_release_taken set — the exact collapse behind the original 404-vs-live incident. VSWZT's abandon action un-collapses it at ITS layer (re-reads liveness on RunNotFound: 409 release-in-progress naming the HAREX budget vs a 404 that says the run carries its own tombstone), but post_run_release retains the original shape for up to one drain budget, and the structural TOCTOU close (liveness read under the supervisor lock with the action — the 1T3FZ close-guard pattern) needs a new SupervisorError::ReleaseInProgress variant. Deferred by VSWZT because supervisor.rs had a live worker. Ask: add the variant, map it to 409 at both release surfaces, and fold VSWZT's re-read into the lock where cheap. VSWZT's residual: its 409 branch is reasoned, not exercised — HAREX's StraySenderDriver harness can build the wedged-mid-release state; add that test here. Injection per TCTTD standard.
-
-* BACKLOG TASK-ZVZ4F clippy -D warnings is red on main: single_match (lib.rs:748, TZKAC) and doc_lazy_continuation (claude.rs:2877) tax every worker's lint gate
-:PROPERTIES:
-:ID: TASK-ZVZ4F
-:PRIORITY: P2
-:END:
-
-Two clippy warnings on merged main make cargo clippy --workspace --all-targets -D warnings fail for every worker, forcing per-worker allow-flag workarounds (TASK-KPMFK's report documents the incantation): clippy::single_match at crates/orgasmic-daemon/src/lib.rs:748 (landed with TASK-TZKAC 5c97409) and clippy::doc_lazy_continuation at crates/orgasmic-drivers/src/adapters/claude.rs:2877. Fix both (trivial), then run the workspace lint clean to confirm nothing else hides behind the early abort (-D warnings stops at the first crate, so the full surface has not been linted end-to-end since these landed). Coordinate with TASK-WKJX4 (the fmt window) — one no-live-worker hygiene window can land both.
-
-LINE SHIFT [2026-07-29, TASK-5P60H]: the single_match finding moved from lib.rs:748 to lib.rs:767 (5P60H's additions above it). Re-locate before fixing.
-
 * BACKLOG TASK-EDPFN Abandon has no --reason: the tombstone names the judgment but cannot carry the operator's evidence
 :PROPERTIES:
 :ID: TASK-EDPFN
@@ -1519,14 +1481,6 @@ From TASK-NYF7Z (2026-07-29), a controlled negative result, not a closure: codex
 :END:
 
 From TASK-NYF7Z (2026-07-29): the acp claude path (NativeLogin arm, adapters/claude.rs:515-527) pushes --safe-mode --strict-mcp-config; the rmux path now pushes only --strict-mcp-config, deliberately (safe-mode's hooks/plugins/CLAUDE.md suppression was in-scope-refused, and CLAUDE.md discovery is actively wanted for TUI workers). That leaves an UNDOCUMENTED difference between two paths running the same personas. Either argue rmux should take --safe-mode too, or record at both push sites why the TUI path wants what the acp path suppresses. Documentation-plus-decision task; tiny code delta if any.
-
-* BACKLOG TASK-SZJ2B Artifact-generation tests create production-named sessions on the LIVE default rmux endpoint; an Err or cancellation leaks one
-:PROPERTIES:
-:ID: TASK-SZJ2B
-:PRIORITY: P2
-:END:
-
-From TASK-BCYMM's §5 verdict (2026-07-29), the confirmed source of the orphan orgasmic-rmux-run-* session the manager reaped: 12 tests in api.rs (seed_test_artifactor_harness / seed_busy_artifactor_harness, mode rmux, 4 ungated) drive real Supervisor::acquire on the rmux driver against RmuxEndpoint::Default — the server hosting live dispatch panes. All 12 register live_guard.owns(&run_id), but only AFTER the awaited call that already created the session returns — so a handler Err (the .expect panics with the id unknown to the guard) or a cancelled/timed-out future leaks one production-named session onto the live server. The run-id shape (make_run_id output) is what proved the class. Fix: the owned-endpoint treatment — move the family onto a per-test/private RmuxEndpoint so nothing it creates can land on the default server (the 0RCRY-for-rmux move; check what RmuxEndpoint variants exist and what the rmux SDK needs for a private socket — the shim measurement says -L works for rmux). DO NOT take the snapshot-and-reap-the-difference shortcut: reap_owned_sessions_blocking's standing warning applies — a real dispatch's session is live on the same endpoint. Injection per TCTTD standard (natural red: a session appearing on the default endpoint during the family's run).
 
 * BACKLOG TASK-KVRZ9 worker-server survives a group TERM: measure whether production's reap grace can return early with descendants still up
 :PROPERTIES:
