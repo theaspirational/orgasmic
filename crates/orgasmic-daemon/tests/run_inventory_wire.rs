@@ -257,12 +257,60 @@ struct WireResponse {
 /// deadline, recording when headers arrived and when the body reached EOF.
 /// `Connection: close` makes EOF the unambiguous end of the body.
 fn get_runs_over_wire(addr: std::net::SocketAddr, token: &str) -> WireResponse {
+    get_runs_over_wire_query(addr, token, "")
+}
+
+/// One authenticated GET over a raw socket, for any path.
+fn get_over_wire(addr: std::net::SocketAddr, token: &str, path: &str) -> WireResponse {
     let started = Instant::now();
     let mut stream = TcpStream::connect(addr).expect("connect daemon");
     stream.set_read_timeout(Some(HARD_DEADLINE)).unwrap();
     stream.set_write_timeout(Some(HARD_DEADLINE)).unwrap();
     let request = format!(
-        "GET /api/runs HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\nAccept: application/json\r\n\r\n"
+        "GET {path} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\nAccept: application/json\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).expect("send request");
+    stream.flush().unwrap();
+    let mut raw = Vec::new();
+    let mut chunk = [0_u8; 16 * 1024];
+    loop {
+        assert!(
+            started.elapsed() < HARD_DEADLINE,
+            "GET {path} exceeded the {HARD_DEADLINE:?} hard deadline after {} bytes",
+            raw.len()
+        );
+        let read = stream.read(&mut chunk).expect("read response");
+        if read == 0 {
+            break;
+        }
+        raw.extend_from_slice(&chunk[..read]);
+    }
+    let elapsed = started.elapsed();
+    let header_end = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("response headers must be complete");
+    let head = String::from_utf8_lossy(&raw[..header_end]).to_string();
+    let (status_line, headers) = head.split_once("\r\n").unwrap_or((head.as_str(), ""));
+    WireResponse {
+        status_line: status_line.to_string(),
+        headers: headers.to_string(),
+        time_to_headers: elapsed,
+        time_to_eof: elapsed,
+        body: raw[header_end + 4..].to_vec(),
+    }
+}
+
+/// orgasmic:TASK-FZB6T — `GET /api/runs` serves a BOUNDED recent-terminal
+/// window by default; `?terminal=all` is the explicit query for the whole
+/// history. Actionable buckets are never bounded either way.
+fn get_runs_over_wire_query(addr: std::net::SocketAddr, token: &str, query: &str) -> WireResponse {
+    let started = Instant::now();
+    let mut stream = TcpStream::connect(addr).expect("connect daemon");
+    stream.set_read_timeout(Some(HARD_DEADLINE)).unwrap();
+    stream.set_write_timeout(Some(HARD_DEADLINE)).unwrap();
+    let request = format!(
+        "GET /api/runs{query} HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\nAccept: application/json\r\n\r\n"
     );
     stream.write_all(request.as_bytes()).expect("send request");
     stream.flush().unwrap();
@@ -449,17 +497,35 @@ async fn runs_endpoint_completes_over_the_wire_with_a_hanging_worker_and_huge_tr
     let second_inspected = second_body["inventory"]["bytes_inspected"]
         .as_u64()
         .unwrap();
-    assert_eq!(
-        second_inspected, inspected,
-        "a second request must inspect exactly the same bounded byte window"
-    );
     let second_file_bytes = second_body["inventory"]["session_file_bytes"]
         .as_u64()
         .unwrap();
+    // orgasmic:TASK-FZB6T — this assertion used to be `second_inspected ==
+    // inspected`: repeated polling cost the same bounded window every time.
+    // The catalog makes the contract STRICTLY STRONGER — a record whose session
+    // file has not been written since it was indexed is answered from the
+    // catalog for zero bytes — so equality is now the wrong shape and would
+    // pass against a build that had lost the cache. The bound is stated as the
+    // ceiling it always was, plus what the second request must NOT do.
+    assert!(
+        second_inspected <= inspected,
+        "a second request must never inspect more than the first: \
+         {second_inspected} vs {inspected}"
+    );
     assert!(
         second_inspected <= ceiling && second_inspected * 10 < second_file_bytes,
         "inspected bytes must stay at the fixed per-record ceiling ({ceiling}), \
          far below the {second_file_bytes} transcript bytes on disk: {second_inspected}"
+    );
+    // The live/hanging records are still being written, so a poll may re-read
+    // those; the released ones never are. Either way the catalog answers most
+    // of the board from memory.
+    assert!(
+        second_body["inventory"]["catalog_cache_hits"]
+            .as_u64()
+            .unwrap()
+            > 0,
+        "a second request must answer at least some records from the catalog"
     );
 
     let _ = running.shutdown.send(());
@@ -511,10 +577,56 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
     .unwrap();
     let warm_body: Value = serde_json::from_slice(&warm.body).unwrap();
     assert_eq!(warm_body["inventory"]["session_files"], 200);
+    // orgasmic:TASK-FZB6T — every seeded record still CLASSIFIES terminal, but
+    // the default response no longer carries all 200: terminal history only
+    // grows and is never re-decided, so it is served as a bounded recent window
+    // with the full count alongside it. This assertion used to read the array
+    // length as the classification count; that conflated "how many records the
+    // daemon classified" with "how many it chose to send", which is exactly the
+    // response-size problem the window fixes.
     assert_eq!(
-        classification_ids(&warm_body, "terminal_noop").len(),
-        200,
+        warm_body["inventory"]["terminal_total"], 200,
         "every seeded record classifies terminal"
+    );
+    let default_window = classification_ids(&warm_body, "terminal_noop").len();
+    assert_eq!(
+        default_window, 50,
+        "the default response carries a bounded recent-terminal window"
+    );
+    assert_eq!(warm_body["inventory"]["terminal_returned"], 50);
+
+    // ...and the whole history is reachable by an explicit query, without
+    // reclassifying anything.
+    let all = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        move || get_runs_over_wire_query(addr, &token, "?terminal=all")
+    })
+    .await
+    .unwrap();
+    let all_body: Value = serde_json::from_slice(&all.body).unwrap();
+    assert_eq!(
+        classification_ids(&all_body, "terminal_noop").len(),
+        200,
+        "?terminal=all serves the whole terminal history"
+    );
+    // Paging reaches the same records in windows.
+    let page = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        move || get_runs_over_wire_query(addr, &token, "?terminal_limit=25&terminal_offset=50")
+    })
+    .await
+    .unwrap();
+    let page_body: Value = serde_json::from_slice(&page.body).unwrap();
+    let paged = classification_ids(&page_body, "terminal_noop");
+    assert_eq!(paged.len(), 25);
+    assert_eq!(page_body["inventory"]["terminal_total"], 200);
+    assert!(
+        paged
+            .iter()
+            .all(|id| !classification_ids(&warm_body, "terminal_noop").contains(id)),
+        "an offset page must not repeat the default window"
     );
 
     let measured = tokio::task::spawn_blocking({
@@ -542,6 +654,66 @@ async fn runs_endpoint_stays_bounded_across_two_hundred_records() {
         measured.time_to_eof,
         inventory["duration_ms"]
     );
+
+    // orgasmic:TASK-FZB6T item 4 — the maintenance accounting, over the same
+    // wire and against the same 200-record board. It is a separate route from
+    // the inventory precisely because it visits every byte of every session
+    // file, which `GET /api/runs` must never do; this is the production path
+    // proving it answers, reports by driver+harness and event class, and says
+    // it wrote nothing.
+    let history = tokio::task::spawn_blocking({
+        let token = token.clone();
+        let addr = running.addr;
+        move || get_over_wire(addr, &token, "/api/runs/history")
+    })
+    .await
+    .unwrap();
+    assert!(history.status_line.starts_with("HTTP/1.1 200"));
+    let history_body: Value = serde_json::from_slice(&history.body).expect("history body parses");
+    let report = &history_body["report"];
+    assert_eq!(report["dry_run"], true);
+    assert_eq!(report["session_files"], 200);
+    assert_eq!(report["unreadable_files"], 0);
+    let accounted = report["bytes_accounted"].as_u64().unwrap();
+    assert_eq!(
+        accounted, file_bytes,
+        "every byte on disk must land in exactly one event class"
+    );
+    let reclaimable = report["reclaimable_bytes"].as_u64().unwrap();
+    assert!(
+        reclaimable > 0 && reclaimable < accounted,
+        "reclaimable {reclaimable} of {accounted}: authority bytes are never reclaimable"
+    );
+    assert!(
+        report["reclaimable_by_driver"]["acp-stdio/claude"]
+            .as_u64()
+            .unwrap()
+            > 0,
+        "accounting is reported by driver+harness: {}",
+        report["reclaimable_by_driver"]
+    );
+    let buckets = report["buckets"].as_array().unwrap();
+    assert!(buckets
+        .iter()
+        .any(|b| b["event_class"] == "lifecycle" && b["reclaimable"] == false));
+    assert!(buckets
+        .iter()
+        .any(|b| b["event_class"] == "rendered_tui" && b["reclaimable"] == true));
+    assert!(report["retention"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(
+            |tier| tier["tier"] == "harness_native_history" && tier["authority"] == "vendor-owned"
+        ));
+
+    // ...and the board is byte-identical afterwards: the dry run changes nothing.
+    let after: u64 = std::fs::read_dir(project_root.join(".orgasmic/tmp/sessions"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.metadata().unwrap().len())
+        .sum();
+    assert_eq!(after, file_bytes, "the dry run must change nothing on disk");
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
