@@ -798,6 +798,14 @@ SIBLING WITH ITS OWN SIGNATURE [2026-07-29, TASK-J1XCB rounds]: `supervisor::tes
 
 LOAD-STARVATION SIGHTING [2026-07-29, TASK-K5NDR gate]: `dispatch_finalize_from_subprocess_stream_json_mode` (orgasmic-cli tests) — `daemon request timed out after 30s (1m load average 22.75)` with three workers live; green in isolation, green bare 20 min earlier, green alone at load 34. Pure client-starvation shape with the EP3H1 diagnostics naming it. Unowned; recurrence in a loaded gate classifies REAL. Route under this task's load-starvation family or spin off when the family gets its own task.
 
+* IN_PROGRESS TASK-RB1ZN Split release_one's overloaded RunNotFound: 'record gone' and 'release already running' are opposite states sharing one error
+:PROPERTIES:
+:ID: TASK-RB1ZN
+:PRIORITY: P2
+:END:
+
+From TASK-VSWZT (2026-07-29): Supervisor::release_one answers RunNotFound both when the record is absent AND when it is present with explicit_release_in_progress/early_exit_release_taken set — the exact collapse behind the original 404-vs-live incident. VSWZT's abandon action un-collapses it at ITS layer (re-reads liveness on RunNotFound: 409 release-in-progress naming the HAREX budget vs a 404 that says the run carries its own tombstone), but post_run_release retains the original shape for up to one drain budget, and the structural TOCTOU close (liveness read under the supervisor lock with the action — the 1T3FZ close-guard pattern) needs a new SupervisorError::ReleaseInProgress variant. Deferred by VSWZT because supervisor.rs had a live worker. Ask: add the variant, map it to 409 at both release surfaces, and fold VSWZT's re-read into the lock where cheap. VSWZT's residual: its 409 branch is reasoned, not exercised — HAREX's StraySenderDriver harness can build the wedged-mid-release state; add that test here. Injection per TCTTD standard.
+
 * IN_PROGRESS TASK-FZB6T P1 compact run catalog and bounded semantic session retention :storage:recovery:sessions:
 :PROPERTIES:
 :DEPENDS_ON: TASK-KWSTJ
@@ -825,12 +833,4 @@ Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls fo
 :END:
 
 From TASK-BCYMM's §5 verdict (2026-07-29), the confirmed source of the orphan orgasmic-rmux-run-* session the manager reaped: 12 tests in api.rs (seed_test_artifactor_harness / seed_busy_artifactor_harness, mode rmux, 4 ungated) drive real Supervisor::acquire on the rmux driver against RmuxEndpoint::Default — the server hosting live dispatch panes. All 12 register live_guard.owns(&run_id), but only AFTER the awaited call that already created the session returns — so a handler Err (the .expect panics with the id unknown to the guard) or a cancelled/timed-out future leaks one production-named session onto the live server. The run-id shape (make_run_id output) is what proved the class. Fix: the owned-endpoint treatment — move the family onto a per-test/private RmuxEndpoint so nothing it creates can land on the default server (the 0RCRY-for-rmux move; check what RmuxEndpoint variants exist and what the rmux SDK needs for a private socket — the shim measurement says -L works for rmux). DO NOT take the snapshot-and-reap-the-difference shortcut: reap_owned_sessions_blocking's standing warning applies — a real dispatch's session is live on the same endpoint. Injection per TCTTD standard (natural red: a session appearing on the default endpoint during the family's run).
-
-* IN_PROGRESS TASK-RB1ZN Split release_one's overloaded RunNotFound: 'record gone' and 'release already running' are opposite states sharing one error
-:PROPERTIES:
-:ID: TASK-RB1ZN
-:PRIORITY: P2
-:END:
-
-From TASK-VSWZT (2026-07-29): Supervisor::release_one answers RunNotFound both when the record is absent AND when it is present with explicit_release_in_progress/early_exit_release_taken set — the exact collapse behind the original 404-vs-live incident. VSWZT's abandon action un-collapses it at ITS layer (re-reads liveness on RunNotFound: 409 release-in-progress naming the HAREX budget vs a 404 that says the run carries its own tombstone), but post_run_release retains the original shape for up to one drain budget, and the structural TOCTOU close (liveness read under the supervisor lock with the action — the 1T3FZ close-guard pattern) needs a new SupervisorError::ReleaseInProgress variant. Deferred by VSWZT because supervisor.rs had a live worker. Ask: add the variant, map it to 409 at both release surfaces, and fold VSWZT's re-read into the lock where cheap. VSWZT's residual: its 409 branch is reasoned, not exercised — HAREX's StraySenderDriver harness can build the wedged-mid-release state; add that test here. Injection per TCTTD standard.
 
