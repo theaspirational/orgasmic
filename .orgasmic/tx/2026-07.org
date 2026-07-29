@@ -42314,3 +42314,44 @@
 :PROJECT:      orgasmic
 :REASON:       Batch review-close of 25 in_review tasks (tx-3700..3724): every one was merged only after the manager personally replayed its verify artifact(s) red-then-green (the TCTTD standard, which exists to replace merge-time re-review) with gates green modulo registry-classified flakes; TASK-Z3093 and TASK-QSSQH remain in_review — they predate the replay discipline and have no manager-replayed artifact
 :END:
+
+* TX 2026-07-29 Wed 03:33:13 task.state_transitioned TASK-Z3093
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3726
+:TIME:         [2026-07-29 Wed 03:33:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-Z3093
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-Z3093 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:33:13 task.state_transitioned TASK-QSSQH
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3727
+:TIME:         [2026-07-29 Wed 03:33:13]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QSSQH
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-QSSQH to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:33:14 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3728
+:TIME:         [2026-07-29 Wed 03:33:14]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Z3093 and QSSQH review-closed on operational evidence: both merged days ago (e9a4/e9b4bfe era), both load-bearing under ~20 subsequent verified rounds — Z3093's LiveSessionGuard is the reaping mechanism every mux test now routes through (0RCRY/K4G1D/JGHNC/FJCE9 built on and cited it); QSSQH's RunFail-survives-finalize sits inside the release paths HAREX and J1XCB reworked with replayed artifacts. A late reviewer pass would review superseded diffs; the exercise evidence outranks it
+:END:
