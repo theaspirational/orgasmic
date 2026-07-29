@@ -1,0 +1,18 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -1285,6 +1285,14 @@ impl Supervisor {
+     /// [`WORK_PROBE_TIMEOUT`]. The probe shells out, so it runs on the blocking
+     /// pool and never under the supervisor lock.
+     async fn observe_work_evidence(&self, target: WorkProbeTarget) -> WorkEvidence {
++        // TASK-JK66P injection: the pre-fix detector. There is no second
++        // channel — the stall clock's silence is the only thing the daemon
++        // consults, so a run whose pane went quiet while its tool subprocess
++        // builds is released on the absence of pane bytes alone, and the
++        // tombstone can name nothing because nothing was looked at.
++        if true {
++            return WorkEvidence::Unknown;
++        }
+         let probe = self.work_probe();
+         let observation = tokio::time::timeout(
+             WORK_PROBE_TIMEOUT,

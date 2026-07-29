@@ -1,0 +1,19 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection restores one line of the pre-fix drain: `last_progress_at` is
+# refreshed for EVERY drained event, variant-agnostically. That is the state
+# TASK-VZMZE measured and the state the crate's own test used to describe.
+exit: 101
+
+# THE INCIDENT. 118 heartbeats at 30s intervals against a 600s stall timeout:
+# the run cannot be released until the 4-hour `DEFAULT_MAX_RUN_DURATION`, having
+# made 0 tool calls, written 0 worktree bytes and consumed 6.77s of CPU in an
+# hour.
+contains: a run whose only traffic is heartbeats has produced no evidence of work and must stall on the normal schedule, not at max_run_duration
+
+# THE MECHANISM. One event, two clocks: pre-fix there is only one, so the
+# heartbeat that proves the harness is there also claims it is working.
+contains: a heartbeat must not refresh the work clock
+
+# Both, and only these two.
+contains: test result: FAILED. 0 passed; 2 failed

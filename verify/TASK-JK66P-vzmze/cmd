@@ -1,0 +1,10 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-JK66P --artifact verify/TASK-JK66P-vzmze`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build and drive a supervisor that must see neither.
+#
+# Two tests: the incident (a heartbeat-only run that will not die) and the
+# mechanism under it (one event, two clocks). The heartbeats arrive at a real
+# cadence against a compressed budget — 8 beats at 150ms against a 1s window,
+# the same 20:1 ratio as production's 30s beats against 600s.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- heartbeats_are_liveness_not_work_so_a_wedged_run_still_stalls a_heartbeat_refreshes_liveness_but_not_the_work_clock

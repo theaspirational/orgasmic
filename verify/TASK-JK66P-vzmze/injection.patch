@@ -1,0 +1,18 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -4653,7 +4653,13 @@ fn apply_driver_event_to_record(
+     terminal_outcome: Option<ReleaseOutcome>,
+ ) {
+     rec.last_driver_event_at = event_at;
+-    if driver_event_advances_stall_clock(evt) {
++    // TASK-VZMZE injection: the pre-fix drain, which refreshed the stall clock
++    // for EVERY drained event, variant-agnostically — the crate's own test used
++    // to say so. A heartbeat then means exactly what a tool call means, and a
++    // harness beating every 30 s can never trip a 600 s stall no matter how
++    // long it does nothing.
++    rec.last_progress_at = event_at;
++    if false && driver_event_advances_stall_clock(evt) {
+         rec.last_progress_at = event_at;
+     }
+     if let Some(outcome) = terminal_outcome {

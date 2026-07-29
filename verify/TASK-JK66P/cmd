@@ -1,0 +1,11 @@
+# One line. Run from the repo root by `orgasmic verify TASK-JK66P`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build and drive a supervisor that must see neither.
+#
+# Two tests, because MRJRK's incident has two observables and the injection
+# takes both: the healthy worker is released (the kill), and its tombstone says
+# only `stall_timeout_exceeded` (the operator, told nothing). Neither sits
+# through the production 600s window — both compress it to 1s through
+# `stall_timeout_secs`, the same field production resolves from
+# `DEFAULT_STALL_TIMEOUT`.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_silent_pane_with_live_work_under_it_is_never_stalled the_stall_reason_names_the_evidence_that_was_absent
