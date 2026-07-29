@@ -1,0 +1,26 @@
+# Pinned from the red run authored against the defect, 2026-07-28, before the
+# split existed.
+#
+# The worst line is the first one: `expect_err ... : ()`. The stop fence's probe
+# is best-effort — it swallows a failed query and returns Ok — so sourcing
+# liveness from the recovery inventory made it FAIL OPEN. A live manager
+# terminal, an unreadable board, and the fence permits the stop. The update
+# fence fails the other way: it propagates the inventory's own I/O failure in
+# place of a liveness verdict.
+exit: 101
+
+# Stop fence: a live manager run went unrefused because the inventory could not
+# be read. `()` is the Ok payload the fence returned instead of the refusal.
+contains: a live manager run must still be refused when history is unreadable: ()
+
+# Update fence: the refusal became someone else's I/O error.
+contains: refusal must name the live run, got: daemon returned 500 Internal Server Error
+
+# The recorded path is the structural proof, and pins the direction: the fence
+# asked the inventory. A rewrite that keeps the assertions but stops recording
+# paths cannot quietly pass this signature.
+contains: the fence must ask the live source and never the recovery inventory
+contains: left: ["/api/runs"]
+contains: right: ["/api/runs/live"]
+
+contains: test result: FAILED. 0 passed; 3 failed

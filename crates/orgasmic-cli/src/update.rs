@@ -433,10 +433,17 @@ fn preflight_daemon(home: &Home) -> Result<bool> {
     }
 }
 
+/// Refuse a runtime update while anything is running.
+///
+/// orgasmic:task_6HJYT — sourced from `/runs/live` (supervisor memory), not the
+/// recovery inventory at `/runs`. This is the fence with teeth: it blocks
+/// `orgasmic update` outright, so an inventory that cannot read the board's
+/// durable history used to turn a liveness verdict into an unrelated I/O
+/// failure.
 fn refuse_if_live_runs(home: &Home) -> Result<()> {
     let runtime = tokio::runtime::Runtime::new().context("create tokio runtime")?;
     let live = runtime.block_on(async {
-        let body: serde_json::Value = DaemonClient::from_home(home)?.get("/runs").await?;
+        let body: serde_json::Value = DaemonClient::from_home(home)?.get("/runs/live").await?;
         let live = body
             .get("live")
             .and_then(|live| live.as_array())
@@ -991,6 +998,57 @@ mod tests {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, contents).unwrap();
+    }
+
+    // orgasmic:task_6HJYT
+    /// The fence with teeth — it blocks `orgasmic update` — reads the live
+    /// source, so a board whose durable recovery history is unreadable still
+    /// refuses while a run is live. On the recovery inventory this refusal
+    /// propagated the inventory's own failure instead of the liveness verdict:
+    /// an update fenced (or not) by unrelated historical runs.
+    #[test]
+    fn update_fence_refuses_a_live_run_on_a_board_whose_session_history_is_unreadable() {
+        use crate::test_support::{env_guard, RecordingDaemon, ScopedEnv};
+
+        fn respond(path: &str) -> Option<(u16, String)> {
+            match path {
+                "/api/runs/live" => Some((
+                    200,
+                    r#"{"boot_id":"boot-fence","acquisition_paused":false,"live":[{"run_id":"run-update-live","task_id":"TASK-LIVE"}]}"#
+                        .to_string(),
+                )),
+                "/api/runs" => Some((
+                    500,
+                    r#"{"error":"read session dir: Permission denied (os error 13)"}"#.to_string(),
+                )),
+                _ => None,
+            }
+        }
+
+        let _env = env_guard();
+        let _scoped = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL", "ORGASMIC_DAEMON_TOKEN"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = RecordingDaemon::start(respond);
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        write(
+            &home.config(),
+            &format!("bind_host: 127.0.0.1\nbind_port: {}\n", daemon.port()),
+        );
+        write(&home.auth_token(), "fence-token\n");
+
+        let error = refuse_if_live_runs(&home)
+            .expect_err("a live run must still block update when history is unreadable");
+
+        assert!(
+            error.to_string().contains("run-update-live"),
+            "refusal must name the live run, got: {error}"
+        );
+        assert_eq!(
+            daemon.paths(),
+            vec!["/api/runs/live".to_string()],
+            "the update fence must ask the live source and never the recovery inventory"
+        );
     }
 
     #[cfg(unix)]

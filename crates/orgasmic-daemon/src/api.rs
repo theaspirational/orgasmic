@@ -625,7 +625,12 @@ pub fn router(state: ApiState) -> Router {
         .route("/ws", get(ws::handler))
         .route("/ws/tmux/:run_id", get(ws::tmux_handler))
         // Stubs — wired so callers can discover them; tracked tasks owned elsewhere.
-        .route("/runs", get(get_runs).post(stub("TASK-006")))
+        // `/runs` is the recovery inventory (whole-board session scan);
+        // `/runs/live` is the supervisor-local liveness answer every control
+        // path wants. Static wins over `:id` in the router, and no minted run
+        // id is the literal `live`.
+        .route("/runs", get(get_recovery_inventory).post(stub("TASK-006")))
+        .route("/runs/live", get(get_live_runs))
         .route("/runs/:id", get(get_run).post(stub("TASK-006")))
         .route(
             "/runs/:id/native-transcript",
@@ -6988,7 +6993,38 @@ async fn get_recovery(State(state): State<ApiState>) -> Json<RecoveryResponse> {
     Json(recovery_status(&state).await)
 }
 
-async fn get_runs(State(state): State<ApiState>) -> Json<Value> {
+/// The supervisor-local answer to "is anything running right now".
+///
+/// orgasmic:task_6HJYT — the same argument `get_run` already makes for exact
+/// id lookups, applied to the plural question. Live runs are held in
+/// supervisor memory with their identities; answering liveness through
+/// [`get_recovery_inventory`] made a control-path fence (daemon stop/restart,
+/// `orgasmic update`, `manager dispatch-close`) pay for classifying every
+/// historical run on the board, and — worse than the cost — made its verdict
+/// depend on unrelated durable history being readable at all.
+///
+/// This handler performs no session-file reads. It carries no classifications
+/// and no inventory metrics precisely so it cannot grow into a second run
+/// list: `live` here is [`SupervisorSnapshot::runs`] verbatim, the same value
+/// the inventory consumes for its own `live` bucket, so the two cannot drift.
+async fn get_live_runs(State(state): State<ApiState>) -> Json<Value> {
+    let live = state.supervisor.snapshot().await;
+    Json(json!({
+        "boot_id": state.boot.boot_id,
+        "acquisition_paused": live.acquisition_paused,
+        "live": live.runs,
+    }))
+}
+
+/// `GET /api/runs` — the crash-recovery inventory, not a general run list.
+///
+/// orgasmic:task_6HJYT — every bucket but `live` is classified by reading
+/// durable session JSONL across the whole board; that scan is the point of the
+/// endpoint and its cost. Callers that only want "what is running right now"
+/// belong on [`get_live_runs`]. The `live` bucket is retained here because the
+/// recovery view renders live and recoverable runs together, and it is the
+/// supervisor snapshot verbatim — never a second classification.
+async fn get_recovery_inventory(State(state): State<ApiState>) -> Json<Value> {
     let recovery = recovery_status(&state).await;
     Json(json!({
         "live": recovery.live_runs,

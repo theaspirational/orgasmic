@@ -344,6 +344,12 @@ pub(crate) fn refuse_if_live_manager(home: &Home) -> Result<()> {
 }
 
 /// Live `manager.launch:` run ids reported by the local daemon.
+///
+/// orgasmic:task_6HJYT — reads `/runs/live`, the supervisor-local liveness
+/// answer, never the recovery inventory at `/runs`. A fence on the stop path
+/// must not be able to fail — or, as it did, silently fail open — because
+/// unrelated historical session files on the board are large, slow, or
+/// unreadable.
 fn live_manager_runs(home: &Home) -> Result<Vec<String>> {
     let Some(base_url) = local_base_url(home)? else {
         return Ok(Vec::new());
@@ -356,18 +362,18 @@ fn live_manager_runs(home: &Home) -> Result<Vec<String>> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(5))
             .build()
-            .context("build daemon runs client")?;
+            .context("build daemon live-runs client")?;
         let body: serde_json::Value = client
-            .get(daemon_url(&base_url, "/runs"))
+            .get(daemon_url(&base_url, "/runs/live"))
             .bearer_auth(token)
             .send()
             .await
-            .context("query daemon runs")?
+            .context("query daemon live runs")?
             .error_for_status()
-            .context("daemon runs status")?
+            .context("daemon live runs status")?
             .json()
             .await
-            .context("parse daemon runs")?;
+            .context("parse daemon live runs")?;
         let runs = body
             .get("live")
             .and_then(|live| live.as_array())
@@ -1196,7 +1202,104 @@ mod tests {
     // (test_support) that daemon_client + doctor tests use, not a private lock —
     // a private mutex here doesn't exclude those modules' `ORGASMIC_DAEMON_URL`
     // reads, which flaked under `cargo test --workspace` (TASK-SJQ9V residual).
-    use crate::test_support::{env_guard, ScopedEnv};
+    use crate::test_support::{env_guard, RecordingDaemon, ScopedEnv};
+
+    /// A board whose durable recovery history cannot be read at all: the
+    /// inventory endpoint answers 500 the way it would if every session file
+    /// were unreadable or gone. The live source answers from supervisor memory
+    /// and is unaffected.
+    fn unreadable_board_with_live_manager(path: &str) -> Option<(u16, String)> {
+        match path {
+            "/api/runs/live" => Some((
+                200,
+                r#"{"boot_id":"boot-fence","acquisition_paused":false,"live":[{"run_id":"run-manager-live","task_id":"manager.launch:orgasmic"}]}"#
+                    .to_string(),
+            )),
+            "/api/runs" => Some((
+                500,
+                r#"{"error":"read session dir: Permission denied (os error 13)"}"#.to_string(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// The same unreadable board with nothing live: only historical records,
+    /// which the fence must not refuse on.
+    fn unreadable_board_with_no_live_runs(path: &str) -> Option<(u16, String)> {
+        match path {
+            "/api/runs/live" => Some((
+                200,
+                r#"{"boot_id":"boot-fence","acquisition_paused":false,"live":[]}"#.to_string(),
+            )),
+            "/api/runs" => Some((
+                500,
+                r#"{"error":"read session dir: Permission denied (os error 13)"}"#.to_string(),
+            )),
+            _ => None,
+        }
+    }
+
+    /// Home wired to `daemon`: config points at its port, token file present.
+    fn home_pointing_at(tmp: &std::path::Path, daemon: &RecordingDaemon) -> Home {
+        let home = Home::at(tmp.join("home"));
+        home.ensure().unwrap();
+        std::fs::write(
+            home.config(),
+            format!("bind_host: 127.0.0.1\nbind_port: {}\n", daemon.port()),
+        )
+        .unwrap();
+        std::fs::create_dir_all(home.auth_token().parent().unwrap()).unwrap();
+        std::fs::write(home.auth_token(), "fence-token\n").unwrap();
+        home
+    }
+
+    // orgasmic:task_6HJYT
+    /// The stop/restart fence answers from the live source, so a board whose
+    /// durable recovery history cannot be read at all still refuses correctly.
+    /// Sourcing it from the recovery inventory made this refusal depend on
+    /// unrelated historical runs being readable — a control-path check failing
+    /// open for reasons that belong to other runs.
+    #[test]
+    fn stop_fence_refuses_a_live_manager_on_a_board_whose_session_history_is_unreadable() {
+        let _env = env_guard();
+        let _scoped = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = RecordingDaemon::start(unreadable_board_with_live_manager);
+        let home = home_pointing_at(tmp.path(), &daemon);
+
+        let error = refuse_if_live_manager(&home)
+            .expect_err("a live manager run must still be refused when history is unreadable");
+
+        assert!(
+            error.to_string().contains("run-manager-live"),
+            "refusal must name the live manager run, got: {error}"
+        );
+        assert_eq!(
+            daemon.paths(),
+            vec!["/api/runs/live".to_string()],
+            "the fence must ask the live source and never the recovery inventory"
+        );
+    }
+
+    // orgasmic:task_6HJYT
+    /// …and still permits when only historical runs exist, again without
+    /// consulting the inventory.
+    #[test]
+    fn stop_fence_permits_when_only_historical_runs_exist() {
+        let _env = env_guard();
+        let _scoped = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon = RecordingDaemon::start(unreadable_board_with_no_live_runs);
+        let home = home_pointing_at(tmp.path(), &daemon);
+
+        refuse_if_live_manager(&home).expect("historical runs alone must not fence a stop");
+
+        assert_eq!(
+            daemon.paths(),
+            vec!["/api/runs/live".to_string()],
+            "the fence must ask the live source and never the recovery inventory"
+        );
+    }
 
     #[cfg(unix)]
     struct ChildGuard(std::process::Child);

@@ -12,7 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useEventStream } from '@/hooks/useEventStream';
-import { fetchRuns, isRunGoneError, postRunRelease } from '@/lib/api';
+import { fetchRecoveryInventory, isRunGoneError, postRunRelease } from '@/lib/api';
 import { useRunDock } from '@/lib/runDock';
 import { runTabTitle } from '@/lib/runLabels';
 import type { DaemonEvent, RecoveredRun, RunSummary } from '@/lib/types';
@@ -29,7 +29,7 @@ function recoveredTitle(run: RecoveredRun): string {
 
 export function RunningAgentsMenu({ projectId }: { projectId: string | null }) {
   const { openRun } = useRunDock();
-  const runs = useResource('rundock-running-agents', fetchRuns);
+  const runs = useResource('rundock-running-agents', fetchRecoveryInventory);
 
   const refresh = useCallback(() => {
     void runs.refresh();

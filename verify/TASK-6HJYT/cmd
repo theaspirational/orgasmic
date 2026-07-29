@@ -1,0 +1,9 @@
+# One line. Run from the repo root by `orgasmic verify TASK-6HJYT`.
+#
+# Both control-path fences, against a stubbed daemon that answers the liveness
+# question and refuses the recovery inventory — the board whose durable session
+# history cannot be read at all. The stub records every path it is asked for, so
+# the tests catch *which question the fence asks*, not merely the answer it
+# reaches: on a healthy board the two sources agree and are indistinguishable by
+# return value.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-cli --bin orgasmic fence
