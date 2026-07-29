@@ -16155,3 +16155,109 @@ labels to `compatibility_worker_id` so the rule cannot drift silently again.
 Related but distinct: TASK-STWVB (four daemon --lib tests that fail only under
 full-suite parallelism). This one fails deterministically, alone or not.
 
+* DONE TASK-VZMZE Heartbeats reset the stall timer, so a wedged run that never starts a turn is immortal for four hours :daemon:supervisor:dispatch:reliability:
+:PROPERTIES:
+:ID: TASK-VZMZE
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-daemon --lib
+:WRITE_SCOPE: crates/orgasmic-daemon/src/supervisor.rs
+:END:
+
+Measured 2026-07-26 on a real dispatch that produced nothing for 60 minutes and
+was never released by the daemon.
+
+THE ARITHMETIC
+- Heartbeats arrive every 30 s (observed: 118 of them, seq 0..115, exactly 30 s
+  apart).
+- `DEFAULT_STALL_TIMEOUT` is 600 s (supervisor.rs:65).
+- Stall is computed from `last_activity_at = rec.last_input_at.max(rec.last_driver_event_at)`
+  (supervisor.rs:3410) and the drain updates `last_driver_event_at` for EVERY
+  drained event, variant-agnostically. The crate's own test says so:
+  `heartbeat_is_non_terminal_so_drain_never_releases_on_it` — "The event drain
+  resets last_driver_event_at for every drained event (variant-agnostic)".
+
+So a harness that is alive and emitting heartbeats can never trip the 600 s stall
+timeout, no matter how long it does no work. The only backstop is
+`DEFAULT_MAX_RUN_DURATION` at 14_400 s — four hours of a billed session producing
+nothing before the daemon acts.
+
+THE OBSERVED RUN
+run-20260726T144430-aa47b867840f42f282b30d3469949731 (TASK-RRT4T implementer,
+acp-stdio / codex / gpt-5.6-sol / xhigh). Session event tally against the healthy
+run that preceded it on the same harness and model:
+
+| event       | TASK-2BPWM (healthy) | TASK-RRT4T (wedged) |
+|-------------|----------------------|---------------------|
+| ready       | 1                    | 1                   |
+| tool_call   | 243                  | 0                   |
+| tool_result | 135                  | 0                   |
+| text_chunk  | 211                  | 12 (all stderr logs)|
+| heartbeat   | 7                    | 118                 |
+| lifecycle   | 3                    | 2 (no terminal)     |
+
+It reached `ready`, never began a turn, wrote zero bytes into its worktree, and
+consumed 6.77 s of CPU in 60 minutes. Its 12 text chunks are all harness stderr:
+`codex_models_manager::cache: failed to load models cache: missing field
+'supports_reasoning_summaries' at line 88 column 5`, repeated `failed to renew
+cache TTL` with the same message, and three
+`rmcp::transport::worker: worker quit with fatal: Transport channel closed` for
+`http://localhost:8080/_agent-native/mcp`.
+
+WHY THIS MATTERS MORE THAN THE HARNESS BUG
+The harness fault may be transient — the reviewer run dispatched seven minutes
+later on the same binary and model worked fine. What is not transient is that the
+daemon could not tell the difference. A run with zero tool calls and 118
+heartbeats is, to the supervisor, exactly as healthy as one with 243 tool calls.
+
+The manager-dispatch convention already states the correct rule for humans:
+"A live PID alone is not proof of progress, and heartbeat-only/session-token
+activity must not reset the deadline." The supervisor does the opposite of what
+we tell managers to do. The manager's shell watcher caught this in 60 minutes
+because it was told to; the daemon would have taken four hours.
+
+FIX DIRECTION
+Distinguish liveness from progress. A heartbeat should keep the run from being
+declared dead, and should NOT count as progress against the stall timer. Track a
+separate `last_progress_at` advanced only by events that represent work —
+tool_call, tool_result, text_chunk from stdout, turn boundaries — and evaluate
+stall against that. Keep `last_driver_event_at` for liveness, since a harness
+that stops heartbeating is a different failure.
+
+Second, a run that reaches `ready` and never starts a turn deserves its own
+shorter deadline. "Started but never began work" is a distinct and much cheaper
+failure to detect than a mid-turn stall, and it is the one that keeps happening.
+
+Related: the handoff already records a run that stayed live ~40 minutes after its
+worker exited. Same family, and this is the mechanism.
+
+Acceptance:
+- a run emitting only heartbeats trips the stall timeout at the configured
+  threshold, not at max_run_duration
+- a heartbeat still prevents a "harness is gone" classification
+- a test asserts a heartbeat-only run is released, using fake time rather than a
+  600 s sleep
+- the reason recorded distinguishes "no progress" from "no liveness"
+
+CORRECTION, same session, before this task is worked. The harness stderr listed
+above is NOT the cause and must not be treated as a lead.
+
+The healthy TASK-2BPWM reviewer run, dispatched seven minutes after the wedged one
+on the same binary, model and effort, contains the SAME errors: 6 occurrences of
+`missing field 'supports_reasoning_summaries'` and the same 3
+`_agent-native/mcp` transport fatals. It then made 41 tool calls and finalized
+normally.
+
+So those messages are ambient noise on every codex run here, and the wedged run's
+cause is UNKNOWN. What is established is only this: it reached `ready`, never
+emitted a single tool_call or a turn, and the supervisor could not tell.
+
+That does not weaken this task. The defect filed here is the detection gap, which
+is proven from the code and the arithmetic (30 s heartbeats against a 600 s
+variant-agnostic stall timer), not from any theory about why the harness stalled.
+If anything the correction strengthens it: the trigger is unidentified and may
+recur at any time, so the daemon cannot rely on knowing the cause in advance.
+
+Worth filing separately if it happens again: a run that reaches `ready` and never
+starts a turn, with no explanation in its session events.
+HARD COMPATIBILITY GATE added 2026-07-27 by the TASK-RWCRN reviewer (finding 2, MEDIUM). TASK-RWCRN landed DriverEvent::PaneActivity, a content-free per-30s event emitted while an rmux pane writes; it is the ONLY driver event an rmux worker produces after ready, and the rmux stall clock now depends on it. This task's recorded fix direction — move stall onto a progress-only clock advanced by tool/text/turn events — will kill every rmux dispatch at 600s again if implemented literally, because a pane produces none of those. The RWCRN author deliberately did NOT reuse DriverEvent::Heartbeat precisely so this task can classify the two independently: Heartbeat means the harness produced no substantive output, PaneActivity means the pane demonstrably wrote. That reasoning is sound, but the only warning it left was a doc comment in orgasmic-core/src/session.rs, which is outside this task's declared supervisor.rs write scope and outside this task record — so an implementer routed here would never see it. Hence this note. REQUIRED ACCEPTANCE, both regressions, cross-transport: (a) an acp-stdio run emitting only heartbeats and no substantive progress MUST time out, which is this task's whole point; and (b) a working rmux run emitting only pane_activity MUST continue to reset its stall deadline and MUST NOT be released. Treat (b) as a gate, not a note. Related: TASK-RWCRN's own reviewer also filed a HIGH that pane_activity is line-based and misses a redrawing TUI; if that lands as a raw-byte observation the event may change shape, so re-read the variant before building on it.
+

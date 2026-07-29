@@ -2000,3 +2000,25 @@ it now fails DETERMINISTICALLY on merged HEAD 52b7554 with a different mode,
 and reproducing it identically. The addr-parse mode entry 4 describes is a
 different, load-dependent failure of the same test.
 
+* IN_REVIEW TASK-JK66P Stall detector kills healthy workers during long quiet tool calls — MRJRK's worker died running its final suite gate
+:PROPERTIES:
+:ID: TASK-JK66P
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 on dispatch-TASK-MRJRK-implementer-20260729T000911: pane_activity events flowed every ~30s until 00:41:22, then the worker launched scripts/run-tests.sh (output redirected to files per house rules, so the pane goes quiet), and at 00:51:22 — exactly 10 minutes of pane silence — the daemon emitted run_complete 'stall_timeout_exceeded' and released the run (finalized_by_worker: false). The worker was HEALTHY: its report.md was complete except the suite result it was killed while producing; its branch had all work committed and its verify artifact self-tested PASS. The manager salvaged by running the gate and closing manually.
+
+THE TENSION: this is the mirror image of TASK-VZMZE (heartbeats reset the stall timer so a wedged run is immortal). Here the detector has no heartbeat to see — the harness pane is static while a child process works — so quiet-but-healthy reads as stalled. TASK-HAREX's false-positive analysis named this exact profile ('sessions routinely go silent for 10+ minutes while cargo builds') for the RELEASE path; the STALL path has no equivalent protection.
+
+THE SIGNAL THAT EXISTS: the worker's tool subprocess (cargo/run-tests.sh) was alive the whole time — child-process liveness under the pane is observable. A pane-bytes-only stall clock conflates 'no output' with 'no work'.
+
+=== Ask
+1. Establish what the stall clock currently measures for rmux dispatches (pane bytes? harness heartbeats?) and its budget (~10min observed). Coordinate with VZMZE's analysis — one design should fix both directions: a wedged run must not be immortal, a working run must not be shot.
+2. Candidate signal: process-tree activity under the worker pane (child pids alive + consuming cpu), or harness-level tool-call-in-progress state, feeding the stall clock as evidence of work.
+3. Whatever ships: MRJRK's profile (10+ quiet minutes on the final suite gate) must survive, proven by test with a compressed budget; VZMZE's wedge must still die.
+
+=== Acceptance
+- A run whose pane is silent but whose tool subprocess is alive and consuming cpu is NOT stalled, proven with compressed budgets.
+- A run with no live work under it still stalls out on the existing schedule.
+- Injection per TCTTD standard, self-tested with orgasmic verify --artifact.
+
