@@ -82,20 +82,45 @@ fn seed_project(home: &Home, project_root: &Path, project_id: &str, task_id: &st
     );
 }
 
+/// The argv the stub answers a warm-up on. Not a `claude` subcommand, not a
+/// flag the adapter composes, and present in no production string — which is
+/// what lets the stub keep warm-ups out of the counted ledger without that
+/// exemption ever covering a real probe.
+const WARM_UP_ARGV: &str = "__orgasmic_warm_up";
+
+/// What the warm-up arm prints, so a stub that execs but cannot run its own
+/// script fails as a stub rather than as silence.
+const WARM_UP_ACK: &str = "orgasmic-warm-up ok";
+
 /// A `claude` that reports a live login and then behaves like the harness.
 ///
 /// It records every invocation, because the count is half the property: a
 /// dispatch must ask `claude auth status` once, before it owns anything, and
 /// never again.
+///
+/// It is also deliberately late on its very first exec, and warms itself past
+/// that lateness before the dispatch is made. See [`warm_up_stub`] — TASK-D1Z87.
 fn write_recording_claude_stub(dir: &Path) -> PathBuf {
     let log = dir.join("invocations.log");
+    let warmups = dir.join("warmups.log");
+    let late = dir.join("late-first-exec");
     let stub = dir.join("claude");
+    std::fs::write(&late, "").unwrap();
     std::fs::write(
         &stub,
         format!(
             r#"#!/bin/sh
+late=""
+if [ -f "{late}" ]; then rm -f "{late}"; late="1"; fi
+if [ "$1" = "{warm_up_argv}" ]; then
+  if [ -n "$late" ]; then sleep 6; fi
+  printf '%s\n' "$*" >> "{warmups}"
+  printf '%s\n' '{warm_up_ack}'
+  exit 0
+fi
 printf '%s\n' "$*" >> "{log}"
 if [ "$1" = "auth" ] && [ "$2" = "status" ]; then
+  if [ -n "$late" ]; then sleep 6; fi
   printf '%s\n' '{{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}}'
   exit 0
 fi
@@ -105,6 +130,10 @@ fi
 printf '%s\n' '{{"type":"system","subtype":"init","session_id":"stub-session","model":"stub-model","claude_code_version":"stub"}}'
 printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
 "#,
+            late = late.display(),
+            warm_up_argv = WARM_UP_ARGV,
+            warm_up_ack = WARM_UP_ACK,
+            warmups = warmups.display(),
             log = log.display()
         ),
     )
@@ -113,7 +142,63 @@ printf '%s\n' '{{"type":"result","subtype":"success","result":"stub complete"}}'
     let mut perms = std::fs::metadata(&stub).unwrap().permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&stub, perms).unwrap();
+    warm_up_stub(&stub, &log, &warmups);
     log
+}
+
+/// Pay the first-exec cost of a file written a millisecond ago, here, where
+/// there is no deadline to blow — and do it without being counted.
+///
+/// The preflight gives a harness five seconds to answer and treats silence as
+/// "could not ask", so every second this stub spends being *started* is a
+/// second of the test's premise draining away. Measured 2026-07-29 under a
+/// loaded workspace run (TASK-GEZHQ): a freshly written stub's first invocation
+/// never reached the first line of its own script inside the bound, while the
+/// identical file exec'd normally moments later.
+///
+/// TASK-GEZHQ's own warm-up asks the harness its real question one extra time.
+/// That is unavailable here, because this stub *remembers*: `auth status`
+/// appends to the ledger the assertion below counts, and asking it twice would
+/// turn "one auth status per dispatch" into a number the test manufactured. So
+/// the warm-up is a third argv the stub answers above the ledger, and the
+/// exemption cannot mask a double probe:
+///
+/// - It is keyed to an argv production cannot produce — every argv the daemon
+///   or adapter can compose still falls through to the `printf … >> log` line.
+/// - Nothing is un-recorded: warm-ups get their own ledger, and this function
+///   asserts the warm-up landed there and that the counted ledger is still
+///   empty before the dispatch is made.
+///
+/// The stub's answer is asserted, so a warm-up failure fails as a stub failure
+/// rather than as a mystified plan assertion two hundred lines below.
+fn warm_up_stub(stub: &Path, log: &Path, warmups: &Path) {
+    let output = std::process::Command::new(stub)
+        .arg(WARM_UP_ARGV)
+        .output()
+        .expect("the recording stub must be executable");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains(WARM_UP_ACK),
+        "the stub must run its own script before the preflight is asked to \
+         believe it: status {:?}, stdout {stdout:?}",
+        output.status.code()
+    );
+    assert_eq!(
+        std::fs::read_to_string(warmups)
+            .unwrap_or_default()
+            .lines()
+            .count(),
+        1,
+        "the warm-up must be recorded, in its own ledger — an un-recorded exec \
+         is one a double-probe regression could hide behind"
+    );
+    assert_eq!(
+        std::fs::read_to_string(log).unwrap_or_default(),
+        String::new(),
+        "the warm-up must not enter the ledger the one-auth-status-per-dispatch \
+         count is read from; if it does, that count is no longer a measurement \
+         of production"
+    );
 }
 
 fn session_lines(project_root: &Path) -> Vec<serde_json::Value> {

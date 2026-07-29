@@ -1,0 +1,8 @@
+# One line. Run from the repo root by `orgasmic verify TASK-D1Z87`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses.
+#
+# The member of the family that actually fired: TASK-GEZHQ's gate run 2 of 5,
+# `left: "native_login" / right: "bare_api_key"`. The load made the stub's first
+# exec late; the injection makes it late on purpose and takes the warm-up away,
+# so the mask is reproduced without replaying the load.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib adapters::claude::tests::the_launch_uses_the_credential_the_preflight_admitted -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events

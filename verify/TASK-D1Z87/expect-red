@@ -1,0 +1,19 @@
+# Pinned from the red run authored against the defect, 2026-07-29.
+#
+# Without the warm-up, the probe's own first attempt pays the late exec: it
+# reaches the stub's ledger, advances the scripted-answer counter, and is then
+# killed at STATUS_TIMEOUT before it can answer. TASK-GEZHQ-retry's second
+# attempt therefore reads the *next* answer — `loggedIn: true` — and the
+# dispatch is admitted on native login while a stale ambient key is the only
+# credential anybody chose.
+exit: 101
+
+# The credential-precedence mask, verbatim: this is what a probe timeout looks
+# like from the assertion's side, and why diagnosing it cost TASK-GEZHQ a gate.
+contains: left: "native_login"
+contains: right: "bare_api_key"
+contains: the_launch_uses_the_credential_the_preflight_admitted
+
+# It must be the mode assertion that falls, not compilation and not the stub
+# warm-up itself — the injection removes the warm-up rather than breaking it.
+contains: test result: FAILED. 0 passed; 1 failed
