@@ -555,3 +555,12 @@ gates: =ORGASMIC_ALLOW_MISSING_TOOLS=tmux scripts/run-tests.sh …= and let the
 NOT RUN manifest say what was waived. A genuine tmux arm needs the real binary
 resolved ahead of the shim (K4G1D's scratch-symlink recipe) — =tmux -V=
 through the shim lies.
+
+** rmux ignores $TMUX entirely — only -L steers it
+Measured by TASK-2GS7V (2026-07-29): with =TMUX= pointing at a private rmux
+socket and no =-L=, =rmux new-session= lands on the DEFAULT rmux server, not
+the one =$TMUX= names. The earlier entry ("=$TMUX= selects the socket") is
+true of the REAL tmux binary only. Consequence: a =$TMUX= pin can never steer
+the shim away from the live worker server — an unpinned call through the shim
+always reaches =/private/tmp/rmux-501/default=. The only safe isolation for
+anything that might resolve the shim is an explicit =-L= socket.
