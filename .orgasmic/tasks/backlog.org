@@ -1523,3 +1523,31 @@ MITIGATION until fixed (in use now): dispatch with --governance-json '{"stall_ti
 - VZMZE's wedge (idle process, no provider connection/no native-file progress) still dies on schedule.
 - The reason string keeps naming which evidence was consulted (JK66P's ask 4).
 - Injection per TCTTD, self-tested.
+
+* BACKLOG TASK-19K68 daemon_client renders every 409 with the node-write CONFLICT sentence — wrong subject for artifact/lease/recovery conflicts
+:PROPERTIES:
+:ID: TASK-19K68
+:PRIORITY: P3
+:SOURCE: TASK-RB1ZN
+:END:
+
+* BACKLOG TASK-ED54V UI isRunGoneError is 404-only: a 409 release conflict lands as a raw-JSON error toast instead of 'run is shutting down; retry'
+:PROPERTIES:
+:ID: TASK-ED54V
+:PRIORITY: P3
+:SOURCE: TASK-RB1ZN
+:END:
+
+* BACKLOG TASK-RRETJ StallableRmuxEndpoint pins RMUX_TMPDIR only: SDK half isolated, driver-spawned rmux CLI half reaches the live server inside a worker pane ($RMUX outranks RMUX_TMPDIR)
+:PROPERTIES:
+:ID: TASK-RRETJ
+:PRIORITY: P3
+:SOURCE: TASK-SZJ2B
+:END:
+
+* BACKLOG TASK-4H33V Pin every rmux-gated test workspace-wide to the owned rmux endpoint (supervisor::tests inherit isolation only when an artifact test ran first in-process)
+:PROPERTIES:
+:ID: TASK-4H33V
+:PRIORITY: P3
+:SOURCE: TASK-SZJ2B
+:END:
