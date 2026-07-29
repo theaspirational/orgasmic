@@ -1,0 +1,19 @@
+# One line. Run from the repo root by `orgasmic verify TASK-NYF7Z`.
+#
+# A pure argv assertion, and deliberately so. The defect is "the composed
+# rmux/claude command line carries no MCP-isolation flag", and `build_spawn_plan`
+# is the whole production path to it — the same function whose output the driver
+# hands to rmux. Proving it needs no rmux daemon, no pane and no harness process,
+# which matters twice over here: this proof gets replayed inside orgasmic workers
+# whose own live panes are hosted by the rmux server, and a proof must not touch
+# the thing it proves.
+#
+# The claude test only. The codex test next to it asserts an ABSENCE (codex-cli
+# has no counterpart flag), so it is green with or without the injection and
+# would say nothing about whether the defect reproduced.
+#
+# The `--skip` is mandatory for any drivers-suite replay: that suite carries the
+# billed harness test, and `orgasmic verify` refuses a cmd without it. The name
+# filter above already excludes it; the skip is the belt-and-braces the tool
+# requires.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-drivers --lib claude_argv_is_mcp_isolated_by_default_and_operator_supplied_wins -- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events
