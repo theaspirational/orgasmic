@@ -1,0 +1,85 @@
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -9245,64 +9245,8 @@
+     let envelopes = latest_run_segment(&scan.envelopes);
+     let first = envelopes.first()?;
+     let last = envelopes.last().unwrap_or(first);
+-    // orgasmic:TASK-7QM8M — a truncated scan read a prefix and a tail with an
+-    // unread gap between them, and two rules keep that gap from inventing a
+-    // candidate. Both are no-ops on a whole-file scan.
+-    if scan.truncated {
+-        // 1. The gap can hold this run's release AND a later run's acquire, so
+-        //    the newest RETAINED segment is not provably the newest segment on
+-        //    disk: pairing a prefix run's `Acquire`/`RunMeta` with the file's
+-        //    end would reattach a run that already released, and would do it
+-        //    under the wrong identity. The final line names the run that owns
+-        //    the end of the file even when that line was dropped as transcript
+-        //    — which is the normal shape for a live TUI run — so require it to
+-        //    be this segment's run. When it is not, the live run's own metadata
+-        //    sits in the gap and no candidate is provable from this file.
+-        if scan.final_line_run_id.as_deref() != Some(first.run_id.as_str()) {
+-            tracing::info!(
+-                session_path = %session_path.display(),
+-                segment_run_id = %first.run_id,
+-                final_line_run_id = ?scan.final_line_run_id,
+-                "boot reattach: truncated scan's newest retained segment does not \
+-                 own the end of the file; skipped rather than combined"
+-            );
+-            return None;
+-        }
+-        // 2. `latest_run_segment` segments on `run_id` alone, which cannot see
+-        //    a boundary the gap hides: a second-granularity manager file could
+-        //    append two runtimes under one run id, and combining the prefix
+-        //    runtime's acquire with the tail runtime's end is exactly the
+-        //    misattribution this scan must not introduce. `boot_id` is
+-        //    deliberately not part of this — a run reattached across daemon
+-        //    restarts keeps its runtime, and refusing on boot id would decline
+-        //    live runs for no evidence.
+-        if let Some(other) = envelopes
+-            .iter()
+-            .find(|envelope| envelope.runtime_id != first.runtime_id)
+-        {
+-            tracing::info!(
+-                session_path = %session_path.display(),
+-                run_id = %first.run_id,
+-                runtime_id = %first.runtime_id,
+-                other_runtime_id = %other.runtime_id,
+-                "boot reattach: truncated scan retained two runtimes under one run \
+-                 id; skipped rather than combined"
+-            );
+-            return None;
+-        }
+-    }
+-    // Skip terminal runs (mirrors the recovery classifier).
+-    //
+-    // orgasmic:TASK-7QM8M — only the file's genuine final envelope can prove a
+-    // terminal release, the same rule `classify_session_dir` applies. When the
+-    // scan dropped that line as transcript, the newest retained lifecycle line
+-    // is not the end of the run, and treating it as terminal would refuse to
+-    // reattach a run that is still writing.
+-    let release = scan
+-        .final_envelope_retained
+-        .then(|| release_outcome(last))
+-        .flatten();
+-    let terminal = match release {
++    // Skip terminal runs (mirrors the recovery classifier).
++    let terminal = match release_outcome(last) {
+         Some(ReleaseOutcome::Completed)
+         | Some(ReleaseOutcome::Failed)
+         | Some(ReleaseOutcome::Cancelled) => true,
+@@ -9498,8 +9442,14 @@
+                 );
+                 continue;
+             }
+-            let Ok(scan) = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT) else {
++            let Ok(envelopes) = read_session_file(&path) else {
+                 continue;
++            };
++            let scan = SessionLifecycleScan {
++                final_line_run_id: envelopes.last().map(|env| env.run_id.clone()),
++                final_envelope_retained: !envelopes.is_empty(),
++                envelopes,
++                ..SessionLifecycleScan::default()
+             };
+             session_files += 1;
+             session_file_bytes += scan.file_bytes;

@@ -1,0 +1,31 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection restores the pre-fix boot path exactly: `read_session_file`
+# (`fs::read_to_string` + a parse of every transcript line) in
+# `collect_boot_reattach_candidates`, and `boot_reattach_candidate` deciding
+# terminality straight off the newest retained envelope with no rule about what
+# the unread middle is allowed to imply.
+exit: 101
+
+# THE BOUND. The boot pass reads the whole file, so a torn line in the middle of
+# a live run's transcript — bytes it never needed — costs that run its
+# reattachment entirely: `read_session_file` errors, the file is skipped, and no
+# candidate exists. The bounded scan never reads those bytes.
+contains: the transcript bytes between the lifecycle head and the file's end
+
+# THE TRUNCATION GUARD. Two run segments, each larger than the scan budget: the
+# prefix window carries the FIRST run's acquire and metadata, the tail window
+# carries the SECOND run's transcript, and the first run's release sits in the
+# unread middle. Without the guard the newest RETAINED segment is taken for the
+# newest segment on disk and the released first run is reattached — under an
+# identity the file itself says is finished.
+contains: run-first released inside the unread middle
+
+# THE SAME GUARD'S OTHER HALF. `latest_run_segment` keys on `run_id` alone, so
+# one run id spanning two runtimes across the gap reads as a single segment and
+# the prefix runtime's metadata is paired with the tail runtime's end.
+contains: one run id spanning two runtimes across an unread gap is two runs, not one
+
+# All three, and only these three. A binary that collapses wholesale is a
+# different failure and has not reproduced this defect.
+contains: test result: FAILED. 0 passed; 3 failed
