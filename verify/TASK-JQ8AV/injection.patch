@@ -1,0 +1,55 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+index bd976c1..98bb65f 100644
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -4634,40 +4634,18 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
+             "{processes} process(es) under pid {root} at {cpu_percent:.1}% cpu \
+              (work threshold {MIN_WORK_CPU_PERCENT:.1}%)"
+         );
++        // TASK-JQ8AV injection: the two-channel clock, as it shipped from
++        // JK66P. The subtree is quiet, so this is a wedge — there is no
++        // third channel, and `pane_open_turn_marker` and the pane readers
++        // below stay exactly where the fix put them, unreachable. A
++        // provider-bound turn (~0% cpu, network wait, statusline frozen on
++        // screen) reads byte-identical to VZMZE's wedge and dies at the
++        // deadline.
+         if cpu_percent >= MIN_WORK_CPU_PERCENT {
+-            return WorkEvidence::Working { detail: cpu_detail };
+-        }
+-        // orgasmic:TASK-JQ8AV — the subtree is quiet; before calling that a
+-        // wedge, read the one channel that can still see a provider-bound
+-        // turn. Only rescues: a pane that cannot be read cannot save a run
+-        // (JK66P's fail-closed rule), it only gets named in the reason.
+-        if target.transport == "rmux" {
+-            match rmux_pane_content(&target.identity, socket) {
+-                Some(pane) => match pane_open_turn_marker(&pane) {
+-                    Some(marker) => {
+-                        return WorkEvidence::Working {
+-                            detail: format!(
+-                                "provider-bound turn open: pane statusline {marker:?}; \
+-                                 {cpu_detail}"
+-                            ),
+-                        };
+-                    }
+-                    None => {
+-                        return WorkEvidence::Idle {
+-                            detail: format!(
+-                                "{cpu_detail}; no open-turn statusline in pane capture"
+-                            ),
+-                        };
+-                    }
+-                },
+-                None => {
+-                    return WorkEvidence::Idle {
+-                        detail: format!("{cpu_detail}; pane capture unavailable"),
+-                    };
+-                }
+-            }
++            WorkEvidence::Working { detail: cpu_detail }
++        } else {
++            WorkEvidence::Idle { detail: cpu_detail }
+         }
+-        WorkEvidence::Idle { detail: cpu_detail }
+     }
+ }
+ 

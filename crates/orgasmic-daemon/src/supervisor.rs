@@ -1327,7 +1327,9 @@ impl Supervisor {
             driver_release_timeout_ms: Arc::new(AtomicU64::new(
                 DRIVER_RELEASE_TIMEOUT.as_millis() as u64
             )),
-            work_probe: Arc::new(std::sync::RwLock::new(Arc::new(ProcessSubtreeCpuProbe))),
+            work_probe: Arc::new(std::sync::RwLock::new(Arc::new(
+                ProcessSubtreeCpuProbe::default(),
+            ))),
         }
     }
 
@@ -4554,7 +4556,11 @@ fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeo
 // subprocess is building for ten minutes emits nothing on that channel — its
 // pane is a terminal, and `scripts/run-tests.sh` redirects cargo to files — so
 // the absence of events is not, on its own, the absence of work. The probe
-// below is the second channel: what is actually running under the run.
+// below is the second channel: what is actually running under the run. It also
+// carries the third (TASK-JQ8AV): a run whose subtree is quiet because the
+// harness is waiting on the provider — a multi-minute server-side think is a
+// network wait — shows an open-turn statusline in its pane, and that content
+// survives the very freeze that silences the byte channels.
 
 /// Minimum CPU consumption, summed as a percentage of one core over the process
 /// subtree under a run, that counts as "work is happening here".
@@ -4613,17 +4619,51 @@ pub(crate) trait WorkEvidenceProbe: Send + Sync {
     fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence;
 }
 
-/// Production probe: CPU burned by the process subtree under the run.
+/// Production probe: CPU burned by the process subtree under the run, and —
+/// when that is quiet — whether the run's pane shows an open provider turn.
 ///
 /// Liveness alone is deliberately NOT the test. VZMZE's wedged harness was
 /// alive for the entire hour it did nothing; MRJRK's healthy worker and that
 /// wedge are indistinguishable by "is a process there?" and separated by three
 /// orders of magnitude of CPU.
-pub(crate) struct ProcessSubtreeCpuProbe;
+///
+/// orgasmic:TASK-JQ8AV — CPU is blind to a provider-bound turn. Measured
+/// 2026-07-29, first hours of this clock in production: three healthy
+/// claude-opus-5 high-effort workers were released with `no work evidence for
+/// 600s; 1 process(es) at 0.0-0.3% cpu` while verifiably mid-turn — a long
+/// server-side think is a network wait (~0% local cpu) and, in that state,
+/// the TUI stops repainting, so pane bytes and CPU both read as VZMZE's
+/// wedge. The channel that still discriminates is the pane's *content*: the
+/// harness TUI keeps its open-turn statusline on screen for exactly as long
+/// as a turn is open (the incident's own live capture read `Quantumizing…
+/// (3m41s · ↓13.1k tokens · thinking with high effort)`), and removes it at
+/// rest. Network-side candidates were measured and rejected: connection
+/// existence is always-true for a live harness (telemetry sockets persist
+/// idle for tens of minutes — the socket-channel analog of the heartbeat
+/// trap), and traffic-rate thresholds cannot separate a slow think from the
+/// bridge-session streaming that rides the same api-host sockets.
+#[derive(Default)]
+pub(crate) struct ProcessSubtreeCpuProbe {
+    /// Explicit rmux socket for the pane lookups. `None` — production — is
+    /// the default endpoint, where every dispatch session lives. Tests pin
+    /// their owned server's socket so the probe reads panes the test created
+    /// instead of live dispatch panes.
+    rmux_socket: Option<std::path::PathBuf>,
+}
+
+#[cfg(test)]
+impl ProcessSubtreeCpuProbe {
+    fn with_rmux_socket(socket: &std::path::Path) -> Self {
+        Self {
+            rmux_socket: Some(socket.to_path_buf()),
+        }
+    }
+}
 
 impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
     fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence {
-        let Some(root) = work_probe_root_pid(target) else {
+        let socket = self.rmux_socket.as_deref();
+        let Some(root) = work_probe_root_pid(target, socket) else {
             return WorkEvidence::Unknown;
         };
         let Some(table) = process_cpu_table() else {
@@ -4634,15 +4674,44 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
                 detail: format!("no live process under pid {root}"),
             };
         };
-        let detail = format!(
+        let cpu_detail = format!(
             "{processes} process(es) under pid {root} at {cpu_percent:.1}% cpu \
              (work threshold {MIN_WORK_CPU_PERCENT:.1}%)"
         );
         if cpu_percent >= MIN_WORK_CPU_PERCENT {
-            WorkEvidence::Working { detail }
-        } else {
-            WorkEvidence::Idle { detail }
+            return WorkEvidence::Working { detail: cpu_detail };
         }
+        // orgasmic:TASK-JQ8AV — the subtree is quiet; before calling that a
+        // wedge, read the one channel that can still see a provider-bound
+        // turn. Only rescues: a pane that cannot be read cannot save a run
+        // (JK66P's fail-closed rule), it only gets named in the reason.
+        if target.transport == "rmux" {
+            match rmux_pane_content(&target.identity, socket) {
+                Some(pane) => match pane_open_turn_marker(&pane) {
+                    Some(marker) => {
+                        return WorkEvidence::Working {
+                            detail: format!(
+                                "provider-bound turn open: pane statusline {marker:?}; \
+                                 {cpu_detail}"
+                            ),
+                        };
+                    }
+                    None => {
+                        return WorkEvidence::Idle {
+                            detail: format!(
+                                "{cpu_detail}; no open-turn statusline in pane capture"
+                            ),
+                        };
+                    }
+                },
+                None => {
+                    return WorkEvidence::Idle {
+                        detail: format!("{cpu_detail}; pane capture unavailable"),
+                    };
+                }
+            }
+        }
+        WorkEvidence::Idle { detail: cpu_detail }
     }
 }
 
@@ -4650,37 +4719,118 @@ impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
 /// pid at acquire; a pane transport has none, so the pane's root process is
 /// resolved from the mux by the run-scoped session name the driver built from
 /// the same identity.
-fn work_probe_root_pid(target: &WorkProbeTarget) -> Option<u32> {
+fn work_probe_root_pid(target: &WorkProbeTarget, socket: Option<&std::path::Path>) -> Option<u32> {
     if let Some(pid) = target.pid.filter(|pid| *pid != 0) {
         return Some(pid);
     }
     (target.transport == "rmux")
-        .then(|| rmux_pane_pid(&target.identity))
+        .then(|| rmux_pane_pid(&target.identity, socket))
         .flatten()
+}
+
+/// An `rmux` invocation for the probe's read-only pane lookups, addressed at
+/// the default endpoint in production (`socket: None`, where a dispatch's
+/// session lives) or at an explicit `-S` socket in tests. A run on a private
+/// endpoint resolves to `None` and therefore [`WorkEvidence::Unknown`], i.e.
+/// the pre-probe behavior.
+fn rmux_probe_command(socket: Option<&std::path::Path>) -> Option<Command> {
+    let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
+    let rmux_bin = probe.path.filter(|_| probe.found)?;
+    let mut cmd = Command::new(rmux_bin);
+    if let Some(socket) = socket {
+        cmd.arg("-S").arg(socket);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    Some(cmd)
 }
 
 /// `rmux display-message -p -t <session> '#{pane_pid}'` — the pane's root
 /// process (the shell the harness runs in), whose descendants are the harness
 /// and everything the harness spawned.
-///
-/// Addressed at the default endpoint, which is where a dispatch's session
-/// lives. A run on a private endpoint resolves to `None` and therefore
-/// [`WorkEvidence::Unknown`], i.e. today's behavior.
-fn rmux_pane_pid(identity: &RuntimeIdentity) -> Option<u32> {
-    let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
-    let rmux_bin = probe.path.filter(|_| probe.found)?;
+fn rmux_pane_pid(identity: &RuntimeIdentity, socket: Option<&std::path::Path>) -> Option<u32> {
     let session = orgasmic_drivers::modes::rmux::rmux_session_name(identity);
-    let output = Command::new(rmux_bin)
+    let output = rmux_probe_command(socket)?
         .args(["display-message", "-p", "-t", &session, "#{pane_pid}"])
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
         .output()
         .ok()?;
     if !output.status.success() {
         return None;
     }
     String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// `rmux capture-pane -p -t <session>` — the pane's current *screen content*,
+/// which survives exactly the state that starves the byte channels: a frozen
+/// TUI keeps its last frame, and that frame carries the open-turn statusline.
+// orgasmic:TASK-JQ8AV
+fn rmux_pane_content(
+    identity: &RuntimeIdentity,
+    socket: Option<&std::path::Path>,
+) -> Option<String> {
+    let session = orgasmic_drivers::modes::rmux::rmux_session_name(identity);
+    let output = rmux_probe_command(socket)?
+        .args(["capture-pane", "-p", "-t", &session])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// The harness TUI's open-turn statusline, if the captured pane shows one.
+///
+/// Both accepted shapes are measured, not guessed (2026-07-29):
+///
+/// - claude in-turn, live: `● Moonwalking… (20m 4s · ↓ 46.3k tokens)`; the
+///   incident capture: `✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking
+///   with high effort)`. Anchor: a leading non-alphanumeric spinner glyph,
+///   then `… (`, then either a `↓ … tokens` stream counter or an elapsed
+///   time starting with a digit.
+/// - the generic TUI interrupt hint (`esc to interrupt`, codex-style),
+///   case-insensitive, for harnesses whose spinner line differs.
+///
+/// A claude pane at rest was measured to show none of these: the prompt box,
+/// the `● ~/path | …` status bar (glyph but no `… (`), and collapsed
+/// transcript lines (`⏺ Thinking for 8m 28s, …` — ellipsis but no `… (`) all
+/// fall through. The last match wins because the live statusline sits at the
+/// bottom of the screen, below any transcript text that might quote one.
+///
+/// The claim this encodes is deliberately bounded: a TUI frozen mid-turn with
+/// the statusline burned on screen is rescued sweep after sweep, but only
+/// until `max_run_duration` — "turn open" past that ceiling is its own
+/// timeout class, not immortality.
+// orgasmic:TASK-JQ8AV
+fn pane_open_turn_marker(pane: &str) -> Option<String> {
+    let mut marker = None;
+    for raw in pane.lines() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line.to_lowercase().contains("esc to interrupt") {
+            marker = Some(line);
+            continue;
+        }
+        let mut chars = line.chars();
+        let Some(glyph) = chars.next() else {
+            continue;
+        };
+        if glyph.is_alphanumeric() || chars.next() != Some(' ') {
+            continue;
+        }
+        let Some((_, after)) = line.split_once("… (") else {
+            continue;
+        };
+        let streaming = after.contains('↓') && after.contains("tokens");
+        let elapsed = after.chars().next().is_some_and(|c| c.is_ascii_digit());
+        if streaming || elapsed {
+            marker = Some(line);
+        }
+    }
+    marker.map(|line| line.chars().take(120).collect())
 }
 
 /// `(pid, ppid, %cpu)` for every process on the box, in one `ps` call.
@@ -5715,10 +5865,11 @@ mod tests {
     use orgasmic_drivers::{
         modes::{
             rmux::{
-                probe_rmux_binary,
+                probe_rmux_binary, rmux_session_name,
                 test_tooling::{
-                    assert_not_degraded, assert_required_test_tooling, skip_test_if_missing,
-                    test_environment_lock, StallableRmuxEndpoint, ToolRequirement,
+                    assert_not_degraded, assert_required_test_tooling, own_rmux_server_for_tests,
+                    skip_test_if_missing, test_environment_lock, StallableRmuxEndpoint,
+                    ToolRequirement,
                 },
             },
             tmux,
@@ -9063,7 +9214,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut last = WorkEvidence::Unknown;
         while Instant::now() < deadline {
-            last = ProcessSubtreeCpuProbe.observe(&target);
+            last = ProcessSubtreeCpuProbe::default().observe(&target);
             if matches!(last, WorkEvidence::Working { .. }) {
                 break;
             }
@@ -9099,7 +9250,7 @@ mod tests {
             .spawn()
             .expect("spawn idle child");
         let pid = sleeper.id();
-        let observed = ProcessSubtreeCpuProbe.observe(&WorkProbeTarget {
+        let observed = ProcessSubtreeCpuProbe::default().observe(&WorkProbeTarget {
             transport: "acp-stdio".into(),
             identity: probe_identity(),
             pid: Some(pid),
@@ -9137,6 +9288,228 @@ mod tests {
             runtime_id: "runtime-probe".into(),
             boot_id: "boot-probe".into(),
         }
+    }
+
+    /// TASK-JQ8AV, the classifier against the MEASURED captures — both
+    /// in-turn shapes are verbatim from real panes (2026-07-29), and the
+    /// at-rest material is what a throwaway claude TUI actually showed.
+    #[test]
+    fn pane_open_turn_marker_recognizes_the_measured_statuslines() {
+        // In-turn, live capture of this fleet's own harness.
+        let live = "● Moonwalking… (20m 4s · ↓ 46.3k tokens)";
+        assert_eq!(pane_open_turn_marker(live).as_deref(), Some(live));
+        // In-turn, the incident capture: the statusline the three killed
+        // workers' panes were showing while the clock read them as wedged.
+        let incident = "✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)";
+        assert_eq!(pane_open_turn_marker(incident).as_deref(), Some(incident));
+        // Elapsed-only spinner: a turn open before the first token arrives.
+        assert!(pane_open_turn_marker("· Considering… (2s)").is_some());
+        // The generic TUI interrupt hint, any case (codex-style spinners).
+        assert!(pane_open_turn_marker("Working (7s • Esc to interrupt)").is_some());
+
+        // At-rest pane furniture must all fall through: an at-rest harness is
+        // the wedge's shape, and must not be rescued by its own chrome. The
+        // status bar has the glyph anchor but no `… (`; the collapsed
+        // transcript line has an ellipsis but no `… (`; the banner's second
+        // char is not a space; the bare prompt has nothing after the glyph.
+        let at_rest = " ▐▛███▜▌   Claude Code v2.1.220\n\
+                       ▝▜█████▛▘  Fable 5 with high effort · Claude Max\n\
+                       ❯ \n\
+                       ● ~/Documents/code/tools/orgasmic | Fable 5 ⇢75k | 0k/1000k\n\
+                       ⏵⏵ auto mode on (shift+tab to cycle) · ← 1 agent\n\
+                       ⏺ Thinking for 8m 28s, running 12 shell commands…";
+        assert_eq!(pane_open_turn_marker(at_rest), None);
+
+        // The last match wins: the live statusline sits at the bottom of the
+        // screen, below any transcript text that might quote an older one.
+        let stacked = format!("{incident}\nsome transcript text\n{live}");
+        assert_eq!(pane_open_turn_marker(&stacked).as_deref(), Some(live));
+    }
+
+    /// Create the run's pane on the test-owned rmux server, running `script`
+    /// under `shell`. Addressed by explicit `-S`, same as every other probe
+    /// call in this test family — an unpinned call would land on the server
+    /// hosting live dispatch panes.
+    #[cfg(unix)]
+    fn spawn_probe_pane_stub(socket: &Path, session: &str, shell: &str, script: &str) {
+        let probe = probe_rmux_binary();
+        let rmux_bin = probe.path.filter(|_| probe.found).expect("rmux-gated test");
+        let status = Command::new(rmux_bin)
+            .arg("-S")
+            .arg(socket)
+            .args([
+                "new-session",
+                "-d",
+                "-x",
+                "200",
+                "-y",
+                "50",
+                "-s",
+                session,
+                "--",
+                shell,
+                "-c",
+                script,
+            ])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("spawn rmux pane stub");
+        assert!(status.success(), "rmux new-session failed for {session}");
+    }
+
+    #[cfg(unix)]
+    fn kill_probe_pane_stub(socket: &Path, session: &str) {
+        let probe = probe_rmux_binary();
+        let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
+            return;
+        };
+        let _ = Command::new(rmux_bin)
+            .arg("-S")
+            .arg(socket)
+            .args(["kill-session", "-t", session])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_open_turn_marker(identity: &RuntimeIdentity, socket: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(pane) = rmux_pane_content(identity, Some(socket)) {
+                if pane_open_turn_marker(&pane).is_some() {
+                    return;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stub pane never showed the open-turn statusline"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    #[cfg(unix)]
+    async fn wait_for_pane_pid(identity: &RuntimeIdentity, socket: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            if rmux_pane_pid(identity, Some(socket)).is_some() {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "stub pane never resolved a pane pid"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+
+    /// TASK-JQ8AV acceptance, both halves, against the REAL probe reading a
+    /// REAL rmux pane — and a stub that is NETWORK-WAITING rather than
+    /// sleeping, because the distinction is the task: a multi-minute
+    /// server-side think is ~0% cpu with an ESTABLISHED provider connection
+    /// and an open-turn statusline on screen, and under the two byte channels
+    /// alone that is indistinguishable from VZMZE's wedge (which is what
+    /// killed FZB6T, RB1ZN and SZJ2B on 2026-07-29).
+    ///
+    /// Three consecutive expired budgets, for the same reason
+    /// [`a_silent_pane_with_live_work_under_it_is_never_stalled`] uses three:
+    /// the acceptance is that a provider-bound run survives *indefinitely*,
+    /// and one saved sweep would not distinguish a fix from an off-by-one.
+    /// Then the wedge half: same run, pane at rest, process asleep with no
+    /// connection anywhere — it must die on schedule, with a reason that
+    /// names every channel that came up empty.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies() {
+        const TEST: &str =
+            "a_network_waiting_provider_turn_survives_the_stall_window_and_a_wedge_dies";
+        // Lock order is flock-then-environment (the owned-server fixture pins
+        // process-global rmux endpoint resolution).
+        let _live_guard = live_session_guard();
+        let _environment = test_environment_lock().lock().await;
+        if skip_test_if_missing(TEST, &[("rmux", probe_rmux_binary().usable())]) {
+            return;
+        }
+        let server = own_rmux_server_for_tests();
+        let socket = server.endpoint_path().to_path_buf();
+
+        // The provider's stand-in: a local listener the stub connects to and
+        // then blocks reading from.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind local listener");
+        let port = listener.local_addr().expect("listener addr").port();
+
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(ProcessSubtreeCpuProbe::with_rmux_socket(&socket)));
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req("TASK-PROVIDER-BOUND", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+        let session = rmux_session_name(&resp.identity);
+
+        // The incident statusline verbatim, then a genuine network wait:
+        // `exec 3<>/dev/tcp` holds an ESTABLISHED connection and `read`
+        // blocks on it at ~0% cpu.
+        let think_stub = format!(
+            "printf '✽ Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)\\n'; \
+             exec 3<>/dev/tcp/127.0.0.1/{port}; read -u 3 line"
+        );
+        spawn_probe_pane_stub(&socket, &session, "/bin/bash", &think_stub);
+        // Accepting the stub's connection is the proof it is network-waiting
+        // and not asleep; holding the stream keeps it blocked mid-read.
+        let _provider_side = tokio::time::timeout(
+            Duration::from_secs(10),
+            tokio::task::spawn_blocking(move || listener.accept()),
+        )
+        .await
+        .expect("stub connected within 10s")
+        .expect("accept task")
+        .expect("accept establishes the stub's connection");
+        wait_for_open_turn_marker(&resp.identity, &socket).await;
+
+        for window in 0..3 {
+            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+            sup.release_first_timed_out_run().await;
+            assert!(
+                run_is_live(&sup, &resp.run_id).await,
+                "quiet window {window}: a provider-bound network-waiting turn was \
+                 stall-released: {:?}",
+                release_reason(&session_path)
+            );
+        }
+        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
+
+        // The wedge half. A fresh pane under the same session name shows no
+        // statusline, and the process under it sleeps with no connection.
+        kill_probe_pane_stub(&socket, &session);
+        spawn_probe_pane_stub(&socket, &session, "/bin/sh", "sleep 300");
+        wait_for_pane_pid(&resp.identity, &socket).await;
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            !run_is_live(&sup, &resp.run_id).await,
+            "an idle run with no provider connection and an at-rest pane must still stall"
+        );
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(
+            reason.split(':').next(),
+            Some("stall_timeout_exceeded"),
+            "the leading token is what CLI and API classify on: {reason}"
+        );
+        assert!(
+            reason.contains("no work evidence for") && reason.contains("% cpu"),
+            "the reason must still carry the cpu channel: {reason}"
+        );
+        assert!(
+            reason.contains("no open-turn statusline in pane capture"),
+            "the reason must say the pane was consulted and came up empty: {reason}"
+        );
+
+        kill_probe_pane_stub(&socket, &session);
     }
 
     #[tokio::test]
@@ -9357,8 +9730,11 @@ mod tests {
             // that overstates — it is the number the NOT RUN block prints.
             // Recount when a mux-gated test is added: api has six
             // `MuxMode::Tmux` arms, six `MuxMode::Rmux` arms, two direct tmux
-            // gates and seven direct rmux gates; this module has one of each.
-            ToolRequirement::new("rmux", 14, probe_rmux_binary().found),
+            // gates and seven direct rmux gates; this module has one tmux
+            // gate and two rmux gates.
+            // orgasmic:task_JQ8AV — +1 for the network-waiting pane-stub
+            // acceptance test.
+            ToolRequirement::new("rmux", 15, probe_rmux_binary().found),
             ToolRequirement::new("tmux", 9, tmux_spawn_usable_for_test().await),
             ToolRequirement::new("bash", 1, command_available_for_test("bash")),
         ]);
