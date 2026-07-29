@@ -18489,3 +18489,78 @@ never has one, not to weaken the branch for everybody.
   failure-stickiness rule; this one owns watcher recovery. They touch the same
   file and must not be dispatched concurrently.
 
+* DONE TASK-VSWZT A run can appear live with no release surface able to clear it, blocking the update fence :runtime:supervisor:recovery:bug:
+:PROPERTIES:
+:ID: TASK-VSWZT
+:priority: P1
+:PRIORITY: P1
+:END:
+
+Observed 2026-07-26 clearing run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2
+(TASK-STWVB implementer). The run showed as `implementer.working` in
+`orgasmic run list` .live for ~80 minutes after its worker died, and NO surface
+could clear it.
+
+THE DEAD END
+
+- `POST /api/runs/:id/release` returned 404 `{"error":"active run <id>"}` — even
+  though the same run was present in `GET /runs` .live. Both the snapshot lookup
+  (api.rs:6173) and `SupervisorError::RunNotFound` (api.rs:6197) return that same
+  string, and `.live` is fed from `supervisor.snapshot()` (api.rs:7651), so the
+  run was in the snapshot while `release_with_finalization` could not find it.
+  Those two views of the supervisor disagreed.
+- `orgasmic manager lease-release` refuses while a live run holds the lease.
+- `orgasmic run recover` offers only reattach_tmux / resume_native_fork /
+  start_recovery_run. The rescue-policy convention lists *abandon* as one of four
+  manager judgments, but no verb implements it.
+- `orgasmic manager dispatch-close` had already run; the dispatch record was
+  closed and the run stayed live regardless.
+
+WHY IT IS NOT COSMETIC
+
+`refuse_if_live_runs` (crates/orgasmic-cli/src/update.rs:436-462) reads exactly
+`GET /runs` .live and refuses the runtime update for any entry. One phantom run
+therefore blocks `orgasmic update` and any publish behind that fence, with no
+documented way out. The only route that worked was a full daemon restart.
+
+WHY THE SESSION NEVER CLOSED
+
+The session JSONL ends at seq 1657 `run_complete` ("worker finalize for
+TASK-STWVB") and seq 1658 fatal `driver_error` ("claude exited with status exit
+status: 143"), with no `Lifecycle::Release`. The supervisor kept its entry; the
+tombstone was never written. On the next boot the classifier read the same file
+and correctly returned terminal_noop ("session ended with terminal driver
+event") via `session_driver_terminal_event` (api.rs:9104), so the durable
+evidence was sufficient all along — only the live supervisor disagreed.
+
+Note this is the second wrong answer recorded about this same run. The prior
+handoff asserted it had been released and that `run list` reported 0 live; it had
+not been, and did not.
+
+WORK
+
+1. Reconcile the two supervisor views, or make `POST /runs/:id/release` able to
+   clear anything that `GET /runs` .live reports. A run the fence refuses to
+   ignore must be releasable by the surface documented to release it.
+2. Implement abandon as a first-class manager verb so the fourth branch of
+   rescue-policy is executable, not just describable.
+3. Write the release tombstone when a driver reports a fatal terminal event.
+   `run_complete` followed by a fatal `driver_error` should end the run rather
+   than leave it working; the boot classifier already treats that pair as
+   terminal, so the two paths disagree about the same evidence.
+4. Consider having `refuse_if_live_runs` name the escape hatch in its error text.
+   It currently says "Close them or use the existing force path deliberately"
+   without saying how, which is what sent this session looking for a verb that
+   does not exist.
+
+Acceptance:
+- a run reported in `GET /runs` .live can always be cleared without restarting
+  the daemon
+- a worker whose harness dies after run_complete leaves a release tombstone
+- `orgasmic run list` .live and the release path never disagree about whether a
+  run exists
+
+SCOPE RETARGETED [2026-07-29, after TASK-HAREX merged]: HAREX diagnosed and fixed the producer of this task's first symptom. The 404-from-release while live-in-snapshot disagreement has exactly one producer — a release that started (explicit_release_in_progress set) and could not finish because the event drain awaited an unbounded recv() held open by a stray driver-internal sender. HAREX's DrainGate bounds the drain once a release is requested (RELEASE_DRAIN_BUDGET, derived, 20s), so that window is now at most one budget and self-clearing. WHAT REMAINS THIS TASK'S SCOPE: (1) the missing *abandon* judgment in `orgasmic run recover` (the rescue-policy convention lists four manager judgments; abandon has no verb); (2) the update-fence consequence and its documentation (a phantom live run blocking `orgasmic update` with no documented way out — partially eased by TASK-6HJYT's liveness split if that lands); (3) if desired, a regression proving the 404/live disagreement stays impossible (HAREX's tests cover the drain; a direct two-views-agree test would pin the property itself).
+
+NUANCE FROM TASK-6HJYT [2026-07-29]: the 404/live disagreement verdict is narrowed-not-closed. post_run_release and /runs .live read the SAME supervisor snapshot at two different times — HAREX removed the persistent producer (a wedged release, self-clearing within RELEASE_DRAIN_BUDGET now), and 6HJYT removed the staleness amplifier (liveness no longer waits behind a whole-board classification pass). What remains is the structural TOCTOU of two reads of one map; closing it means reading liveness under the supervisor lock as one step with the action (the TASK-1T3FZ close-guard pattern). Fold that into this task's remaining scope if a direct two-views-agree regression is wanted.
+

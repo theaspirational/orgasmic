@@ -1765,3 +1765,26 @@ From TASK-K5NDR (2026-07-29): with the deny-by-default fixture merged, scripts/r
 
 From TASK-SVKPN's driver audit (2026-07-29): acp_ws.rs:277 (commands / ws.next() select) breaks on channel close and on release-done without draining the socket — the same break-without-drain shape SVKPN fixed in subprocess_stream_json and acp_stdio. Deliberately NOT fixed there: no child process, no SubprocessExitSummary, no empty-run_complete synthesis (the product harm SVKPN was about), and the release path closes the socket first — a fix would drain a just-closed socket on an unmeasured path. The loss, if any, is transcript events only. Measure before fixing: construct a fast-closing ws peer and check whether produced frames are lost; if yes, apply the SVKPN bounded-drain pattern (RELEASE_DRAIN_BUDGET derivation, drain after close-initiation, biased select inside the drain); if no, record the negative result and close.
 
+* BACKLOG TASK-RB1ZN Split release_one's overloaded RunNotFound: 'record gone' and 'release already running' are opposite states sharing one error
+:PROPERTIES:
+:ID: TASK-RB1ZN
+:PRIORITY: P2
+:END:
+
+From TASK-VSWZT (2026-07-29): Supervisor::release_one answers RunNotFound both when the record is absent AND when it is present with explicit_release_in_progress/early_exit_release_taken set — the exact collapse behind the original 404-vs-live incident. VSWZT's abandon action un-collapses it at ITS layer (re-reads liveness on RunNotFound: 409 release-in-progress naming the HAREX budget vs a 404 that says the run carries its own tombstone), but post_run_release retains the original shape for up to one drain budget, and the structural TOCTOU close (liveness read under the supervisor lock with the action — the 1T3FZ close-guard pattern) needs a new SupervisorError::ReleaseInProgress variant. Deferred by VSWZT because supervisor.rs had a live worker. Ask: add the variant, map it to 409 at both release surfaces, and fold VSWZT's re-read into the lock where cheap. VSWZT's residual: its 409 branch is reasoned, not exercised — HAREX's StraySenderDriver harness can build the wedged-mid-release state; add that test here. Injection per TCTTD standard.
+
+* BACKLOG TASK-ZVZ4F clippy -D warnings is red on main: single_match (lib.rs:748, TZKAC) and doc_lazy_continuation (claude.rs:2877) tax every worker's lint gate
+:PROPERTIES:
+:ID: TASK-ZVZ4F
+:PRIORITY: P2
+:END:
+
+Two clippy warnings on merged main make cargo clippy --workspace --all-targets -D warnings fail for every worker, forcing per-worker allow-flag workarounds (TASK-KPMFK's report documents the incantation): clippy::single_match at crates/orgasmic-daemon/src/lib.rs:748 (landed with TASK-TZKAC 5c97409) and clippy::doc_lazy_continuation at crates/orgasmic-drivers/src/adapters/claude.rs:2877. Fix both (trivial), then run the workspace lint clean to confirm nothing else hides behind the early abort (-D warnings stops at the first crate, so the full surface has not been linted end-to-end since these landed). Coordinate with TASK-WKJX4 (the fmt window) — one no-live-worker hygiene window can land both.
+
+* BACKLOG TASK-EDPFN Abandon has no --reason: the tombstone names the judgment but cannot carry the operator's evidence
+:PROPERTIES:
+:ID: TASK-EDPFN
+:PRIORITY: P3
+:END:
+
+From TASK-VSWZT (2026-07-29): rescue-policy's inspect-before-choosing section wants the operator's evidence recorded ('superseded by TASK-X', 'worktree empty'), but RunRecoverRequest has no reason field, so the abandon tombstone carries only the fixed judgment string. Add optional reason threaded into the Release tombstone's reason suffix; CLI --reason flag on run recover. Small; keep the fixed prefix stable (JK66P's leading-token consumers).
