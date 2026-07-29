@@ -1265,9 +1265,9 @@ impl Supervisor {
             driver_release_timeout_ms: Arc::new(AtomicU64::new(
                 DRIVER_RELEASE_TIMEOUT.as_millis() as u64
             )),
-            work_probe: Arc::new(std::sync::RwLock::new(
-                Arc::new(ProcessSubtreeCpuProbe::default()),
-            )),
+            work_probe: Arc::new(std::sync::RwLock::new(Arc::new(
+                ProcessSubtreeCpuProbe::default(),
+            ))),
         }
     }
 
