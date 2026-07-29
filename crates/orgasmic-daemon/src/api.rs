@@ -21851,6 +21851,225 @@ pub(crate) mod tests {
         );
     }
 
+    /// TASK-95SGV.2: the test above proves the shared renderer by calling it
+    /// directly; this one drives the ordinary dispatch surface so a real
+    /// `CleanupInProgress` acquire refusal reaches the structured 409 through
+    /// the production match arm in `spawn_worker_run` (the shared pipeline
+    /// `post_task_dispatch` calls), not by invoking the renderer.
+    ///
+    /// A real `dispatch-close` reservation is installed on the worktree; the
+    /// dispatch is then run into it. Admission refuses on the reservation
+    /// *before* `driver.acquire` is ever called, so no subprocess is launched
+    /// and no billed turn is submitted — the refusal is purely the lease/
+    /// cleanup fence. The refusal must surface as HTTP 409 naming the exact
+    /// caller-visible fields the task requires: the reservation's guard id,
+    /// its owner pid, and that the owner is alive, plus the task, kind and
+    /// worktree identity.
+    ///
+    /// Reverting the `spawn_worker_run` `CleanupInProgress` match arm to the
+    /// generic `supervisor_acquire_error` 500 mapper (the regression
+    /// TASK-95SGV.1 closed) drops both the 409 status and these fields, so
+    /// every assertion below fails while the helper test above and the
+    /// recovery unit tests stay green — the injection under
+    /// `verify/TASK-95SGV.2` demonstrates exactly that.
+    #[tokio::test]
+    async fn ordinary_dispatch_endpoint_surfaces_cleanup_conflict_409() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        std::fs::create_dir_all(&project_root).unwrap();
+        // The worktree must exist so `normalize_cleanup_worktree` canonicalizes
+        // both the reservation and the acquire to one key.
+        let worktree = tmp.path().join("worktrees/task-95sgv-dispatch");
+        std::fs::create_dir_all(&worktree).unwrap();
+        seed_project(&home, &project_root, "proj-95sgv");
+        let state = direct_stage_test_state(home).await;
+
+        let project_id = "proj-95sgv";
+        let task_id = "TASK-95SGV-DISPATCH";
+        let owner_pid = std::process::id();
+
+        // Install a real cleanup reservation on the worktree, exactly as
+        // `dispatch-close` does. This is the acquire refusal the ordinary
+        // dispatch surface must hit.
+        let guard_id = match state
+            .supervisor
+            .reserve_dispatch_close(&DispatchCloseGuardParams {
+                project_id: project_id.into(),
+                task_id: task_id.into(),
+                kind: RunKind::Worker,
+                branch: "task-95sgv-impl".into(),
+                worktree_path: worktree.clone(),
+                dispatch_attempt_token: None,
+                last_path: None,
+                stdout_path: None,
+                // This process is the holder, and it is alive for the whole
+                // test, so the reservation survives the dead-owner sweep and
+                // `owner_alive` resolves to `true`.
+                owner_pid: Some(owner_pid),
+                releasing_run_id: None,
+                owned_run_ids: Vec::new(),
+            })
+            .await
+        {
+            DispatchCloseGuardOutcome::Reserved { guard_id, .. } => guard_id,
+            other => panic!("close guard must be reserved for this fixture: {other:?}"),
+        };
+
+        // A hermes worker has no preflight probe — `HermesAdapter` leaves
+        // `preflight` at the trait default (`Preflight::Unsupported`), which
+        // never rejects a dispatch. So `spawn_worker_run` runs preflight, then
+        // reaches `acquire`, where admission refuses on the reservation before
+        // any subprocess is spawned. No real credential and no billed turn.
+        let worker = StageWorker {
+            id: "implementer-hermes".into(),
+            kind: WorkerKind::Implementer,
+            driver: "acp-stdio".into(),
+            harness: "hermes".into(),
+            linked_skills: Vec::new(),
+            missing_skills: Vec::new(),
+            babysitter: None,
+            max_iterations: None,
+            context_budget_chars: None,
+            applicable_states: Vec::new(),
+            stall_timeout_secs: None,
+            max_run_duration_secs: None,
+            sandbox_permissions: None,
+            harness_args: Vec::new(),
+        };
+        let failure = match spawn_worker_run(
+            &state,
+            SpawnWorkerRequest {
+                project_id,
+                task_id,
+                worker,
+                run_kind: RunKind::Worker,
+                bundle: "TASK-95SGV.2 endpoint cleanup-conflict probe",
+                overrides: DriverOverrides::default(),
+                project_root_path: &project_root,
+                worktree_path: &worktree,
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                origin: "cli_dispatch",
+                dispatch_kind: Some("implementer"),
+                task_sandbox_permissions: None,
+                dispatch_governance: None,
+            },
+        )
+        .await
+        {
+            Err(failure) => failure,
+            Ok(_) => panic!(
+                "a worktree held by a cleanup reservation must refuse the \
+                 ordinary dispatch, not spawn a worker"
+            ),
+        };
+
+        // HTTP 409, and the exact caller-visible fields the task requires.
+        assert_eq!(
+            failure.error.status,
+            StatusCode::CONFLICT,
+            "the ordinary dispatch surface must answer 409, not the generic 500 \
+             the pre-TASK-95SGV.1 mapper returned"
+        );
+        // `CleanupHolderDiagnostic::observed` only claims liveness on Unix
+        // (`subprocess_exited` cannot answer elsewhere); match that here so the
+        // assertion is exact on every target without pretending non-Unix probes.
+        let expected_owner_alive: Value = if cfg!(unix) { json!(true) } else { json!(null) };
+        let expected = json!({
+            "error": "dispatch cleanup in progress",
+            "task_id": task_id,
+            "kind": "worker",
+            "worktree": worktree.display().to_string(),
+            "guard_id": guard_id,
+            "owner_pid": owner_pid,
+            "owner_alive": expected_owner_alive,
+            "detail": "a dispatch cleanup holds this worktree; retry once it finishes",
+        });
+        assert_eq!(
+            failure.error.body.as_ref().unwrap(),
+            &expected,
+            "the ordinary dispatch endpoint must surface the structured cleanup \
+             conflict naming guard_id, owner_pid and owner_alive"
+        );
+
+        // The refusal really came from this reservation: releasing the guard
+        // lets the very same dispatch advance past admission. It then fails
+        // for an unrelated reason (hermes has no binary to spawn), which must
+        // NOT be the cleanup 409 — proving the 409 above was the reservation,
+        // not a lease or a stale entry.
+        state.supervisor.finish_dispatch_close(&guard_id).await;
+        match spawn_worker_run(
+            &state,
+            SpawnWorkerRequest {
+                project_id,
+                task_id,
+                worker: StageWorker {
+                    id: "implementer-hermes".into(),
+                    kind: WorkerKind::Implementer,
+                    driver: "acp-stdio".into(),
+                    harness: "hermes".into(),
+                    linked_skills: Vec::new(),
+                    missing_skills: Vec::new(),
+                    babysitter: None,
+                    max_iterations: None,
+                    context_budget_chars: None,
+                    applicable_states: Vec::new(),
+                    stall_timeout_secs: None,
+                    max_run_duration_secs: None,
+                    sandbox_permissions: None,
+                    harness_args: Vec::new(),
+                },
+                run_kind: RunKind::Worker,
+                bundle: "TASK-95SGV.2 endpoint cleanup-conflict probe (after release)",
+                overrides: DriverOverrides::default(),
+                project_root_path: &project_root,
+                worktree_path: &worktree,
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                origin: "cli_dispatch",
+                dispatch_kind: Some("implementer"),
+                task_sandbox_permissions: None,
+                dispatch_governance: None,
+            },
+        )
+        .await
+        {
+            Ok(spawn) => {
+                // If hermes somehow spawned, release the run so the test never
+                // leaks a worker. Unreachable without a hermes binary.
+                let _ = state
+                    .supervisor
+                    .release(
+                        &spawn.acquire.run_id,
+                        "TASK-95SGV.2 test cleanup",
+                        ReleaseOutcome::Completed,
+                    )
+                    .await;
+            }
+            Err(after) => {
+                assert_ne!(
+                    after.error.status,
+                    StatusCode::CONFLICT,
+                    "once the guard is released the dispatch must not surface the \
+                     cleanup 409"
+                );
+                assert!(
+                    after.error.body.as_ref().is_none_or(|body| {
+                        body.get("error").and_then(Value::as_str)
+                            != Some("dispatch cleanup in progress")
+                    }),
+                    "once the guard is released the dispatch must not surface the \
+                     cleanup conflict: {:?}",
+                    after.error.body,
+                );
+            }
+        }
+    }
+
     /// Acquire a run whose driver reaches `Ready` and then never says anything
     /// again, holding a sender clone the whole time.
     ///
