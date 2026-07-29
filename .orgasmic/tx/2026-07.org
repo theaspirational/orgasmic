@@ -43932,3 +43932,168 @@
 :PROJECT:      orgasmic
 :REASON:       Runtime reinstall 2026-07-29: new binary (ee1f855) installed and running with all fixes; TCC broke launchd-context Documents access for the daemon (launchd probe: Operation not permitted; terminal context fine; grant row intact but ineffective) — daemon bridged as a session-child process (pid 35243, ppid 1) with inherited access, 5/5 projects indexed, parse_errors 0. OPERATOR RESTORE: System Settings > Privacy & Security > Files and Folders (or Full Disk Access) -> re-grant Documents to orgasmic, then kill the bridge daemon and launchctl bootstrap gui/UID ~/Library/LaunchAgents/orgasmic.daemon.plist
 :END:
+
+* TX 2026-07-29 Wed 05:41:52 task.state_transitioned TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3825
+:TIME:         [2026-07-29 Wed 05:41:52]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-WKJX4 to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-29 Wed 05:41:53 manager.dispatch_started TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3826
+:TIME:         [2026-07-29 Wed 05:41:53]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wkjx4/worktree
+:BRANCH:       task-wkjx4-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4.md
+:STARTED_AT:   [2026-07-29 Wed 05:41:53]
+:LIVENESS:     e9393dcf9fb64cb98532867c614a9f0dd2ec694c
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P2 hygiene window retry under the bridged new runtime; first live dispatch validating NYF7Z
+:END:
+
+* TX 2026-07-29 Wed 05:41:53 run.created TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3827
+:TIME:         [2026-07-29 Wed 05:41:53]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-WKJX4-implementer-20260729T054152.jsonl
+:REASON:       P2 hygiene window retry under the bridged new runtime; first live dispatch validating NYF7Z
+:RUN_ID:       run-20260729T054152-657d81d41c774830a76b36e1ffe19c81
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wkjx4/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4-26403b42517a43cfb3bdc07cf1035a99-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4-26403b42517a43cfb3bdc07cf1035a99-stdout.log
+:DISPATCH_ATTEMPT: 26403b42517a43cfb3bdc07cf1035a99
+:DISPATCH_TX:  tx-20260729-orgasmic-3826
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
+
+
+* TX 2026-07-29 Wed 05:43:07 manager.dispatch_aborted TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3828
+:TIME:         [2026-07-29 Wed 05:43:07]
+:TYPE:         manager.dispatch_aborted
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:REASON:       manager abort: dispatched under the rollback-probe binary by mistake; re-dispatching under the new one
+:CLOSED_TX:    tx-20260729-orgasmic-3826
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wkjx4/worktree
+:LIFECYCLE_FROM: in_progress
+:LIFECYCLE_TO: todo
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-29 Wed 05:43:07 task.state_transitioned TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3829
+:TIME:         [2026-07-29 Wed 05:43:07]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:TARGET:       .orgasmic/tasks/todo.org
+:REASON:       transition TASK-WKJX4 to todo
+:FROM_STATE:   in_progress
+:TO_STATE:     todo
+:END:
+
+* TX 2026-07-29 Wed 05:43:08 task.state_transitioned TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3830
+:TIME:         [2026-07-29 Wed 05:43:08]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-WKJX4 to in_progress
+:FROM_STATE:   todo
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-29 Wed 05:43:09 manager.dispatch_started TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3831
+:TIME:         [2026-07-29 Wed 05:43:09]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wkjx4/worktree
+:BRANCH:       task-wkjx4-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4.md
+:STARTED_AT:   [2026-07-29 Wed 05:43:09]
+:LIVENESS:     e9393dcf9fb64cb98532867c614a9f0dd2ec694c
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P2 hygiene retry under the NEW-binary bridge; validates NYF7Z argv
+:END:
+
+* TX 2026-07-29 Wed 05:43:09 run.created TASK-WKJX4
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3832
+:TIME:         [2026-07-29 Wed 05:43:09]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WKJX4
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-WKJX4-implementer-20260729T054309.jsonl
+:REASON:       P2 hygiene retry under the NEW-binary bridge; validates NYF7Z argv
+:RUN_ID:       run-20260729T054309-f836025c6c22454a90ebb4375b479c49
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-wkjx4/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4-c30c8a35269e4e009096ac2e7722fb62-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-wkjx4/brief-wkjx4-c30c8a35269e4e009096ac2e7722fb62-stdout.log
+:DISPATCH_ATTEMPT: c30c8a35269e4e009096ac2e7722fb62
+:DISPATCH_TX:  tx-20260729-orgasmic-3831
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
