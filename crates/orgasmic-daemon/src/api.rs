@@ -1712,12 +1712,18 @@ fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiErr
             task_id,
             kind,
             worktree,
+            holder,
         } => ApiError::conflict_json(json!({
             "error": "recovery blocked by dispatch cleanup in progress",
             "task_id": task_id,
             "kind": format!("{kind:?}").to_lowercase(),
             "worktree": worktree,
-            "detail": "a dispatch-close holds this worktree; retry once it finishes",
+            // TASK-95SGV — name the reservation and its owner, so a refusal
+            // from a live cleanup is distinguishable from a stale leaked entry.
+            "guard_id": holder.guard_id,
+            "owner_pid": holder.owner_pid,
+            "owner_alive": holder.owner_alive,
+            "detail": "a dispatch cleanup holds this worktree; retry once it finishes",
         })),
         other => {
             tracing::error!(error = %other, "run recovery failed");
@@ -5040,11 +5046,14 @@ async fn post_task_dispatch_cleanup(
                 error: Some("cleanup identity mismatch with live or newer tokened attempt".into()),
             }));
         }
-        Ok(DispatchCleanupOutcome::Proceed { released_run_id }) => released_run_id,
+        Ok(DispatchCleanupOutcome::Proceed {
+            released_run_id,
+            cleanup_guard_id,
+        }) => (released_run_id, cleanup_guard_id),
         Err(error) => return Err(ApiError::internal(error.to_string())),
     };
 
-    let released_run_id = cleanup;
+    let (released_run_id, cleanup_guard_id) = cleanup;
 
     let mut errors = Vec::new();
     let worktree_removal = match remove_dispatch_worktree(
@@ -5060,7 +5069,7 @@ async fn post_task_dispatch_cleanup(
             errors.push(format!("worktree: {err}"));
             state
                 .supervisor
-                .finish_dispatch_cleanup(&cleanup_params)
+                .finish_dispatch_cleanup(&cleanup_guard_id)
                 .await;
             return Ok(Json(DispatchCleanupResponse {
                 status: "failed".into(),
@@ -5097,7 +5106,7 @@ async fn post_task_dispatch_cleanup(
 
     state
         .supervisor
-        .finish_dispatch_cleanup(&cleanup_params)
+        .finish_dispatch_cleanup(&cleanup_guard_id)
         .await;
 
     let status = match (

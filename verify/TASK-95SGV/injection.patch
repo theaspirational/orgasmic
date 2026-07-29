@@ -1,0 +1,41 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -3867,12 +3867,31 @@ impl Supervisor {
+     /// [`Supervisor::finish_dispatch_close`].
+     pub async fn finish_dispatch_cleanup(&self, cleanup_guard_id: &str) {
+         let mut g = self.inner.lock().await;
+-        g.cleanup_reservations.retain(|_, reservation| {
+-            reservation
+-                .holder
+-                .as_ref()
+-                .is_none_or(|holder| holder.close_guard_id != cleanup_guard_id)
+-        });
++        // TASK-95SGV injection: the pre-fix state. The release looks its
++        // reservation up by a worktree key recomputed from the stored path —
++        // but cleanup has already deleted that directory, so under a symlinked
++        // prefix (/var on macOS) the recomputed key differs from the installed
++        // one, the lookup misses, and the reservation leaks forever.
++        let Some((key, reservation)) = g
++            .cleanup_reservations
++            .iter()
++            .find(|(_, reservation)| {
++                reservation
++                    .holder
++                    .as_ref()
++                    .is_some_and(|holder| holder.close_guard_id == cleanup_guard_id)
++            })
++            .map(|(key, reservation)| (key.clone(), reservation.clone()))
++        else {
++            return;
++        };
++        let recomputed_key = CleanupReservationKey {
++            project_id: key.project_id,
++            task_id: key.task_id,
++            kind: key.kind,
++            worktree_key: normalize_cleanup_worktree(&reservation.worktree_path),
++        };
++        g.cleanup_reservations.remove(&recomputed_key);
+     }
+ 
+     /// Reserve a worktree for a destructive `dispatch-close`, and decide, under

@@ -1,0 +1,15 @@
+# Pinned from the real red run of 2026-07-29: first from the pre-fix tree
+# (the natural reproduction, before the handle-based release existed), then
+# byte-identically from the fixed tree with injection.patch applied.
+
+exit: 101
+
+# The defect, named exactly: the release recomputed the worktree key from a
+# path cleanup had already deleted, missed the installed key, and left the
+# reservation behind.
+contains: the reservation must be released even though the worktree directory is gone
+
+# One test, and it is this one. A broader collapse is a different failure and
+# would mean this proof did not reproduce the defect it claims to.
+contains: finish_dispatch_cleanup_releases_even_after_the_worktree_is_removed
+contains: test result: FAILED. 0 passed; 1 failed
