@@ -780,6 +780,60 @@ pub fn own_tmux_server_for_tests() -> &'static str {
     })
 }
 
+// orgasmic:TASK-FJCE9
+/// Is the binary a PATH lookup of `tmux` landed on really tmux?
+///
+/// **A deliberate, documented copy.** The canonical rule is TASK-K4G1D's
+/// `tmux_mode_availability_for` in `orgasmic-daemon`'s `api::tests`, and
+/// TASK-VJ633 owns collapsing the two. It is copied rather than called for the
+/// reason `modes::rmux::test_tooling` already documents: an integration-test
+/// crate cannot import a `#[cfg(test)]` library module, and
+/// `crates/orgasmic-daemon/tests/recovery_fault_restart.rs` is exactly such a
+/// crate — it must gate its live-tmux test on the same rule the daemon's own
+/// tests use, or it goes back to gating on `tmux -V`, which the rmux shim
+/// answers with a lie (`tmux 3.4`; the real binary is 3.6a).
+///
+/// The copy is not free to drift: `daemon_and_driver_tmux_strictness_agree` in
+/// `api::tests` asserts the two answer identically over the whole matrix, next
+/// to the canonical rule so an edit there fails there.
+///
+/// rmux installs a shim directory ahead of a worker's `PATH` in which `tmux` is
+/// a symlink to `rmux` (`.orgasmic/gotchas.org`). Following the symlink is the
+/// only reliable tell.
+#[doc(hidden)]
+pub fn tmux_mode_availability_for(resolved: Option<&Path>) -> Result<(), String> {
+    let Some(resolved) = resolved else {
+        return Err("no tmux on PATH".to_string());
+    };
+    let real = std::fs::canonicalize(resolved).unwrap_or_else(|_| resolved.to_path_buf());
+    if real.file_name().and_then(|name| name.to_str()) == Some("rmux") {
+        return Err(format!(
+            "tmux on PATH ({}) is the rmux shim ({}); a genuine tmux-mode run needs the \
+             real binary resolved ahead of the shim",
+            resolved.display(),
+            real.display()
+        ));
+    }
+    Ok(())
+}
+
+// orgasmic:TASK-FJCE9
+/// [`tmux_mode_availability_for`] applied to the PATH lookup the drivers do —
+/// the strict "is real tmux usable here?" a test binary gates on.
+///
+/// Deliberately not `tmux_available()`: that asks `-V`, and inside an orgasmic
+/// worker the shim answers it.
+#[doc(hidden)]
+#[must_use]
+pub fn real_tmux_on_path() -> bool {
+    let resolved = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join("tmux"))
+            .find(|candidate| candidate.is_file())
+    });
+    tmux_mode_availability_for(resolved.as_deref()).is_ok()
+}
+
 fn tmux_available() -> bool {
     // `-V` never contacts a server, so it needs no socket selection.
     StdCommand::new("tmux")
