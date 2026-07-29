@@ -638,6 +638,26 @@ impl WriterHandle {
 
 /// Boot the writer task and return a clone-able handle.
 pub fn spawn(events: EventBus) -> WriterHandle {
+    spawn_with_catalog(events, None)
+}
+
+/// [`spawn`] with a run catalog attached to the session-append boundary.
+///
+/// orgasmic:TASK-FZB6T item 1 — the catalog is maintained *through the existing
+/// session writer boundary* rather than by a second component watching the
+/// filesystem. This is the one place in the daemon that knows a session file
+/// was written before anybody asks about it, so a lifecycle append invalidates
+/// that run's cached entry here and the next inventory re-derives it.
+///
+/// Only lifecycle appends invalidate. A driver event changes the file's length
+/// (so the fingerprint would catch it anyway on the next refresh) but cannot
+/// change a lifecycle verdict, and invalidating on the transcript firehose would
+/// make every poll of a chatty run re-read its window — the exact cost the
+/// catalog exists to remove.
+pub fn spawn_with_catalog(
+    events: EventBus,
+    catalog: Option<crate::run_catalog::RunCatalog>,
+) -> WriterHandle {
     let (tx, rx) = mpsc::channel(256);
     let idempotency = Arc::new(Mutex::new(HashMap::new()));
     let in_flight = Arc::new(std::sync::Mutex::new(None));
@@ -646,6 +666,7 @@ pub fn spawn(events: EventBus) -> WriterHandle {
         events,
         Arc::clone(&idempotency),
         Arc::clone(&in_flight),
+        catalog,
     ));
     WriterHandle {
         tx,
@@ -721,6 +742,7 @@ async fn writer_loop(
     events: EventBus,
     idempotency: Arc<Mutex<HashMap<String, CachedResponse>>>,
     in_flight: Arc<std::sync::Mutex<Option<PendingWrite>>>,
+    catalog: Option<crate::run_catalog::RunCatalog>,
 ) {
     let mut tx_handles: HashMap<PathBuf, CachedTxWriter> = HashMap::new();
     let mut session_handles: HashMap<String, SessionWriter> = HashMap::new();
@@ -803,6 +825,14 @@ async fn writer_loop(
                         },
                     );
                     if let Some(phase) = lifecycle_phase {
+                        // orgasmic:TASK-FZB6T — the catalog update runs through
+                        // this boundary, before the event is published, so no
+                        // consumer woken by the lifecycle event can read a
+                        // catalog entry that predates the write it was told
+                        // about.
+                        if let Some(catalog) = catalog.as_ref() {
+                            catalog.invalidate_session(&session_path);
+                        }
                         events.publish(
                             Topic::Run,
                             EventPayload::RunLifecycle {

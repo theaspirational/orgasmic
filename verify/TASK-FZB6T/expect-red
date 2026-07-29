@@ -1,0 +1,25 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection removes the file-identity cache from `RunCatalog::refresh_dir`:
+# every inventory pass and every daemon boot re-derives every record from disk,
+# which is exactly what the pre-catalog code did on every call.
+exit: 101
+
+# THE COST CLAIM. After the one-time legacy index, enumerating a 197-file
+# production-shaped board must read no session bytes at all. Without the cache
+# it reads 2.4 MiB of bounded windows on the small board and 27 MiB on the 16x
+# board — a cost that is still a function of what the files contain.
+contains: enumeration after the index still read session bytes
+
+# THE SAME CLAIM'S OTHER HALF. Every record of an unchanged board is answered
+# from the catalog; a cache-hit count of zero is the pre-catalog behaviour.
+contains: every record of an unchanged board must be answered from the catalog
+
+# BOOT RECONCILIATION. The second boot must load the previous boot's durable
+# index and re-read only what was written since. Without the cache the snapshot
+# is loaded and then ignored, so the restart pays the whole board again.
+contains: the first boot indexed the board
+
+# All three, and only these three. A binary that collapses wholesale is a
+# different failure and has not reproduced this defect.
+contains: test result: FAILED. 0 passed; 3 failed

@@ -1,0 +1,18 @@
+# One line. Run from the repo root by `orgasmic verify TASK-FZB6T`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses,
+# and these tests build synthetic boards in temp homes that must see neither.
+#
+# Three tests, one per claim the compact run catalog has to keep:
+#
+# 1. the cost claim, stated as a number rather than a wall time — after the
+#    one-time legacy index, enumerating a 197-file production-shaped board reads
+#    ZERO session bytes, and the index itself is bounded by record count at any
+#    payload size. Without the file-identity cache every pass re-derives every
+#    record from disk, which is exactly the pre-catalog cost;
+# 2. the migration claim — the same board yields identical classifications
+#    before and after the catalog is populated. This is what makes the catalog a
+#    question of WHEN a file is read and never of what its lifecycle means;
+# 3. boot reconciliation — a restart loads the previous boot's durable index and
+#    re-reads only the session files written since, selecting the same reattach
+#    candidates as a cold boot.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- inventory_cost_does_not_follow_transcript_bytes a_production_shaped_board_classifies_identically_before_and_after_the_catalog boot_reconciliation_after_the_index_reads_no_session_bytes

@@ -1,0 +1,18 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection removes the catalog-version check from `load_snapshot`: any
+# catalog file on disk is trusted, whatever wrote it and whatever shape it is.
+exit: 101
+
+# A CORRUPT INDEX POISONING CLASSIFICATION. A snapshot this build cannot vouch
+# for is loaded and its 197 entries become the inventory's answer, in place of
+# what the session files actually say. The catalog is derived state; the only
+# safe response to a record shape it cannot verify is to discard and re-index.
+contains: a catalog this daemon cannot vouch for must not load
+
+# ROLLBACK, BOTH DIRECTIONS. An older daemon reading a newer catalog and a newer
+# one reading an older shape are the same problem and take the same answer.
+contains: a catalog version this build does not know must be refused, not read
+
+# Both, and only these two.
+contains: test result: FAILED. 0 passed; 2 failed

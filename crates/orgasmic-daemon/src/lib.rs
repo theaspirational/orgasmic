@@ -25,6 +25,7 @@ pub mod logging;
 pub mod manager_registration;
 pub mod prompt_compiler;
 pub mod recovery_claim;
+pub mod run_catalog;
 pub mod runtime;
 pub mod supervisor;
 pub mod watcher;
@@ -963,7 +964,10 @@ impl Daemon {
         api::migrate_legacy_home_sessions(&home, &migrate_projects);
 
         boot_progress.set_phase("starting runtime")?;
-        let writer = spawn_writer(events.clone());
+        // orgasmic:TASK-FZB6T — one catalog instance, shared by the writer
+        // boundary that maintains it and the API state that serves from it.
+        let run_catalog = crate::run_catalog::RunCatalog::new();
+        let writer = crate::writer::spawn_with_catalog(events.clone(), Some(run_catalog.clone()));
         // orgasmic:TASK-AK6EM — externally-held `dispatch-close` guards are
         // persisted here, so a replacement daemon inherits a fence whose holder
         // (the CLI) is still deleting files. Declared before the listener binds,
@@ -1043,6 +1047,7 @@ impl Daemon {
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
+            run_catalog: run_catalog.clone(),
             trusted_claude_binary: api::pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: opts.trusted_exec_wrapper_override.clone(),
             release_tasks: api::ReleaseTaskTracker::new(),

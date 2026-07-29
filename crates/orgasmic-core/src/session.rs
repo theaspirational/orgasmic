@@ -18,7 +18,8 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -171,7 +172,20 @@ impl SessionWriter {
     }
 
     /// Append one envelope and return its sequence number.
+    ///
+    /// `driver_event` payloads pass through [`bound_driver_event_payload`]
+    /// first: this is the single choke point every persisted harness payload
+    /// goes through, so the cap cannot be bypassed by a new driver or a new
+    /// call site (orgasmic:TASK-FZB6T item 3). Lifecycle, babysitter-summary,
+    /// and note envelopes are supervisor-authored authority and are written
+    /// verbatim.
     pub fn append(&mut self, kind: SessionEventKind, event: Value) -> Result<u64, SessionError> {
+        let event = match kind {
+            SessionEventKind::DriverEvent => {
+                bound_driver_event_payload(event, DRIVER_EVENT_PAYLOAD_CAP_BYTES).value
+            }
+            _ => event,
+        };
         let envelope = SessionEnvelope {
             seq: self.seq,
             time: Utc::now(),
@@ -190,6 +204,214 @@ impl SessionWriter {
         self.seq += 1;
         Ok(seq)
     }
+}
+
+// orgasmic:TASK-FZB6T
+// ---------------------------------------------------------------------------
+// Retention by authority, and the payload cap that enforces it.
+// ---------------------------------------------------------------------------
+
+/// Default per-payload byte cap for one string inside a persisted
+/// `driver_event`.
+///
+/// Not a cap on the event, and not a cap on the file: it is a cap on any
+/// SINGLE free-text payload (assistant text, tool result body, thinking
+/// block). Events stay countable — `call_id`, `name`, `ok`, `seq`, and the
+/// envelope `time` are structure, never payload, so a bounded stream still
+/// answers how many tool calls ran, which failed, how many were retried, and
+/// how long each took.
+///
+/// 16 KiB is chosen against the shapes that actually appear: it holds a whole
+/// ACP `ready` capabilities frame (the largest control frame observed on a real
+/// 2.2 GiB board was 18 KiB, and control frames are not payload), an ordinary
+/// assistant turn, and a normal tool result, while a `cargo test` log or a
+/// pasted file — the payloads that produced the 2.239 GiB incident — is
+/// digested instead of copied.
+pub const DRIVER_EVENT_PAYLOAD_CAP_BYTES: usize = 16 * 1024;
+
+/// Bytes of the original payload retained inline ahead of the digest marker.
+/// Enough for a human skimming the JSONL to recognize what was cut.
+const BOUNDED_PAYLOAD_HEAD_BYTES: usize = 2 * 1024;
+
+/// Key suffix carrying the machine-readable digest for a bounded sibling.
+/// `chunk` → `chunk_bounded`. A suffix rather than a nested rewrite because
+/// `DriverEvent` deserialization must keep working on bounded lines: the tag
+/// stays a string, and serde ignores the unknown sibling key.
+const BOUNDED_SUFFIX: &str = "_bounded";
+
+/// Where the bytes that were NOT copied still live.
+///
+/// orgasmic never copies harness-native JSONL into its own session file. When a
+/// payload overflows the cap, the full text remains exactly where the harness
+/// already wrote it, and the digest names that fact rather than a path orgasmic
+/// would have to keep valid.
+const BOUNDED_PAYLOAD_SOURCE: &str =
+    "harness-native session transcript (vendor-owned; never copied by orgasmic)";
+
+/// Default retention by authority (orgasmic:TASK-FZB6T item 5).
+///
+/// Four tiers, ordered by who owns the bytes. Anything a maintenance command
+/// may reclaim must be justified against this table, and the two authoritative
+/// tiers are never reclaimable:
+///
+/// | tier | authority | default retention |
+/// | --- | --- | --- |
+/// | lifecycle envelopes + run catalog | orgasmic (authoritative) | kept indefinitely; the catalog is derived and rebuildable, the lifecycle lines are not |
+/// | compact semantic driver events | orgasmic (derived, budgeted) | kept within [`DRIVER_EVENT_PAYLOAD_CAP_BYTES`] per payload; overflow becomes a digest |
+/// | derived retro/evidence caches | orgasmic (disposable) | reclaimable at any time; regenerable from the two tiers above |
+/// | harness-native history | the vendor | never copied, never pruned, never counted against an orgasmic budget |
+///
+/// Rendered TUI redraw and scrollback are not a tier: they are forbidden
+/// storage (dec_WDR5K item 7 / TASK-AFE5Q). A pane transport persists a
+/// [`DriverEvent::PaneActivity`] byte COUNT and nothing else.
+pub const RETENTION_TIERS: [(&str, &str, &str); 4] = [
+    (
+        "lifecycle",
+        "orgasmic-authoritative",
+        "kept: lifecycle envelopes and the run catalog decide recovery",
+    ),
+    (
+        "semantic_driver_events",
+        "orgasmic-derived",
+        "kept within the documented per-payload byte budget; overflow digested",
+    ),
+    (
+        "retro_evidence_cache",
+        "orgasmic-disposable",
+        "reclaimable: regenerable from lifecycle + semantic events",
+    ),
+    (
+        "harness_native_history",
+        "vendor-owned",
+        "never copied by orgasmic and never pruned by orgasmic",
+    ),
+];
+
+/// Outcome of bounding one `driver_event` payload tree.
+#[derive(Debug, Clone)]
+pub struct BoundedDriverEvent {
+    /// The event with oversized payloads replaced by head + digest marker.
+    pub value: Value,
+    /// How many individual payloads were digested.
+    pub bounded_payloads: u64,
+    /// Total bytes of original payload that were NOT persisted.
+    pub bytes_elided: u64,
+}
+
+/// Cap every individual string payload inside one `driver_event`.
+///
+/// Strings longer than `cap` are replaced by their first
+/// [`BOUNDED_PAYLOAD_HEAD_BYTES`] plus an inline marker, and — when the string
+/// sits under a key in an object — a sibling `<key>_bounded` object carrying
+/// the byte count, the SHA-256 of the full original payload, and the source
+/// reference. Structure (`type`, `call_id`, `name`, `ok`, `seq`, `stream`) is
+/// never touched, so a bounded stream stays countable.
+///
+/// Idempotent: re-bounding an already-bounded event is a no-op, because the
+/// retained head is shorter than the cap.
+pub fn bound_driver_event_payload(event: Value, cap: usize) -> BoundedDriverEvent {
+    let mut value = event;
+    let mut stats = BoundStats::default();
+    bound_value(&mut value, cap, 0, &mut stats);
+    BoundedDriverEvent {
+        value,
+        bounded_payloads: stats.bounded_payloads,
+        bytes_elided: stats.bytes_elided,
+    }
+}
+
+#[derive(Default)]
+struct BoundStats {
+    bounded_payloads: u64,
+    bytes_elided: u64,
+}
+
+/// Recursion depth ceiling. ACP content trees are shallow; a pathological
+/// payload must cost bounded work rather than blow the stack.
+const BOUND_MAX_DEPTH: usize = 16;
+
+fn bound_value(value: &mut Value, cap: usize, depth: usize, stats: &mut BoundStats) {
+    if depth >= BOUND_MAX_DEPTH {
+        return;
+    }
+    match value {
+        Value::Object(map) => {
+            let mut digests: Vec<(String, Value)> = Vec::new();
+            for (key, child) in map.iter_mut() {
+                if let Value::String(text) = child {
+                    if text.len() > cap {
+                        let (head, digest) = digest_payload(text);
+                        stats.bounded_payloads += 1;
+                        stats.bytes_elided += text.len().saturating_sub(head.len()) as u64;
+                        *text = head;
+                        digests.push((format!("{key}{BOUNDED_SUFFIX}"), digest));
+                    }
+                    continue;
+                }
+                bound_value(child, cap, depth + 1, stats);
+            }
+            for (key, digest) in digests {
+                map.insert(key, digest);
+            }
+        }
+        Value::Array(items) => {
+            for child in items.iter_mut() {
+                if let Value::String(text) = child {
+                    if text.len() > cap {
+                        let (head, _) = digest_payload(text);
+                        stats.bounded_payloads += 1;
+                        stats.bytes_elided += text.len().saturating_sub(head.len()) as u64;
+                        *text = head;
+                    }
+                    continue;
+                }
+                bound_value(child, cap, depth + 1, stats);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `(retained head + marker, machine-readable digest object)` for one
+/// oversized payload.
+fn digest_payload(text: &str) -> (String, Value) {
+    let sha = hex_sha256(text.as_bytes());
+    let bytes = text.len();
+    let head_end = char_boundary_at_or_below(text, BOUNDED_PAYLOAD_HEAD_BYTES);
+    let mut head = String::with_capacity(head_end + 160);
+    head.push_str(&text[..head_end]);
+    head.push_str(&format!(
+        "…[orgasmic-bounded: {bytes} bytes, sha256 {sha}, retained {head_end}; \
+         full payload stays in the {BOUNDED_PAYLOAD_SOURCE}]"
+    ));
+    let mut digest = Map::new();
+    digest.insert("bytes".to_string(), Value::from(bytes as u64));
+    digest.insert("sha256".to_string(), Value::String(sha));
+    digest.insert("retained_bytes".to_string(), Value::from(head_end as u64));
+    digest.insert(
+        "source".to_string(),
+        Value::String(BOUNDED_PAYLOAD_SOURCE.to_string()),
+    );
+    (head, Value::Object(digest))
+}
+
+fn char_boundary_at_or_below(text: &str, mut index: usize) -> usize {
+    if index >= text.len() {
+        return text.len();
+    }
+    while index > 0 && !text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out
 }
 
 /// Driver-side events serialized into the per-run JSONL session.
@@ -1112,6 +1334,298 @@ mod tests {
         let path = dir.path().join("run-torn.jsonl");
         std::fs::write(&path, "{\"seq\":0,\"kind\":\"lifecycle\"").unwrap();
         assert!(scan_session_lifecycle(&path, SessionScanBudget::DEFAULT).is_err());
+    }
+
+    // orgasmic:TASK-FZB6T — item 3: lock future storage.
+
+    /// A long TUI session must not grow the orgasmic JSONL from screen repaint
+    /// traffic.
+    ///
+    /// Stated as a CONSEQUENCE, not a wall time: the pane writes 8 MiB of
+    /// full-screen ANSI redraws in 512 chunks, and the only thing that reaches
+    /// the writer is the coalesced [`DriverEvent::PaneActivity`] byte count.
+    /// The gate is that persisted bytes track the number of activity EVENTS,
+    /// not the number of pane bytes — a driver that ever forwards rendered
+    /// content (a `text_chunk` synthesized from the pane, a scrollback capture,
+    /// a redraw payload) fails on file size and on the content assertion, in
+    /// that order.
+    #[test]
+    fn a_long_tui_session_persists_no_rendered_redraw_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-tui.jsonl");
+        let mut writer =
+            SessionWriter::open(&path, RuntimeIdentity::new("run-tui", "boot-tui")).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                json!({"phase": "acquire", "kind": "worker", "task_id": "TASK-TUI", "worker_id": "implementer-claude-rmux"}),
+            )
+            .unwrap();
+
+        // One full-screen repaint: cursor home, clear, 40 rows of content.
+        let repaint = format!(
+            "\x1b[H\x1b[2J{}",
+            "\x1b[K spinner ⠙ working…\r\n".repeat(40)
+        );
+        let mut pane_bytes_written = 0_u64;
+        let mut activity_events = 0_u64;
+        for seq in 0..512_u64 {
+            for _ in 0..24 {
+                pane_bytes_written += repaint.len() as u64;
+            }
+            // What the pane transport is allowed to persist: a count.
+            let event = DriverEvent::PaneActivity {
+                seq,
+                bytes: repaint.len() as u64 * 24,
+            };
+            writer
+                .append(
+                    SessionEventKind::DriverEvent,
+                    serde_json::to_value(&event).unwrap(),
+                )
+                .unwrap();
+            activity_events += 1;
+        }
+        drop(writer);
+
+        assert!(
+            pane_bytes_written > 8 * 1024 * 1024,
+            "the fixture must actually be a long TUI session: {pane_bytes_written} pane bytes"
+        );
+        let persisted = std::fs::metadata(&path).unwrap().len();
+        // Each PaneActivity line is an envelope header plus two small numbers.
+        // 512 bytes per event is generous headroom and still two orders of
+        // magnitude below the pane traffic it observed.
+        let ceiling = 512 * (activity_events + 1);
+        assert!(
+            persisted < ceiling,
+            "rendered TUI output reached the JSONL: {persisted} bytes persisted for \
+             {activity_events} activity events (ceiling {ceiling}), against \
+             {pane_bytes_written} pane bytes observed"
+        );
+
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !source.contains("\\u001b") && !source.contains("spinner"),
+            "a redraw chunk persisted to JSONL: rendered pane content must never \
+             be written to an orgasmic session file"
+        );
+        let envelopes = read_session_file(&path).unwrap();
+        for envelope in &envelopes {
+            if envelope.kind != SessionEventKind::DriverEvent {
+                continue;
+            }
+            let parsed: DriverEvent = serde_json::from_value(envelope.event.clone()).unwrap();
+            assert!(
+                matches!(parsed, DriverEvent::PaneActivity { .. }),
+                "a pane transport may persist only PaneActivity, got {parsed:?}"
+            );
+        }
+
+        // THE LOCK, not the fixture. The assertions above hold because the
+        // fixture emits only counts — which is what the current pane transports
+        // do, and exactly what a future one could stop doing. So drive the case
+        // that regression looks like: a driver that synthesizes a `text_chunk`
+        // out of accumulated pane repaints and hands it to the writer. The
+        // writer is the choke point, and it must refuse to persist the rendered
+        // bytes whatever the driver believes.
+        let scrollback = repaint.repeat(4096);
+        assert!(scrollback.len() > 4 * 1024 * 1024);
+        let before = std::fs::metadata(&path).unwrap().len();
+        let mut writer =
+            SessionWriter::open(&path, RuntimeIdentity::new("run-tui", "boot-tui")).unwrap();
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(&DriverEvent::TextChunk {
+                    stream: TextStream::Stdout,
+                    chunk: scrollback.clone(),
+                    seq: 9_999,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+        let grew = std::fs::metadata(&path).unwrap().len() - before;
+        assert!(
+            grew < 8 * 1024,
+            "a redraw chunk persisted to JSONL: a {} byte rendered repaint grew the \
+             session file by {grew} bytes",
+            scrollback.len()
+        );
+        let source = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            source.contains("orgasmic-bounded"),
+            "the rendered payload must be replaced by a digest that names its size \
+             and where the bytes actually live"
+        );
+    }
+
+    /// Oversized payloads are digested; the evidence needed for retrospective
+    /// analysis survives.
+    #[test]
+    fn oversized_driver_payloads_are_digested_but_stay_countable() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-acp.jsonl");
+        let mut writer =
+            SessionWriter::open(&path, RuntimeIdentity::new("run-acp", "boot-acp")).unwrap();
+
+        let huge = "cargo test output line\n".repeat(200_000);
+        assert!(huge.len() > 4 * 1024 * 1024);
+        // Two calls, the first failing and retried, so the stream still has to
+        // answer calls / results / retries / latencies after bounding.
+        for (attempt, ok) in [("c1", false), ("c2", true)] {
+            writer
+                .append(
+                    SessionEventKind::DriverEvent,
+                    serde_json::to_value(&DriverEvent::ToolCall {
+                        call_id: attempt.to_string(),
+                        name: "shell".to_string(),
+                        args: json!({"command": "cargo test"}),
+                        seq: 0,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+            writer
+                .append(
+                    SessionEventKind::DriverEvent,
+                    serde_json::to_value(&DriverEvent::ToolResult {
+                        call_id: attempt.to_string(),
+                        ok,
+                        output: json!({"content": [{"type": "text", "text": huge}]}),
+                        seq: 1,
+                    })
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        writer
+            .append(
+                SessionEventKind::DriverEvent,
+                serde_json::to_value(&DriverEvent::TextChunk {
+                    stream: TextStream::Assistant,
+                    chunk: huge.clone(),
+                    seq: 2,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+
+        let persisted = std::fs::metadata(&path).unwrap().len();
+        assert!(
+            persisted < 5 * DRIVER_EVENT_PAYLOAD_CAP_BYTES as u64,
+            "three multi-megabyte payloads must not reach the file: {persisted} bytes"
+        );
+
+        let envelopes = read_session_file(&path).unwrap();
+        // Calls, results, retries: countable.
+        let calls = envelopes
+            .iter()
+            .filter(|e| e.event.get("type").and_then(|v| v.as_str()) == Some("tool_call"))
+            .count();
+        let results: Vec<&SessionEnvelope> = envelopes
+            .iter()
+            .filter(|e| e.event.get("type").and_then(|v| v.as_str()) == Some("tool_result"))
+            .collect();
+        assert_eq!(calls, 2);
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|e| e.event.get("ok") == Some(&Value::Bool(false)))
+                .count(),
+            1,
+            "a bounded result must still say whether it failed"
+        );
+        // Latency: envelope times survive, and call/result correlate by id.
+        for envelope in &results {
+            assert!(envelope
+                .event
+                .get("call_id")
+                .and_then(|v| v.as_str())
+                .is_some());
+        }
+        assert!(envelopes
+            .windows(2)
+            .all(|pair| pair[0].time <= pair[1].time));
+
+        // The digest names bytes, hash, and where the bytes actually live.
+        let chunk_envelope = envelopes
+            .iter()
+            .find(|e| e.event.get("type").and_then(|v| v.as_str()) == Some("text_chunk"))
+            .unwrap();
+        let digest = chunk_envelope.event.get("chunk_bounded").unwrap();
+        assert_eq!(
+            digest.get("bytes").and_then(|v| v.as_u64()),
+            Some(huge.len() as u64)
+        );
+        assert_eq!(
+            digest.get("sha256").and_then(|v| v.as_str()),
+            Some(hex_sha256(huge.as_bytes()).as_str())
+        );
+        assert!(digest
+            .get("source")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.contains("never copied by orgasmic")));
+
+        // A bounded line still deserializes as its typed DriverEvent: the tag
+        // stays a string and the digest is an ignored sibling key.
+        let parsed: DriverEvent = serde_json::from_value(chunk_envelope.event.clone()).unwrap();
+        let DriverEvent::TextChunk { chunk, .. } = parsed else {
+            panic!("bounded text_chunk must still parse as TextChunk");
+        };
+        assert!(chunk.contains("orgasmic-bounded"));
+        assert!(chunk.len() < DRIVER_EVENT_PAYLOAD_CAP_BYTES);
+    }
+
+    #[test]
+    fn bounding_is_idempotent_and_leaves_small_payloads_untouched() {
+        let small = json!({"type": "text_chunk", "chunk": "hello", "seq": 1});
+        let once = bound_driver_event_payload(small.clone(), DRIVER_EVENT_PAYLOAD_CAP_BYTES);
+        assert_eq!(once.bounded_payloads, 0);
+        assert_eq!(once.value, small);
+
+        let big = json!({"type": "text_chunk", "chunk": "x".repeat(1024 * 1024), "seq": 1});
+        let first = bound_driver_event_payload(big, DRIVER_EVENT_PAYLOAD_CAP_BYTES);
+        assert_eq!(first.bounded_payloads, 1);
+        assert!(first.bytes_elided > 1_000_000);
+        let second =
+            bound_driver_event_payload(first.value.clone(), DRIVER_EVENT_PAYLOAD_CAP_BYTES);
+        assert_eq!(second.bounded_payloads, 0, "re-bounding must be a no-op");
+        assert_eq!(second.value, first.value);
+    }
+
+    /// Lifecycle envelopes are authority, not payload: the cap must not touch
+    /// them, or a long recovery prompt draft would come back digested and the
+    /// operator would lose the exact text that was staged.
+    #[test]
+    fn lifecycle_envelopes_are_never_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("run-lifecycle.jsonl");
+        let text = "recovery prompt ".repeat(4096);
+        assert!(text.len() > DRIVER_EVENT_PAYLOAD_CAP_BYTES);
+        let mut writer =
+            SessionWriter::open(&path, RuntimeIdentity::new("run-lc", "boot-lc")).unwrap();
+        writer
+            .append(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::PromptDraft {
+                    text: text.clone(),
+                    sent: false,
+                })
+                .unwrap(),
+            )
+            .unwrap();
+        drop(writer);
+        let envelopes = read_session_file(&path).unwrap();
+        let Lifecycle::PromptDraft { text: back, .. } =
+            serde_json::from_value(envelopes[0].event.clone()).unwrap()
+        else {
+            panic!("expected a prompt draft");
+        };
+        assert_eq!(back, text);
     }
 
     #[test]

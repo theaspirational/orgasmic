@@ -1058,6 +1058,9 @@ enum RunCmd {
         /// Run id, e.g. `run-20260707T211315-…`, as printed by `orgasmic run list`.
         id: String,
     },
+    /// Inspect or maintain durable run history storage (TASK-FZB6T).
+    #[command(subcommand)]
+    History(RunHistoryCmd),
     /// Locate the harness-native session transcript for a run (TASK-0SADP).
     ///
     /// Resolves claude/codex/cursor-agent/hermes on-disk JSONL via per-harness
@@ -1096,6 +1099,39 @@ enum RunCmd {
         /// use only after confirming the process is gone.
         #[arg(long)]
         force_inert: bool,
+    },
+}
+
+// orgasmic:TASK-FZB6T
+#[derive(Subcommand, Debug)]
+enum RunHistoryCmd {
+    /// Account for what durable run history holds, by driver+harness and event
+    /// class. Read-only: nothing is written, moved, or deleted.
+    ///
+    /// Unlike `orgasmic run list`, this visits every byte of every session file
+    /// — accounting for bytes means reading them. That is why it is a separate
+    /// operator command and not part of the inventory.
+    Inspect {
+        /// Restrict accounting to one registered project id.
+        #[arg(long)]
+        project: Option<String>,
+    },
+    /// Report exactly which legacy rendered-TUI bytes a compaction pass could
+    /// reclaim.
+    ///
+    /// `--dry-run` is required and is the only mode this build implements. The
+    /// destructive half — compacting or archiving those payloads — is
+    /// deliberately not wired up here: it must preserve lifecycle/native
+    /// correlation, write recoverably, and take an explicit operator
+    /// confirmation, and none of that may ship on the back of a flag that
+    /// already accounts correctly. Nothing is ever cleaned up automatically.
+    Compact {
+        /// Required. Report only; changes nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Restrict accounting to one registered project id.
+        #[arg(long)]
+        project: Option<String>,
     },
 }
 
@@ -3298,6 +3334,26 @@ fn cmd_run(home: &Home, cmd: RunCmd) -> Result<()> {
         let value: serde_json::Value = match cmd {
             RunCmd::List => client.get("/runs").await?,
             RunCmd::Show { id } => client.get(&format!("/runs/{id}")).await?,
+            RunCmd::History(RunHistoryCmd::Inspect { project }) => {
+                client.get(&run_history_path(project.as_deref())).await?
+            }
+            // orgasmic:TASK-FZB6T item 4 — the dry run and the destructive run
+            // are the same accounting with different consequences, so the
+            // refusal is stated here, in front of the daemon, rather than by a
+            // route that could later start doing the other thing.
+            RunCmd::History(RunHistoryCmd::Compact { dry_run, project }) => {
+                if !dry_run {
+                    anyhow::bail!(
+                        "`run history compact` requires --dry-run: this build implements the \
+                         accounting only. Compacting or archiving legacy payloads must preserve \
+                         lifecycle/native correlation, write recoverably, and take an explicit \
+                         operator confirmation; none of that is wired up, and no cleanup of \
+                         existing history happens automatically. Run with --dry-run to see \
+                         exactly what a future pass could reclaim."
+                    );
+                }
+                client.get(&run_history_path(project.as_deref())).await?
+            }
             RunCmd::NativeTranscript { id } => {
                 client.get(&format!("/runs/{id}/native-transcript")).await?
             }
@@ -3324,6 +3380,14 @@ fn cmd_run(home: &Home, cmd: RunCmd) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&value)?);
         Ok(())
     })
+}
+
+/// orgasmic:TASK-FZB6T — `/runs/history`, optionally scoped to one project.
+fn run_history_path(project: Option<&str>) -> String {
+    match project {
+        Some(project) => format!("/runs/history?project={project}"),
+        None => "/runs/history".to_string(),
+    }
 }
 
 fn cmd_auth_show(home: &Home) -> Result<()> {
