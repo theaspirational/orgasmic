@@ -1781,6 +1781,28 @@ async fn dispatch_clean_worktree_protocol_end_without_finalize_orphans() {
     let _ = running.join.await;
 }
 
+/// Run ids the daemon still holds a lease for. The lease, not the session
+/// file, is what "released" means to every caller (TASK-37TAF).
+async fn live_run_ids(running: &RunningDaemon, token: &str) -> Vec<String> {
+    let body: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{}/api/runs/live", running.addr))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    body["live"]
+        .as_array()
+        .map(|runs| {
+            runs.iter()
+                .filter_map(|run| run["run_id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn read_project_tx(project_root: &Path) -> String {
     let mut raw = String::new();
     let tx_dir = project_root.join(".orgasmic/tx");
@@ -3707,10 +3729,23 @@ async fn dispatch_endpoint_worker_finalize_preserves_authoritative_artifacts() {
     let release = reqwest::Client::new()
         .post(format!("http://{}/api/runs/{run_id}/release", running.addr))
         .bearer_auth(&token)
+        // orgasmic:TASK-37TAF — carries its terminal tx, as every `dispatch
+        // finalize` has since TASK-WGXKD. A `finalized_by_worker` release
+        // WITHOUT one is now refused outright (old-CLI skew), so sending the
+        // old payload here would test the refusal, not the artifact contract
+        // this test is about.
         .json(&serde_json::json!({
             "reason": format!("worker finalize for {task_id}"),
             "finalized_by_worker": true,
-            "request_id": "dispatch-endpoint-finalize-test"
+            "request_id": "dispatch-endpoint-finalize-test",
+            "terminal_tx": {
+                "request_id": format!("dispatch-finalize-{task_id}"),
+                "type": "implementer.reported",
+                "actor": "agent.implementer",
+                "project": project_id,
+                "task": task_id,
+                "extra": [["RUN_ID", run_id]],
+            },
         }))
         .send()
         .await
@@ -3883,6 +3918,185 @@ async fn dispatch_endpoint_worker_finalize_tx_survives_caller_disconnect() {
         !reported.contains(":TYPE:         manager.dispatch_orphaned"),
         "a reported worker finalize must not also flag an orphan"
     );
+
+    let _ = running.shutdown.send(());
+    let _ = running.join.await;
+}
+
+/// TASK-37TAF: the OTHER version-skew direction — an old `dispatch finalize`
+/// (pre-TASK-WGXKD) against a current daemon — must also be fail-closed.
+///
+/// TASK-WGXKD.1 closed new-CLI/old-daemon with a capability handshake. Nothing
+/// closed old-CLI/new-daemon: `terminal_tx` is optional on the payload, so a
+/// `finalized_by_worker: true` release carrying none released the run anyway
+/// and answered 200 with `terminal_tx_id: null`, expecting the caller to post
+/// its own `/tx` afterwards. On acp-stdio there is no afterwards — the release
+/// tears down the driver, the driver reaps the harness's setsid process group
+/// with a direct `kill(-pgid, …)`, and the finalize CLI is in that group. The
+/// run ends released, `Completed`, with no terminal tx AND no orphan flag,
+/// because the dispatch completion watcher reads `finalized_by_worker` as
+/// "the worker reported this itself" and skips its fallback entirely.
+///
+/// So the daemon refuses instead, and the lease stays HELD — the same trade
+/// `require_daemon_writes_terminal_tx` takes on the CLI side: visible-and-wrong
+/// beats invisible-and-wrong. The second half of this test pins the refusal
+/// narrow: the same release WITH a `terminal_tx` still succeeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn dispatch_endpoint_old_cli_release_without_terminal_tx_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = Home::at(tmp.path().join("home"));
+    home.ensure().unwrap();
+    let project_root = tmp.path().join("project");
+    std::fs::create_dir_all(&project_root).unwrap();
+    let project_id = "proj-dispatch";
+    let task_id = "TASK-SKEW-TX";
+    // acp-stdio specifically: this is the transport where the loss is total
+    // (3/3 in TASK-WGXKD's measurements) because the group reap is a direct
+    // kill rather than a round trip through an mux server.
+    let worker_id = "implementer-codex-acp-stdio";
+    seed_project(&home, &project_root, project_id, worker_id, task_id);
+    write(
+        &project_root.join(".orgasmic/project.org"),
+        "#+title: orgasmic\n#+orgasmic_version: 1\n\n* PROJECT orgasmic\n:PROPERTIES:\n:ID:                     orgasmic\n:END:\n",
+    );
+    // The harness never has to answer: the ACP handshake blocks on its stdout,
+    // which is exactly the live-run state a finalize is issued from.
+    let bin_dir = install_fake_codex(tmp.path(), "#!/bin/sh\nsleep 120\n");
+    let stem_dir = project_root.join(".orgasmic/tmp/dispatch/task-skew-tx");
+    std::fs::create_dir_all(&stem_dir).unwrap();
+    let worktree = stem_dir.join("worktree");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let brief = stem_dir.join("brief.md");
+    write(&brief, "old-cli skew brief");
+    let last = stem_dir.join("last.txt");
+    let stdout = stem_dir.join("stdout.log");
+    write(&last, "worker report");
+    write(&stdout, "");
+
+    let running = boot(home.clone()).await;
+    let token = read_token(&home);
+    let mut dispatch = dispatch_body(
+        "implementer",
+        &brief,
+        &worktree,
+        &last,
+        &stdout,
+        Some(worker_id),
+    );
+    dispatch["driver_config"] = serde_json::json!({
+        "PATH": format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())
+    });
+    let response = post_dispatch(&running, &token, project_id, task_id, dispatch).await;
+    assert_eq!(
+        response.status(),
+        200,
+        "dispatch failed: {}",
+        response.text().await.unwrap_or_default()
+    );
+    let body: serde_json::Value = response.json().await.unwrap();
+    let run_id = body["run_id"]
+        .as_str()
+        .expect("dispatch response run_id")
+        .to_string();
+
+    // Guard against a false red: the assertion below reads "the lease is gone"
+    // as the defect, so a run that was never live (or that the harness stub
+    // already lost) has to fail with its own message instead.
+    assert!(
+        live_run_ids(&running, &token).await.contains(&run_id),
+        "run {run_id} was not live before the finalize; this test would prove \
+         nothing about the release"
+    );
+
+    // The old CLI's release payload, verbatim: it declares the worker finalize
+    // and sends no tx, because that CLI still intends to POST /tx itself.
+    let old_cli_release = reqwest::Client::new()
+        .post(format!("http://{}/api/runs/{run_id}/release", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": format!("worker finalize for {task_id}"),
+            "request_id": format!("dispatch-release-skew-{run_id}"),
+            "finalized_by_worker": true,
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = old_cli_release.status();
+    let refusal = old_cli_release.text().await.unwrap_or_default();
+
+    // THE LOSS, asserted first: the lease must still be held. A released run
+    // here is the invisible fourth state — committed, reported to last.txt,
+    // lease gone, no tx, no orphan flag.
+    let still_live = live_run_ids(&running, &token).await;
+    assert!(
+        still_live.contains(&run_id),
+        "an old-CLI finalize with no terminal_tx must leave the lease HELD, not \
+         release a run nothing will ever report: run {run_id} is gone from \
+         /runs/live (status {status}, body {refusal})\nlive={still_live:?}"
+    );
+    assert_eq!(
+        status, 400,
+        "the skewed release must be refused, not performed: {refusal}"
+    );
+    // The refusal has to name the skew and the remedy (EP3H1/TZKAC standard):
+    // an operator reading only this string must know which side is old and
+    // what to do next.
+    for needle in [
+        "terminal_tx",
+        "still held",
+        "orgasmic dispatch finalize",
+        "orgasmic update",
+    ] {
+        assert!(
+            refusal.contains(needle),
+            "the refusal must name `{needle}` so the operator can act on it: {refusal}"
+        );
+    }
+    assert!(
+        !read_project_tx(&project_root).contains(":TYPE:         implementer.reported"),
+        "a refused release must not leave a terminal tx behind"
+    );
+
+    // The guard is narrow: the same release WITH the tx the current CLI sends
+    // still succeeds, and still writes it.
+    let good = reqwest::Client::new()
+        .post(format!("http://{}/api/runs/{run_id}/release", running.addr))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "reason": format!("worker finalize for {task_id}"),
+            "request_id": format!("dispatch-release-skew-ok-{run_id}"),
+            "finalized_by_worker": true,
+            "terminal_tx": {
+                "request_id": format!("dispatch-finalize-{task_id}-{run_id}"),
+                "type": "implementer.reported",
+                "actor": "agent.implementer",
+                "project": project_id,
+                "task": task_id,
+                "extra": [["RUN_ID", run_id]],
+            },
+        }))
+        .send()
+        .await
+        .unwrap();
+    let good_status = good.status();
+    let good_body = good.text().await.unwrap_or_default();
+    assert!(
+        good_status.is_success(),
+        "a release carrying its terminal tx must still be accepted: \
+         {good_status} {good_body}"
+    );
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let raw = read_project_tx(&project_root);
+        if raw.contains(":TYPE:         implementer.reported") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the accepted release must still write its terminal tx:\n{raw}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 
     let _ = running.shutdown.send(());
     let _ = running.join.await;
