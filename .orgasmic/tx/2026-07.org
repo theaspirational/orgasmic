@@ -41862,3 +41862,69 @@
 :PROJECT:      orgasmic
 :REASON:       TASK-VZMZE closed done: fixed by TASK-JK66P's merge (co-owned, one evidence-of-work design; verify/TASK-JK66P-vzmze pins its direction — heartbeats no longer reset the work clock, wedge stalls on schedule)
 :END:
+
+* TX 2026-07-29 Wed 03:31:21 task.state_transitioned TASK-KPMFK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3697
+:TIME:         [2026-07-29 Wed 03:31:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KPMFK
+:TARGET:       .orgasmic/tasks/in_progress.org
+:REASON:       transition TASK-KPMFK to in_progress
+:FROM_STATE:   backlog
+:TO_STATE:     in_progress
+:END:
+
+* TX 2026-07-29 Wed 03:31:22 manager.dispatch_started TASK-KPMFK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3698
+:TIME:         [2026-07-29 Wed 03:31:22]
+:TYPE:         manager.dispatch_started
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KPMFK
+:REASON:
+:KIND:         implementer
+:MODE:         rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kpmfk/worktree
+:BRANCH:       task-kpmfk-impl
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-kpmfk/brief-kpmfk.md
+:STARTED_AT:   [2026-07-29 Wed 03:31:22]
+:LIVENESS:     180d592ad9e774942ddfbcf21c291769b8225424
+:NEXT:         fix-implementer-watch-then-integrate
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:REASON_INITIAL: P1: cross-restart terminal-tx gap from C0XMR review finding; premise-verify-first given 567JG/HAREX/JK66P landed since
+:END:
+
+* TX 2026-07-29 Wed 03:31:22 run.created TASK-KPMFK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3699
+:TIME:         [2026-07-29 Wed 03:31:22]
+:TYPE:         run.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-KPMFK
+:TARGET:       .orgasmic/tmp/sessions/dispatch-TASK-KPMFK-implementer-20260729T033122.jsonl
+:REASON:       P1: cross-restart terminal-tx gap from C0XMR review finding; premise-verify-first given 567JG/HAREX/JK66P landed since
+:RUN_ID:       run-20260729T033122-37974f31fa10442d90fbc3b80fed680e
+:ORIGIN:       cli_dispatch
+:WORKER:       implementer-claude-rmux
+:KIND:         implementer
+:DRIVER:       rmux
+:HARNESS:      claude
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-kpmfk/worktree
+:BRIEF_PATH:   .orgasmic/tmp/dispatch/brief-kpmfk/brief-kpmfk.md
+:LAST_PATH:    .orgasmic/tmp/dispatch/brief-kpmfk/brief-kpmfk-9b5af674ef0541e1917fa1bc4fd920dc-last.txt
+:STDOUT_PATH:  .orgasmic/tmp/dispatch/brief-kpmfk/brief-kpmfk-9b5af674ef0541e1917fa1bc4fd920dc-stdout.log
+:DISPATCH_ATTEMPT: 9b5af674ef0541e1917fa1bc4fd920dc
+:DISPATCH_TX:  tx-20260729-orgasmic-3698
+:MODEL_OVERRIDE: claude-opus-5
+:EFFORT_OVERRIDE: high
+:END:
