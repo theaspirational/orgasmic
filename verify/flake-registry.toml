@@ -124,57 +124,45 @@ filed = "2026-07-28"
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# TASK-TZKAC — the lock-acquisition budget. FOUND by TASK-J1XCB as the one entry
-# of its four that it did not fix, and handed to TASK-TZKAC, which owns the
-# decision this entry needs: the mechanism is a production protocol rule
-# (`acquire_daemon_lock` stops retrying after DAEMON_LOCK_RETRY_BUDGET), not a
-# test defect, so fixing it is its own task rather than J1XCB's fourth commit.
-# The owner moved J1XCB -> TZKAC on 2026-07-29 for exactly that reason; the
-# evidence below is still J1XCB's measurement, unchanged.
+# TASK-TZKAC — DELETED, not registered. The lock-acquisition budget was fixed.
 #
-# J1XCB's siblings are gone rather than registered:
-#   supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases
-#   tests::replacement_start_waits_out_a_shutting_down_predecessor  (both modes)
-# Both measured a fixed amount of wall clock against work whose real cost is a
-# timer, both were fixed, and both went from 10-of-12 and 1-of-12 red to 0-of-12
-# under the harness that produced them. Proof: verify/TASK-J1XCB and
-# verify/TASK-J1XCB-marker.
+# The entry that stood here named
+# `api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post`,
+# signature "the configured port is 0, so the incumbent address cannot be
+# probed", filed 2026-07-29 by TASK-J1XCB and re-owned to TASK-TZKAC the same
+# day. It is gone because the defect under it is gone, which is what the rule at
+# the top of this file requires.
 #
-# This one stayed registered because it was never reproduced under J1XCB's own
-# harness rounds and its mechanism was still unexplained — see the caveat under
-# the entry, which is TZKAC's starting point.
+# The mechanism, which J1XCB left unexplained, turned out not to need the
+# holder's identity at all. `acquire_daemon_lock` retried the lock only inside
+# DAEMON_LOCK_RETRY_BUDGET (125ms, sized by TASK-870YX for a CLI probe that
+# holds it for microseconds) and then, finding no shutdown marker, stopped
+# trying the lock ENTIRELY and refused on whatever the incumbent probe could not
+# establish — and every answer that probe can give short of "a healthy daemon is
+# already running" is a condition the holder can grow out of a millisecond
+# later. So a transient holder produced a permanent refusal, and this test could
+# only ever have been fixed by acquiring the lock: `test_options()` sets
+# `port_override: Some(0)`, which makes its probe permanently impossible.
+#
+# Fixed at the protocol level, not in the test: past the transient budget the
+# loop keeps trying the lock, keeps re-reading the marker, and keeps probing, up
+# to a ceiling DERIVED from this daemon's own `ShutdownBudgets::total` — so no
+# holder, declared or not, can cost a replacement more wall clock than a real
+# shutdown can. Proof: verify/TASK-TZKAC, whose injected red reproduces J1XCB's
+# second measured refusal verbatim.
+#
+# The sibling this entry's comment named,
+# `tests::daemon_lock_retries_a_transient_probe_hold`, is fixed by the same
+# change and was never registered.
+#
+# Measured, this worktree, 2026-07-29. Pre-fix, carrying the pid probe J1XCB
+# proposed: 28 loaded copy-runs (7 rounds x 4 concurrent copies of the daemon
+# --lib binary at --test-threads=64) reproduced NEITHER test — J1XCB's own rate
+# was 1 in 36, so the holder was never caught in the act and is still
+# unidentified. Post-fix, same harness: 7 complete rounds, 28 copy-runs, 0
+# failures of either test, and one captured instance of the new wait doing its
+# job on the real path — a `Daemon::run` met an undeclared holder, waited 488ms,
+# and booted, where pre-fix it would have refused. The refusal now names the pid
+# the lock file records and whether it is alive, so the next sighting answers
+# the question these runs could not.
 # --------------------------------------------------------------------------
-
-[[flake]]
-test = "api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post"
-owner = "TASK-TZKAC"
-signature = "the configured port is 0, so the incumbent address cannot be probed"
-evidence = "Reproduced here 2026-07-29, 1 of 36 loaded runs of the daemon --lib binary, in the round with four copies of that binary running concurrently at --test-threads=64. Verbatim, at api.rs:25505 — the `.unwrap()` of `let restarted = crate::Daemon::run(home.clone(), test_options())`, the test's RESTART of the daemon on the same home: `called Result::unwrap() on an Err value: daemon instance lock <tmp>/home/daemon.lock is held, but the incumbent is not healthy and no daemon has recorded a shutdown for this home, so the holder is not a departing predecessor: the configured port is 0, so the incumbent address cannot be probed. Refusing to start a competing daemon`. The originally captured panic (TASK-5FEN5's 2026-07-29 runs, api.rs:24818) elided the holder clause; this one does not, and 24818 resolves to the same restart line in the tree of that date (be3408ce). Green alone; green in 24 of 24 loaded runs at lower concurrency."
-filed = "2026-07-29"
-
-# The holder is `LockHolder::NotDeparting`, and that is the load-bearing fact.
-# It means the lock was held by something that published no shutdown marker, and
-# `acquire_daemon_lock` gives such a holder only `DAEMON_LOCK_RETRY_BUDGET`
-# (125ms): once that expires with no marker on disk it stops retrying the lock
-# entirely and goes straight to classification, where `port_override: Some(0)`
-# from `test_options()` makes the probe impossible and the refusal certain.
-#
-# That budget is sized for "a CLI probe that holds the lock for microseconds"
-# (TASK-870YX). On a host running four copies of this binary it is not enough,
-# and this test is not the only one that shows it: in the SAME round
-# `tests::daemon_lock_retries_a_transient_probe_hold` failed with the same
-# holder class and the same 125ms budget — `transient lock hold must not fail
-# daemon acquisition: ... is held, but the incumbent is not healthy and no
-# daemon has recorded a shutdown for this home ...: the incumbent has not
-# created an auth token yet (it may still be booting)`, lib.rs:1665. Two
-# different tests, one budget.
-#
-# What is NOT established is which transient holder this test's restart met.
-# Ruled out by reading: the test awaits `running.join` before restarting and the
-# daemon's shutdown task does `drop(instance_lock)` as its second-to-last
-# statement, so a joined predecessor cannot still hold it; the home is a fresh
-# `tempdir` per loop iteration, so no other test in the binary shares the path;
-# and no code outside `acquire_daemon_lock` opens `daemon.lock` at all. The next
-# probe is to log the pid recorded inside the lock file at the refusal site —
-# `open_and_try_lock_daemon` writes it on every successful acquisition — which
-# separates an in-process holder from anything else in one run.
