@@ -17,8 +17,8 @@
 //!   mid-boot — and must refuse, naming the live owner it refused for;
 //! - one competitor is given a budget that outlasts the scan and must conclude
 //!   with the incumbent's own identity, not a second listener;
-//! - an autostart-shaped observer reads only the published records throughout
-//!   and must see one owner, advancing, classified `starting`.
+//! - and throughout, the records an autostart reads — boot heartbeat, lock file,
+//!   lock ownership — must name one owner, advancing, classified `starting`.
 //!
 //! Compression rather than production numbers, for the reason TASK-G7E4R gives:
 //! the ratio between the slow phase and the budget is what is under test, and

@@ -375,6 +375,8 @@ impl SharedBootProgress {
         BootPhaseReport {
             phases,
             total_millis: self.started_instant.elapsed().as_millis() as u64,
+            // The publisher measures time; it does not know what was read. The
+            // boot fills these in from its own snapshot.
             projects: 0,
             tx_entries: 0,
         }
