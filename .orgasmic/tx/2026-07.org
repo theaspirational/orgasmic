@@ -41928,3 +41928,389 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-29 Wed 03:32:15 task.state_transitioned TASK-GQPGR
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3700
+:TIME:         [2026-07-29 Wed 03:32:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GQPGR
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-GQPGR to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:15 task.state_transitioned TASK-TCTTD
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3701
+:TIME:         [2026-07-29 Wed 03:32:15]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TCTTD
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-TCTTD to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:16 task.state_transitioned TASK-MFJZ7
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3702
+:TIME:         [2026-07-29 Wed 03:32:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MFJZ7
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-MFJZ7 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:16 task.state_transitioned TASK-ZYWZD
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3703
+:TIME:         [2026-07-29 Wed 03:32:16]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-ZYWZD
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-ZYWZD to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:17 task.state_transitioned TASK-DJ1WV
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3704
+:TIME:         [2026-07-29 Wed 03:32:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-DJ1WV
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-DJ1WV to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:17 task.state_transitioned TASK-WE0Q7
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3705
+:TIME:         [2026-07-29 Wed 03:32:17]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-WE0Q7
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-WE0Q7 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:18 task.state_transitioned TASK-HQ970
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3706
+:TIME:         [2026-07-29 Wed 03:32:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HQ970
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-HQ970 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:18 task.state_transitioned TASK-XPYRR
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3707
+:TIME:         [2026-07-29 Wed 03:32:18]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-XPYRR
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-XPYRR to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:19 task.state_transitioned TASK-5FEN5
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3708
+:TIME:         [2026-07-29 Wed 03:32:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-5FEN5
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-5FEN5 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:19 task.state_transitioned TASK-EP3H1
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3709
+:TIME:         [2026-07-29 Wed 03:32:19]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-EP3H1
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-EP3H1 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:20 task.state_transitioned TASK-S2KM0
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3710
+:TIME:         [2026-07-29 Wed 03:32:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-S2KM0
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-S2KM0 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:20 task.state_transitioned TASK-0RCRY
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3711
+:TIME:         [2026-07-29 Wed 03:32:20]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-0RCRY
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-0RCRY to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:21 task.state_transitioned TASK-K4G1D
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3712
+:TIME:         [2026-07-29 Wed 03:32:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-K4G1D
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-K4G1D to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:21 task.state_transitioned TASK-HXSW0
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3713
+:TIME:         [2026-07-29 Wed 03:32:21]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HXSW0
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-HXSW0 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:22 task.state_transitioned TASK-GEZHQ
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3714
+:TIME:         [2026-07-29 Wed 03:32:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-GEZHQ
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-GEZHQ to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:22 task.state_transitioned TASK-JGHNC
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3715
+:TIME:         [2026-07-29 Wed 03:32:22]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JGHNC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-JGHNC to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:23 task.state_transitioned TASK-HAREX
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3716
+:TIME:         [2026-07-29 Wed 03:32:23]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-HAREX
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-HAREX to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:24 task.state_transitioned TASK-6HJYT
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3717
+:TIME:         [2026-07-29 Wed 03:32:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-6HJYT
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-6HJYT to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:24 task.state_transitioned TASK-FJCE9
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3718
+:TIME:         [2026-07-29 Wed 03:32:24]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-FJCE9
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-FJCE9 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:25 task.state_transitioned TASK-MRJRK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3719
+:TIME:         [2026-07-29 Wed 03:32:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MRJRK
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-MRJRK to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:25 task.state_transitioned TASK-4YC8E
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3720
+:TIME:         [2026-07-29 Wed 03:32:25]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YC8E
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-4YC8E to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:26 task.state_transitioned TASK-D1Z87
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3721
+:TIME:         [2026-07-29 Wed 03:32:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-D1Z87
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-D1Z87 to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:26 task.state_transitioned TASK-TZKAC
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3722
+:TIME:         [2026-07-29 Wed 03:32:26]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-TZKAC
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-TZKAC to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:27 task.state_transitioned TASK-J1XCB
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3723
+:TIME:         [2026-07-29 Wed 03:32:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-J1XCB
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-J1XCB to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:27 task.state_transitioned TASK-JK66P
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3724
+:TIME:         [2026-07-29 Wed 03:32:27]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JK66P
+:TARGET:       .orgasmic/tasks/done.org
+:REASON:       transition TASK-JK66P to done
+:FROM_STATE:   in_review
+:TO_STATE:     done
+:END:
+
+* TX 2026-07-29 Wed 03:32:37 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3725
+:TIME:         [2026-07-29 Wed 03:32:37]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       Batch review-close of 25 in_review tasks (tx-3700..3724): every one was merged only after the manager personally replayed its verify artifact(s) red-then-green (the TCTTD standard, which exists to replace merge-time re-review) with gates green modulo registry-classified flakes; TASK-Z3093 and TASK-QSSQH remain in_review — they predate the replay discipline and have no manager-replayed artifact
+:END:

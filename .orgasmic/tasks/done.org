@@ -16261,3 +16261,1785 @@ Worth filing separately if it happens again: a run that reaches `ready` and neve
 starts a turn, with no explanation in its session events.
 HARD COMPATIBILITY GATE added 2026-07-27 by the TASK-RWCRN reviewer (finding 2, MEDIUM). TASK-RWCRN landed DriverEvent::PaneActivity, a content-free per-30s event emitted while an rmux pane writes; it is the ONLY driver event an rmux worker produces after ready, and the rmux stall clock now depends on it. This task's recorded fix direction — move stall onto a progress-only clock advanced by tool/text/turn events — will kill every rmux dispatch at 600s again if implemented literally, because a pane produces none of those. The RWCRN author deliberately did NOT reuse DriverEvent::Heartbeat precisely so this task can classify the two independently: Heartbeat means the harness produced no substantive output, PaneActivity means the pane demonstrably wrote. That reasoning is sound, but the only warning it left was a doc comment in orgasmic-core/src/session.rs, which is outside this task's declared supervisor.rs write scope and outside this task record — so an implementer routed here would never see it. Hence this note. REQUIRED ACCEPTANCE, both regressions, cross-transport: (a) an acp-stdio run emitting only heartbeats and no substantive progress MUST time out, which is this task's whole point; and (b) a working rmux run emitting only pane_activity MUST continue to reset its stall deadline and MUST NOT be released. Treat (b) as a gate, not a note. Related: TASK-RWCRN's own reviewer also filed a HIGH that pane_activity is line-based and misses a redrawing TUI; if that lands as a raw-byte observation the event may change shape, so re-read the variant before building on it.
 
+* DONE TASK-GQPGR manager/task/tx CLI run from a dispatch worktree reports frozen snapshot state as fact and writes can silently not apply :cli:agent-ergonomics:hardening:
+:PROPERTIES:
+:ID: TASK-GQPGR
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-28 from three measured false readings in one session, all caused
+by one mechanism: the CLI resolves the project from the cwd, and a dispatch
+worktree contains a FROZEN `.orgasmic/` snapshot from the commit the worktree
+was created at. Run from inside one, state commands answer confidently from
+stale data, and some writes report success without applying.
+
+=== Measured, 2026-07-28 (all after `cd` into
+`.orgasmic/tmp/dispatch/task-z8wej-review/worktree` to inspect a commit)
+
+1. `orgasmic manager dispatch-status` returned EMPTY while three workers were
+   live and healthy (`rmux ls` showed both sessions; `git worktree list` showed
+   all three worktrees). Briefly read as "all workers died".
+2. `orgasmic manager dispatch-close --started-tx tx-...-3305` failed with
+   "no manager.dispatch_started tx in the tx log" — the worktree's snapshot
+   predates that tx.
+3. `orgasmic task update --property BLOCKED_BY=...` RETURNED A TX ID and
+   silently did not apply to the live project. A write verb that succeeds
+   against a frozen snapshot is the worst variant: no signal, wrong state.
+
+The failure is plausible rather than loud, which distinguishes it from
+TASK-HXSW0's argument-level silent drops (same disease, different organ: this is
+PROJECT RESOLUTION, not flag parsing).
+
+=== The fix
+
+The CLI created these worktrees; it can recognize them. Detect that the resolved
+project root is a dispatch worktree — by path shape
+(`.orgasmic/tmp/dispatch/*/worktree`), or better, by a marker the dispatch
+machinery already writes (or should write) into the worktree at creation.
+
+Then, for every verb that reads project state or writes the tx/ledger surface
+(`manager *`, `task *`, `tasks *`, `tx *`, `node *`, `board`, ...):
+
+- REFUSE with an error naming the situation and the primary project root
+  ("this is the dispatch worktree for TASK-X; run from <root> or pass
+  --project"), OR auto-resolve to the primary root and say so on stderr.
+  Choose one policy, record why. Refusal is the conservative default; a worker
+  legitimately operating inside its own worktree (the `dispatch` verb group,
+  dec_3M7M0) must keep working — the worker-facing surface is the carve-out
+  that must be explicitly decided and tested.
+- Daemon-routed verbs with explicit `--project` are already safe and must keep
+  working from anywhere.
+
+=== Acceptance
+
+- From inside a dispatch worktree: `manager dispatch-status` either reports the
+  LIVE project's state or refuses naming the primary root — proven by a test
+  that creates a real dispatch worktree shape and runs the verb from it.
+- From the same location, `task update` on a live task either applies (visible
+  from the primary root) or errors; it must never return a tx id that does not
+  land in the live ledger.
+- The worker-authority `dispatch` verb group still functions from inside its
+  own worktree (regression test).
+- Injection proof per project standard: with the guard removed, show the stale
+  EMPTY dispatch-status reading red against the new test; restore, green.
+
+=== Non-goals
+
+- Do not change how snapshots get into worktrees or what workers may read.
+- Do not implement TASK-HXSW0's help/arg-validation items here; cross-reference
+  only.
+
+Related: TASK-HXSW0 (silent no-ops on write verbs), the recorded gotcha
+"Manager commands run from a dispatch worktree report stale state as fact".
+
+* DONE TASK-TCTTD Injection proofs are re-authored at merge time against the fixed tree; ship them as artifacts replayed by one verb :cli:verification:mechanism:
+:PROPERTIES:
+:ID: TASK-TCTTD
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-28 after a session in which the manager's own re-injection probes
+were malformed four times, every time failing toward FALSE GREEN: an org-verbatim
+span tested against a backtick extractor, a std-Mutex API probe against a tokio
+Mutex, a "removed" lock that was still one shared static, and a genuine removal
+run after the ambient load that reproduced the race had gone. A broken probe
+that passes looks identical to a working fix. Each was caught only by manual
+suspicion, which does not scale and fails silently.
+
+Root cause: the injection proof is a RITUAL, re-authored from scratch at merge
+time against the ALREADY-FIXED tree — which is precisely where false green
+lives. The worker demonstrated red once, pre-fix, when red was cheap; that
+demonstration is then thrown away and the manager improvises a new probe.
+
+=== The mechanism
+
+Make the injection a shipped ARTIFACT, authored once at the moment the defect
+demonstrably exists, then replayed — never re-authored.
+
+1. The implementer, while the defect still reproduces (pre-fix), captures:
+   - a patch that reintroduces the defect onto the fixed tree (reverse of the
+     fix, or a minimal hand-written defect patch),
+   - the exact test command (single line, with the mandatory
+     `--skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+     baked in where the drivers suite is involved),
+   - the expected RED signature: a substring/regex of the failure output plus
+     the nonzero exit class.
+2. These live in the repo with the fix (suggested: `verify/TASK-<id>/` with
+   `injection.patch`, `cmd`, `expect-red`), so they survive worktree removal
+   and travel with the merge. The task drawer records the path.
+3. A new verb `orgasmic verify TASK-<id>` replays it: assert clean tree, apply
+   patch, run cmd, ASSERT RED MATCHING SIGNATURE (a green or wrong-red run
+   fails verification loudly), revert patch byte-clean, run cmd, assert green.
+   Machine-readable result; nonzero exit on any deviation.
+
+The property this buys: probe authorship happens exactly once, against a
+known-broken state, with its red output pinned. Replay cannot silently degrade
+into false green — a probe that no longer bites fails the replay itself.
+It also makes merge verification delegable (reviewer or manager runs one verb)
+instead of a manager-serial bespoke step.
+
+=== Design points the worker must decide and record
+
+- Patch application on a moved tree: if `injection.patch` no longer applies,
+  verify must FAIL (stale artifact), not skip.
+- Where the verb lives (`orgasmic verify` vs `orgasmic task verify`) and how it
+  finds the artifact (drawer property vs path convention). Prefer drawer
+  property `verify_artifact` set by the implementer, validated at close.
+- Safety: refuse to run on a dirty tree; always restore (RAII/temp-worktree ok,
+  but note dispatch worktrees already exist — do not invent a second worktree
+  mechanism if `git stash`-discipline suffices).
+
+=== Acceptance
+
+- One real, already-merged fix (suggested: TASK-R74E8's drain-budget defect) is
+  re-expressed as a verify artifact, and `orgasmic verify` shows the full
+  red-then-green replay with output.
+- A deliberately malformed artifact (patch that does not change behavior, or
+  wrong expected signature) makes verify FAIL loudly — demonstrated, with
+  output. This is the false-green detector and the core of the task.
+- Replay leaves the tree byte-identical (`git status` clean, `git diff` empty).
+- `verify --help` documents the artifact layout.
+
+=== Non-goals
+
+- Do not retrofit artifacts onto historical merges beyond the one exemplar.
+- Do not gate `manager dispatch-close` on verify yet — that is a follow-up
+  decision once the verb has been used in anger.
+- Do not touch the billed harness test in any way; its name appears here only
+  inside the mandatory skip flag.
+
+Related: TASK-S2KM0 (a CI lane could run `orgasmic verify` per merged task),
+TASK-MFJZ7 (mechanism-over-prose for the billed test, same philosophy).
+
+* DONE TASK-MFJZ7 the billed harness test is guarded only by a flag people must remember, and it already fired
+:PROPERTIES:
+:ID: TASK-MFJZ7
+:PRIORITY: P1
+:TAGS: drivers,tests,cost,safety
+:END:
+** Description
+`legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+(`crates/orgasmic-drivers/tests/driver_modes.rs:1662`) spawns the real `claude`
+binary and can submit a real, billed turn. It is declared as a plain
+`#[tokio::test]` with **no `#[ignore]` and no environment gate**, so a bare
+`cargo test -p orgasmic-drivers` runs it.
+
+The only thing standing between a contributor and a charge is remembering to
+pass `-- --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+on every invocation. That is prose in briefs and one entry in `gotchas.org`
+("Asking a harness to prove it can work costs real money"), enforced by nothing.
+
+=== It already fired
+
+2026-07-28, the TASK-QRB8S worker. Its brief carried the constraint in bold and
+it still ran `cargo test -p orgasmic-drivers` without the skip, twice — once on
+its branch and once on a stashed baseline to classify the failure. It reported
+the result honestly, which is how this was caught.
+
+Cost was probably nil that time: the run failed with the real binary answering
+`Error: Session ID … is already in use`, which is a pre-turn rejection. **That is
+luck, not a control.** A clean session id would have submitted the turn.
+
+This is the same shape as the defects this project keeps finding: a guarantee
+that lives in a document rather than in the code. A worker who is told the rule
+and breaks it anyway is evidence the rule needs a mechanism, not a louder brief.
+
+=== Ask
+
+1. Gate the test so the **default is safe**. `#[ignore]` plus an explicit
+   opt-in env (e.g. `ORGASMIC_ALLOW_BILLED_TESTS=1`) is the obvious shape: a
+   bare `cargo test` then skips it and says so, and `--include-ignored` alone is
+   not enough to run it.
+2. Make the skip unnecessary rather than mandatory. Once gated, briefs and
+   `gotchas.org` should stop telling people to pass `--skip`; update both, and
+   say what the new instruction is.
+3. Audit for any other test that can spend money or quota — any test that
+   spawns a real harness and submits a turn. Report the full list and gate each,
+   or state why it cannot bill. `real_claude_stream_json_bridge_reports_auth_error`
+   and the `live_rmux_*` family are the obvious places to start; several are
+   already availability-gated but availability is not the same as billing.
+4. Make the sentinel account for it. The `required_test_tooling_is_present`
+   contract counts gated tests; a billed test that is skipped by default must not
+   silently change that count in a way that hides it.
+
+=== Acceptance
+
+- `cargo test -p orgasmic-drivers` with no extra flags does not run the billed
+  test, and prints something that names why it was skipped.
+- Prove it by injection: remove the gate, show the test being collected and
+  attempted, restore it, show it skipped — with output. Do **not** let the
+  injected run actually submit a turn; assert on collection, not on execution.
+- The opt-in path works: with the env set, the test runs.
+- `gotchas.org` and every brief template no longer instruct `--skip`, and the
+  audit list from ask 3 is recorded on this task.
+
+=== Non-goals
+
+- Do not delete the test. It is the parity check between legacy drivers and
+  explicit pairs and it has real value when someone deliberately opts in.
+- Do not change what the test asserts.
+
+* DONE TASK-ZYWZD node body set silently drops nested headings: a write verb that lost 92 percent of a body and reported success :cli:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-ZYWZD
+:PRIORITY: P1
+:END:
+
+Filed 2026-07-28. `orgasmic node body set` replaces only the free prose between
+the property drawer and the first nested heading. A body containing `**`
+sub-headings is silently truncated at the first one — TASK-ATAXN was filed with
+300 of its 3959 characters and nobody was told. The read side compounds it:
+nested `**` sections are NOT returned in the JSON `description` field, so the
+loss is invisible through the same surface that caused it. A write verb that
+can drop 92% of its payload and report success is the single worst surface in
+the CLI.
+
+=== The principle (shared with TASK-HQ970, defect 2)
+
+A writer must not commit what it cannot read back. TASK-HQ970 states it for
+`tx record` (re-parse before reporting success); this task applies the same
+round-trip guarantee to the node body surface. If the fix grows shared
+machinery (compose -> re-parse -> diff-against-intent -> refuse on loss), use
+it for both.
+
+=== Work
+
+1. WRITE: `node body set` must either persist the full submitted body
+   (including nested `**` headings, correctly re-depthed under the task
+   heading) or REFUSE, naming exactly what would be lost ("body contains 3
+   nested headings starting at '** The gap'; this verb replaces prose only —
+   use ... or restructure with ==="). Never a silent partial write. Same audit
+   for `node body append` and any sibling that composes org content.
+2. READ: `task get` / `node` reads must expose the full body, or explicitly
+   mark elision ("+ 3 nested sections not shown") — never present a truncated
+   body as complete. Pick and record one; full exposure preferred.
+3. Post-write verification: after composing the new file content, re-parse and
+   assert the submitted body round-trips before the write is committed
+   (mirrors HQ970's acceptance "a write that would not round-trip is rejected
+   rather than committed").
+
+=== Acceptance
+
+- Setting a body containing `** Section` either persists it fully (verified by
+  reading the raw org node) or errors naming the offending heading — proven
+  both ways in tests.
+- The ATAXN shape is the regression fixture: a ~4000-char body with three `**`
+  sections survives set + get with zero loss, or is refused up front.
+- No silent partial write remains on any `node body` verb (enumerate them in
+  the report).
+- Injection proof per project standard: restore the truncating behavior, show
+  the round-trip test red with output, restore the fix, green.
+
+=== Non-goals
+
+- Do not implement TASK-HQ970 (tx record validation) here; share machinery if
+  natural, cross-reference regardless.
+- Do not redesign the org body/section model; make the existing surface honest
+  about it.
+
+Related: TASK-HQ970 (same round-trip principle on tx record), TASK-XPYRR
+(title, the other unwritable field), the recorded gotcha "`node body set`
+replaces prose only, so `**` headings in a body are lost".
+
+* DONE TASK-DJ1WV Red classification is manual folklore; a runner wrapper must retry failures in isolation against a signed flake registry :testing:mechanism:
+:PROPERTIES:
+:ID: TASK-DJ1WV
+:PRIORITY: P2
+:END:
+
+Filed 2026-07-28. Five tests fail on full-suite runs under load and pass in
+isolation. Today every full run therefore ends with a MANUAL classification
+step: a human (or manager agent) rereads the failure list, recalls which names
+are "known", reruns them alone, and decides whether red means anything. That
+step was performed from memory at least four times today; once a failure was
+misattributed to the wrong owning task (the 5HBST/STWVB mislabel — one test
+name, two distinct failure modes) and was caught only by reading the panic
+text. Standing red that requires folklore to interpret trains everyone to
+discount red, which is exactly how the next TASK-Q07Y5 walks through a green
+gate.
+
+=== Mechanism
+
+1. A machine-readable flake registry in the repo (suggested:
+   `verify/flake-registry.toml` or similar): per entry the exact test name, the
+   owning open TASK id, the failure SIGNATURE (substring/regex of the panic —
+   this is what makes the 5HBST/STWVB confusion impossible: one test may carry
+   two entries with different signatures and different owners), the evidence
+   ("fails under load, green in isolation, N/M runs on <date>"), and the date
+   filed. An entry whose owning task is done must fail a check — a registry
+   that only grows is a graveyard.
+2. A test-runner wrapper (script or cargo alias the whole project adopts —
+   workers, manager, and the future TASK-S2KM0 CI lane) that: runs the suite,
+   reruns each failure IN ISOLATION, and emits a final verdict block that
+   separates `REAL:` failures from `FLAKE (green in isolation, owner
+   TASK-STWVB, signature matched):` ones. Exit code nonzero iff REAL is
+   nonempty OR a failure matched no registry entry.
+3. A failure that matches a registered NAME but not its SIGNATURE is REAL —
+   that is the mislabel detector.
+4. The wrapper must bake in the mandatory
+   `--skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events`
+   default for the drivers suite so the safe invocation is the short one
+   (until TASK-MFJZ7 lands the in-test gate; then keep both).
+
+=== Seed entries (verify signatures before recording, do not copy blindly)
+
+`poll_direct_child_pid_prefers_worker_server_over_generic_sibling`,
+`recovery_reattaches_tmux_session_when_handle_exists`,
+`recovery_inventory_waits_for_atomic_claim_commit`,
+`git_resolves_quoted_included_origin_from_linked_worktree` — owner TASK-STWVB;
+`production_resume_native_fork_uses_pinned_claude_not_path_shim` — owner
+TASK-STWVB with the `resume_native_fork recover: 500` signature ONLY (its env
+race signature was fixed by TASK-5HBST and must NOT be registered).
+
+=== Acceptance
+
+- A full-suite run under induced load ends with the verdict block; the five
+  seeds classify as FLAKE with owners named; an injected genuine failure (any
+  deliberately broken test) classifies as REAL and the wrapper exits nonzero.
+- A failure matching a registered name with a different panic signature is
+  reported REAL — demonstrated.
+- Registry entries pointing at a done/cancelled task fail a check.
+- The wrapper never runs the billed test by default — demonstrated by output.
+
+=== Non-goals
+
+- Not fixing the flakes themselves (TASK-STWVB, TASK-QCG6J, TASK-Y9BY6 own
+  those). This task makes red mean something while they are being fixed.
+- Not the CI lane itself (TASK-S2KM0 consumes this — its work item 2, "decide
+  what to do about known-red tests before the lane goes required", is answered
+  by this registry).
+
+* DONE TASK-WE0Q7 No gate runs a daemon longer than ten seconds; add a scheduled soak that would have caught Q07Y5 :daemon:testing:mechanism:
+:PROPERTIES:
+:ID: TASK-WE0Q7
+:PRIORITY: P2
+:END:
+
+Filed 2026-07-28. No test in this repository runs a daemon longer than about
+ten seconds, so any defect that needs uptime to express passes every gate.
+That is not hypothetical: TASK-Q07Y5 shipped fully green and killed the
+operator's daemon 10.00s after every boot. TASK-R74E8 fixed it and added
+`daemon_serves_far_beyond_its_connection_drain_budget` — one test, watching one
+instance of the class (drain-budget misapplication, 8x budget ~ seconds). The
+CLASS — anything that expresses only with minutes of uptime: timers, budgets,
+watchers, leaks, heartbeat/stall interactions (see TASK-VZMZE), fd/session
+accumulation — still has nothing watching it.
+
+=== Mechanism
+
+A scheduled soak gate, not a per-merge one (minutes of wall clock do not belong
+in the merge path):
+
+1. A self-contained script (suggested `scripts/soak.sh` or a subcommand) that:
+   boots a REAL daemon from the tree under test with an isolated
+   `ORGASMIC_HOME` and random port (the isolated smoke-daemon recipe in
+   gotchas/memory — never `daemon start`, never the LaunchAgent, never the
+   installed runtime), runs it for a configurable duration (default >= 5
+   minutes; >= 10x any derived budget), under light periodic traffic (status
+   probes, a task read, a tx list — hit real surfaces), then SIGTERMs it.
+2. Asserts across the whole window: one pid and one boot_id throughout; zero
+   parse errors; memory/fd growth bounded (record; alert on gross growth, do
+   not tune thresholds finely); clean exit within
+   `ShutdownBudgets::default().total()` + margin (derived, not a literal —
+   the R74E8/ATAXN/QRB8S standard); marker/lock files retracted after exit.
+3. Wire it into a schedule: the repo already has `nightly-macos` /
+   `nightly-runtime` workflows — add it there, and/or a local launchd schedule
+   for the operator machine. Decide and record which; a soak that exists but
+   never runs is the same blindspot with extra steps.
+
+=== Acceptance
+
+- The soak runs green on current HEAD for the full default duration, output
+  showing the single pid/boot_id assertion sampled across the window.
+- Injection proof: reintroduce the Q07Y5-class defect (apply the drain budget
+  to the server's whole life instead of the drain phase) and show the soak
+  catches it — daemon dies mid-window, soak exits nonzero with a message
+  naming when it died. Restore, green. This proves the gate watches the class,
+  not the code path R74E8 already guards.
+- A second, different uptime defect class is demonstrated caught (suggested: a
+  short-interval timer/watcher misbehavior injected artificially) — one
+  exemplar beyond Q07Y5's, to show the gate is not overfit.
+- The soak NEVER touches the installed runtime, the real LaunchAgent, or
+  `$ORGASMIC_HOME` proper — asserted in the script itself, not just documented.
+
+=== Non-goals
+
+- Not the PR test lane (TASK-S2KM0); this is the scheduled long-run complement.
+- No multi-hour endurance matrix; one honest daily soak at minutes-scale first.
+- Do not run harness/provider turns in the soak — zero billed cost by
+  construction.
+
+Related: TASK-S2KM0 (CI), TASK-VZMZE (a defect exactly this gate would
+express), memory "orgasmic daemon uptime blindspot".
+
+* DONE TASK-HQ970 tx record accepts a multi-line --reason and bricks the append-only ledger :tx:data-integrity:defect:
+:PROPERTIES:
+:ID: TASK-HQ970
+:PRIORITY: P1
+:TEST_CMD: cargo test -p orgasmic-core
+:END:
+
+`orgasmic tx record --reason "<multi-line text>"` writes the newlines verbatim
+into the org property drawer, returns success with a tx_id, and leaves the
+append-only ledger unparseable. Every subsequent CLI read fails, so no verb —
+including the ones you would use to repair it — can run. The only way out is a
+hand-edit of the file the manager is forbidden to hand-edit.
+
+REPRODUCED [2026-07-26], not inferred. `orgasmic tx record --type manager.action
+--project orgasmic --task TASK-D0GA3 --reason "$(cat multi-line-file)"` returned
+
+    {"tx_id": "tx-20260726-orgasmic-2973", "tx_path": ".orgasmic/tx/2026-07.org"}
+
+and the next command failed with
+
+    Error: parse .orgasmic/tx/2026-07.org
+    Caused by: ...:29850: malformed property drawer entry: blank line inside
+    property drawer
+
+The remaining `--extra KEY=VALUE` properties were appended AFTER the injected
+prose, so they landed outside the drawer too. A second, subtler failure mode:
+once the blank lines were removed the parser then rejected the entry with "tx
+entry has trailing content after property drawer" — tx entries are drawer-only
+and carry no body at all, which is not stated anywhere in `tx record --help`.
+
+BLAST RADIUS. The write is accepted, so a manager has no signal until the next
+read. Both ledgers were hit in one session: the project ledger and, because
+`tx record` is not project-scoped by default (TASK-HXSW0 instance 6),
+`$ORGASMIC_HOME/state/tx/2026-07.org` as well. A daemon that cannot parse its
+tx file cannot dispatch, cannot close, cannot update a task.
+
+THREE SEPARATE DEFECTS, all in this one path:
+1. No validation. A value containing a newline must be rejected at the API
+   boundary with a clear error, before anything is written.
+2. No atomicity or verification. The writer should re-parse what it produced
+   before reporting success — a ledger that only accepts what it can read back
+   cannot be bricked by its own writer.
+3. No documented body support. If long prose belongs in a tx (and
+   `tx-scannable-bodies` implies it does), the entry format needs a body region
+   the parser accepts, or `--reason` needs to be documented as single-line and
+   the convention corrected.
+
+Acceptance:
+- `tx record --reason` with an embedded newline fails with a clear message and
+  writes nothing
+- a tx write that would not round-trip through the parser is rejected rather
+  than committed
+- `tx record --help` states the single-line constraint, or a body region exists
+  and is tested with multi-paragraph prose
+- a regression test asserts the ledger still parses after each supported write
+SIBLING FILED [2026-07-28]: TASK-ZYWZD applies this task's defect-2 principle (a writer must not commit what it cannot read back) to the node body surface, where `node body set` silently truncated TASK-ATAXN to 300 of 3959 chars. If either fix grows shared compose->re-parse->refuse machinery, use it for both.
+
+* DONE TASK-XPYRR a task title cannot be corrected through any CLI surface, so a retracted claim outlives its correction
+:PROPERTIES:
+:ID: TASK-XPYRR
+:PRIORITY: P1
+:TAGS: cli,daemon,org-surface
+:END:
+** Description
+A task heading's title cannot be changed through any CLI surface. `task update`
+takes `--state`, `--priority`, `--reason` and `--property`, and rejects
+`--title` with `unexpected argument`. `node body set` edits prose and named
+sections, never the heading line. `node prop set` edits the drawer. Nothing
+edits the title.
+
+=== Why it matters, concretely
+
+TASK-0RCRY was filed on 2026-07-28 with a diagnosis that was **retracted the
+same day** (tx-20260728-orgasmic-3226): the claim that workers inherit the
+daemon's `$TMUX`. The body was rewritten around the one surviving fact and now
+opens with an explicit correction. **The title could not be rewritten**, so the
+board still reads:
+
+  "Workers inherit the daemon's $TMUX, so tmux tests talk to the rmux server
+   and six gated tests never run"
+
+The title is the most-read field on the board — it is what `dispatch-status`,
+the task lists and every survey print. A retracted claim sitting in a heading
+outlives the correction in the body, and the only reader guaranteed to see the
+correction is one who opens the task.
+
+The manager cannot fix this by hand: `.orgasmic` is daemon-owned and hand-edits
+are forbidden. So the wrong title is currently unfixable by any sanctioned path.
+
+=== Same class as TASK-JQARS
+
+JQARS was about a documented command that did not exist. This is the inverse:
+a field the product plainly owns, with no surface to write it. Both leave an
+operator with a state they can observe and cannot change.
+
+=== Ask
+
+1. Add title editing to the task surface, through the daemon with the same OCC +
+   structural guard as the other node writes. `task update --title` is the
+   obvious shape given the flag already suggested by clap's own "a similar
+   argument exists" tip.
+2. Decide and record whether a title edit is allowed to change the org tags on
+   the title line, or whether tags stay a separate concern. Do not let a title
+   write silently drop tags — the heading line carries both.
+3. Check the same question for the other node kinds that have titles (decision,
+   architecture, glossary, goal). Report which already have a write path and
+   which do not; fix only the ones in scope and file the rest.
+4. Fix TASK-0RCRY's title as the acceptance demonstration, to:
+   "No tmux call site passes -L/-S, so every probe and test session shares one
+    server — on a dev box, the operator's own"
+
+=== Acceptance
+
+- `orgasmic task update <id> --title "..."` rewrites the heading, preserves the
+  drawer, the body, all named sections and the org tags, and records a tx.
+- Prove it by injection: a test that rewrites a title and asserts tags and body
+  survive fails if the tag-preserving path is removed. Show it red, then green.
+- A title containing org-significant characters (`*` at line start, `:tag:`
+  shapes, trailing colons) either round-trips or is rejected with a reason — say
+  which you chose and why. A silently corrupted heading is worse than a refusal.
+- TASK-0RCRY reads correctly on the board afterwards.
+
+=== Non-goals
+
+- Do not add a general "edit any org line" escape hatch. The structural guard is
+  the reason these surfaces are narrow.
+
+* DONE TASK-5FEN5 Two unowned load flakes found by the registry verification: babysitter flush and index repo_url rebuild :daemon:testing:flake:
+:PROPERTIES:
+:ID: TASK-5FEN5
+:PRIORITY: P1
+:END:
+
+Discovered 2026-07-28 by the TASK-DJ1WV worker while verifying flake-registry
+seed signatures under induced load (8-12 cpu hogs, elevated --test-threads).
+Both fail under load, pass green in isolation, and had never been written down:
+
+1. `supervisor::tests::live_babysitter_summary_flushes_on_event_threshold`
+   (crates/orgasmic-daemon/src/supervisor.rs:9727) — failed 2 of 3 runs at 64
+   test threads.
+2. `index::tests::live_rebuild_preserves_repo_url_and_schedules_post_bind_refresh`
+   (crates/orgasmic-daemon/src/index.rs:2095) — assertion left "" vs right
+   "ssh://git@example.com/..." — the rebuilt index observed before the repo_url
+   refresh landed.
+
+The flake registry (verify/flake-registry.toml) deliberately refuses entries
+without an owning open task, so both currently classify REAL and a loaded
+full-suite run exits nonzero. This task exists to own them; its number should
+be added to registry entries ONLY once each panic signature is captured
+verbatim from a real failure (the DJ1WV rule: never guess a signature from the
+test body).
+
+=== Ask
+
+1. Reproduce each under load, capture the exact panic text, register both with
+   this task as owner (or fix them outright if the cause is shallow —
+   registering is the fallback, fixing is the goal).
+2. Diagnose: both look like timing assumptions about background work
+   (babysitter flush threshold; post-bind refresh scheduling) observed from a
+   test that does not wait on the completion signal. Fix the synchronization,
+   not the timeout size, per the R74E8/ATAXN standard.
+3. On fix, delete the registry entries (the registry check enforces this once
+   this task is done).
+
+=== Acceptance
+
+- Injection per project standard, shipped as a verify/TASK-<id>/ artifact that
+  `git apply` accepts.
+- Either both tests survive 5 consecutive loaded runs (fixed), or both are
+  registered with measured signatures and this task documents the diagnosis
+  for the eventual fix.
+THIRD CANDIDATE [2026-07-29], from the TASK-HQ970 worker's gate classification: `dispatch_system_only_session_without_finalize_orphans_not_scrapes` — 'timed out waiting for session ready' under full-suite load, passes in isolation and 34/34 when its binary runs alone. Same timeout shape as the others. If you reproduce it under the load recipe, capture its verbatim panic and treat it under this task's ownership too; if not, leave it unregistered per the DJ1WV rule.
+
+FOURTH CANDIDATE [2026-07-29], from the TASK-XPYRR worker's gate run: `supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases` — "run run-… did not release within 12s" (crates/orgasmic-daemon/src/supervisor.rs:8065), one RED under full-suite load, green in isolation. Same shape: a timeout-bounded wait on background work observed under contention. Same rule applies: capture the verbatim panic under the load recipe before registering; ownership under this task, not a new entry.
+
+* DONE TASK-EP3H1 dispatch-close tears under load: tx appended, lifecycle stranded, and a timed-out request can succeed invisibly :cli:daemon:hardening:
+:PROPERTIES:
+:ID: TASK-EP3H1
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 at load average ~190 (a worker deliberately inducing load).
+`orgasmic manager dispatch-close --task TASK-G7E4R --status done` produced:
+
+  warning: close tx appended but lifecycle update failed: daemon request
+  failed ... is the daemon reachable?
+  closed: TASK-G7E4R implementer.done tx=tx-20260728-orgasmic-3500
+
+State afterwards: close tx recorded, dispatch record closed, task stranded at
+`in_review`. The warning is loud (good — this is not a silent tear), but the
+operator is left to repair the lifecycle by hand.
+
+The repair then hit the second half of the defect: a follow-up
+`task update --state done` returned `"changed": {}` with an EMPTY tx_id —
+because the "failed" lifecycle request had actually landed server-side after
+the client gave up. Client timeout is not server failure. Two consequences:
+
+1. `dispatch-close` is not atomic across its two writes (tx append +
+   lifecycle update) and does not retry or reconcile the second on failure.
+2. A timed-out request can succeed invisibly, so naive retry logic can
+   double-apply or mis-read state. The `{"changed":{}, "tx_id":""}` no-op
+   response was correct here, but nothing documents that contract.
+
+=== Ask
+
+1. Make dispatch-close's task-state transition part of the same daemon
+   operation as the close tx (single request, single commit), or make the CLI
+   reconcile on startup of the next manager command ("close tx tx-N exists but
+   task is in_review -> finish the transition").
+2. Idempotency: closes and state updates should carry the started-tx (they
+   already do) and the daemon should treat a re-submitted close/transition for
+   an already-closed dispatch as a clean no-op with a response that SAYS it was
+   already applied, distinguishable from "nothing to do".
+3. While in the file: the CLI's timeout error text "is the daemon reachable?"
+   misdiagnoses scheduler starvation as daemon death (three occurrences on
+   2026-07-29, all with the daemon healthy and answering raw HTTP in 0.4s).
+   Say "request timed out after Ns; the daemon may be healthy but the system
+   is under load" and name the load if cheaply readable.
+
+=== Acceptance
+
+- A close whose lifecycle leg is injected to fail leaves a state the NEXT
+  manager command repairs automatically, proven by test.
+- A re-submitted close is a labelled no-op, proven by test.
+- Injection per the TCTTD standard; verify artifact `git apply`-clean.
+
+* DONE TASK-S2KM0 No CI workflow runs the test suite; every green gate in this project is a local claim :ci:process:test:
+:PROPERTIES:
+:ID: TASK-S2KM0
+:priority: P1
+:PRIORITY: P1
+:END:
+
+Verified 2026-07-26 while ruling on reviewer finding 5 on TASK-8W30B.
+
+`.github/workflows/` contains six files — nightly-android, nightly-macos,
+nightly-runtime, release-android, release-macos, runtime-bundles. `grep -rn
+"cargo test\|cargo nextest" .github/workflows/` returns nothing. No workflow runs
+the Rust test suite, clippy or fmt.
+
+Every "gates green" claim in every task Evidence section in this repository is
+therefore a local run by whoever happened to run it, on their machine, in
+whatever state that machine was in. Nothing re-checks it on merge, and nothing
+would catch a regression landed by a contributor who skipped the local run.
+
+This session is a direct illustration. The full suite degrades as it runs
+(TASK-8W30B: leaked rmux sessions), a driver test now bills real money and fails
+intermittently (TASK-099T6), three daemon tests are known-red, and all of that
+was discovered by hand, twice, because two different agents ran the suite in two
+different local states and got two different answers.
+
+The reviewer raised the narrow version — the new rmux regression test skips
+rather than fails when rmux is absent, so adding `cargo test` to CI naively would
+make it green forever without ever creating a session. That is real, but it is
+downstream of the larger gap.
+
+Work:
+1. Add a CI lane that runs `cargo test --workspace`, `cargo clippy --workspace
+   --all-targets -- -D warnings` and `cargo fmt --all --check`.
+2. Decide what to do about the three known-red daemon tests before turning the
+   lane required — a lane that is red on arrival teaches everyone to ignore it.
+3. Decide which live-harness tests may run in CI at all. Some spawn real claude
+   and cost money per run (see the gotcha "Asking a harness to prove it can work
+   costs real money"); those need an opt-in gate, not a default lane.
+4. For tests that skip when their runtime is unavailable, add a required-environment
+   mode where a skip is a failure, and provision rmux in whatever lane is
+   designated as the gate.
+
+Acceptance:
+- a pull request that breaks the workspace suite fails a check
+- the suite CI runs is honest about what it did not run, rather than skipping
+  silently
+- no default CI lane bills the operator for a provider turn
+SIBLINGS FILED [2026-07-28]: TASK-DJ1WV (flake registry + retry-in-isolation runner wrapper) is the concrete answer to work item 2 — the CI lane should consume its verdict block so known flakes cannot teach anyone to ignore the lane. TASK-WE0Q7 adds the scheduled minutes-scale daemon soak (the uptime blindspot class behind Q07Y5) as the nightly complement to this per-PR lane. TASK-TCTTD's `orgasmic verify` replay is a candidate per-merge CI step once it exists.
+
+* DONE TASK-0RCRY No tmux call site passes -L/-S, so every probe and test session shares one server — on a dev box, the operator's own :daemon:drivers:tmux:testing:
+:PROPERTIES:
+:ID: TASK-0RCRY
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-drivers/**,crates/orgasmic-daemon/**,.orgasmic/gotchas.org
+:END:
+
+**This task was filed on 2026-07-28 with a wrong diagnosis and rewritten the same
+day.** The original claim — that workers inherit the daemon's `$TMUX` and so
+reach the rmux server — is false and is recorded as such in
+tx-20260728-orgasmic-3226. What survives is a narrower, measured problem.
+
+=== What was measured, and what it ruled out
+
+Filed after a TASK-1T3FZ dispatch reported six daemon failures with
+`tmux new-session failed (exit 1): server exited unexpectedly` and
+`required test tooling is missing: tmux (gates 6 tests)`.
+
+Ruled out, each by direct measurement:
+
+- *The daemon does not carry `TMUX`.* `ps eww 32814` shows none. (The earlier
+  contrary reading came from `pgrep` matching a worker's prompt text instead of
+  the daemon; the pid was a claude worker, not the daemon.)
+- *A worker's tmux calls are not broken.* rmux creates the worker's pane, sets
+  `TMUX=/private/tmp/rmux-501/default,...`, and prepends a shim directory in
+  which `tmux` is a symlink to `rmux`. Under the exact worker `PATH` + `TMUX`,
+  `tmux new-session -d -s … -- sleep 1` exits **0**.
+- *It is not environmental at all.* `supervisor::tests::required_test_tooling_is_present`
+  passes in isolation in both the manager environment and a replicated worker
+  environment (0.04 s / 0.03 s).
+- *It is not worker-specific.* A full `cargo test -p orgasmic-daemon --lib` in
+  the **manager** environment — no shim, no `TMUX` — reproduced three of the
+  worker's six failures identically: `production_resume_native_fork_uses_pinned_claude_not_path_shim`,
+  `recovery_reattaches_tmux_session_when_handle_exists`, and
+  `two_recovery_chain_second_resume_uses_first_fork_session_id`
+  (528 passed, 5 failed, 451 s).
+
+So these are **full-suite concurrency failures — the TASK-STWVB family** — and
+this task is not about a worker/manager divergence. The RRT4T/R2HDN open question
+is still open, and is now *more* open, because the leading candidate is gone.
+
+=== The real, narrower defect
+
+No tmux call site anywhere passes `-L` or `-S`
+(`crates/orgasmic-drivers/src/modes/tmux.rs:1506`, `:2489`, `:3730`). Every
+probe, every test session, and every production call therefore shares **one tmux
+server** — whichever the environment selects. Concurrent tests create, query and
+reap sessions on that single shared server, and on a developer machine it is the
+same server the operator's own sessions live on.
+
+`server exited unexpectedly` under a full-suite run, from a server that was
+verified alive throughout (pid 32723, up since 13:32, still running at 15:1x), is
+consistent with contention on that shared server rather than with a missing or
+broken tmux.
+
+=== Ask
+
+- Give the test path an owned server: an explicit `-L <socket>` per test binary
+  (or per test), so no test can reach a server it did not create, and so a
+  developer's own tmux sessions are never touched by a test run.
+- Decide separately, and state, whether production call sites should pin a
+  socket too. An operator running the daemon inside tmux is the mirror image of
+  this and would be a product bug, not a test bug.
+- Make the diagnostic name the cause. `tmux test session should start` and
+  `required test tooling is missing: tmux` are both true and both useless when
+  tmux is installed, on PATH, and working — the message should name the server it
+  tried and how that server was selected.
+
+=== Acceptance
+
+- The tmux-gated daemon tests use a server the test run owns, and a concurrent
+  full-suite run does not produce `server exited unexpectedly`.
+- Reproduce first: show the contention on the shared server before the fix.
+  If it cannot be reproduced, say so plainly rather than shipping a speculative
+  isolation change — that is precisely the mistake this task's first version made.
+- Sessions created on the owned server are reaped. TASK-Z3093's guard covers
+  rmux sessions, not a new tmux socket; say which mechanism reaps this one.
+- The three failures that reproduce in the manager environment are re-run after
+  the change and their status reported honestly, whether or not this fixes them.
+
+=== Relationship to TASK-STWVB
+
+STWVB is "four daemon tests fail on every full-suite run and pass alone". This
+measurement says the set is at least five and includes the tmux-session-start
+failures. If the socket isolation here does not fix them, that is a genuine
+result and STWVB keeps them; do not widen this task into STWVB's investigation.
+
+=== Non-goals
+
+- Do not weaken the TASK-RRT4T sentinel to make the red go away. The red is
+  correct — the tests really did not run.
+- Do not use `ORGASMIC_ALLOW_MISSING_TOOLS` to paper over this. A contended
+  server is not a missing tool, and the waiver would recreate the silent skip.
+
+** Measured, one variable, 2026-07-28
+
+The daemon runs inside an rmux pane and therefore carries rmux's `TMUX` in its
+own environment:
+
+```
+$ ps eww 30834 | tr ' ' '\n' | grep ^TMUX=
+TMUX=/private/tmp/rmux-501/default,32723,751
+```
+
+Every dispatched worker inherits it. A tmux client with `$TMUX` set and no
+`-L`/`-S` connects to the socket named in `$TMUX` — which is the **rmux**
+server's socket, and rmux is a tmux fork with an incompatible protocol version.
+
+```
+$ TMUX=/private/tmp/rmux-501/default,32723,751 tmux new-session -d -s p -- sleep 1
+server exited unexpectedly
+EXIT=1
+
+$ env -u TMUX tmux new-session -d -s p -- sleep 1
+EXIT=0
+```
+
+Same binary (tmux 3.6a), same host, same user, same TMPDIR. The only difference
+is the inherited variable.
+
+** Scope, measured rather than assumed
+
+- `rmux` under the same inherited `TMUX` exits **0** — matching binary, matching
+  socket. So the 7 rmux-gated tests do run in workers, and the rmux half of the
+  RRT4T story was never the problem.
+- The class is **tmux-only: 6 gated tests**
+  (`crates/orgasmic-daemon/src/supervisor.rs:6941`,
+  `ToolRequirement::new("tmux", 6, tmux_spawn_usable_for_test().await)`).
+- Observed live in the TASK-1T3FZ dispatch: `required test tooling is missing:
+  tmux (gates 6 tests); gated tests did not run`, with
+  `recovery_reattaches_tmux_session_when_handle_exists`,
+  `failed_terminal_with_live_tmux_never_offers_reattach`,
+  `boot_reattach_respawns_dispatch_completion_watcher_without_artifacts`,
+  `production_resume_native_fork_uses_pinned_claude_not_path_shim` and
+  `two_recovery_chain_second_resume_uses_first_fork_session_id` all failing on
+  `tmux test session should start`. Before TASK-RRT4T's sentinel these skipped
+  **silently** — which is precisely the historical divergence.
+- No probe and no production call site passes `-L` or `-S`
+  (`crates/orgasmic-drivers/src/modes/tmux.rs:1506, 2489, 3730`), so all of them
+  inherit whatever server `$TMUX` names.
+
+** Ask
+
+1. **Isolate the tmux server the tests use.** A test that means to exercise tmux
+   should not be able to reach whatever server happens to host the daemon. Give
+   the test path an explicit `-L <socket>` (or clear `TMUX` for the spawn), so
+   the probe and the tests it gates talk to a server they own. Decide and state
+   whether production tmux calls should do the same — an operator running the
+   daemon inside tmux hits the mirror image of this, and that is a product bug,
+   not a test bug.
+2. **Make the diagnostic name the cause.** `tmux test session should start` and
+   `required test tooling is missing: tmux` are both true and both useless here:
+   tmux is installed, on PATH, and working. The failure text should say the
+   server it tried, and that `$TMUX` selected it.
+3. Reconcile `.orgasmic/gotchas.org`. R2HDN correctly demoted the PATH claim to a
+   simulation and recorded the open question. Replace the open question with this
+   measurement.
+
+** Acceptance
+
+- The 6 tmux-gated daemon tests pass inside a dispatched worker. Prove it by
+  dispatching, not by reasoning — that is the whole point of this task.
+- Reproduce first, the way it was found: set `TMUX` to a foreign server's socket,
+  show the probe failing, apply the fix, show it passing.
+- The manager path stays green; isolating the socket must not make tests reach a
+  server they then leak. Whatever sessions the tests create are still reaped —
+  TASK-Z3093's guard covers rmux sessions, not a new tmux socket.
+- State whether production call sites were changed and why.
+
+** Why this matters beyond the six tests
+
+Every dispatched worker has been reporting a green tmux lane it never ran, for
+as long as the daemon has been hosted in an rmux pane. The sentinel from
+TASK-RRT4T is what made it visible; this is the first dispatch where a worker
+reported the failure honestly instead of a silent skip. Any conclusion drawn from
+a worker's daemon-suite count before 2026-07-28 should be treated as excluding
+these six tests.
+
+** Non-goals
+
+- Do not weaken the sentinel to make the red go away. The red is correct.
+- Do not change `ORGASMIC_ALLOW_MISSING_TOOLS` semantics; a foreign tmux server
+  is not a missing tool, and papering over it with the waiver would recreate the
+  silent skip this task exists to end.
+
+* DONE TASK-K4G1D Run the mux-dependent daemon tests under tmux as well as rmux, so 'is rmux at fault' becomes a measurement :testing:daemon:drivers:rmux:
+:PROPERTIES:
+:DEPENDS_ON: TASK-RRT4T
+:ID: TASK-K4G1D
+:PRIORITY: P1
+:WRITE_SCOPE: crates/orgasmic-daemon/src/api.rs
+:END:
+
+Filed after the operator asked whether rmux, being far less mature than tmux,
+might itself be the defect behind the recurring artifact-test failures.
+
+It cannot currently be answered, and that is the problem worth fixing.
+
+WHAT IS KNOWN
+rmux 0.9.0 (crates.io, pinned `=0.9.0` in crates/orgasmic-drivers/Cargo.toml) is
+a pre-1.0 third-party tmux clone with a tmux-compatible CLI. Measured 2026-07-26
+against tmux on the same machine: 15 create+kill cycles cost 12.1 ms each against
+tmux's 13.1 ms, 20 pane spawns of a warm script cost 12.8 ms against tmux's
+6.9 ms, neither leaves a session behind, and neither costs syspolicyd anything.
+So at the level that can be measured from outside, rmux is leak-free and merely
+about 2x slower per pane spawn.
+
+WHAT IS NOT KNOWN
+Every artifact-regenerate test in crates/orgasmic-daemon/src/api.rs runs only
+under rmux. There is no tmux counterpart, so when one fails there is no way to
+tell whether the defect is in our driver, in rmux, or in the test's deadline.
+Two of the three worker rounds on TASK-STWVB attributed that failure to a
+different cause and both attributions were later withdrawn.
+
+The one confirmed rmux-adjacent defect so far was OURS, not rmux's: TASK-8W30B,
+where RmuxControl::release aborted its lifecycle task before Session::kill and
+poisoned the shared ordered SDK transport. Worth noting the structural asymmetry
+it exposed, though — the tmux driver drives tmux through its CLI, one process per
+command and no shared state, while the rmux driver holds a persistent socket with
+an ordered transport shared between Session and the lifecycle watcher. The second
+design has failure modes the first cannot have, and every hang and leak this week
+has been on that side. That is an argument about our integration, not about rmux's
+correctness, and the two keep getting conflated.
+
+WHAT TO DO
+Parameterize the artifact-regenerate tests (and any other mux-dependent daemon
+test) over both rmux and tmux, running the same assertions through each mode.
+
+- red under rmux, green under tmux -> rmux is indicted, with a reproducer we can
+  file upstream or route around by defaulting to tmux
+- red under both -> the defect is ours, and we stop suspecting the dependency
+- green under both -> the deadline is the defect
+
+Depends on TASK-RRT4T: a mode that is unavailable must make the test fail or
+report as ignored, never silently pass. Without that this change would just
+double the number of tests that can quietly do nothing.
+
+Acceptance:
+- at least post_artifact_regenerate_hot_path_reuses_live_run_id runs under both
+  modes
+- a failure names which mode it failed under
+- the answer to "is rmux at fault" is a test result, not a judgement call
+
+* DONE TASK-HXSW0 Make the CLI self-documenting for agents: real help per verb and flag, no silent no-ops, a drivers listing verb :cli:agent-ergonomics:docs:
+:PROPERTIES:
+:ID: TASK-HXSW0
+:priority: P1
+:write_scope: crates/orgasmic-cli/src/
+:PRIORITY:    P1
+:END:
+
+Filed 2026-07-26 after a session in which the manager guessed wrong CLI verbs
+four times, and one shipped convention was found instructing a hallucination.
+
+The operator framing, which sets the constraint: fix this with better CLI help
+that agents are told to consult, NOT by pasting a command cheat sheet into every
+prompt. Prompt space is scarce and a stale cheat sheet is worse than none.
+
+MEASURED FAILURES, all from one session
+
+1. `orgasmic manager drivers` does not exist in any command group — and
+   `shipped/prompt-studio/conventions/manager-dispatch.org` instructed the
+   manager to run it to choose `--mode`/`--harness`. The valid pairs live only in
+   `orgasmic_drivers::SUPPORTED` (crates/orgasmic-drivers/src/lib.rs:74) with no
+   CLI surface at all. The convention was corrected the same day, but the
+   underlying gap stands: the one fact needed on EVERY dispatch has no listing
+   verb. The only discovery path is to submit a bogus pair and read the
+   rejection, which does helpfully name all sixteen.
+2. `orgasmic task show` — guessed repeatedly. The real verb is `task get`, and
+   listing lives in a SEPARATE top-level group, `tasks list`. A singular/plural
+   split where both exist and neither mentions the other is a hallucination
+   generator.
+3. `orgasmic run release` — a prior manager asserted it existed, corrected
+   itself in the handoff, and the correction itself was then wrong. Two wrong
+   records about one nonexistent verb.
+4. `orgasmic worker list` — guessed, does not exist.
+
+5. WORST CLASS — a silent no-op on a write verb.
+   `orgasmic task update TASK-X --property "WRITE_SCOPE=..." --property
+   "TEST_CMD=..."` returned `{"changed":{"STATE":"in_progress"}}` and dropped
+   both properties without a word. The same call with lowercase `write_scope`
+   and `test_cmd` worked. An unrecognised property key must be an error: a write
+   verb that reports success while discarding two of three arguments is worse
+   than a missing feature, because the caller has no reason to re-check.
+
+6. Flags on the primary agent verb have NO help text. `orgasmic manager dispatch
+   --help` renders `--task <TASK>`, `--kind <KIND>`, `--brief <BRIEF>`,
+   `--from <FROM>`, `--model <MODEL>`, `--effort <EFFORT>`, `--worktree`,
+   `--branch`, `--reason` with blank descriptions. An agent cannot learn from
+   that whether `--from` is a git ref or a path, or that `--worktree-remove`
+   on `dispatch-close` defaults to TRUE and force-deletes uncommitted work
+   (TASK-2BPWM).
+
+WHAT ALREADY WORKS, and should be the template
+
+Two errors in the same session were excellent and cost zero follow-up:
+- `manager dispatch` from the wrong lifecycle: "task TASK-X is in lifecycle
+  stage in_progress; implementer dispatch is allowed only from BACKLOG or TODO"
+  — names the rule and the allowed set.
+- `node body append --section Evidence` on a node lacking it: "no section
+  \"Evidence\"; sections: [] (use `set --section` to create one via add)" —
+  names the fix verb.
+Contrast `node body append gotchas ...` → "glossary file not found", which names
+the wrong file entirely (already a recorded gotcha).
+
+WORK
+
+1. Give every command and every flag a one-line description that says what it
+   does and what it returns. Blank `#[arg]` descriptions on agent-facing verbs
+   should be treated as a bug, not a style nit.
+2. State destructive defaults in the help text where the operator reads them,
+   not only in the code.
+3. Make unrecognised `--property` keys a hard error listing accepted keys.
+   Audit for other silent-drop paths in the same shape.
+4. Add a real listing verb for mode/harness pairs, sourced from
+   `orgasmic_drivers::SUPPORTED` so it cannot drift.
+5. Make near-miss verbs self-correcting: an unknown subcommand should suggest
+   the real one (`task show` -> `task get`; `worker list` -> ?) and cross-
+   reference the singular/plural split between `task` and `tasks`.
+6. Audit shipped prompts and conventions for commands that do not exist. One was
+   found by accident; nobody has checked the rest. A test asserting that every
+   `orgasmic ...` invocation appearing in `shipped/**` parses against the real
+   clap surface would make this class permanently impossible.
+
+Item 6 is the highest-leverage item here — it converts "an agent hallucinated"
+into a build failure.
+
+Acceptance:
+- an agent can discover any verb and flag it needs from `--help` alone, in at
+  most three calls, without reading Rust source
+- no write verb silently ignores an argument
+- every command string in shipped prompts/conventions is checked against the
+  real CLI surface by a test
+- mode/harness pairs are listable
+CONFIRMED INSTANCE, found while filing these very tasks [2026-07-26].
+
+`orgasmic task create` has no `--priority` flag at all. Every task filed this
+session used `--property "priority=P1"` on create, which was accepted silently
+and discarded. ALL SEVEN tasks created today came out with priority None:
+TASK-099T6, TASK-A55J7, TASK-VSWZT, TASK-S2KM0, TASK-6FNAY, TASK-2BPWM,
+TASK-HXSW0. They were repaired afterwards with `task update --priority`, which
+does have a real flag and works.
+
+This sharpens item 3 beyond "unknown property keys should error". Two distinct
+defects compose here:
+
+1. The property allowlist differs between `create` and `update`. `update`
+   accepts `--priority` as a first-class flag; `create` accepts neither the flag
+   nor the property. The same field is settable, unsettable, or silently ignored
+   depending on which verb you reach for.
+2. The silent drop makes the divergence invisible. `create` returned a normal
+   success object with `id` and `tx_id` and no indication that an argument had
+   been thrown away.
+
+The result is a whole session of P1 work filed as unprioritised, which is exactly
+the kind of state error that later reads as "nobody triaged this" rather than
+"the CLI dropped it".
+
+Note the failure is silent in BOTH directions worth testing: an unknown key
+(`WRITE_SCOPE` uppercase, dropped) and a known-but-unsupported-on-this-verb key
+(`priority` on create, dropped). Fixing only the first would leave this case
+intact.
+
+TWO MORE CONFIRMED INSTANCES [2026-07-26], both found while filing a fix subtask.
+
+4. `task create` accepts and silently discards property keys that `task update`
+   accepts and persists. Reproduced on TASK-D0GA3: the same
+   `--property "PARENT_TASK=TASK-2BPWM" --property "FIX_SUBTASK=t"` pair was
+   dropped by `create` (drawer contained only ID, PRIORITY, TEST_CMD,
+   WRITE_SCOPE) and then written verbatim by `update`, whose response echoed both
+   keys under "changed". PRIORITY, TEST_CMD and WRITE_SCOPE survived `create` in
+   the same invocation, so this is a per-key filter on create, not a general
+   restriction. The user-visible effect is that the same command produces
+   different state depending on which verb you happen to use.
+
+5. `:PARENT_TASK:` is never read by anything. `parent_task` is derived purely
+   from the id grammar — `derive_task_parent_id` (crates/orgasmic-core/src/id.rs:319)
+   splits `TASK-<stem>.<digits>` and returns `TASK-<stem>`. So the property is
+   accepted by `update`, stored in the drawer, echoed as changed, and ignored by
+   every reader. `orgasmic task get TASK-D0GA3` still reports
+   `parent_task: null` with `:PARENT_TASK: TASK-2BPWM` sitting in the file.
+
+   This one had a downstream cost: the shipped `manager-dispatch` convention
+   instructed managers to file fix subtasks with a `:PARENT_TASK:` back-edge, so
+   the documented mechanism produced no edge at all. Corrected in the convention
+   the same day — parentage must be minted into the id as `TASK-<parent>.N`.
+
+The pattern across all five instances is one defect: `--property` is an untyped
+passthrough with no schema, so every layer is free to accept, store, filter or
+ignore a key independently, and every combination reports success. The fix is not
+five special cases. It is (a) validate keys against the schema at write time and
+reject unknown or miscased ones with a message naming the correct key, and
+(b) make `create` and `update` accept the same set, or say why they differ.
+
+INSTANCE 6 [2026-07-26]. `orgasmic tx record` is the only mutation verb that is
+NOT project-scoped by default. Without `--project`, it writes to
+$ORGASMIC_HOME/state/tx/YYYY-MM.org — the global home file — and reports success
+with a differently-shaped tx id (tx-20260726192932-05e34dce) rather than the
+project's tx-20260726-orgasmic-NNNN. Every sibling verb (`task update`, `node
+body append`, `task create`) resolves the project from the cwd and needs no
+flag. The help text for --tx-path says "defaults to $ORGASMIC_HOME/state/tx/
+YYYY-MM.org", which is accurate and is the only warning you get; nothing in
+`tx record --help` suggests --project is load-bearing.
+
+Cost: one manager.action for TASK-D0GA3 was written to the home tx file and had
+to be re-recorded with --project. The stray entry is still there. A manager
+following the obvious invocation silently loses every tx it records off the
+project ledger and cannot tell from the exit code.
+
+Fix direction: default `tx record` to the cwd project like its siblings, and
+keep --project / --tx-path as explicit overrides.
+
+* DONE TASK-GEZHQ Preflight accepts an unusable credential under parallel load: 200 where 400 is required, and a worktree is left behind
+:PROPERTIES:
+:ID: TASK-GEZHQ
+:PRIORITY: P1
+:END:
+
+From TASK-EP3H1's gate run (2026-07-29), full-suite under parallel load:
+`an_unusable_credential_leaves_no_lease_no_session_and_no_run`
+(crates/orgasmic-daemon/tests/dispatch_preflight.rs:211) failed with the daemon
+ACCEPTING a dispatch whose claude credential the test intends to be unusable:
+
+  assertion `left == right` failed: preflight rejection must be a 400 so the
+  CLI treats it as an unambiguous refusal and rolls back the worktree it
+  created: {"run_id":"run-20260728T221637-…","driver":"acp-stdio",
+  "harness":"claude",…}
+    left: 200
+   right: 400
+
+The `left: 200` body shows a REAL RUN was created. The assertion text names the
+stake: the CLI relies on the 400 to roll back the worktree it created, so a 200
+here leaves a worktree behind for a dispatch that should never have started.
+
+This is deliberately NOT filed into the load-flake class: the EP3H1 worker's
+read is that it is environment-dependent rather than timing-dependent — a
+usable claude credential exists on the dev machine, and parallelism changes
+which credential the preflight probe observes. A preflight that PASSES when it
+should refuse is a product defect surface, not a test-timing defect. Green in
+isolation, so the gate does not catch it.
+
+=== Ask
+
+1. Diagnose how the probe found a usable credential when the test constructs an
+   unusable one — fixture bleed (real ~/.claude reachable from the test env?),
+   probe fallback order, or a race in credential selection.
+2. Fix so the test's intent holds under parallel load: an unusable credential
+   yields 400, no lease, no session, no run, no leftover worktree — regardless
+   of what else is on the machine.
+3. If the root cause is the test env leaking the operator's real credentials
+   into the probe, treat that as the defect (isolation), not the assertion.
+
+=== Acceptance
+
+- The test survives >=5 consecutive full-suite loaded runs (pre-fix red count
+  pinned for A/B if reproducible).
+- Injection per TCTTD standard, `git apply`-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+
+* DONE TASK-JGHNC Seven tmux-gated daemon tests accept the rmux shim and have been measuring rmux while reporting tmux
+:PROPERTIES:
+:ID: TASK-JGHNC
+:PRIORITY: P1
+:END:
+
+From TASK-K4G1D (2026-07-29), measured, not inferred: inside an orgasmic
+worker, `tmux` on PATH is the rmux shim, and a `-L`-pinned call through the
+shim creates an RMUX server (the socket lands in /private/tmp/rmux-501/, and
+the real tmux cannot connect to it). The 0RCRY owned-server mechanism does not
+protect against this — the isolation holds, but the multiplexer is the wrong
+one.
+
+Consequence: seven tmux-gated daemon tests gate on `tmux_on_path()`, which
+accepts the shim, so IN EVERY WORKER-RUN SUITE they have been measuring rmux
+while reporting tmux:
+
+  boot_rehydration_reattaches_tmux_session,
+  explicit_reattach_tmux_session_endpoint,
+  pending_plan_reattach_existing_session,
+  boot_reattach_respawns_when_session_gone,
+  failed_terminal_with_live_tmux_session_is_not_resurrected,
+  production_resume_native_fork_uses_pinned_claude_not_path_shim,
+  two_recovery_chain_second_resume_uses_first_fork_session_id
+
+(names as listed in K4G1D's report §6.2; verify against HEAD before acting).
+
+K4G1D added the strict availability rule (`tmux_mode_availability_for` — a
+shimmed tmux counts as ABSENT, loudly) but deliberately did NOT widen
+`tmux_on_path()`: regating seven tests is a decision, not a fix — it would
+newly fail the tmux sentinel in every worker environment, and it partly
+reframes the worker-vs-manager failure comparisons recorded on TASK-STWVB.
+
+=== Ask
+
+1. Decide: should these seven tests demand REAL tmux (strict rule), or is
+   testing-through-the-shim acceptable for some of them (in which case they
+   should SAY they ran rmux)? Record the decision and its reason.
+2. Apply it: either regate on the strict rule (accepting that worker-run
+   suites will report tmux NOT RUN via the honesty manifest — that is the
+   truth), or split tests into genuinely-mode-agnostic (rename/parameterize per
+   K4G1D's pattern) vs really-tmux-specific (strict gate).
+3. Re-examine any STWVB comparison that relied on "the worker ran these under
+   tmux" — it ran them under rmux.
+
+=== Acceptance
+
+- No daemon test can report mode=tmux while executing rmux: proven by test
+  (K4G1D's strict rule is the template; its verify artifact pins the
+  silent-GREEN failure mode).
+- The honesty manifest names whatever is gated out in a worker environment.
+- Injection per TCTTD standard, self-tested before reporting.
+
+* DONE TASK-HAREX A worker that exits without finalize stays live for tens of minutes instead of being released :daemon:supervisor:dispatch:recovery:
+:PROPERTIES:
+:ID: TASK-HAREX
+:PRIORITY: P1
+:END:
+
+Observed 2026-07-26 on run `run-20260726T080801-79056fdb262348afb3e0eb6633d3cab2`
+(TASK-STWVB, acp-stdio/claude, installed runtime 0.0.15-dev.1).
+
+The worker wrote a complete report to `last.txt` and exited WITHOUT calling
+`orgasmic dispatch finalize`. Roughly forty minutes later the run was still
+`sub_state: implementer.working`, `live`, with its process long gone. It was
+only released when a manager ran `manager dispatch-close`, which releases
+explicitly (`release_dispatch_run`, crates/orgasmic-cli/src/manager.rs:627).
+
+WHY THIS IS A DEFECT AND NOT A MISSING FEATURE
+
+The rescue-policy convention is explicit that this is the daemon's job:
+
+  "A failed agent run (protocol-end without terminal declaration, fatal driver
+  error, stall / max-duration / idle timeout) ends after the daemon writes the
+  authoritative release tombstone and, for dispatches, a
+  manager.dispatch_orphaned tx."
+
+So the intended sequence for a vanished worker is: daemon detects protocol-end
+or stall, writes the Release tombstone with
+`reason = protocol_end_without_finalize`, emits `manager.dispatch_orphaned`, and
+only then does the manager choose a rescue action via `orgasmic run recover`.
+None of that happened here. There was no orphan tx, and the manager had to
+close the record for the run to go away.
+
+Deliberately NOT the fix: adding an `orgasmic run release` verb. Release is not
+a manager-authorized action in this model — `run recover` is — and a manual
+release verb would paper over the daemon failing to write its own tombstone.
+
+LIKELY ALREADY FIXED, NEEDS CONFIRMING
+
+The running daemon is 0.0.15-dev.1 and predates f80b577,
+"a declared failure ends the run instead of waiting for the harness" (TASK-TJKFC),
+whose message says `terminal_event_releases_transport` allowlisted
+`tmux | tmux-tui | rmux`, so on every OTHER transport a terminal event set the
+outcome and released nothing, leaving release to stream end. acp-stdio is
+exactly such an 'other transport'. That is a strong candidate for the whole
+explanation.
+
+So the first step is confirmation, not code: re-run this scenario on a daemon
+built from current main — dispatch acp-stdio/claude, let the worker exit without
+finalize, and check whether a Release tombstone and `manager.dispatch_orphaned`
+appear on their own within the stall window. If they do, close this against
+f80b577 with the evidence. If they do not, the stall detector is not reaching
+this state at all and that is the bug.
+
+Either way the observable acceptance is the same: a worker that exits without
+finalize produces a daemon-written release tombstone and an orphan tx without
+any manager action.
+
+* DONE TASK-6HJYT Split the liveness question out of the recovery inventory :daemon:api:architecture:
+:PROPERTIES:
+:ID: TASK-6HJYT
+:PRIORITY: P1
+:END:
+
+Problem: =GET /api/runs= answers three unrelated questions with one full pass
+over every session file on disk.
+
+1. "Is anything live?" — the CLI's fence before restart, update, and
+   dispatch-close (=daemon_lifecycle.rs::live_manager_runs=). It reads the
+   response, keeps =live=, and filters to =task_id= starting =manager.launch:=.
+2. "What should the UI badge show?" — =ui/src/hooks/useTaskRuns.ts=.
+3. "What needs recovery?" — the actual crash-recovery inventory, which is the
+   only one of the three that genuinely requires reading durable history.
+
+Question 1 needs no disk at all. Live runs are supervisor-local: the daemon
+already holds them in memory, with their identities. Answering it through the
+recovery inventory means a restart fence pays for classifying every historical
+run on the board.
+
+The codebase already contains this reasoning, applied to the singular endpoint
+and never to the plural one. =get_run= (api.rs, "Exact active-run lookups are
+supervisor-local") checks =state.supervisor.snapshot()= first and only falls
+back to =recovery_status= when the id is not live, with the comment: "Worker
+finalize and manager close must not scan unrelated durable recovery history
+before they can act on a live run whose id they already know." That is exactly
+the argument for splitting the list endpoint too.
+
+Why this is worth doing even though the scan is now cheap: the coupling, not the
+duration, is the defect. Measured on the operator's board 2026-07-25 after
+TASK-KWSTJ: 224 session files, 2.42 GB on disk, 31.4 MB inspected, 0.24 s to
+first byte — down from 41.9 s. Before that fix the same fence failed outright:
+=manager dispatch-close --status aborted= died after 10.03 s against the CLI's
+10 s deadline, so a dispatch that failed at startup could not be closed by the
+documented verb. Two defects multiplied — startup left the mess, enumeration
+prevented cleaning it. A control-path check that cannot fail for reasons
+belonging to unrelated historical runs removes that whole class.
+
+Work:
+1. Give the liveness question its own answer sourced from the supervisor
+   snapshot, with no session-file reads. The CLI fence and any other
+   "is something running right now" caller move onto it.
+2. Keep =GET /api/runs= as the recovery inventory it actually is. Decide
+   explicitly whether the UI badge path belongs on the live source, the
+   inventory, or a third shape — it wants live state per task, not history.
+3. Do not duplicate classification logic. If the live bucket is derived in two
+   places it will drift; the supervisor snapshot should be the single source for
+   "live" and the inventory should consume it rather than recompute it.
+4. Naming should stop implying that =/api/runs= is a general run list. It is a
+   recovery inventory and reads as one only after reading the handler.
+
+Acceptance:
+- the restart/update/dispatch-close fence performs no session-file reads
+- that fence still refuses correctly while a manager terminal is live, and
+  still permits when only historical runs exist
+- =GET /api/runs= keeps its current classifications and bounded-scan metrics
+- a regression proves the fence answers on a board whose session files are
+  unreadable or absent, since its correctness no longer depends on them
+
+* DONE TASK-FJCE9 recovery_fault_restart.rs drives the LIVE rmux server via unpinned tmux calls with kill-session — one name collision from killing a worker
+:PROPERTIES:
+:ID: TASK-FJCE9
+:PRIORITY: P1
+:END:
+
+From TASK-JGHNC (2026-07-29), same defect class as JGHNC/0RCRY, different
+binary, and this one is a LIVE-WORKER SAFETY issue:
+
+`crates/orgasmic-daemon/tests/recovery_fault_restart.rs` drives an unpinned
+PATH tmux — i.e. in a worker environment, the LIVE rmux server — in every
+worker-run suite:
+
+- It gates on `Command::new("tmux").arg("-V")` (the rmux shim answers, and
+  lies about being tmux 3.4).
+- Every call site is a raw `Command::new("tmux")` — no -L/-S, never routed
+  through `tmux_command()`, so the 0RCRY owned-server mechanism does not cover
+  it.
+- Measured in JGHNC's workspace suite (3 passed): it created and
+  `kill-session`-ed sessions on /private/tmp/rmux-501/default — the server
+  hosting live dispatched workers. Nothing was lost (its session names are
+  orgasmic-run-…), but the mechanism is ONE NAME COLLISION away from killing a
+  live worker's pane.
+
+Related, same file, already owned elsewhere: the harness's addr-file
+`parse().unwrap()` race is TASK-J1XCB's fourth entry. This task is about the
+mux routing, not that.
+
+=== Ask
+
+1. Route every tmux invocation in this file through `tmux_command()` /
+   `tmux_socket_args_for` onto an owned per-test server (0RCRY mechanism), and
+   gate on the strict rule (`tmux_mode_availability_for` — a shimmed tmux is
+   ABSENT; JGHNC's follow-up P2 may have promoted the canonical copy to
+   orgasmic_drivers by the time this runs — use whatever the canonical location
+   is then).
+2. If the test's subject genuinely requires the real tmux (fault-restart
+   semantics), strict-gate it and let it appear as NOT RUN in workers — the
+   honesty manifest is the intended surface.
+3. Audit the same file for any other raw `Command::new("tmux"|"rmux")` and fix
+   the class, not the instance.
+
+=== Acceptance
+
+- No invocation in the file can reach a server the test did not create; proven
+  the 0RCRY way (socket listing brackets the run; default servers unchanged).
+- kill-session is scoped to the owned server (or replaced by guard-based
+  reaping).
+- Injection per TCTTD standard (natural red: an invocation argv without -L, the
+  K4G1D/0RCRY template), self-tested with `orgasmic verify --artifact`.
+
+* DONE TASK-MRJRK A registered project can be missing from the index, and the 404 blames the wrong thing :P1:
+:PROPERTIES:
+:ID: TASK-MRJRK
+:PRIORITY: P1
+:END:
+
+Problem: a project can be registered on the board, listed by `orgasmic project
+list`, and still be absent from the index snapshot, at which point every route
+that addresses it by id fails with a 404 that names the project as though it
+were unregistered. The operator's only signal is an error that points at the
+wrong thing, and the only known remedy is `orgasmic reindex` - which nobody
+tries, because nothing suggests the index is the problem.
+
+Two things need fixing, and they are separable.
+
+1. The diagnosis. `select_project` (api.rs) reports a missed lookup as
+   `not_found("project {id}")`. That message is indistinguishable from a genuinely
+   unknown project, so it sends the reader to check registration - the one thing
+   that is definitely fine, since `project list` just showed it. The message
+   should distinguish "no such project on this board" from "registered but not
+   in the current index snapshot", and the latter should name the remedy
+   (`orgasmic reindex`). This is cheap and is most of the operator-visible value.
+
+2. The underlying gap. A project that is registered but missing from the
+   snapshot is a state the daemon can sit in indefinitely: nothing retries, and
+   nothing reports it. Whatever the cause, the daemon should either converge on
+   its own or say plainly that it has not. A `status` field naming registered-
+   but-unindexed projects would make the condition self-reporting rather than
+   something an operator stumbles into through an unrelated 404.
+
+Do not start by assuming a cause. What is actually established is thin, and one
+plausible-sounding explanation has already been checked and ruled out.
+
+EVIDENCE, 2026-07-25, live on the operator's daemon
+Found incidentally while trying to record gotchas during TASK-TJKFC.
+
+- Daemon booted 17:53:31Z (pid 10647, boot_id a6fdd006). It had restarted on its
+  own during the session; the previous instance was pid 71878 from 16:49.
+- At ~18:03Z - ten minutes after that boot, so this is NOT a boot race -
+  `orgasmic node body append <anything> --project orgasmic` returned
+  `404 {"error":"project orgasmic"}`. Same for ddd.
+- The same command with `--project orsl`, `--project lynx-auth` and
+  `--project rare` got PAST project resolution (they failed later, on the node
+  id or the glossary file). So exactly two of five were missing.
+- `orgasmic project list` showed all five with clean ids at that moment. Ids
+  were checked through `cat -v` for hidden characters: clean.
+- `orgasmic reindex` at ~18:04Z fixed it immediately. The retry of the same
+  command then failed at the *next* stage instead, which is how we know project
+  resolution had started succeeding.
+- Corroborated in ~/.orgasmic/logs/daemon.out.log: the first `glossary file not
+  found` warnings for ddd appear at 18:04:23Z - i.e. only after the reindex,
+  because before it the request never got far enough to touch a file.
+
+RULED OUT, so nobody re-runs it
+- Not a boot race. Ten minutes elapsed, and the boot log shows a completed
+  reattach pass at 17:53:35 with no scan-timeout or partial-load warnings.
+- Not "`status` reads a different source". `status.projects` is
+  `snap.projects.len()` (api.rs:5753) - the same map the lookup missed. So
+  `status` should have reported 3, not 5, during the window. It was simply never
+  run at that moment, which is the one piece of evidence this report is missing
+  and the first thing to capture if it recurs.
+
+STILL OPEN
+Whether the two projects were dropped after a successful load, never loaded at
+all, or present under a different key. Note `load_project` inserts under
+`board_entry.id`, and the two affected projects are the two with the largest and
+most actively written `.orgasmic/` trees - both were being written continuously
+by this session while the others were idle. That is a correlation, not a cause.
+
+REPRODUCTION NOTE
+If this recurs, capture in this order before reindexing, because reindex
+destroys the evidence: `orgasmic status` (the projects count is the decisive
+missing datum), `orgasmic project list`, and the failing node call for each of
+the five project ids.
+
+ACCEPTANCE
+- A lookup miss for an id that IS registered on the board reports that
+  distinctly from an unknown id, and names `orgasmic reindex` as the remedy.
+- The condition is visible without provoking it: an operator can see that a
+  registered project is not in the current snapshot without first hitting an
+  unrelated 404.
+- A test drives a snapshot that is missing a registered project and asserts the
+  error text distinguishes the two cases. The test must construct the state
+  directly rather than wait for whatever produced it here, since the cause is
+  not yet known - fixing the diagnosis must not be blocked on finding it.
+
+* DONE TASK-4YC8E hermes reasoning_effort alias collides with the daemon's dual-key driver_config :drivers:bug:
+:PROPERTIES:
+:ID: TASK-4YC8E
+:PRIORITY: P1
+:END:
+
+`adapters/hermes.rs` declares
+
+    #[serde(default, alias = "effort")]
+    reasoning_effort: Option<String>
+
+while the daemon writes the value under BOTH keys at once (`api.rs`:
+`"effort": effort` and `"reasoning_effort": reasoning_effort`, lines 3573-3574;
+also 2329-2330). Serde then sees one field populated twice and fails
+deserialization, so `validate_config` returns `InvalidConfig` and the dispatch
+dies with
+
+    400 Bad Request: {"error":"driver configuration is invalid"}
+
+Measured on claude 2026-07-26: adding that exact alias to `ClaudeAcpConfig`
+reproduced this immediately, and removing it fixed it. Hermes carries the alias
+today, so a hermes dispatch that sets an effort should fail the same way.
+
+NOT VERIFIED for hermes itself — inferred from identical code and a reproduced
+failure in a sibling adapter, not from a hermes dispatch. Confirm before fixing:
+run a hermes acp-stdio dispatch with `--effort high` and check for the 400.
+
+If confirmed the fix is one line — drop `alias = "effort"`, since the daemon
+already writes `reasoning_effort`. Check codex too; it also carries
+`reasoning_effort` and needs the same read.
+
+Worth fixing beyond the crash: the error text names neither the field nor the
+adapter. `InvalidConfig(e.to_string())` has serde's message in hand and drops it
+on the floor at the API boundary. Surfacing it would have made this a ten-second
+diagnosis instead of a grep through api.rs.
+
+The dual-key write is itself questionable — one value under two names is what
+made an ordinary alias a landmine. Consider emitting only `reasoning_effort`
+once every adapter reads that key.
+
+* DONE TASK-D1Z87 Probe-timeout mechanism in the remaining stub-then-probe test families (claude.rs adapter, dispatch_credential_plan) needs an un-recorded warm-up
+:PROPERTIES:
+:ID: TASK-D1Z87
+:PRIORITY: P2
+:END:
+
+From TASK-GEZHQ (2026-07-29). The probe-timeout mechanism GEZHQ fixed in
+dispatch_preflight.rs (first exec of a freshly written stub pays macOS's
+one-time evaluation under load, eating the 5s STATUS_TIMEOUT; probe answers
+Unknown; dispatch admitted per dec_7P79C) has UNFIXED siblings that share the
+stub-then-probe shape:
+
+1. `crates/orgasmic-drivers/src/adapters/claude.rs` — the auth-stub family via
+   `make_auth_status_stub` (:2564 at GEZHQ's HEAD):
+   - `the_launch_uses_the_credential_the_preflight_admitted` (:2943) — FIRED in
+     GEZHQ's gate run 2 of 5: `left: "native_login" / right: "bare_api_key"`.
+     Reads as a credential-precedence bug; is actually a probe timeout (rule 5
+     taken instead of rule 4). This mask cost is the point: without the WARN
+     the diagnosis is expensive.
+   - Same shape, not yet observed red:
+     `acp_stdio_rejects_a_dispatch_for_a_logged_out_claude` (:2231),
+     `an_empty_endpoint_still_gets_a_verdict_because_it_still_spawns_claude`
+     (:2263), `acp_stdio_accepts_a_dispatch_for_a_logged_in_claude` (:2290).
+2. `crates/orgasmic-daemon/tests/dispatch_credential_plan.rs` — same shape;
+   breaks at `plan["native_login"] == "present"` and a timeout still yields
+   200, so it fails LATER and reads as a plan-pinning defect.
+
+WHY GEZHQ's warm-up does not transplant naively (its stated reason for not
+fixing these): `make_recording_stub` (:2838) logs EVERY invocation to a file
+the test then counts ("one auth status per dispatch" is an asserted property),
+and its `--version` arm sleeps 60s — a naive warm-up corrupts the count and
+hangs. The family needs a warm-up that execs without being recorded (separate
+warm-up entrypoint in the stub script, or exec of a sibling binary written from
+the same bytes, or count-exempt marker) — a design decision for whoever owns
+those assertions.
+
+=== Ask
+
+1. Design the un-recorded warm-up (state the chosen mechanism and why it
+   cannot mask the one-probe-per-dispatch property the recording stub guards).
+2. Apply to both files' stub families.
+3. Keep GEZHQ's rule intact: warm-up failures must fail AS STUB failures, not
+   surface as downstream verdict mysteries.
+
+=== Acceptance
+
+- The named tests survive >=5 consecutive loaded runs (GEZHQ's load harness
+  recipe: 18-19 sibling test binaries looping at --test-threads 16), pre-fix
+  red counts pinned where reproducible.
+- The one-auth-status-per-dispatch count property still proven.
+- Injection per TCTTD standard, self-tested with `orgasmic verify --artifact`
+  before reporting (GEZHQ-retry's deterministic slow-once stub is the
+  template).
+
+* DONE TASK-TZKAC DAEMON_LOCK_RETRY_BUDGET gives up permanently after 125ms — a transient lock holder kills a daemon restart
+:PROPERTIES:
+:ID: TASK-TZKAC
+:PRIORITY: P1
+:END:
+
+From TASK-J1XCB (2026-07-29): `acquire_daemon_lock` retries the daemon.lock
+only inside DAEMON_LOCK_RETRY_BUDGET (125ms, sized by TASK-870YX for a holder
+that keeps the lock for microseconds), and when no shutdown marker exists it
+then STOPS RETRYING ENTIRELY and classifies the holder — LockHolder::NotDeparting
+→ "Refusing to start a competing daemon". Two tests now demonstrate the budget
+losing to a transient holder:
+
+1. `api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post`
+   (api.rs:25505 at J1XCB's HEAD) — 1/36 loaded runs, on the test's RESTART of
+   the daemon: "…the holder is not a departing predecessor: the configured
+   port is 0, so the incumbent address cannot be probed". REGISTERED in
+   verify/flake-registry.toml with owner TASK-J1XCB and the full diagnosis.
+2. `tests::daemon_lock_retries_a_transient_probe_hold` (lib.rs:1665) — same
+   holder class, same budget: "…the incumbent has not created an auth token
+   yet (it may still be booting)".
+
+J1XCB ruled out (by reading): the prior daemon's lock is dropped before its
+join returns; fresh tempdir per iteration; nothing else opens daemon.lock. NOT
+established: which transient holder the restart met. J1XCB's proposed next
+probe: log the pid recorded inside the lock file at the refusal site (one run).
+
+This is PRODUCTION behaviour on the ATAXN/870YX lock protocol — a real
+operator restart can lose the same race — so it wants a deliberate decision,
+not a drive-by: keep polling past the budget with a ceiling (what ceiling, and
+derived from what)? Distinguish transient-holder classes (probe-in-progress vs
+genuinely-unhealthy incumbent)? The refusal text already names its evidence;
+whatever ships must keep that property.
+
+=== FIRST ACT (before any code): re-own the registry row
+
+verify/flake-registry.toml has one entry owned by TASK-J1XCB (test 1 above).
+TASK-J1XCB's task cannot move to done while the row names it (graveyard
+check). Your FIRST commit changes that row's owner to THIS task id and adjusts
+the comment. That unblocks closing J1XCB. On fixing the flake, delete the row
+per the registry rule.
+
+=== Ask
+
+1. The re-own commit (above), immediately.
+2. Run J1XCB's proposed probe: capture the lock-file pid at the refusal site
+   under the reproduction harness (4 copies of the daemon --lib binary at
+   --test-threads=64 reproduces the class; J1XCB's report has the recipe) and
+   identify the transient holder.
+3. Decide and implement the lock-acquisition behaviour: a holder that is alive
+   and mid-boot/mid-probe deserves continued polling (bounded, derived); a
+   genuinely dead-or-stuck holder deserves the current refusal. Fix at the
+   protocol level, not the test budget (R74E8 standard).
+4. On fix: delete the registry row; both named tests survive >=12 runs under
+   the reproduction harness.
+
+=== Acceptance
+
+- Registry row re-owned in commit 1; graveyard check green with TASK-J1XCB
+  done.
+- The transient holder identified with captured evidence (or the failure to
+  identify stated plainly with the probe output).
+- Injection per TCTTD standard, git apply-clean, self-tested with
+  `orgasmic verify --artifact` before reporting.
+
+* DONE TASK-J1XCB Three unowned load flakes from 5FEN5's runs: dead-pid release wait, port-0 instance lock, shutdown-budget replacement wait
+:PROPERTIES:
+:ID: TASK-J1XCB
+:PRIORITY: P1
+:END:
+
+Successor to TASK-5FEN5 (which fixed its three owned flakes and closed).
+These load flakes were seen red during 5FEN5's 2026-07-29 load runs, panics
+captured VERBATIM per the DJ1WV rule, and are currently unowned — so the flake
+registry rightly classifies any recurrence as REAL and a loaded full-suite run
+exits nonzero. This task exists to own them.
+
+1. `supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases`
+   — 3 sightings (both pre- and post-fix binaries):
+   `run <id> did not release within 12s` at supervisor.rs:8077 (8065 in older
+   trees). First flagged by the TASK-XPYRR worker's gate, confirmed by 5FEN5.
+2. `api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post` —
+   api.rs:24818: `called Result::unwrap() on an Err value: daemon instance
+   lock … the configured port is 0, so the incumbent address cannot be probed`.
+3. `tests::replacement_start_waits_out_a_shutting_down_predecessor` —
+   lib.rs:1796, one sighting: `waited 1.50062225s, its own whole shutdown
+   budget`.
+
+NOT in scope: `index::tests::git_resolves_quoted_included_origin_from_linked_worktree`
+(registry names it a TASK-STWVB flake; its first captured panic is now recorded
+on STWVB). NOT in scope: the dispatch_endpoint.rs Gatekeeper family (owned by
+its own fixture-rework task).
+
+=== Ask
+
+Per the 5FEN5 standard: reproduce each under the DJ1WV load recipe (10-12 cpu
+hogs + --test-threads=64; add suite-concurrent binaries if hogs alone don't
+bite), then FIX at the synchronization rather than the budget size
+(R74E8/ATAXN). Registering with this task as owner is the fallback, fixing is
+the goal; on fix, no registry entry may remain owned by this task.
+
+Note from 5FEN5's diagnosis style: (1) looks like a fixed-budget wait on
+background release work; (2) looks like environment/config bleed (port 0)
+rather than timing — diagnose before assuming it's the same class.
+
+=== Acceptance
+
+- Either each test survives >=5 consecutive loaded runs post-fix (with pre-fix
+  red counts pinned for A/B), or it is registered with its measured signature
+  and the diagnosis documented here.
+- Injection per TCTTD standard where patch-expressible; deterministic trigger
+  preferred over load replay, per the 5FEN5 artifact's precedent.
+- No production behaviour change without naming it; test-side-only fixes state
+  so explicitly.
+
+FOURTH ENTRY [2026-07-29, from TASK-EP3H1's gate run]: `recovery_faults_kill_real_daemon_and_preserve_original_pane` (crates/orgasmic-daemon/tests/recovery_fault_restart.rs:308) — `called Result::unwrap() on an Err value: AddrParseError(Socket)`. The test harness reads the child daemon's address file and parse().unwrap()s it; under load it reads mid-write and parses a truncated address. Fix is in the harness (retry on parse failure inside the existing 20s deadline loop), not product code. Green in isolation.
+=== IMPLEMENTER RESULT [2026-07-29, TASK-J1XCB worker, branch task-j1xcb-impl]
+
+Entries 1 and 3 FIXED; entry 3 turned out to have two failure modes and both
+are fixed. Entry 2 REGISTERED with TASK-J1XCB as owner (reproduced here, with
+the holder clause the original capture elided). Entry 4 NOT TOUCHED: TASK-FJCE9
+is live in that file, per the dispatch brief.
+
+Reproduction recipe correction, and it matters for whoever chases the rest:
+CPU HOGS DO NOT REPRODUCE THESE. 6 pre-fix runs under 10 `yes` children at load
+average 164 were 0/6 red. SUITE CONCURRENCY does: four copies of the daemon
+--lib binary at --test-threads=64, 12 runs, put entry 1 red 10/12. The failures
+are late timers, not slow CPU, and a `yes` child does not delay a timer.
+
+ENTRY 1 dead_pid_aborts_joins_hung_producer_then_receiver_releases — FIXED.
+Root cause is not the load. Measured ALONE on an idle machine, the test took
+10.08s against its own 12s assertion, a 1.19x margin: HungProducerDriver hangs
+in BOTH halves of the driver stop (HungReleaseControl::release is pending(),
+the producer parks 6s), so stop_and_join_driver_producer spends
+DRIVER_RELEASE_TIMEOUT twice. Both hangs are load-bearing — they are the only
+way to reach the abort path the test is named for — so the fix injects the
+budget instead of removing the hangs: a driver_release_timeout cell on
+Supervisor with a #[cfg(test)] setter, mirroring TASK-HAREX's
+set_release_drain_budget, compressed to 150ms. Test cost 10.08s -> 0.44s.
+Compressing it alone flipped the asserted release to `early-exit subprocess
+with no work envelopes`, which exposed a second latent defect: the terminal
+event both HungProducerDriver tests are named after ("racing terminal") landed
+inside the join window only because that window happened to be [5s, 10s]. It is
+now emitted from release(), at the moment the forced stop begins, for any
+budget. The sibling timeout_aborts_joins_hung_producer_then_drains_racing_terminal
+shares the fixture and got the same compression; it asserts no wall clock and
+was never flaky, but it cost the suite 10s per run.
+
+Composition with TASK-HAREX: none of this fights DrainGate. The gate arms on
+begin_explicit_release and would fire at RELEASE_DRAIN_BUDGET; the channel now
+closes on the real producer abort ~300ms in, so the drain still ends on stream
+closure and the gate is never reached. The test's release reason
+(`driver stream closed`) proves that — a gate-bounded drain would not produce it.
+
+ENTRY 3 replacement_start_waits_out_a_shutting_down_predecessor — FIXED, two
+modes. Mode A (the reported one, `waited 1.50062225s, its own whole shutdown
+budget`): the replacement's ceiling is the marker's DRAIN + 2*TAIL and TAIL was
+100ms, so the whole margin was the ~375ms head start against a 1200ms drain
+enforced by a timer. TAIL is now 2s. That is not a tolerance bump on the term
+under test: graceful_shutdown passes release_drain to wait_idle and
+writer_shutdown to shutdown_within, both ceilings that return the moment their
+subject is idle, and this predecessor has no release in flight and a quiet
+writer — so the predecessor's real cost is unchanged and the test still runs in
+1.53s while the replacement can absorb ~4.3s of overrun. Mode B surfaced only
+after mode A was fixed, in this task's own post-fix runs:
+`the predecessor published its departure`, lib.rs:1808, 1/12. The test read the
+shutdown marker once behind a fixed 250ms sleep, but publish_shutdown_marker
+runs on the daemon's shutdown task — that line asserted the host had scheduled a
+task in 250ms. It now waits for the marker, with the original liveness assertion
+as the loop's failure exit.
+
+A/B, four concurrent copies at --test-threads=64, 12 runs per arm:
+  entry 1        pre 10/12 red -> post 0/12
+  entry 3 mode A pre  1/12 red -> post 0/12
+  entry 3 mode B      1/12 red (post-A tree) -> 0/12 after mode B fix
+Both also green in 12 sequential runs and 6 runs under 10 cpu hogs.
+
+Proofs: verify/TASK-J1XCB (both wall-clock modes) and verify/TASK-J1XCB-marker
+(mode B, separate because it panics earlier in the same test body so the two
+cannot be red in one run). Both self-tested PASS with
+`orgasmic verify TASK-J1XCB [--artifact verify/TASK-J1XCB-marker]`. The
+counterfactual `orgasmic verify` cannot show — the FIXED tests carrying the
+injected 3s / 1.5s / 600ms delays, without the test-side reverts — was measured
+by hand: 2 passed, 7.18s.
+
+ENTRY 2 deleted_or_corrupt_claim_reconstructs_exact_status_and_post —
+REGISTERED (verify/flake-registry.toml), owner TASK-J1XCB. Reproduced 1 of 36
+loaded runs. The captured panic is now complete, and the clause the original
+elided is the whole diagnosis: holder is LockHolder::NotDeparting — `is held,
+but the incumbent is not healthy and no daemon has recorded a shutdown for this
+home`. api.rs:24818 in the tree of the original sighting (be3408ce) resolves to
+the same line as api.rs:25505 here: the `.unwrap()` on the test's RESTART of the
+daemon, not its first boot. So this is NOT environment/config bleed as the body
+guessed — port 0 only makes the refusal certain once classification is reached.
+It is the 125ms DAEMON_LOCK_RETRY_BUDGET: acquire_daemon_lock retries the lock
+only inside that budget, and when no shutdown marker exists it then STOPS
+RETRYING ENTIRELY and classifies. Independent confirmation in the same round:
+tests::daemon_lock_retries_a_transient_probe_hold failed with the identical
+holder class and budget (`transient lock hold must not fail daemon acquisition`,
+lib.rs:1665). Two tests, one budget, sized (TASK-870YX) for a holder that keeps
+the lock for microseconds. What is NOT established is which transient holder
+this test's restart met — ruled out by reading: the test awaits running.join and
+the shutdown task drops instance_lock as its second-to-last statement; the home
+is a fresh tempdir per iteration; nothing outside acquire_daemon_lock opens
+daemon.lock. Next probe, one run: log the pid recorded inside the lock file at
+the refusal site.
+
+ENTRY 4 recovery_faults_kill_real_daemon_and_preserve_original_pane — NOT
+TOUCHED per brief (TASK-FJCE9 live in that file). Note for whoever picks it up:
+it now fails DETERMINISTICALLY on merged HEAD 52b7554 with a different mode,
+`cleanup: replay status 500 Internal Server Error`, recovery_fault_restart.rs:481
+— confirmed pre-existing by rebuilding that file's tree at HEAD~1 of this branch
+and reproducing it identically. The addr-parse mode entry 4 describes is a
+different, load-dependent failure of the same test.
+
+* DONE TASK-JK66P Stall detector kills healthy workers during long quiet tool calls — MRJRK's worker died running its final suite gate
+:PROPERTIES:
+:ID: TASK-JK66P
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 on dispatch-TASK-MRJRK-implementer-20260729T000911: pane_activity events flowed every ~30s until 00:41:22, then the worker launched scripts/run-tests.sh (output redirected to files per house rules, so the pane goes quiet), and at 00:51:22 — exactly 10 minutes of pane silence — the daemon emitted run_complete 'stall_timeout_exceeded' and released the run (finalized_by_worker: false). The worker was HEALTHY: its report.md was complete except the suite result it was killed while producing; its branch had all work committed and its verify artifact self-tested PASS. The manager salvaged by running the gate and closing manually.
+
+THE TENSION: this is the mirror image of TASK-VZMZE (heartbeats reset the stall timer so a wedged run is immortal). Here the detector has no heartbeat to see — the harness pane is static while a child process works — so quiet-but-healthy reads as stalled. TASK-HAREX's false-positive analysis named this exact profile ('sessions routinely go silent for 10+ minutes while cargo builds') for the RELEASE path; the STALL path has no equivalent protection.
+
+THE SIGNAL THAT EXISTS: the worker's tool subprocess (cargo/run-tests.sh) was alive the whole time — child-process liveness under the pane is observable. A pane-bytes-only stall clock conflates 'no output' with 'no work'.
+
+=== Ask
+1. Establish what the stall clock currently measures for rmux dispatches (pane bytes? harness heartbeats?) and its budget (~10min observed). Coordinate with VZMZE's analysis — one design should fix both directions: a wedged run must not be immortal, a working run must not be shot.
+2. Candidate signal: process-tree activity under the worker pane (child pids alive + consuming cpu), or harness-level tool-call-in-progress state, feeding the stall clock as evidence of work.
+3. Whatever ships: MRJRK's profile (10+ quiet minutes on the final suite gate) must survive, proven by test with a compressed budget; VZMZE's wedge must still die.
+
+=== Acceptance
+- A run whose pane is silent but whose tool subprocess is alive and consuming cpu is NOT stalled, proven with compressed budgets.
+- A run with no live work under it still stalls out on the existing schedule.
+- Injection per TCTTD standard, self-tested with orgasmic verify --artifact.
+
