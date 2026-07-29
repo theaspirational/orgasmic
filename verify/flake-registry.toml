@@ -124,9 +124,15 @@ filed = "2026-07-28"
 # --------------------------------------------------------------------------
 
 # --------------------------------------------------------------------------
-# TASK-J1XCB — the one entry of that task's four that was NOT fixed.
+# TASK-TZKAC — the lock-acquisition budget. FOUND by TASK-J1XCB as the one entry
+# of its four that it did not fix, and handed to TASK-TZKAC, which owns the
+# decision this entry needs: the mechanism is a production protocol rule
+# (`acquire_daemon_lock` stops retrying after DAEMON_LOCK_RETRY_BUDGET), not a
+# test defect, so fixing it is its own task rather than J1XCB's fourth commit.
+# The owner moved J1XCB -> TZKAC on 2026-07-29 for exactly that reason; the
+# evidence below is still J1XCB's measurement, unchanged.
 #
-# Its siblings are gone rather than registered:
+# J1XCB's siblings are gone rather than registered:
 #   supervisor::tests::dead_pid_aborts_joins_hung_producer_then_receiver_releases
 #   tests::replacement_start_waits_out_a_shutting_down_predecessor  (both modes)
 # Both measured a fixed amount of wall clock against work whose real cost is a
@@ -134,13 +140,14 @@ filed = "2026-07-28"
 # under the harness that produced them. Proof: verify/TASK-J1XCB and
 # verify/TASK-J1XCB-marker.
 #
-# This one is registered because it was never reproduced here and its mechanism
-# is still unexplained — see the caveat under the entry.
+# This one stayed registered because it was never reproduced under J1XCB's own
+# harness rounds and its mechanism was still unexplained — see the caveat under
+# the entry, which is TZKAC's starting point.
 # --------------------------------------------------------------------------
 
 [[flake]]
 test = "api::tests::deleted_or_corrupt_claim_reconstructs_exact_status_and_post"
-owner = "TASK-J1XCB"
+owner = "TASK-TZKAC"
 signature = "the configured port is 0, so the incumbent address cannot be probed"
 evidence = "Reproduced here 2026-07-29, 1 of 36 loaded runs of the daemon --lib binary, in the round with four copies of that binary running concurrently at --test-threads=64. Verbatim, at api.rs:25505 — the `.unwrap()` of `let restarted = crate::Daemon::run(home.clone(), test_options())`, the test's RESTART of the daemon on the same home: `called Result::unwrap() on an Err value: daemon instance lock <tmp>/home/daemon.lock is held, but the incumbent is not healthy and no daemon has recorded a shutdown for this home, so the holder is not a departing predecessor: the configured port is 0, so the incumbent address cannot be probed. Refusing to start a competing daemon`. The originally captured panic (TASK-5FEN5's 2026-07-29 runs, api.rs:24818) elided the holder clause; this one does not, and 24818 resolves to the same restart line in the tree of that date (be3408ce). Green alone; green in 24 of 24 loaded runs at lower concurrency."
 filed = "2026-07-29"
