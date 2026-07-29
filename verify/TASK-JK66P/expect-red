@@ -1,0 +1,21 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection removes the daemon's second channel: `observe_work_evidence`
+# returns `Unknown` before it can look at anything. That is the pre-fix state
+# exactly — the stall clock's silence was the only input, so ten quiet minutes
+# on a pane meant "stalled" whether or not a cargo build was running under it.
+exit: 101
+
+# THE KILL. MRJRK's shape: no pane bytes for a full stall window while the tool
+# subprocess works. Pre-fix the run is gone on the first expired budget, which
+# is why the assertion names the window it died in.
+contains: quiet window 0: a run with live work under it is not stalled
+
+# THE OPERATOR. The tombstone the manager actually got that night: the bare
+# reason, identical to the one a genuinely wedged harness produces, with
+# nothing to tell them apart.
+contains: the reason must say for how long: stall_timeout_exceeded
+
+# Both, and only these two. A binary that collapses wholesale is a different
+# failure and has not reproduced this defect.
+contains: test result: FAILED. 0 passed; 2 failed

@@ -5922,9 +5922,12 @@ fn dispatch_release_requires_orphan_signal(envelopes: &[SessionEnvelope]) -> boo
     }
 }
 
+// orgasmic:TASK-JK66P — matched on the reason's leading token: a stall release
+// now carries the evidence it could not find (`stall_timeout_exceeded: no work
+// evidence for 612s; …`), and an orphan is an orphan either way.
 fn anomalous_without_finalize_release_reason(reason: &str) -> bool {
     matches!(
-        reason,
+        reason.split(':').next().unwrap_or(reason).trim(),
         "stall_timeout_exceeded"
             | "max_run_duration_exceeded"
             | "idle_timeout_exceeded"
@@ -20510,6 +20513,19 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn stall_without_worker_finalize_flags_orphan_not_done() {
         assert_timeout_without_finalize_flags_orphan("stall_timeout_exceeded").await;
+    }
+
+    /// orgasmic:TASK-JK66P — the stall tombstone now carries which evidence was
+    /// absent and for how long. The orphan signal keys on the leading token, so
+    /// the run that was shot mid-build is still flagged for rescue instead of
+    /// falling into `Unrecognized`.
+    #[tokio::test]
+    async fn stall_reason_with_evidence_detail_still_flags_orphan_not_done() {
+        assert_timeout_without_finalize_flags_orphan(
+            "stall_timeout_exceeded: no work evidence for 612s; 1 process(es) under pid \
+             4242 at 0.2% cpu (work threshold 5.0%)",
+        )
+        .await;
     }
 
     #[tokio::test]

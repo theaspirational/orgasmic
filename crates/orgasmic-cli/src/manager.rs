@@ -2643,11 +2643,21 @@ enum DispatchReleaseTombstone {
     None,
 }
 
+// orgasmic:TASK-JK66P — matched on the reason's FIRST TOKEN, not the whole
+// string. A stall release now appends what evidence was absent and for how long
+// (`stall_timeout_exceeded: no work evidence for 612s; …`) so an operator can
+// tell a wedged harness from a worker shot mid-build; the classification must
+// not change because the tombstone got more informative.
 fn is_stall_sweep_release_reason(reason: &str) -> bool {
     matches!(
-        reason,
+        release_reason_token(reason),
         "stall_timeout_exceeded" | "max_run_duration_exceeded" | "idle_timeout_exceeded"
     )
+}
+
+/// The leading `snake_case` token of a release reason, before any `:` detail.
+fn release_reason_token(reason: &str) -> &str {
+    reason.split(':').next().unwrap_or(reason).trim()
 }
 
 #[cfg(test)]
@@ -5077,6 +5087,28 @@ mod tests {
             default_worktree(&project_root, "TASK-086", DispatchKind::Architector),
             default_worktree(&project_root, "TASK-086", DispatchKind::Reviewer)
         );
+    }
+
+    /// orgasmic:TASK-JK66P — a stall tombstone now names the evidence that was
+    /// absent and for how long, so an operator can tell a wedged harness from a
+    /// worker shot mid-build. Classification keys on the leading token, and a
+    /// more informative reason must not stop reading as a stall sweep.
+    #[test]
+    fn a_stall_reason_carrying_its_evidence_detail_is_still_a_stall_sweep() {
+        assert!(is_stall_sweep_release_reason("stall_timeout_exceeded"));
+        assert!(is_stall_sweep_release_reason(
+            "stall_timeout_exceeded: no work evidence for 612s; 1 process(es) under \
+             pid 4242 at 0.2% cpu (work threshold 5.0%)"
+        ));
+        assert!(is_stall_sweep_release_reason("idle_timeout_exceeded"));
+        assert!(is_stall_sweep_release_reason("max_run_duration_exceeded"));
+        // Still not a sweep: a worker-declared or operator release, whatever
+        // it carries after a colon.
+        assert!(!is_stall_sweep_release_reason("worker finalize for TASK-X"));
+        assert!(!is_stall_sweep_release_reason(
+            "protocol_end_without_finalize"
+        ));
+        assert!(!is_stall_sweep_release_reason(""));
     }
 
     #[test]

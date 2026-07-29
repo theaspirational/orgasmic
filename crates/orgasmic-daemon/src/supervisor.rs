@@ -35,7 +35,7 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use orgasmic_core::{
     read_session_file, BabysitterSummaryChunk, BabysitterTool, DriverEvent, Lifecycle,
-    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind,
+    ReleaseOutcome, RunSubState, RuntimeIdentity, SessionEventKind, TextStream,
 };
 use orgasmic_drivers::{
     driver_for_mode_harness, AttachOutcome, BabysitterAck, BabysitterRequest, DriverConfig,
@@ -65,6 +65,23 @@ const BABYSITTER_SUMMARY_INTERVAL: Duration = Duration::from_secs(60);
 const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(600);
 const DEFAULT_MAX_RUN_DURATION: Duration = Duration::from_secs(14_400);
 const DRIVER_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The first token of every stall release reason, and the whole reason when the
+/// daemon could not establish what was missing (TASK-JK66P). Consumers that
+/// classify a tombstone match on this token, not on the whole string:
+/// `is_stall_sweep_release_reason` (CLI) and
+/// `anomalous_without_finalize_release_reason` (api).
+pub(crate) const STALL_TIMEOUT_REASON: &str = "stall_timeout_exceeded";
+
+/// How long the supervisor waits for a work-evidence probe before giving up on
+/// it and releasing the run on the evidence it already has (TASK-JK66P).
+///
+/// The probe shells out (`rmux display-message`, `ps`), so a wedged rmux daemon
+/// would otherwise be able to make every stalled run immortal — the exact
+/// failure mode this task exists to close, re-entered through the fix. On
+/// expiry the observation is [`WorkEvidence::Unknown`] and the release proceeds
+/// with today's reason.
+const WORK_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// How long a run's event drain may keep waiting for its driver's stream to
 /// end *after* a release has been requested for that run, before the drain
@@ -343,6 +360,13 @@ pub struct Supervisor {
     /// is the only way to exercise the abort path, sits through 10s of real
     /// time before it can observe anything. Read once per teardown.
     driver_release_timeout_ms: Arc<AtomicU64>,
+    /// The second channel the stall detector reads before releasing a run
+    /// (TASK-JK66P): what is actually running under it. Production installs
+    /// [`ProcessSubtreeCpuProbe`]; supervisor tests swap in doubles, because no
+    /// unit test can put a real cargo build under a real rmux pane. The
+    /// production implementation is proven separately against a real process
+    /// subtree.
+    work_probe: Arc<std::sync::RwLock<Arc<dyn WorkEvidenceProbe>>>,
 }
 
 // orgasmic:TASK-AK6EM
@@ -978,6 +1002,16 @@ struct RunRecord {
     /// On implementer runs only: companion babysitter run_id set by auto-spawn.
     babysitter_run_id: Option<String>,
     last_driver_event_at: Instant,
+    /// Instant of the last driver event that was *evidence of work*, per
+    /// [`driver_event_advances_stall_clock`], or of the last work-evidence
+    /// probe that found live work under the run. The stall clock reads this,
+    /// never `last_driver_event_at`.
+    ///
+    /// orgasmic:TASK-VZMZE,TASK-JK66P — two measured failures of one clock.
+    /// Keeping liveness (`last_driver_event_at`, which every event refreshes)
+    /// separate from work is what lets a heartbeat-only run die on schedule
+    /// while a silent pane with a cargo build under it survives.
+    last_progress_at: Instant,
     run_started_at: Instant,
     /// Instant of the last `send_input` accepted by the driver. Reset on
     /// every accepted `send_input` — unlike `last_driver_event_at`, which
@@ -1216,8 +1250,53 @@ impl Supervisor {
                 RELEASE_DRAIN_BUDGET.as_millis() as u64
             )),
             driver_release_timeout_ms: Arc::new(AtomicU64::new(
-                DRIVER_RELEASE_TIMEOUT.as_millis() as u64,
+                DRIVER_RELEASE_TIMEOUT.as_millis() as u64
             )),
+            work_probe: Arc::new(std::sync::RwLock::new(Arc::new(ProcessSubtreeCpuProbe))),
+        }
+    }
+
+    /// Replace the work-evidence probe (TASK-JK66P).
+    ///
+    /// Test-only, and for the same reason as
+    /// [`Supervisor::set_driver_release_timeout`]: production has no better
+    /// answer than the real probe, and a test cannot spawn a real harness pane
+    /// running a real build. Every other line of the detection path — the
+    /// clock, the deadline, the credit, the reason — stays on the executed
+    /// path.
+    #[cfg(test)]
+    fn set_work_probe(&self, probe: Arc<dyn WorkEvidenceProbe>) {
+        *self
+            .work_probe
+            .write()
+            .expect("work probe lock is never poisoned: no panics under it") = probe;
+    }
+
+    fn work_probe(&self) -> Arc<dyn WorkEvidenceProbe> {
+        Arc::clone(
+            &self
+                .work_probe
+                .read()
+                .expect("work probe lock is never poisoned: no panics under it"),
+        )
+    }
+
+    /// Ask the probe what is running under a run, bounded by
+    /// [`WORK_PROBE_TIMEOUT`]. The probe shells out, so it runs on the blocking
+    /// pool and never under the supervisor lock.
+    async fn observe_work_evidence(&self, target: WorkProbeTarget) -> WorkEvidence {
+        let probe = self.work_probe();
+        let observation = tokio::time::timeout(
+            WORK_PROBE_TIMEOUT,
+            tokio::task::spawn_blocking(move || probe.observe(&target)),
+        )
+        .await;
+        match observation {
+            Ok(Ok(evidence)) => evidence,
+            // A probe that panicked or outran its budget establishes nothing.
+            // Unknown, never Working: the release must not be blockable by a
+            // probe that cannot answer.
+            Ok(Err(_)) | Err(_) => WorkEvidence::Unknown,
         }
     }
 
@@ -1661,6 +1740,7 @@ impl Supervisor {
                 pending_cancel: false,
                 babysitter_run_id: None,
                 last_driver_event_at: run_started_at,
+                last_progress_at: run_started_at,
                 run_started_at,
                 last_input_at: run_started_at,
                 stall_timeout: resolve_timeout_secs(req.stall_timeout_secs, DEFAULT_STALL_TIMEOUT),
@@ -2366,6 +2446,7 @@ impl Supervisor {
             pending_cancel: false,
             babysitter_run_id: None,
             last_driver_event_at: run_started_at,
+            last_progress_at: run_started_at,
             run_started_at,
             last_input_at: run_started_at,
             stall_timeout: (!is_interactive_manager_task(&task_id))
@@ -3107,13 +3188,67 @@ impl Supervisor {
             }
             revalidated
         };
+        // orgasmic:TASK-JK66P — the event channel says no work arrived. Before
+        // shooting a run on that, look at the channel the events cannot carry:
+        // what is running under the run right now. Only the stall clock asks —
+        // `max_run_duration` is an absolute ceiling by design, and idle is
+        // about operator input, not work.
+        let missing_evidence = if revalidated.reason == STALL_TIMEOUT_REASON {
+            let target = {
+                let g = self.inner.lock().await;
+                g.runs.get(&revalidated.run_id).map(|rec| WorkProbeTarget {
+                    transport: rec.transport.clone(),
+                    identity: rec.identity.clone(),
+                    pid: rec.early_exit_watcher_pid,
+                })
+            };
+            let Some(target) = target else {
+                return;
+            };
+            match self.observe_work_evidence(target).await {
+                WorkEvidence::Working { detail } => {
+                    // Credit the probe as the progress event the transport
+                    // could not emit, and leave the run alone. A run whose work
+                    // never ends still meets `max_run_duration`.
+                    let mut g = self.inner.lock().await;
+                    let Some(rec) = g.runs.get_mut(&revalidated.run_id) else {
+                        return;
+                    };
+                    rec.last_progress_at = Instant::now();
+                    tracing::info!(
+                        run_id = %revalidated.run_id,
+                        quiet_secs = revalidated.elapsed.as_secs(),
+                        evidence = %detail,
+                        "stall deadline overridden: live work under a quiet run"
+                    );
+                    return;
+                }
+                WorkEvidence::Idle { detail } => Some(detail),
+                WorkEvidence::Unknown => None,
+            }
+        } else {
+            None
+        };
         warn!(
             run_id = %revalidated.run_id,
             reason = revalidated.reason,
             threshold_secs = revalidated.threshold.as_secs(),
             elapsed_secs = revalidated.elapsed.as_secs(),
+            work_evidence = missing_evidence.as_deref().unwrap_or("not established"),
             "supervisor run timeout exceeded"
         );
+        // orgasmic:TASK-JK66P — name what was absent and for how long, so the
+        // operator reading a tombstone can tell a wedge from a worker that was
+        // killed mid-build. The reason's FIRST TOKEN stays
+        // `stall_timeout_exceeded`; consumers classify on that token.
+        let timeout_reason = match &missing_evidence {
+            Some(detail) => format!(
+                "{}: no work evidence for {}s; {detail}",
+                revalidated.reason,
+                revalidated.elapsed.as_secs()
+            ),
+            None => revalidated.reason.to_string(),
+        };
         // orgasmic:TASK-S52X9 — hot-session artifactor that already submitted
         // ends idle with the finalize tombstone (Completed), not Failed.
         let (reason, outcome, finalized) = {
@@ -3123,12 +3258,12 @@ impl Supervisor {
                     .filter(|decl| decl.round == rec.terminal_round)
                     .map(|decl| decl.reason)
             }) {
-                Some(declared) => (declared, ReleaseOutcome::Completed, true),
-                None => (revalidated.reason, ReleaseOutcome::Failed, false),
+                Some(declared) => (declared.to_string(), ReleaseOutcome::Completed, true),
+                None => (timeout_reason, ReleaseOutcome::Failed, false),
             }
         };
         if let Err(e) = self
-            .release_with_finalization(&revalidated.run_id, reason, outcome, finalized, None)
+            .release_with_finalization(&revalidated.run_id, &reason, outcome, finalized, None)
             .await
         {
             if matches!(e, SupervisorError::DeferredWhileInFlight(_)) {
@@ -3140,7 +3275,7 @@ impl Supervisor {
                 warn!(
                     error = %e,
                     run_id = %revalidated.run_id,
-                    reason,
+                    reason = %reason,
                     "supervisor timeout release failed"
                 );
             }
@@ -4246,14 +4381,19 @@ fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeo
         return None;
     }
 
+    // orgasmic:TASK-VZMZE — keyed on `last_progress_at`, NOT on
+    // `last_driver_event_at`. The distinction is the whole task: a heartbeat is
+    // signal on the channel, not evidence of work, and a clock that cannot tell
+    // them apart declares a run that made 0 tool calls in an hour exactly as
+    // healthy as one that made 243.
     let stall = rec.stall_timeout.and_then(|threshold| {
-        let elapsed = now.saturating_duration_since(rec.last_driver_event_at);
+        let elapsed = now.saturating_duration_since(rec.last_progress_at);
         (elapsed > threshold).then(|| RunTimeoutCandidate {
             run_id: run_id.to_string(),
-            reason: "stall_timeout_exceeded",
+            reason: STALL_TIMEOUT_REASON,
             threshold,
             elapsed,
-            deadline: rec.last_driver_event_at + threshold,
+            deadline: rec.last_progress_at + threshold,
         })
     });
     let max = rec.max_run_duration.and_then(|threshold| {
@@ -4290,6 +4430,201 @@ fn timed_out_run(run_id: &str, rec: &RunRecord, now: Instant) -> Option<RunTimeo
         .min_by_key(|candidate| candidate.deadline)
 }
 
+// ───────────────────────── work evidence (TASK-JK66P) ──────────────────────
+//
+// The stall clock above reads one channel: driver events. A worker whose tool
+// subprocess is building for ten minutes emits nothing on that channel — its
+// pane is a terminal, and `scripts/run-tests.sh` redirects cargo to files — so
+// the absence of events is not, on its own, the absence of work. The probe
+// below is the second channel: what is actually running under the run.
+
+/// Minimum CPU consumption, summed as a percentage of one core over the process
+/// subtree under a run, that counts as "work is happening here".
+///
+/// Both bounds this sits between are measured, not chosen:
+///
+/// - TASK-VZMZE's wedged codex run consumed **6.77 s of CPU in 60 minutes** —
+///   0.19 % of one core — while emitting a heartbeat every 30 s. It must not
+///   read as work, or the fix for JK66P reintroduces VZMZE.
+/// - TASK-JK66P's healthy claude/rmux worker was inside
+///   `scripts/run-tests.sh`: a cargo build saturates at least one core and its
+///   subtree reads in the hundreds of percent.
+///
+/// 5 % is more than an order of magnitude above the wedge and more than an
+/// order below the build, so neither classification depends on exactly where in
+/// that gap the line falls.
+const MIN_WORK_CPU_PERCENT: f32 = 5.0;
+
+/// What the daemon could establish about live work under a run at the moment
+/// its stall deadline expired.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WorkEvidence {
+    /// Work is demonstrably running under this run right now. The stall clock
+    /// was reading the wrong channel; it gets credited and the run lives.
+    Working { detail: String },
+    /// The daemon looked and found none. The stall stands, and `detail` says
+    /// what was looked at so the operator can tell a wedge from a quiet worker.
+    Idle { detail: String },
+    /// The daemon could not look: no probe target, no rmux binary, no session,
+    /// `ps` unavailable, or the probe outran [`WORK_PROBE_TIMEOUT`]. The stall
+    /// stands on today's bare reason — a probe that cannot run must not be able
+    /// to save a run, or a broken probe is an immortality switch.
+    Unknown,
+}
+
+/// Everything a [`WorkEvidenceProbe`] is allowed to know about a run.
+#[derive(Debug, Clone)]
+pub(crate) struct WorkProbeTarget {
+    /// Driver transport (`rmux`, `acp-stdio`, …).
+    transport: String,
+    /// Run identity — for pane transports this is what names the rmux session.
+    identity: RuntimeIdentity,
+    /// Wrapper pid, for transports that own a direct child process. `None` for
+    /// pane transports: a tmux pane is a child of the mux server, not of us.
+    pid: Option<u32>,
+}
+
+/// The second channel the stall detector consults before releasing a run.
+///
+/// A trait rather than a free function because no unit test can spawn a real
+/// cargo build under a real rmux pane; the production implementation is proven
+/// separately against a real process subtree
+/// (`process_subtree_cpu_probe_*`), and the supervisor tests drive the
+/// decision with doubles.
+pub(crate) trait WorkEvidenceProbe: Send + Sync {
+    fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence;
+}
+
+/// Production probe: CPU burned by the process subtree under the run.
+///
+/// Liveness alone is deliberately NOT the test. VZMZE's wedged harness was
+/// alive for the entire hour it did nothing; MRJRK's healthy worker and that
+/// wedge are indistinguishable by "is a process there?" and separated by three
+/// orders of magnitude of CPU.
+pub(crate) struct ProcessSubtreeCpuProbe;
+
+impl WorkEvidenceProbe for ProcessSubtreeCpuProbe {
+    fn observe(&self, target: &WorkProbeTarget) -> WorkEvidence {
+        let Some(root) = work_probe_root_pid(target) else {
+            return WorkEvidence::Unknown;
+        };
+        let Some(table) = process_cpu_table() else {
+            return WorkEvidence::Unknown;
+        };
+        let Some((processes, cpu_percent)) = subtree_cpu_percent(&table, root) else {
+            return WorkEvidence::Idle {
+                detail: format!("no live process under pid {root}"),
+            };
+        };
+        let detail = format!(
+            "{processes} process(es) under pid {root} at {cpu_percent:.1}% cpu \
+             (work threshold {MIN_WORK_CPU_PERCENT:.1}%)"
+        );
+        if cpu_percent >= MIN_WORK_CPU_PERCENT {
+            WorkEvidence::Working { detail }
+        } else {
+            WorkEvidence::Idle { detail }
+        }
+    }
+}
+
+/// The process to walk down from. A subprocess transport hands us its wrapper
+/// pid at acquire; a pane transport has none, so the pane's root process is
+/// resolved from the mux by the run-scoped session name the driver built from
+/// the same identity.
+fn work_probe_root_pid(target: &WorkProbeTarget) -> Option<u32> {
+    if let Some(pid) = target.pid.filter(|pid| *pid != 0) {
+        return Some(pid);
+    }
+    (target.transport == "rmux")
+        .then(|| rmux_pane_pid(&target.identity))
+        .flatten()
+}
+
+/// `rmux display-message -p -t <session> '#{pane_pid}'` — the pane's root
+/// process (the shell the harness runs in), whose descendants are the harness
+/// and everything the harness spawned.
+///
+/// Addressed at the default endpoint, which is where a dispatch's session
+/// lives. A run on a private endpoint resolves to `None` and therefore
+/// [`WorkEvidence::Unknown`], i.e. today's behavior.
+fn rmux_pane_pid(identity: &RuntimeIdentity) -> Option<u32> {
+    let probe = orgasmic_drivers::modes::rmux::probe_rmux_binary();
+    let rmux_bin = probe.path.filter(|_| probe.found)?;
+    let session = orgasmic_drivers::modes::rmux::rmux_session_name(identity);
+    let output = Command::new(rmux_bin)
+        .args(["display-message", "-p", "-t", &session, "#{pane_pid}"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
+}
+
+/// `(pid, ppid, %cpu)` for every process on the box, in one `ps` call.
+///
+/// `%cpu` is what both platforms already compute: a decaying utilization
+/// average on macOS, cpu-time-over-lifetime on Linux. The Linux form
+/// under-reports a long-lived process that only just started working — which is
+/// why the sum is taken over the whole subtree, where the freshly spawned,
+/// short-lived, CPU-bound children (cargo, rustc) report accurately.
+fn process_cpu_table() -> Option<Vec<(u32, u32, f32)>> {
+    let output = Command::new("ps")
+        .args(["ax", "-o", "pid=,ppid=,pcpu="])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let table: Vec<(u32, u32, f32)> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let pid = parts.next()?.parse::<u32>().ok()?;
+            let ppid = parts.next()?.parse::<u32>().ok()?;
+            let pcpu = parts.next()?.parse::<f32>().ok()?;
+            Some((pid, ppid, pcpu))
+        })
+        .collect();
+    (!table.is_empty()).then_some(table)
+}
+
+/// Process count and summed `%cpu` for `root` and every descendant of it.
+/// `None` when `root` is not in the table at all — the process is gone.
+fn subtree_cpu_percent(table: &[(u32, u32, f32)], root: u32) -> Option<(usize, f32)> {
+    let mut frontier = vec![root];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut processes = 0_usize;
+    let mut cpu_percent = 0.0_f32;
+    let mut found_root = false;
+    while let Some(pid) = frontier.pop() {
+        if !seen.insert(pid) {
+            continue;
+        }
+        if let Some((_, _, pcpu)) = table.iter().find(|(candidate, _, _)| *candidate == pid) {
+            if pid == root {
+                found_root = true;
+            }
+            processes += 1;
+            cpu_percent += pcpu;
+        }
+        frontier.extend(
+            table
+                .iter()
+                .filter(|(_, ppid, _)| *ppid == pid)
+                .map(|(child, _, _)| *child),
+        );
+    }
+    found_root.then_some((processes, cpu_percent))
+}
+
 fn terminal_outcome_for_event(evt: &DriverEvent) -> Option<ReleaseOutcome> {
     match evt {
         DriverEvent::RunComplete { .. } => Some(ReleaseOutcome::Completed),
@@ -4316,6 +4651,9 @@ fn apply_driver_event_to_record(
     terminal_outcome: Option<ReleaseOutcome>,
 ) {
     rec.last_driver_event_at = event_at;
+    if driver_event_advances_stall_clock(evt) {
+        rec.last_progress_at = event_at;
+    }
     if let Some(outcome) = terminal_outcome {
         // A release-triggered control acknowledgement must not downgrade the
         // failure that caused transport shutdown (including iteration budget
@@ -4368,6 +4706,40 @@ fn driver_event_counts_as_work(evt: &DriverEvent) -> bool {
             | DriverEvent::Heartbeat { .. }
             | DriverEvent::PaneActivity { .. }
     )
+}
+
+/// Whether an event advances the stall clock (`last_progress_at`), i.e. whether
+/// it is *evidence of work* rather than signal on the channel.
+///
+/// orgasmic:TASK-VZMZE,TASK-JK66P — deliberately a different question from
+/// [`driver_event_counts_as_work`], which answers "did the worker do anything
+/// at all" for the early-exit classification. `PaneActivity` is false there and
+/// true here, and that split is the point: a TUI painting its banner is not
+/// proof the *worker* worked, but a pane that demonstrably wrote bytes is proof
+/// the run is not frozen — and it is the ONLY stall input an rmux run has
+/// (TASK-RWCRN; see the variant's doc comment in `orgasmic-core::session`,
+/// which names this change as the one that must not drop it).
+fn driver_event_advances_stall_clock(evt: &DriverEvent) -> bool {
+    match evt {
+        // Liveness, not work. TASK-VZMZE measured 118 of these at 30 s
+        // intervals holding open a run with 0 tool calls, 0 worktree bytes and
+        // 6.77 s of CPU in an hour.
+        DriverEvent::Heartbeat { .. } => false,
+        // The startup handshake. "Reached ready and then nothing" is the
+        // wedge's exact shape, so ready must not buy a stall window.
+        DriverEvent::Ready { .. } => false,
+        // A transport reporting its own breakage is not the worker working.
+        DriverEvent::DriverError { .. } => false,
+        // Harness stderr is ambient on this fleet: VZMZE's wedged run emitted
+        // 12 of these and nothing else, and the healthy run dispatched seven
+        // minutes later on the same binary emitted the same messages. Counting
+        // them would let a harness log its way to immortality.
+        DriverEvent::TextChunk {
+            stream: TextStream::Stderr,
+            ..
+        } => false,
+        _ => true,
+    }
 }
 
 fn remove_record_lease(inner: &mut Inner, rec: &RunRecord) {
@@ -5342,6 +5714,62 @@ mod tests {
                 .send(DriverEvent::Ready {
                     protocol_version: "rmux/1".into(),
                     capabilities: json!({"tui": true}),
+                })
+                .await;
+            Ok(DriverSession {
+                identity: ctx.identity,
+                pid: None,
+                events: rx,
+                control: Box::new(RmuxPaneControl {
+                    event_tx: Arc::clone(&self.event_tx),
+                }),
+                producer: None,
+                native_runtime: None,
+            })
+        }
+    }
+
+    /// TASK-VZMZE's measured shape: an acp-stdio harness that reaches `ready`,
+    /// never begins a turn, and emits a heartbeat every interval forever.
+    struct HeartbeatOnlyAcpDriver {
+        event_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<DriverEvent>>>>,
+    }
+
+    impl HeartbeatOnlyAcpDriver {
+        fn new() -> Self {
+            Self {
+                event_tx: Arc::new(Mutex::new(None)),
+            }
+        }
+
+        async fn inject(&self, evt: DriverEvent) {
+            if let Some(tx) = self.event_tx.lock().await.as_ref() {
+                tx.send(evt).await.expect("heartbeat channel is open");
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl WorkerDriver for HeartbeatOnlyAcpDriver {
+        fn transport(&self) -> &'static str {
+            "acp-stdio"
+        }
+
+        fn harness(&self) -> Option<&'static str> {
+            Some("codex")
+        }
+
+        async fn acquire(
+            &self,
+            ctx: DriverContext,
+            _config: DriverConfig,
+        ) -> Result<DriverSession, orgasmic_drivers::DriverError> {
+            let (tx, rx) = tokio::sync::mpsc::channel(16);
+            *self.event_tx.lock().await = Some(tx.clone());
+            let _ = tx
+                .send(DriverEvent::Ready {
+                    protocol_version: "acp/1".into(),
+                    capabilities: json!({}),
                 })
                 .await;
             Ok(DriverSession {
@@ -6551,7 +6979,29 @@ mod tests {
         let writer = spawn_writer(events.clone());
         let boot = Arc::new(BootIdentity::new());
         let sup = Supervisor::new(writer.clone(), boot, CloseGuardStore::ephemeral());
+        sup.set_work_probe(Arc::new(UnobservableWorkProbe));
         (sup, dir, writer, events)
+    }
+
+    /// The probe every test supervisor starts with: it establishes nothing, so
+    /// the stall path behaves exactly as it did before TASK-JK66P unless a test
+    /// installs a probe that can answer. Also keeps the unit suite hermetic —
+    /// the production probe shells out to `rmux` and `ps`.
+    struct UnobservableWorkProbe;
+
+    impl WorkEvidenceProbe for UnobservableWorkProbe {
+        fn observe(&self, _target: &WorkProbeTarget) -> WorkEvidence {
+            WorkEvidence::Unknown
+        }
+    }
+
+    /// A probe with a fixed answer — the two halves of TASK-JK66P's acceptance.
+    struct FixedWorkProbe(WorkEvidence);
+
+    impl WorkEvidenceProbe for FixedWorkProbe {
+        fn observe(&self, _target: &WorkProbeTarget) -> WorkEvidence {
+            self.0.clone()
+        }
     }
 
     /// A supervisor whose only releaser is the test itself.
@@ -6565,6 +7015,7 @@ mod tests {
         let writer = spawn_writer(EventBus::new());
         let boot = Arc::new(BootIdentity::new());
         let sup = Supervisor::unmonitored(writer.clone(), boot, CloseGuardStore::ephemeral());
+        sup.set_work_probe(Arc::new(UnobservableWorkProbe));
         (sup, dir, writer)
     }
 
@@ -7771,6 +8222,11 @@ mod tests {
         );
     }
 
+    /// Age a run's clocks. `last_driver_event_age` means "nothing at all has
+    /// arrived on the driver channel for this long", so it ages the work clock
+    /// with the liveness clock — no event means no work event either. A test
+    /// that needs the two to diverge (TASK-JK66P: a live run whose channel is
+    /// silent) drives real events at a real cadence instead.
     async fn age_run(
         sup: &Supervisor,
         run_id: &str,
@@ -7782,6 +8238,7 @@ mod tests {
         let rec = g.runs.get_mut(run_id).expect("run exists");
         if let Some(age) = last_driver_event_age {
             rec.last_driver_event_at = now - age;
+            rec.last_progress_at = now - age;
         }
         if let Some(age) = run_age {
             rec.run_started_at = now - age;
@@ -7888,6 +8345,23 @@ mod tests {
             .iter()
             .filter(|envelope| envelope.kind == SessionEventKind::DriverEvent)
             .count()
+    }
+
+    /// The release tombstone's reason verbatim — for the assertions that read
+    /// the detail a stall now carries, not just its leading token.
+    fn release_reason(path: &Path) -> Option<String> {
+        session_events(path).into_iter().find_map(|envelope| {
+            (envelope.kind == SessionEventKind::Lifecycle
+                && envelope.event.get("phase").and_then(|phase| phase.as_str()) == Some("release"))
+            .then(|| {
+                envelope
+                    .event
+                    .get("reason")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default()
+                    .to_string()
+            })
+        })
     }
 
     fn has_release_reason(path: &Path, reason: &str) -> bool {
@@ -8206,6 +8680,345 @@ mod tests {
 
         assert!(!run_is_live(&sup, &resp.run_id).await);
         assert_release_reason(&session_path, "stall_timeout_exceeded");
+    }
+
+    /// TASK-VZMZE, the wedge. Measured 2026-07-26 on
+    /// run-20260726T144430-aa47b867840f42f282b30d3469949731: 118 heartbeats at
+    /// 30 s intervals, 0 tool calls, 0 worktree bytes, 6.77 s of CPU in an
+    /// hour — and the supervisor could not tell it from a run making 243 tool
+    /// calls, because the drain refreshed `last_driver_event_at` for every
+    /// drained event, variant-agnostically.
+    ///
+    /// Real cadence against a compressed budget, not a backdated clock: the
+    /// heartbeats genuinely arrive faster than the stall window, exactly as
+    /// they did in production. The clock they must not refresh is the work
+    /// clock; the liveness clock they DO refresh is asserted below, because
+    /// "the harness is gone" is a different classification that must stay
+    /// available (this task's second acceptance line).
+    #[tokio::test]
+    async fn heartbeats_are_liveness_not_work_so_a_wedged_run_still_stalls() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let driver = HeartbeatOnlyAcpDriver::new();
+        let req = manual_req("TASK-HEARTBEAT-WEDGE", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        // 30 s heartbeats against a 600 s window, compressed by the same
+        // factor: 8 beats at 150 ms against a 1 s window.
+        for seq in 0..8 {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            driver.inject(DriverEvent::Heartbeat { seq }).await;
+            wait_for_event_count(&sup, &resp.run_id, 2 + seq).await;
+        }
+
+        sup.release_first_timed_out_run().await;
+
+        assert!(
+            !run_is_live(&sup, &resp.run_id).await,
+            "a run whose only traffic is heartbeats has produced no evidence of \
+             work and must stall on the normal schedule, not at max_run_duration"
+        );
+        assert_release_reason(&session_path, "stall_timeout_exceeded");
+    }
+
+    /// The mechanism behind the test above, asserted on the record itself: one
+    /// event, two clocks, opposite answers. A heartbeat must keep proving the
+    /// harness is *there* — "the harness is gone" is a different failure with a
+    /// different response — while proving nothing about work.
+    #[tokio::test]
+    async fn a_heartbeat_refreshes_liveness_but_not_the_work_clock() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let driver = HeartbeatOnlyAcpDriver::new();
+        let req = manual_req("TASK-HEARTBEAT-CLOCKS", dir.path(), Some(600), None);
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let before_beat = Instant::now();
+        driver.inject(DriverEvent::Heartbeat { seq: 0 }).await;
+        wait_for_event_count(&sup, &resp.run_id, 2).await;
+
+        let g = sup.inner.lock().await;
+        let rec = g.runs.get(&resp.run_id).expect("run is still live");
+        assert!(
+            rec.last_driver_event_at >= before_beat,
+            "a heartbeat must still refresh liveness"
+        );
+        assert!(
+            rec.last_progress_at < before_beat,
+            "a heartbeat must not refresh the work clock"
+        );
+    }
+
+    /// TASK-JK66P, the healthy half. Measured 2026-07-29 on
+    /// dispatch-TASK-MRJRK-implementer-20260729T000911: `pane_activity` every
+    /// ~30 s until 00:41:22, then the worker ran `scripts/run-tests.sh` — whose
+    /// output goes to files, so the pane writes nothing — and at 00:51:22, ten
+    /// minutes of pane silence to the second, the daemon released it as
+    /// stalled. It was healthy: report written, work committed, verify artifact
+    /// self-tested PASS. It died at its final gate.
+    ///
+    /// The pane is the only channel an rmux run has, and it was empty. The
+    /// evidence that existed was under the pane, not on it, and the probe is
+    /// what reads it. Three consecutive expired budgets here, because the
+    /// acceptance is that such a run survives *indefinitely* — one saved sweep
+    /// would not distinguish a fix from an off-by-one.
+    #[tokio::test]
+    async fn a_silent_pane_with_live_work_under_it_is_never_stalled() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Working {
+            detail: "9 process(es) under pid 4242 at 412.0% cpu (work threshold 5.0%)".into(),
+        })));
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req("TASK-QUIET-BUT-WORKING", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        for window in 0..3 {
+            // No pane bytes at all in this window — the measured MRJRK shape.
+            age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+            sup.release_first_timed_out_run().await;
+            assert!(
+                run_is_live(&sup, &resp.run_id).await,
+                "quiet window {window}: a run with live work under it is not stalled"
+            );
+        }
+        assert!(!has_release_reason(&session_path, "stall_timeout_exceeded"));
+
+        // And it is not immortal: the same run, once the work under it stops,
+        // dies on the next expired budget. This is the half that keeps the fix
+        // from being `stall_timeout_secs: Some(0)` by another name.
+        sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
+            detail: "1 process(es) under pid 4242 at 0.2% cpu (work threshold 5.0%)".into(),
+        })));
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+        assert!(
+            !run_is_live(&sup, &resp.run_id).await,
+            "when the work under a quiet pane stops, the stall stands"
+        );
+    }
+
+    /// TASK-JK66P ask 4. `stall_timeout_exceeded` on its own told the operator
+    /// nothing: MRJRK's healthy worker and VZMZE's wedge produced the identical
+    /// tombstone. The reason now says which evidence was absent and for how
+    /// long, while keeping `stall_timeout_exceeded` as its first token so every
+    /// consumer that classifies a stall sweep still classifies it.
+    #[tokio::test]
+    async fn the_stall_reason_names_the_evidence_that_was_absent() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        sup.set_work_probe(Arc::new(FixedWorkProbe(WorkEvidence::Idle {
+            detail: "1 process(es) under pid 4242 at 0.2% cpu (work threshold 5.0%)".into(),
+        })));
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req("TASK-STALL-REASON", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        age_run(&sup, &resp.run_id, Some(Duration::from_secs(612)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        let reason = release_reason(&session_path).expect("release tombstone");
+        assert_eq!(
+            reason.split(':').next(),
+            Some("stall_timeout_exceeded"),
+            "the leading token is what CLI and API classify on: {reason}"
+        );
+        assert!(
+            reason.contains("no work evidence for 612s"),
+            "the reason must say for how long: {reason}"
+        );
+        assert!(
+            reason.contains("0.2% cpu"),
+            "the reason must say what was looked at and what it showed: {reason}"
+        );
+    }
+
+    /// A probe that cannot answer must not be able to save a run. This is the
+    /// path every run with no resolvable pane or pid takes — and, if a future
+    /// probe breaks or times out, the path all of them take.
+    #[tokio::test]
+    async fn an_unobservable_run_still_stalls_on_the_bare_reason() {
+        let (sup, dir, _w) = make_unmonitored_supervisor();
+        let driver = RmuxPaneDriver::new();
+        let req = manual_req("TASK-UNPROBEABLE", dir.path(), Some(1), None);
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        age_run(&sup, &resp.run_id, Some(Duration::from_millis(1_001)), None).await;
+        sup.release_first_timed_out_run().await;
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        assert_release_reason(&session_path, "stall_timeout_exceeded");
+    }
+
+    /// The classification itself, event by event, with the reason each one is
+    /// on the side it is on.
+    #[test]
+    fn the_stall_clock_advances_only_on_evidence_of_work() {
+        // Not work: liveness, startup, transport breakage, harness stderr.
+        assert!(!driver_event_advances_stall_clock(
+            &DriverEvent::Heartbeat { seq: 7 }
+        ));
+        assert!(!driver_event_advances_stall_clock(&DriverEvent::Ready {
+            protocol_version: "acp/1".into(),
+            capabilities: json!({}),
+        }));
+        assert!(!driver_event_advances_stall_clock(
+            &DriverEvent::DriverError {
+                fatal: false,
+                message: "failed to renew cache TTL".into(),
+            }
+        ));
+        assert!(
+            !driver_event_advances_stall_clock(&DriverEvent::TextChunk {
+                stream: TextStream::Stderr,
+                chunk: "codex_models_manager::cache: failed to load models cache".into(),
+                seq: 0,
+            }),
+            "VZMZE's wedged run emitted 12 of these and nothing else, and its \
+             healthy sibling emitted the same messages"
+        );
+
+        // Work: anything the worker did, plus a pane that demonstrably wrote.
+        assert!(driver_event_advances_stall_clock(&DriverEvent::ToolCall {
+            call_id: "1".into(),
+            name: "read".into(),
+            args: json!({}),
+            seq: 0,
+        }));
+        assert!(driver_event_advances_stall_clock(&DriverEvent::TextChunk {
+            stream: TextStream::Stdout,
+            chunk: "test result: ok".into(),
+            seq: 1,
+        }));
+        assert!(driver_event_advances_stall_clock(
+            &DriverEvent::AgentTurnComplete { seq: 3 }
+        ));
+
+        // The RWCRN split, in one assertion: pane bytes are not proof the
+        // WORKER worked (so the early-exit classifier ignores them) and are
+        // proof the run is not frozen (so the stall clock takes them). An rmux
+        // run has no other stall input; dropping this is what would kill every
+        // rmux dispatch at 600s again.
+        let pane = DriverEvent::PaneActivity { seq: 0, bytes: 480 };
+        assert!(!driver_event_counts_as_work(&pane));
+        assert!(driver_event_advances_stall_clock(&pane));
+    }
+
+    /// The production probe against a real process subtree — the part no
+    /// supervisor test can prove, because it cannot put a cargo build under a
+    /// pane. A `sh` burning a core is MRJRK's `cargo`; the assertion is that
+    /// the probe's `ps` parse, subtree walk, and threshold agree with reality
+    /// on this OS.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_subtree_cpu_probe_sees_a_real_cpu_burning_child() {
+        use std::os::unix::process::CommandExt as _;
+        // A signed interpreter, not a fixture script: on macOS the first exec
+        // of a newly created executable is serialized through syspolicy
+        // (gotchas.org). Own process group + null stdio so the reap below takes
+        // the whole tree and nothing holds the runner's pipes.
+        let mut burner = Command::new("/bin/sh")
+            .args(["-c", "while :; do :; done"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn cpu burner");
+        let pid = burner.id();
+        let target = WorkProbeTarget {
+            transport: "acp-stdio".into(),
+            identity: probe_identity(),
+            pid: Some(pid),
+        };
+
+        // macOS reports a decaying utilization average, so the number needs a
+        // moment of real burning before it crosses the threshold; Linux's
+        // lifetime average crosses almost immediately. Poll rather than sleep a
+        // guessed amount.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut last = WorkEvidence::Unknown;
+        while Instant::now() < deadline {
+            last = ProcessSubtreeCpuProbe.observe(&target);
+            if matches!(last, WorkEvidence::Working { .. }) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{pid}")])
+            .status();
+        let _ = burner.kill();
+        let _ = burner.wait();
+
+        assert!(
+            matches!(last, WorkEvidence::Working { .. }),
+            "a process burning a core is live work, got {last:?}"
+        );
+    }
+
+    /// The other half of the same production path: an alive-but-idle process is
+    /// NOT work. This is VZMZE's wedge in miniature — its harness was alive for
+    /// the whole hour it did nothing — and it is why the probe measures CPU
+    /// rather than liveness.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_subtree_cpu_probe_does_not_mistake_a_live_idle_child_for_work() {
+        use std::os::unix::process::CommandExt as _;
+        let mut sleeper = Command::new("/bin/sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn idle child");
+        let pid = sleeper.id();
+        let observed = ProcessSubtreeCpuProbe.observe(&WorkProbeTarget {
+            transport: "acp-stdio".into(),
+            identity: probe_identity(),
+            pid: Some(pid),
+        });
+
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{pid}")])
+            .status();
+        let _ = sleeper.kill();
+        let _ = sleeper.wait();
+
+        assert!(
+            matches!(observed, WorkEvidence::Idle { .. }),
+            "a live but idle process is not evidence of work, got {observed:?}"
+        );
+    }
+
+    /// A pid that is gone is `Idle`, not `Unknown`: the daemon looked and there
+    /// was nothing there, which is a finding, not a failure to observe.
+    #[test]
+    fn process_subtree_cpu_probe_reports_a_vanished_process_as_idle() {
+        let table = vec![(1_u32, 0_u32, 0.0_f32), (2, 1, 0.0)];
+        assert!(subtree_cpu_percent(&table, 4_242).is_none());
+
+        // And the subtree really is a subtree: a grandchild's cpu counts.
+        let table = vec![(10, 1, 0.1), (11, 10, 90.0), (12, 11, 5.0), (99, 1, 400.0)];
+        let (processes, cpu) = subtree_cpu_percent(&table, 10).expect("root is live");
+        assert_eq!(processes, 3, "root, child, grandchild — and not pid 99");
+        assert!((cpu - 95.1).abs() < 0.01, "summed subtree cpu: {cpu}");
+    }
+
+    fn probe_identity() -> RuntimeIdentity {
+        RuntimeIdentity {
+            run_id: "run-probe".into(),
+            runtime_id: "runtime-probe".into(),
+            boot_id: "boot-probe".into(),
+        }
     }
 
     #[tokio::test]
@@ -11749,6 +12562,7 @@ mod tests {
             pending_cancel: false,
             babysitter_run_id: None,
             last_driver_event_at: Instant::now(),
+            last_progress_at: Instant::now(),
             run_started_at: Instant::now(),
             last_input_at: Instant::now(),
             stall_timeout: None,
