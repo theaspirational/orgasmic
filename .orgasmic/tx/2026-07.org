@@ -40888,3 +40888,116 @@
 :MODEL_OVERRIDE: claude-opus-5
 :EFFORT_OVERRIDE: high
 :END:
+
+* TX 2026-07-29 Wed 00:51:23 manager.dispatch_orphaned TASK-MRJRK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3638
+:TIME:         [2026-07-29 Wed 00:51:23]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MRJRK
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-MRJRK-implementer-20260729T000911.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260729T000911-7e0bfe0d571941d7be6f09399f7f6f77
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-mrjrk/worktree
+:END:
+
+* TX 2026-07-29 Wed 00:54:29 task.created TASK-JK66P
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3639
+:TIME:         [2026-07-29 Wed 00:54:29]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-JK66P
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-JK66P
+:END:
+
+* TX 2026-07-29 Wed 00:57:41 manager.dispatch_orphaned TASK-4YC8E
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3640
+:TIME:         [2026-07-29 Wed 00:57:41]
+:TYPE:         manager.dispatch_orphaned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-4YC8E
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/sessions/dispatch-TASK-4YC8E-implementer-20260729T001739.jsonl
+:REASON:       worker never called `orgasmic dispatch finalize` before the run was released
+:RUN_ID:       run-20260729T001739-f4d1ff077c184b27affaa33d899c9f1f
+:WORKTREE:     /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tmp/dispatch/task-4yc8e/worktree
+:END:
+
+* TX 2026-07-29 Wed 01:03:34 task.edited TASK-QCG6J
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3641
+:TIME:         [2026-07-29 Wed 01:03:34]
+:TYPE:         task.edited
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-QCG6J
+:TARGET:       /Users/aspirational/Documents/code/tools/orgasmic/.orgasmic/tasks/backlog.org
+:REASON:       edited task node TASK-QCG6J
+:NODE_ID:      TASK-QCG6J
+:END:
+
+* TX 2026-07-29 Wed 01:03:55 implementer.done TASK-MRJRK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3642
+:TIME:         [2026-07-29 Wed 01:03:55]
+:TYPE:         implementer.done
+:ACTOR:        agent.implementer
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MRJRK
+:MODEL:        claude-opus-5
+:EFFORT:       high
+:MERGE_SHA:    1257f91
+:BRANCH:       task-mrjrk-impl
+:CLOSED_TX:    tx-20260729-orgasmic-3626
+:CLEANUP_STATUS: ok
+:END:
+
+* TX 2026-07-29 Wed 01:03:55 task.state_transitioned TASK-MRJRK
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3643
+:TIME:         [2026-07-29 Wed 01:03:55]
+:TYPE:         task.state_transitioned
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-MRJRK
+:TARGET:       .orgasmic/tasks/in_review.org
+:REASON:       transition TASK-MRJRK to in_review
+:FROM_STATE:   in_progress
+:TO_STATE:     in_review
+:END:
+
+* TX 2026-07-29 Wed 01:04:08 manager.action orgasmic
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3644
+:TIME:         [2026-07-29 Wed 01:04:08]
+:TYPE:         manager.action
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:REASON:       TASK-MRJRK merged via manager salvage: worker stall-killed at its final gate (JK66P class); manager replayed the verify artifact (PASS) and ran the missing suite gate (RED only on QCG6J's unregistered rmux twin, green in isolation, unreachable from the diff); follow-up candidates filed from its report
+:END:
+
+* TX 2026-07-29 Wed 01:04:09 task.created TASK-AJP4A
+:PROPERTIES:
+:TX_ID:        tx-20260729-orgasmic-3645
+:TIME:         [2026-07-29 Wed 01:04:09]
+:TYPE:         task.created
+:ACTOR:        theaspirational@users.noreply.github.com
+:MACHINE:      Vasyls-MacBook-Pro.local
+:PROJECT:      orgasmic
+:TASK:         TASK-AJP4A
+:TARGET:       .orgasmic/tasks/backlog.org
+:REASON:       created task TASK-AJP4A
+:END:

@@ -1605,3 +1605,89 @@ mux routing, not that.
 - Injection per TCTTD standard (natural red: an invocation argv without -L, the
   K4G1D/0RCRY template), self-tested with `orgasmic verify --artifact`.
 
+* IN_REVIEW TASK-MRJRK A registered project can be missing from the index, and the 404 blames the wrong thing :P1:
+:PROPERTIES:
+:ID: TASK-MRJRK
+:PRIORITY: P1
+:END:
+
+Problem: a project can be registered on the board, listed by `orgasmic project
+list`, and still be absent from the index snapshot, at which point every route
+that addresses it by id fails with a 404 that names the project as though it
+were unregistered. The operator's only signal is an error that points at the
+wrong thing, and the only known remedy is `orgasmic reindex` - which nobody
+tries, because nothing suggests the index is the problem.
+
+Two things need fixing, and they are separable.
+
+1. The diagnosis. `select_project` (api.rs) reports a missed lookup as
+   `not_found("project {id}")`. That message is indistinguishable from a genuinely
+   unknown project, so it sends the reader to check registration - the one thing
+   that is definitely fine, since `project list` just showed it. The message
+   should distinguish "no such project on this board" from "registered but not
+   in the current index snapshot", and the latter should name the remedy
+   (`orgasmic reindex`). This is cheap and is most of the operator-visible value.
+
+2. The underlying gap. A project that is registered but missing from the
+   snapshot is a state the daemon can sit in indefinitely: nothing retries, and
+   nothing reports it. Whatever the cause, the daemon should either converge on
+   its own or say plainly that it has not. A `status` field naming registered-
+   but-unindexed projects would make the condition self-reporting rather than
+   something an operator stumbles into through an unrelated 404.
+
+Do not start by assuming a cause. What is actually established is thin, and one
+plausible-sounding explanation has already been checked and ruled out.
+
+EVIDENCE, 2026-07-25, live on the operator's daemon
+Found incidentally while trying to record gotchas during TASK-TJKFC.
+
+- Daemon booted 17:53:31Z (pid 10647, boot_id a6fdd006). It had restarted on its
+  own during the session; the previous instance was pid 71878 from 16:49.
+- At ~18:03Z - ten minutes after that boot, so this is NOT a boot race -
+  `orgasmic node body append <anything> --project orgasmic` returned
+  `404 {"error":"project orgasmic"}`. Same for ddd.
+- The same command with `--project orsl`, `--project lynx-auth` and
+  `--project rare` got PAST project resolution (they failed later, on the node
+  id or the glossary file). So exactly two of five were missing.
+- `orgasmic project list` showed all five with clean ids at that moment. Ids
+  were checked through `cat -v` for hidden characters: clean.
+- `orgasmic reindex` at ~18:04Z fixed it immediately. The retry of the same
+  command then failed at the *next* stage instead, which is how we know project
+  resolution had started succeeding.
+- Corroborated in ~/.orgasmic/logs/daemon.out.log: the first `glossary file not
+  found` warnings for ddd appear at 18:04:23Z - i.e. only after the reindex,
+  because before it the request never got far enough to touch a file.
+
+RULED OUT, so nobody re-runs it
+- Not a boot race. Ten minutes elapsed, and the boot log shows a completed
+  reattach pass at 17:53:35 with no scan-timeout or partial-load warnings.
+- Not "`status` reads a different source". `status.projects` is
+  `snap.projects.len()` (api.rs:5753) - the same map the lookup missed. So
+  `status` should have reported 3, not 5, during the window. It was simply never
+  run at that moment, which is the one piece of evidence this report is missing
+  and the first thing to capture if it recurs.
+
+STILL OPEN
+Whether the two projects were dropped after a successful load, never loaded at
+all, or present under a different key. Note `load_project` inserts under
+`board_entry.id`, and the two affected projects are the two with the largest and
+most actively written `.orgasmic/` trees - both were being written continuously
+by this session while the others were idle. That is a correlation, not a cause.
+
+REPRODUCTION NOTE
+If this recurs, capture in this order before reindexing, because reindex
+destroys the evidence: `orgasmic status` (the projects count is the decisive
+missing datum), `orgasmic project list`, and the failing node call for each of
+the five project ids.
+
+ACCEPTANCE
+- A lookup miss for an id that IS registered on the board reports that
+  distinctly from an unknown id, and names `orgasmic reindex` as the remedy.
+- The condition is visible without provoking it: an operator can see that a
+  registered project is not in the current snapshot without first hitting an
+  unrelated 404.
+- A test drives a snapshot that is missing a registered project and asserts the
+  error text distinguishes the two cases. The test must construct the state
+  directly rather than wait for whatever produced it here, since the cause is
+  not yet known - fixing the diagnosis must not be blocked on finding it.
+

@@ -1250,6 +1250,81 @@ symptom.
 :PRIORITY: P2
 :TAGS: daemon,tests,flake
 :END:
+
+Found by the manager's independent gate on TASK-AK6EM, 2026-07-28. **The fence
+itself is correct** — this is about what its test asserts.
+
+=== Observed
+
+In a full `cargo test -p orgasmic-daemon --lib` under concurrent load:
+
+```
+---- api::tests::explicit_reattach_tmux_is_fenced_out_of_a_worktree_a_close_guard_holds ----
+panicked at crates/orgasmic-daemon/src/api.rs:19229:
+the refusal must name the cleanup reservation:
+  recovery action reattach_tmux is not valid for run run-fence-d825d586...
+```
+
+The reattach **was refused**. It was refused by an earlier validity check rather
+than by the cleanup fence, because under load the test's tmux session was not
+live by the time the recovery action was evaluated. The test asserts *which*
+refusal fired, so it goes red on a safe outcome.
+
+Its sibling `boot_rehydration_is_fenced_out_of_a_worktree_a_close_guard_holds`
+passed in the same run and its log shows the fence doing exactly its job:
+
+```
+boot reattach: skipped (mux session not live / not reattachable)
+  run_id=run-fence-cc02bfb7... task_id=TASK-BOOT-FENCE
+  error=dispatch cleanup in progress for task=TASK-BOOT-FENCE kind=Worker
+```
+
+So the P0 fix is sound and merged. This task is the test's precision.
+
+=== Why it is worth fixing rather than tolerating
+
+A P0 destructive-path fence whose regression goes red for a reason unrelated to
+the fence trains the next reader to wave it through — which is precisely how a
+real fence regression would get discounted. It also lands on the standing
+known-flake list, which this project is actively trying to shrink (TASK-5HBST,
+TASK-STWVB).
+
+Note the same full run showed two more load-induced failures on the same axis —
+`post_artifact_regenerate_hot_path_reuses_live_run_id` ("harness busy", 409) and
+`poll_direct_child_pid_prefers_worker_server_over_generic_sibling` ("fake
+cursor-agent did not start children"). AK6EM added three new tmux-shaped tests,
+and the `LiveSessionGuard` flock serializes live sections across every test
+binary, so the tmux contention window widened. That is context for TASK-STWVB,
+not a separate defect.
+
+=== Ask
+
+1. Make the assertion robust to *which* refusal fires: the property under test
+   is "a reattach into a guarded worktree does not become live". Assert that,
+   and assert the reservation-named refusal only when the run is actually still
+   reattachable — or make the fixture's tmux session reliably live for the
+   duration, if that can be done without a sleep.
+2. Do not weaken it into "some error happened". The test must still fail if the
+   fence is removed; verify that by injection (`worktree: None` in the reattach
+   admission was AK6EM's own injection and turned four tests red).
+3. Say whether the sibling boot-rehydration and pending-plan fence tests have
+   the same exposure and fix them together if so.
+
+=== Acceptance
+
+- 10 consecutive full `cargo test -p orgasmic-daemon --lib` runs with no failure
+  from any of the three fence tests. Report the count.
+- Removing the fence still turns them red, shown by injection with output.
+- State plainly whether the fixture still depends on a live tmux session and, if
+  so, what now guarantees it.
+
+=== Non-goals
+
+- Do not change the fence, the admission module, the close-guard persistence, or
+  dec_NFZY2. All are merged and manager-verified.
+
+RMUX TWIN [2026-07-29, manager salvage gate for TASK-MRJRK]: `api::tests::explicit_reattach_rmux_is_fenced_out_of_a_worktree_a_close_guard_holds` (api.rs:19622) — the rmux arm TASK-JGHNC added of this task's registered tmux test — failed with the same mode (reattach refused by an earlier validity check rather than the cleanup fence), green in isolation. When this task fixes the assertion, fix both arms (they share one body post-JGHNC); the registry entry for the tmux arm should either cover the twin or gain a sibling row owned here, per the DJ1WV only-the-owner-writes rule.
+
 ** Description
 Found by the manager's independent gate on TASK-AK6EM, 2026-07-28. **The fence
 itself is correct** — this is about what its test asserts.
@@ -1968,3 +2043,33 @@ From TASK-FJCE9 (2026-07-29), same class as FJCE9/JGHNC, one line above JGHNC's 
 :END:
 
 From TASK-FJCE9 (2026-07-29): the 0RCRY owned-server mechanism leaves the socket INODE behind after tmux tears the server down (24 present, none with a live server, oldest 01:39). Harmless but unbounded, and it makes 'did this run create a server?' harder to read from a listing. Options: the keepalive's exit path unlinks its own socket after the server dies (careful: only its own, by exact name, never a sweep of the directory — a sweep could race a live run); or a claim-time cleanup of sockets whose server is provably dead AND whose pid-embedded owner is gone. State the chosen rule and why it cannot remove a live run's socket. Small; verify artifact optional if covered by a direct test.
+
+* BACKLOG TASK-JK66P Stall detector kills healthy workers during long quiet tool calls — MRJRK's worker died running its final suite gate
+:PROPERTIES:
+:ID: TASK-JK66P
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 on dispatch-TASK-MRJRK-implementer-20260729T000911: pane_activity events flowed every ~30s until 00:41:22, then the worker launched scripts/run-tests.sh (output redirected to files per house rules, so the pane goes quiet), and at 00:51:22 — exactly 10 minutes of pane silence — the daemon emitted run_complete 'stall_timeout_exceeded' and released the run (finalized_by_worker: false). The worker was HEALTHY: its report.md was complete except the suite result it was killed while producing; its branch had all work committed and its verify artifact self-tested PASS. The manager salvaged by running the gate and closing manually.
+
+THE TENSION: this is the mirror image of TASK-VZMZE (heartbeats reset the stall timer so a wedged run is immortal). Here the detector has no heartbeat to see — the harness pane is static while a child process works — so quiet-but-healthy reads as stalled. TASK-HAREX's false-positive analysis named this exact profile ('sessions routinely go silent for 10+ minutes while cargo builds') for the RELEASE path; the STALL path has no equivalent protection.
+
+THE SIGNAL THAT EXISTS: the worker's tool subprocess (cargo/run-tests.sh) was alive the whole time — child-process liveness under the pane is observable. A pane-bytes-only stall clock conflates 'no output' with 'no work'.
+
+=== Ask
+1. Establish what the stall clock currently measures for rmux dispatches (pane bytes? harness heartbeats?) and its budget (~10min observed). Coordinate with VZMZE's analysis — one design should fix both directions: a wedged run must not be immortal, a working run must not be shot.
+2. Candidate signal: process-tree activity under the worker pane (child pids alive + consuming cpu), or harness-level tool-call-in-progress state, feeding the stall clock as evidence of work.
+3. Whatever ships: MRJRK's profile (10+ quiet minutes on the final suite gate) must survive, proven by test with a compressed budget; VZMZE's wedge must still die.
+
+=== Acceptance
+- A run whose pane is silent but whose tool subprocess is alive and consuming cpu is NOT stalled, proven with compressed budgets.
+- A run with no live work under it still stalls out on the existing schedule.
+- Injection per TCTTD standard, self-tested with orgasmic verify --artifact.
+
+* BACKLOG TASK-AJP4A Index rebuild drops a project whose scan exceeds the 5s bound and never retries — decide the convergence policy
+:PROPERTIES:
+:ID: TASK-AJP4A
+:PRIORITY: P2
+:END:
+
+From TASK-MRJRK (2026-07-29): rebuild_with_timeout (index.rs:495-514 at MRJRK's HEAD) is the one path that removes a key from snap.projects — on scan timeout or join error it warns and moves on, the project is omitted from the published snapshot, and nothing reschedules it. MRJRK made the condition VISIBLE (unindexed_projects in status, warn at publish, the 404 names the index) and deliberately shipped NO convergence, because the 2026-07-25 incident's cause is still open (scan give-up vs short board read — the new status field discriminates them on recurrence) and a silent heal would erase the evidence. This task decides the policy once evidence exists: carry the prior snapshot's ProjectIndex forward past a failed scan (the last-good pattern load_project already uses), or a bounded retry — either WITH a staleness signal so the fix does not re-hide what MRJRK surfaced. Blocked on nothing technically; prefer waiting for one captured recurrence. Also note the accidental convergence: watcher.rs:365-397 reloads missing projects on any board-file event (touch board.org fixes the state) — make that deliberate or remove it as part of the same decision. Injection per TCTTD standard.
