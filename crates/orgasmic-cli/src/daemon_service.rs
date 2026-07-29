@@ -373,15 +373,27 @@ fn service_spec(home: &Home) -> Result<ServiceSpec> {
     })
 }
 
+/// Write the daemon LaunchAgent definition, replacing whatever is there.
+///
+/// orgasmic:TASK-5P60H — split out of [`start_macos_launch_agent`] so the
+/// install/update rewrite is exercisable against a generated file in a temp
+/// directory. Every install and every `orgasmic update` reaches this through
+/// `daemon_lifecycle::restart_with_force` → `daemon_service::start`, so a plist
+/// written before this task's `ThrottleInterval` existed is replaced on the next
+/// one rather than surviving as a silently unthrottled job.
+fn write_macos_launch_agent(plist: &Path, spec: &ServiceSpec) -> Result<()> {
+    if let Some(parent) = plist.parent() {
+        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    }
+    std::fs::write(plist, render_macos_launch_agent(spec))
+        .with_context(|| format!("write {}", plist.display()))
+}
+
 fn start_macos_launch_agent(home: &Home) -> Result<()> {
     let spec = service_spec(home)?;
     start_macos_rmux_launch_agent(home, &spec)?;
     let plist = macos_plist_path()?;
-    if let Some(parent) = plist.parent() {
-        std::fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    }
-    std::fs::write(&plist, render_macos_launch_agent(&spec))
-        .with_context(|| format!("write {}", plist.display()))?;
+    write_macos_launch_agent(&plist, &spec)?;
     let uid = current_uid();
     let domain = format!("gui/{uid}");
     let service = format!("{domain}/{MACOS_LABEL}");
@@ -792,6 +804,30 @@ pub(crate) fn service_stop_timeout() -> Duration {
     orgasmic_daemon::ShutdownBudgets::default().total() + SERVICE_STOP_MARGIN
 }
 
+/// The floor launchd enforces between two spawns of the daemon job.
+///
+/// orgasmic:TASK-5P60H — launchd's default is 10 seconds, and the plist never
+/// said otherwise, so the restart policy was a default rather than a decision.
+/// `ThrottleInterval` is measured from the last *spawn*, not the exit: a daemon
+/// that served for hours and then died is respawned immediately, and only a job
+/// that keeps dying young is slowed down. So the number is a statement about
+/// *failed starts*, and the longest a failed start may legitimately take is the
+/// wait it spends on a lock somebody else holds — `undeclared_holder_budget` in
+/// `orgasmic_daemon`, which is [`orgasmic_daemon::ShutdownBudgets::total`].
+///
+/// launchd runs one instance of a job at a time, so the churn this closes is not
+/// two launchd daemons: it is launchd's respawn cadence landing inside a start
+/// (or a slow boot) that is legitimately in progress — a CLI `daemon start`, an
+/// autostart, or the predecessor's own drain. Respawning faster than a start can
+/// conclude guarantees the next attempt meets the same unresolved lock, which is
+/// how a log fills with alternating instance-lock and Address-in-use failures.
+///
+/// Derived, so raising a shutdown budget moves it instead of quietly reopening
+/// the window (the rule TASK-Q07Y5 set for [`service_stop_timeout`]).
+pub(crate) fn launch_agent_throttle_interval() -> Duration {
+    orgasmic_daemon::ShutdownBudgets::default().total()
+}
+
 /// orgasmic:TASK-WGXKD.2 — `ExitTimeOut` is load-bearing, not cosmetic.
 /// launchd's default is 20 seconds between SIGTERM and SIGKILL, which lands
 /// inside the daemon's own release-finalization drain, so the SIGKILL can cut
@@ -811,10 +847,12 @@ fn render_macos_launch_agent(spec: &ServiceSpec) -> String {
   <key>StandardErrorPath</key>\n  <string>{stderr}</string>\n\
   <key>RunAtLoad</key>\n  <true/>\n\
   <key>KeepAlive</key>\n  <true/>\n\
+  <key>ThrottleInterval</key>\n  <integer>{throttle}</integer>\n\
   <key>ExitTimeOut</key>\n  <integer>{exit_timeout}</integer>\n\
 </dict>\n\
 </plist>\n",
         label = MACOS_LABEL,
+        throttle = launch_agent_throttle_interval().as_secs(),
         exit_timeout = service_stop_timeout().as_secs(),
         exe = xml_escape_path(&spec.exe),
         home = xml_escape_path(&spec.home),
@@ -1144,6 +1182,167 @@ mod tests {
             service_stop_timeout().as_secs()
         );
         assert!(plist.contains("Orgasmic &amp; Tools"));
+    }
+
+    /// orgasmic:TASK-5P60H — the restart policy has to be a decision, and the
+    /// rendered value has to be the derived one for the same reason
+    /// `ExitTimeOut` does: a literal here is how a budget change silently
+    /// reopens the respawn window it was sized against.
+    #[test]
+    fn macos_launch_agent_throttles_respawns_instead_of_taking_launchds_default() {
+        let plist = render_macos_launch_agent(&spec());
+        assert!(
+            plist.contains("<key>ThrottleInterval</key>"),
+            "without ThrottleInterval launchd applies its own 10s default, and \
+             the restart policy is an accident: {plist}"
+        );
+        assert!(
+            plist.contains(&format!(
+                "<key>ThrottleInterval</key>\n  <integer>{}</integer>",
+                launch_agent_throttle_interval().as_secs()
+            )),
+            "the plist must carry the derived ThrottleInterval {}s: {plist}",
+            launch_agent_throttle_interval().as_secs()
+        );
+        // KeepAlive stays on: the daemon is meant to be persistent. Throttle is
+        // how a crash loop is slowed, not by giving up on restarts.
+        assert!(plist.contains("<key>KeepAlive</key>"));
+    }
+
+    /// orgasmic:TASK-5P60H — the derivation, and its ordering against the one
+    /// number a start may legitimately spend before it concludes anything.
+    #[test]
+    fn respawn_throttle_covers_the_longest_a_failed_start_may_take() {
+        /// launchd's own default, and the value the plist used to inherit.
+        const LAUNCHD_DEFAULT_THROTTLE: Duration = Duration::from_secs(10);
+        let budget = orgasmic_daemon::ShutdownBudgets::default();
+
+        assert_eq!(
+            launch_agent_throttle_interval(),
+            budget.total(),
+            "the throttle must be the undeclared-holder wait a refusing start \
+             spends, so changing ShutdownBudgets moves it"
+        );
+        assert!(
+            launch_agent_throttle_interval() > LAUNCHD_DEFAULT_THROTTLE,
+            "throttle {:?} must exceed launchd's {LAUNCHD_DEFAULT_THROTTLE:?} \
+             default, or writing the key changed nothing",
+            launch_agent_throttle_interval()
+        );
+    }
+
+    /// launchd's documented `ThrottleInterval` policy, modelled: the job may be
+    /// respawned only once `throttle` has elapsed since it was last *spawned*.
+    ///
+    /// Returns the spawn times, relative to the first spawn.
+    fn launchd_spawn_schedule(
+        lifetime: Duration,
+        throttle: Duration,
+        spawns: usize,
+    ) -> Vec<Duration> {
+        let mut times = Vec::new();
+        let mut at = Duration::ZERO;
+        for _ in 0..spawns {
+            times.push(at);
+            // Exit, then wait out whatever is left of the throttle window.
+            at += lifetime.max(throttle);
+        }
+        times
+    }
+
+    /// orgasmic:TASK-5P60H — repeated abnormal exits must cost launchd backoff,
+    /// and a daemon that was healthy must not.
+    #[test]
+    fn repeated_abnormal_exits_back_off_while_a_healthy_daemon_restarts_at_once() {
+        let throttle = launch_agent_throttle_interval();
+
+        // The crash loop: the daemon dies the instant it starts, ten times.
+        let schedule = launchd_spawn_schedule(Duration::ZERO, throttle, 10);
+        for pair in schedule.windows(2) {
+            assert!(
+                pair[1] - pair[0] >= throttle,
+                "launchd respawned {:?} after the previous spawn, inside the \
+                 throttle {throttle:?} — that is the hot loop",
+                pair[1] - pair[0]
+            );
+        }
+        assert!(
+            *schedule.last().unwrap() >= throttle * 9,
+            "ten crash-restarts must span at least nine throttle windows, got {:?}",
+            schedule.last().unwrap()
+        );
+        // Which is also the property an operator reads off the log: a bounded
+        // number of attempts per minute, not a full page of them.
+        let attempts_per_minute = 60.0 / throttle.as_secs_f64();
+        assert!(
+            attempts_per_minute <= 2.0,
+            "{attempts_per_minute} restart attempts per minute is still a hot loop"
+        );
+
+        // And the other half: a daemon that outlived the throttle window comes
+        // straight back, so throttling never delays recovery from a real crash.
+        let healthy = throttle + Duration::from_secs(1);
+        let schedule = launchd_spawn_schedule(healthy, throttle, 3);
+        for pair in schedule.windows(2) {
+            assert_eq!(
+                pair[1] - pair[0],
+                healthy,
+                "a job that ran longer than the throttle must respawn on exit"
+            );
+        }
+    }
+
+    /// orgasmic:TASK-5P60H — install and update must *rewrite* an existing
+    /// plist, not leave a pre-throttle definition in place. Exercised against a
+    /// generated file in a temp directory: this test never goes near
+    /// `~/Library/LaunchAgents` and never loads a job.
+    #[test]
+    fn installing_over_an_existing_plist_rewrites_it_with_the_current_policy() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plist = tmp.path().join("LaunchAgents/orgasmic.daemon.plist");
+
+        // A definition from before this task: no ThrottleInterval, and pinned to
+        // a per-version binary that no longer exists.
+        std::fs::create_dir_all(plist.parent().unwrap()).unwrap();
+        std::fs::write(
+            &plist,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\
+             \x20 <key>Label</key>\n  <string>orgasmic.daemon</string>\n\
+             \x20 <key>ProgramArguments</key>\n  <array>\n    <string>/stale/runtimes/0.0.1/bin/orgasmic</string>\n    <string>serve</string>\n  </array>\n\
+             \x20 <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <true/>\n</dict>\n</plist>\n",
+        )
+        .unwrap();
+        assert!(!std::fs::read_to_string(&plist)
+            .unwrap()
+            .contains("ThrottleInterval"));
+
+        write_macos_launch_agent(&plist, &spec()).expect("rewrite the existing plist");
+
+        let rewritten = std::fs::read_to_string(&plist).expect("read rewritten plist");
+        assert!(
+            rewritten.contains("<key>ThrottleInterval</key>"),
+            "the rewrite must carry the throttle: {rewritten}"
+        );
+        assert!(
+            !rewritten.contains("/stale/runtimes/0.0.1/bin/orgasmic"),
+            "the stale definition survived the rewrite: {rewritten}"
+        );
+        assert_eq!(
+            rewritten,
+            render_macos_launch_agent(&spec()),
+            "an install must leave exactly the definition this build renders"
+        );
+    }
+
+    /// A first install has no directory to write into.
+    #[test]
+    fn writing_the_plist_creates_a_missing_launch_agents_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let plist = tmp.path().join("Library/LaunchAgents/orgasmic.daemon.plist");
+        write_macos_launch_agent(&plist, &spec()).expect("first install");
+        assert!(std::fs::read_to_string(&plist)
+            .unwrap()
+            .contains("<key>ThrottleInterval</key>"));
     }
 
     /// orgasmic:TASK-Q07Y5 — the derivation itself, not just the rendering.

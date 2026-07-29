@@ -1,0 +1,35 @@
+diff --git a/crates/orgasmic-daemon/src/lib.rs b/crates/orgasmic-daemon/src/lib.rs
+index cea8a45..b949856 100644
+--- a/crates/orgasmic-daemon/src/lib.rs
++++ b/crates/orgasmic-daemon/src/lib.rs
+@@ -541,18 +541,18 @@ fn describe_lock_holder(home: &Home) -> String {
+         None => parts.push("the lock file records no pid".to_string()),
+     }
+     match read_boot_state(home) {
+-        Some(state) => {
+-            let alive = process_is_alive(state.pid);
+-            parts.push(
+-                boot_state::classify_boot_owner(
+-                    &state,
+-                    alive,
+-                    chrono::Utc::now(),
+-                    boot_state::heartbeat_stale_after(),
+-                )
+-                .to_string(),
+-            );
+-        }
++        // TASK-5P60H injection: the boot record transcribed instead of
++        // classified, as it was before this task. The three records are still
++        // all printed, so the refusal *looks* complete — it names the lock's
++        // pid, the boot record's pid, and the phase. What it never answers is
++        // the only question the reader has: whether that owner is starting or
++        // dead. Deciding that requires joining the record to pid liveness and
++        // to heartbeat freshness, and leaving it to the reader is how a live,
++        // progressing boot gets read as a wedged one and replaced.
++        Some(state) => parts.push(format!(
++            "a boot record names pid {} in phase {:?} (seq {})",
++            state.pid, state.phase, state.seq
++        )),
+         None => parts.push("no boot record".to_string()),
+     }
+     match read_shutdown_marker(home) {

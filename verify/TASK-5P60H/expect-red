@@ -1,0 +1,26 @@
+# Pinned from the real red run of 2026-07-29, with the boot record transcribed
+# instead of classified.
+#
+# The injection removes no information from the refusal: it still names the
+# lock's pid, the boot record's pid, and the phase. It removes the *judgment* —
+# and the red below is what that costs. A daemon 438ms into a healthy scan,
+# heartbeating every 100ms, is reported as "the incumbent is not healthy". That
+# sentence is the crash-loop report this task audits, printed by the code that
+# is supposed to prevent it.
+exit: 101
+
+contains: test a_scan_that_outlasts_the_readiness_budget_still_leaves_one_owner_and_one_listener ... FAILED
+contains: the refusal must classify a live pre-bind owner as starting
+
+# The holder line the injection restores, verbatim: three records transcribed,
+# no verdict. Pinned so an unrelated failure in this target cannot be mistaken
+# for this one, and so a future refusal that merely reworded the classification
+# would not pass as this red.
+contains: a boot record names pid
+contains: in phase "scanning projects"
+
+# And the observer's half of the same defect: the refusal reached this
+# conclusion from an HTTP probe that could not have succeeded — nothing was
+# listening yet, because the owner is pre-bind by construction.
+contains: HTTP health probe at
+contains: the incumbent is not healthy

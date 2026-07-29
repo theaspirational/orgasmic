@@ -54,7 +54,8 @@ pub use crate::api::{router, ApiState};
 pub use crate::artifacts::{ArtifactSummary, BLOCK_TYPES};
 pub use crate::auth::AuthState;
 pub use crate::boot_state::{
-    boot_state_path, clear_boot_state_if_owner, read_boot_state, BootProgress, DaemonBootState,
+    boot_state_path, classify_boot_owner, clear_boot_state_if_owner, heartbeat_stale_after,
+    read_boot_state, BootOwnerVerdict, BootPhaseReport, BootProgress, DaemonBootState, PhaseTiming,
     BOOT_STATE_FILE,
 };
 pub use crate::config::DaemonConfig;
@@ -81,6 +82,9 @@ pub use crate::writer::{
 pub struct RunningDaemon {
     pub addr: SocketAddr,
     pub boot_id: String,
+    /// Where this boot spent its wall clock, measured to the moment the
+    /// listener bound (orgasmic:TASK-5P60H).
+    pub boot_report: BootPhaseReport,
     pub shutdown: tokio::sync::oneshot::Sender<()>,
     pub join: tokio::task::JoinHandle<()>,
     // Keep the sender alive; dropping it closes command_loop and drops notify.
@@ -518,6 +522,13 @@ fn lock_file_recorded_pid(home: &Home) -> Option<u32> {
 /// holder. These three records are what the lock protocol actually publishes
 /// about a holder, and the answer "none of them, and the recorded pid is gone"
 /// is exactly the shape of the wedged holder the refusal is for.
+///
+/// orgasmic:TASK-5P60H — the boot record is now *classified* rather than
+/// transcribed. Printing "phase scanning projects" next to an HTTP probe failure
+/// left the reader to decide whether that meant starting or wedged, and the
+/// whole crash-loop report is what happens when that decision goes the wrong
+/// way. [`boot_state::classify_boot_owner`] joins the record to pid liveness and
+/// heartbeat freshness, so `starting` versus `stale` is one read.
 fn describe_lock_holder(home: &Home) -> String {
     let mut parts = Vec::new();
     match lock_file_recorded_pid(home) {
@@ -530,10 +541,18 @@ fn describe_lock_holder(home: &Home) -> String {
         None => parts.push("the lock file records no pid".to_string()),
     }
     match read_boot_state(home) {
-        Some(state) => parts.push(format!(
-            "a boot record names pid {} in phase {:?} (seq {})",
-            state.pid, state.phase, state.seq
-        )),
+        Some(state) => {
+            let alive = process_is_alive(state.pid);
+            parts.push(
+                boot_state::classify_boot_owner(
+                    &state,
+                    alive,
+                    chrono::Utc::now(),
+                    boot_state::heartbeat_stale_after(),
+                )
+                .to_string(),
+            );
+        }
         None => parts.push("no boot record".to_string()),
     }
     match read_shutdown_marker(home) {
@@ -919,8 +938,19 @@ impl Daemon {
         let index = Index::new(home.clone());
         // AC #1: rebuild before serving normal reads.
         index.rebuild().await;
+        // orgasmic:TASK-5P60H — a scan made slow on purpose, inside its own
+        // phase and with the refresh loop above still publishing, so a
+        // concurrent-start matrix can hold a real boot open past the readiness
+        // timeout without waiting on a board large enough to do it naturally.
+        if let Some(hold) = boot_state::scan_hold_for_tests() {
+            tokio::time::sleep(hold).await;
+        }
         boot_progress.stop_refresh_loop();
         let initial_snapshot = index.snapshot().await;
+        // The two numbers a phase duration is only interpretable against: this
+        // scan cost that much *for this much board* (orgasmic:TASK-5P60H).
+        let scanned_projects = initial_snapshot.board.len();
+        let scanned_tx_entries = initial_snapshot.tx.len();
         if let Some(error) = initial_snapshot.first_historical_tx_parse_error().cloned() {
             return Err(HistoricalTxStartupError::from_parse_error(error).into());
         }
@@ -1057,10 +1087,20 @@ impl Daemon {
             .with_context(|| format!("bind {addr}"))?;
         boot_progress.stop_refresh_loop();
         let local_addr = listener.local_addr().context("local_addr")?;
+        // orgasmic:TASK-5P60H — read before retirement: this is the only moment
+        // the whole pre-bind timeline exists, and "8.45 seconds" is not a
+        // finding until it says which phase spent them and over how much board.
+        let mut boot_report = boot_progress.report();
+        boot_report.projects = scanned_projects;
+        boot_report.tx_entries = scanned_tx_entries;
         info!(
             address = %local_addr,
             boot_id = %boot.boot_id,
             home = %home.root.display(),
+            boot_total_ms = boot_report.total_millis,
+            projects = boot_report.projects,
+            tx_entries = boot_report.tx_entries,
+            phases = %boot_report.summary(),
             "orgasmic daemon listening"
         );
         // Ready: retire boot heartbeat so readers do not keep reporting phases.
@@ -1179,6 +1219,7 @@ impl Daemon {
         Ok(RunningDaemon {
             addr: local_addr,
             boot_id: boot.boot_id.clone(),
+            boot_report,
             shutdown: shutdown_tx,
             join,
             _watcher: watcher,
