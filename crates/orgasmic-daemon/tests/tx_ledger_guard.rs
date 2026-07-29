@@ -393,14 +393,16 @@ async fn ledger_still_parses_after_every_supported_write() {
     }
 
     // And the whole ledger reads back as the number of entries written.
-    let source = std::fs::read_to_string(project_tx_dir.join(
-        std::fs::read_dir(&project_tx_dir)
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name())
-            .next()
-            .unwrap(),
-    ))
+    let source = std::fs::read_to_string(
+        project_tx_dir.join(
+            std::fs::read_dir(&project_tx_dir)
+                .unwrap()
+                .flatten()
+                .map(|e| e.file_name())
+                .next()
+                .unwrap(),
+        ),
+    )
     .unwrap();
     let entries = orgasmic_core::parse_tx_file(&source, "ledger").unwrap();
     assert_eq!(

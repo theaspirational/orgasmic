@@ -306,7 +306,10 @@ async fn node_body_verbs_round_trip_or_refuse_by_name() {
             "--title",
             "Filed with sub-headings",
             "--body",
-            &format!("** Description\nLead prose.\n\n{}", ataxn_shaped_body("***")),
+            &format!(
+                "** Description\nLead prose.\n\n{}",
+                ataxn_shaped_body("***")
+            ),
         ],
     );
     let with_nested: serde_json::Value =

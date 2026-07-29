@@ -4088,7 +4088,11 @@ mod tests {
         );
         // The flag this task explicitly refused: rmux is NativeLogin, and
         // `--bare` would break subscription auth.
-        assert!(!plan.args.iter().any(|arg| arg == "--bare"), "{:?}", plan.args);
+        assert!(
+            !plan.args.iter().any(|arg| arg == "--bare"),
+            "{:?}",
+            plan.args
+        );
         // The RECORDED argv carries it too. `native_runtime.launch_argv` is what
         // run state surfaces after the process is gone, so this is the surface a
         // manager reads to confirm "a live dispatch shows the flag in its argv"

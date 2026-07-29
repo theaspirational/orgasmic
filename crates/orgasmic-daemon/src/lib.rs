@@ -757,8 +757,7 @@ async fn acquire_daemon_lock(
     // ceiling below runs out.
     let undeclared_deadline = std::time::Instant::now() + undeclared_holder_budget(opts);
     let mut last_probe = None::<std::time::Instant>;
-    let mut last_detail =
-        "the holder was never reachable for a health probe at all".to_string();
+    let mut last_detail = "the holder was never reachable for a health probe at all".to_string();
     let mut announced = false;
 
     loop {
