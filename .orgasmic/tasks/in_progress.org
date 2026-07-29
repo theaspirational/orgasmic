@@ -837,3 +837,62 @@ Acceptance: the slow-start matrix produces no alternating Address-in-use/instanc
 ** Notes
 Handoff from TASK-KWSTJ: `GET /api/runs` now classifies from a bounded prefix/tail lifecycle scan, but `reattach_live_runs_on_boot` still calls `read_session_file` on every session JSONL — on the reported board that is 2.239 GiB read at boot before the daemon can serve. It was left alone deliberately: boot reattach takes the *last* Acquire/RunMeta rather than the first, so switching it to the bounded scan is a semantic change that belongs with the slow-start work, not with the request-path repair. `orgasmic_core::scan_session_lifecycle` is ready to reuse.
 
+* IN_PROGRESS TASK-37TAF An old CLI releasing with no terminal_tx still loses it on acp-stdio; only one skew direction is fail-closed :dispatch:daemon:defect:skew:
+:PROPERTIES:
+:ID: TASK-37TAF
+:PRIORITY: P1
+:test_cmd: cargo test -p orgasmic-daemon
+:END:
+
+Found 2026-07-28 by the TASK-WGXKD.2 reviewer (reviewer-codex-rmux,
+run-20260728T103240) as finding 2. Pre-existing from TASK-WGXKD.1, outside the
+TASK-WGXKD.2 diff, so it did not block that round — but it means the parent
+TASK-WGXKD **cannot claim both version-skew directions are safe**, and TASK-WGXKD
+must not close until this is resolved.
+
+** The defect
+
+`crates/orgasmic-daemon/src/api.rs:6849,7118-7141`.
+
+`terminal_tx` is optional on the release payload. A `finalized_by_worker` release
+carrying `terminal_tx: None` releases the run and returns success with
+`terminal_tx_id: None`. An old CLI then still owes the separate `POST /tx`.
+
+On acp-stdio the release reaps the old finalize process's own setsid group
+**before** that POST is made, leaving a released run with no terminal tx. That is
+exactly the loss TASK-WGXKD exists to prevent, arriving through the skew
+direction the capability handshake does not cover.
+
+** What is already correct — do not redo it
+
+The other direction is fail-closed and proven: new CLI against an old daemon is
+refused by the TASK-WGXKD.1 capability handshake, and its regression passed under
+review. Only old CLI → new daemon is open.
+
+** Fix, per the reviewer
+
+Two shapes, choose and record which:
+
+A. Fail closed before releasing when `finalized_by_worker: true` arrives with no
+   `terminal_tx`, and tell the operator to upgrade or restart the CLI. Keeps the
+   lease held rather than releasing into a known-lossy path.
+B. Reconstruct the terminal tx server-side from what the daemon already knows,
+   so the old CLI's missing POST stops mattering.
+
+A is the safe one and matches the handshake's existing posture; B removes the
+skew concern entirely but has to be correct about what the daemon can reconstruct
+without the worker's own report.
+
+** Acceptance
+
+- An old-payload / new-daemon acp-stdio regression that proves either the lease
+  stays held, or the terminal tx lands atomically with the release.
+- The chosen shape is recorded, not just implemented.
+- TASK-WGXKD's version-skew claim is restated to match what is actually true.
+
+** Non-goals
+
+- Do not touch the capability handshake's new-CLI/old-daemon direction; it works.
+- Do not fold this into the TASK-WGXKD.2 fix round (TASK-Q07Y5) — the reviewer
+  scoped them apart deliberately, and Q07Y5's writer-budget work is unrelated.
+
