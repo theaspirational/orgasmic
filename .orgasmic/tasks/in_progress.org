@@ -818,3 +818,62 @@ Acceptance: inventory latency and boot reconciliation are independent of payload
 ** Notes
 Handoff from TASK-KWSTJ: the bounded legacy fallback this task's item 1 calls for already exists as `orgasmic_core::scan_session_lifecycle` (prefix/tail byte window, transcript lines rejected from raw bytes without parsing, `truncated` and `final_envelope_retained` flags for conservative classification). Measured on the real 198-file / 2.239 GiB board: 26.67 MiB inspected in 95.3 ms versus 3.08 s for a full read. The durable catalog can be built by caching that scan's result by file identity rather than by inventing a second reader. `InventoryStageMetrics` on `GET /api/runs` gives the before/after signal for the catalog work.
 
+* IN_PROGRESS TASK-JQ8AV The evidence clock cannot see a provider-bound turn: long server-side thinking reads as the VZMZE wedge (three false-positive kills)
+:PROPERTIES:
+:ID: TASK-JQ8AV
+:PRIORITY: P1
+:END:
+
+Measured 2026-07-29 06:23-06:27, first hours of TASK-JK66P's clock in production: THREE healthy workers (FZB6T, RB1ZN, SZJ2B, dispatched together) were stall-released with 'no work evidence for 600s; 1 process(es) at 0.0-0.3% cpu' — and the RB1ZN retry's pane, captured live, showed the truth: 'Quantumizing… (3m41s · ↓13.1k tokens · thinking with high effort)'. A claude-opus-5 high-effort turn thinks server-side for many minutes: ~0% local cpu (network wait), zero pane repaints (the TUI spinner does not repaint without token arrival), no protocol events on the rmux transport. Under JK66P's two signals (pane bytes, subtree cpu) that is BYTE-IDENTICAL to VZMZE's wedge. The single-dispatch WKJX4 worked earlier only because its turns' evidence landed inside each 600s window.
+
+JK66P's design anticipated adjacent shapes (its Unknown-fails-closed rule is right); what is missing is a third evidence channel that can see 'waiting on the provider'. Candidates, to be MEASURED not assumed: (a) established TCP connection to the provider with recent traffic on the harness pid's sockets; (b) the harness's own native session/log file mtime advancing (claude writes turn state under ~/.claude — check what a thinking turn touches); (c) the TUI spinner does repaint on some cadence in some modes — measure exactly when pane bytes flow during thinking; (d) provider-turn-in-flight marker from the driver where a protocol exists (acp has heartbeats — VZMZE forbids counting them as WORK, but 'turn open' is a different, bounded claim: a turn that stays open past max-turn-duration is its own timeout class).
+
+MITIGATION until fixed (in use now): dispatch with --governance-json '{"stall_timeout_secs":3600}' — the per-run governance override; max_run_duration still bounds the run. Recorded in gotchas.org.
+
+=== Acceptance
+- A worker in a measured multi-minute server-side think survives the stall window with the production default budget, proven by test (compressed budgets, a stub that is network-waiting rather than sleeping — the distinction IS the task).
+- VZMZE's wedge (idle process, no provider connection/no native-file progress) still dies on schedule.
+- The reason string keeps naming which evidence was consulted (JK66P's ask 4).
+- Injection per TCTTD, self-tested.
+
+* IN_PROGRESS TASK-XYYBT Explore and estimate the cost of excising the architecture layer (arch_ nodes, architector agent, architecture.org) :architecture:excision:estimate:plan:
+:PROPERTIES:
+:ID: TASK-XYYBT
+:PRIORITY: P1
+:END:
+
+Operator decision [2026-07-28]: decisions.org is enough. The architecture layer makes orgasmic too heavy and adds redundant bureaucracy. This task does NOT excise anything — it is a scoped exploration that produces a cost estimate and a staged removal plan, so the operator can decide go/no-go with real numbers.
+
+Deliverable: a written report (artifact or task Evidence block) covering the inventory, the coupling risks, a staged plan with per-stage effort estimate, and an explicit recommendation. Plus a decision draft for decisions.org if the recommendation is GO.
+
+** Scope of what "architecture" means here
+1. The =arch_XXXXX= node class and =.orgasmic/architecture.org= (177 headings, 26 top-level subsystems, IMPLEMENTED + TARGET ARCHITECTURE sections).
+2. The =architector= worker kind / =architect= stage: =POST /architect=, =stage_spec("architect")=, =WorkerKind::Architector=, =DispatchEndpointKind::Architector= ("architector-watch-then-integrate"), the architector prompt spec, and =manager architecture= stage plumbing.
+3. CLI surface: =orgasmic architecture {list,show,drift,create,schema,...}= and =crates/orgasmic-cli/src/architecture_drift.rs= (457 lines).
+4. Read model: architecture projections in =orgasmic-daemon/src/index.rs=, =api.rs= routes, =writer.rs= authority, =orgasmic-core= =org.rs=/=schema.rs=/=id.rs=/=marker.rs=/=identity_lint.rs=/=schema_examples.rs=.
+5. UI: =ArchitectureView.tsx= (273 lines), NodeModal arch node views, router/routes entries, =descriptor.ts=, capabilities.
+6. Shipped instruction surfaces: =shipped/prompt-studio/context-packs/architecture.org=, =shipped/prompt-studio/prompt-specs/manager.org=, =shipped/entry/router.org=, =shipped/schema/tx.org=, =shipped/skills/orgasmic/SKILL.md=, =shipped/skills/orgasmic/references/recall-resume.md=, =shipped/project-scaffold/tasks/{goal,backlog}.org=.
+7. The =// orgasmic:arch_NNNNN= source marker convention and its drift comparator.
+
+** Measured inventory (manager scan 2026-07-28, non-target, non-node_modules)
+- =architecture.org=: 177 org headings, 26 top-level =arch_= subsystems, ~2100+ lines.
+- =arch_= identifier occurrences by file (source only): api.rs 21, index.rs 25, org.rs 31, id.rs 22, schema.rs 21, architecture_drift.rs 20, marker.rs 10, identity_lint.rs 8, session.rs 8, plus fixtures/tests (integration.rs 21, fixtures.rs 19, bootstrap_smoke.rs, id_mint.rs, identity_lint.rs).
+- =architect= occurrences: api.rs 94, main.rs 29, manager.rs 26, dispatch.rs (test) 25, index.rs 24, NodeModal.tsx 22, integration.rs 21, ArchitectureView.tsx 15.
+- Source files carrying an =orgasmic:= header marker that names an =arch_= id: 51. Of those, 21 marker lines are arch-ONLY (no =dec_=/=TASK-= companion) — those 21 files lose their entire back-edge if arch ids are dropped, while 30 degrade gracefully to their decision/task ids.
+- State coupling: =.orgasmic/tasks/done.org= has 335 =arch_= references, tx logs 151 (2026-06: 58, 2026-07: 93), =decisions.org= 15, =tasks/goal.org= 6, =tasks/backlog.org= 2 (=:IMPLEMENTS: arch_RN73Z= on two live backlog tasks).
+
+** Questions the exploration must answer with evidence
+1. *Is the source-marker back-edge worth keeping without arch nodes?* The drift comparator is the only mechanical code↔model link in the product. If arch dies, does =// orgasmic:dec_XXXXX, TASK-XXXXX= keep enough value to retain a (renamed, simplified) drift check, or does drift die with it? Name the 21 arch-only marker files and say what each would carry instead.
+2. *What happens to history?* tx records and done.org are append-only narrative. Excision must NOT rewrite them (dec on ID migration set the precedent that history keeps old ids and stays resolvable via git). Confirm that dangling =arch_= references in immutable surfaces do not trip the identity lint / malformed-ID lint, or specify the lint carve-out needed.
+3. *What do the 15 decisions.org =arch_= references become?* Several decisions cite arch nodes as pairing context (dec on recovery cites arch_Z3Z3V/arch_A53QX; dec on graph-page excision says arch_M8JQT "sheds its claims at excision"). Do those decisions need amendment, or is a dangling-but-historical reference acceptable?
+4. *What absorbs the content that is actually load-bearing?* Some arch nodes carry real constraints (INTERFACE/CONSTRAINTS claims, =:SOURCE_PATHS:=). Decide per top-level subsystem: fold into the owning decision, drop, or park in an archive file. Give a rough count of nodes in each bucket — do not do the folding.
+5. *Live task fallout*: two backlog tasks carry =:IMPLEMENTS: arch_RN73Z=. Enumerate every open task with an arch edge and say what the drawer becomes.
+6. *Does anything block on architecture at runtime?* Specifically: does dispatch, boot reconciliation, or the read model fail if =architecture.org= is absent, or is it already optional? Test it — this determines whether excision is subtractive or requires new fallbacks.
+7. *Precedent*: the Graph page excision (dec_ZG9B9 / TASK-M6146) is the closest prior art for removing a whole surface. Read what that cost in practice and calibrate against it.
+
+** Estimate format required
+Break the removal into stages that can each land and gate independently, e.g.: (a) stop producing — retire the architector worker kind + architect stage + create verbs; (b) retire the drift comparator and the marker convention; (c) remove read model + CLI + UI surfaces; (d) retire the file and the node class from core schema/id/lint; (e) shipped instruction surface rewrite. For each stage give: files touched, LOC delta estimate, test suites affected, whether it is reversible, and a rough dispatch-round count. Flag which stages are cheap and independently valuable even if the operator later declines full excision.
+
+** Non-goals
+Do not remove anything. Do not edit architecture.org. Do not rewrite tx or done.org. No source changes beyond a throwaway experiment for question 6 (which must be reverted). The output is a report and a decision draft.
+
