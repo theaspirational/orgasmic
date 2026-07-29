@@ -764,18 +764,15 @@ async fn acquire_daemon_lock(
     loop {
         // The lock itself. This is the step the old code never took again, and
         // it is the only outcome anyone actually wants.
-        match open_and_try_lock_daemon(home)? {
-            Ok(file) => {
-                discard_stale_shutdown_marker(home);
-                if announced {
-                    info!(
-                        waited_ms = started.elapsed().as_millis() as u64,
-                        "the undeclared lock holder released; took the daemon instance lock"
-                    );
-                }
-                return Ok(Ok(file));
+        if let Ok(file) = open_and_try_lock_daemon(home)? {
+            discard_stale_shutdown_marker(home);
+            if announced {
+                info!(
+                    waited_ms = started.elapsed().as_millis() as u64,
+                    "the undeclared lock holder released; took the daemon instance lock"
+                );
             }
-            Err(_) => {}
+            return Ok(Ok(file));
         }
 
         // A departure record beats every other kind of evidence: the holder

@@ -2860,6 +2860,18 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
 
     // ---- admission-to-launch boundary (TASK-KKBTP) -----------------------
 
+    /// The argv the recording stub answers a warm-up on.
+    ///
+    /// Nothing in the adapter can mint it — it is not a `claude` subcommand,
+    /// not a flag the composer emits, and appears in no production string. That
+    /// is the whole basis on which the stub is allowed to keep warm-ups out of
+    /// the ledger the one-probe-per-dispatch count is read from.
+    const WARM_UP_ARGV: &str = "__orgasmic_warm_up";
+
+    /// What the warm-up arm prints, so a stub that execs but cannot run its own
+    /// script fails as a stub rather than as silence.
+    const WARM_UP_ACK: &str = "orgasmic-warm-up ok";
+
     /// A `claude` stub that logs every invocation and can change its answer.
     ///
     /// Two things make it different from [`make_auth_status_stub`], and both
@@ -2874,18 +2886,6 @@ printf '%s\n' '{"type":"result","subtype":"success","result":"stub complete"}'
     /// - **It records what it was asked.** "How many times does one dispatch
     ///   ask `claude auth status`?" is a question about production call counts,
     ///   and a count is the only honest way to answer it.
-    /// The argv the recording stub answers a warm-up on.
-    ///
-    /// Nothing in the adapter can mint it — it is not a `claude` subcommand,
-    /// not a flag the composer emits, and appears in no production string. That
-    /// is the whole basis on which the stub is allowed to keep warm-ups out of
-    /// the ledger the one-probe-per-dispatch count is read from.
-    const WARM_UP_ARGV: &str = "__orgasmic_warm_up";
-
-    /// What the warm-up arm prints, so a stub that execs but cannot run its own
-    /// script fails as a stub rather than as silence.
-    const WARM_UP_ACK: &str = "orgasmic-warm-up ok";
-
     fn make_recording_stub(dir: &std::path::Path, answers: &[bool]) -> std::path::PathBuf {
         recording_stub(dir, answers, false)
     }
