@@ -1,0 +1,13 @@
+# One line. Run from the repo root by `orgasmic verify TASK-5P60H`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses.
+#
+# The slow-start matrix, and only it. One target, ~4s, no tmux and no network:
+# a winner whose project scan is held open past a competing start's whole lock
+# budget, an impatient competitor that must refuse, a patient one that must
+# resolve to the incumbent, and the phase measurement the boot now carries.
+#
+# Chosen over the plist injection (the other deterministic candidate) because
+# the GREEN side of this command is the task's headline claim — one lock owner,
+# one listener, no competitor at bind, a fully rebuilt index on normal routes —
+# while the plist candidate would only ever replay a string in a format!().
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --test boot_slow_start_matrix

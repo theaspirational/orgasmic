@@ -1397,6 +1397,74 @@ mod tests {
         fs2::FileExt::unlock(&lock).unwrap();
     }
 
+    /// orgasmic:TASK-5P60H — the rule stated as a property of the *lock*, not
+    /// of the wait: an HTTP answer the CLI does not like is never grounds for
+    /// treating a live file lock as free.
+    ///
+    /// `autostart_preserves_booting_lock_owner_without_spawning_a_racer` covers
+    /// the connection-refused shape (nothing listening). This is the other one,
+    /// and the more dangerous: something *is* listening and answering 500, which
+    /// is what a daemon whose router is up but whose index is not would look
+    /// like, and what a wrong reading turns into "replace it".
+    #[test]
+    fn a_failing_http_probe_never_frees_a_live_lock_owner() {
+        let _env = env_guard();
+        let _scoped = ScopedEnv::clear(&["ORGASMIC_DAEMON_URL"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let daemon =
+            RecordingDaemon::start(|_| Some((500, r#"{"error":"index not rebuilt"}"#.to_string())));
+        let home = home_pointing_at(tmp.path(), &daemon);
+
+        let mut lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(daemon_lock_file(&home))
+            .unwrap();
+        fs2::FileExt::lock_exclusive(&lock).unwrap();
+        lock.set_len(0).unwrap();
+        std::io::Write::write_all(&mut lock, format!("{}\n", std::process::id()).as_bytes())
+            .unwrap();
+        lock.sync_data().unwrap();
+
+        match probe_local(&home).unwrap() {
+            LocalDaemonState::Starting(starting) => {
+                assert_eq!(
+                    starting.pid,
+                    Some(std::process::id()),
+                    "the lock owner is the only evidence here; the probe established nothing"
+                );
+            }
+            other => panic!(
+                "a 500 from a live lock owner must read as starting, not {other:?} — \
+                 the lock is the fact, the HTTP status is an observation"
+            ),
+        }
+
+        // And the probe left the lock exactly as it found it.
+        assert_eq!(
+            std::fs::read_to_string(daemon_lock_file(&home))
+                .unwrap()
+                .trim()
+                .parse::<u32>()
+                .ok(),
+            Some(std::process::id()),
+            "the probe rewrote the lock file it was only meant to read"
+        );
+        let second = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(daemon_lock_file(&home))
+            .unwrap();
+        assert!(
+            fs2::FileExt::try_lock_exclusive(&second).is_err(),
+            "the probe released a lock it does not own"
+        );
+        drop(second);
+        fs2::FileExt::unlock(&lock).unwrap();
+    }
+
     #[test]
     #[cfg(unix)]
     fn start_timeout_fails_when_spawned_pid_exited() {
