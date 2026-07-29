@@ -1,0 +1,16 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-FZB6T --artifact verify/TASK-FZB6T-redraw`.
+#
+# The storage lock (TASK-FZB6T item 3), proved at the choke point rather than at
+# the driver. Two tests:
+#
+# 1. a long TUI session must not grow the orgasmic JSONL from screen repaint
+#    traffic. The fixture emits only PaneActivity counts — which is what the
+#    current pane transports do — and THEN drives the case a regression looks
+#    like: a driver that synthesizes a `text_chunk` out of accumulated pane
+#    repaints and hands it to the writer. The writer must refuse to persist the
+#    rendered bytes whatever the driver believes;
+# 2. the same cap, on the ACP side: multi-megabyte tool results and assistant
+#    text are digested, and the stream still answers how many tool calls ran,
+#    which failed, and when — because structure was never payload.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-core --lib -- a_long_tui_session_persists_no_rendered_redraw_bytes oversized_driver_payloads_are_digested_but_stay_countable

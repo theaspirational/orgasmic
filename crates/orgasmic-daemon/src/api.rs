@@ -34,9 +34,8 @@ use orgasmic_core::{
     lifecycle_stage_file_name, project_sessions_dir, read_session_file, resolve_loader,
     scan_session_lifecycle, task_file_path, task_file_rel, DriverEvent, Heading, HeadingLineEdit,
     Home, Lifecycle, LifecycleStage, OrgFile, OrgRewriter, ProjectFile, ReleaseOutcome,
-    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionLifecycleScan,
-    SessionScanBudget, SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL,
-    REFERENCE_PROPERTY_KEYS,
+    RuntimeIdentity, SandboxAllowlist, SessionEnvelope, SessionEventKind, SessionScanBudget,
+    SlotValues, WorkerKind, DEFAULT_TASK_FILE, DEFAULT_TASK_FILE_REL, REFERENCE_PROPERTY_KEYS,
 };
 use orgasmic_drivers::r#trait::AttachOutcome;
 use orgasmic_drivers::{
@@ -225,6 +224,10 @@ pub struct ApiState {
     /// claim/index decisions. Inventory resolution may quarantine or rebuild a
     /// claim, so concurrent GETs cannot safely use a shared/read-side guard.
     pub recovery_status_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Compact per-run lifecycle inventory (orgasmic:TASK-FZB6T). Derived state
+    /// only: it caches what a bounded session scan already said, keyed by file
+    /// identity, so enumeration costs record count instead of transcript bytes.
+    pub run_catalog: crate::run_catalog::RunCatalog,
     /// Daemon-pinned trusted Claude executable identity, resolved at boot.
     pub trusted_claude_binary: Option<PinnedClaudeExecutable>,
     /// Optional trusted host override for the retained-inode exec boundary.
@@ -631,6 +634,9 @@ pub fn router(state: ApiState) -> Router {
         // id is the literal `live`.
         .route("/runs", get(get_recovery_inventory).post(stub("TASK-006")))
         .route("/runs/live", get(get_live_runs))
+        // orgasmic:TASK-FZB6T — registered before `/runs/:id` so `history` is a
+        // verb, not a run id.
+        .route("/runs/history", get(get_run_history))
         .route("/runs/:id", get(get_run).post(stub("TASK-006")))
         .route(
             "/runs/:id/native-transcript",
@@ -1161,8 +1167,8 @@ struct AddProjectRequest {
 }
 
 #[derive(Debug)]
-struct ExistingProjectIdentity {
-    project_id: String,
+pub(crate) struct ExistingProjectIdentity {
+    pub(crate) project_id: String,
 }
 
 async fn add_project(
@@ -1729,7 +1735,7 @@ fn org_rewriter_error(context: &str, node_id: &str, error: impl std::fmt::Displa
     ApiError::bad_request("org file update failed")
 }
 
-fn read_existing_project_identity(
+pub(crate) fn read_existing_project_identity(
     project_org: &FsPath,
 ) -> Result<ExistingProjectIdentity, ApiError> {
     let source = std::fs::read_to_string(project_org).map_err(|e| {
@@ -6981,6 +6987,22 @@ pub struct InventoryStageMetrics {
     pub truncated_scans: u64,
     /// Files that could not be scanned or parsed, classified `ambiguous`.
     pub unreadable_sessions: u64,
+    // orgasmic:TASK-FZB6T — the catalog's own cost model. `catalog_cache_hits`
+    // is the number of records answered without opening their session file at
+    // all; on a board whose runs have ended it is every record and
+    // `bytes_inspected` is zero, which is the acceptance stated as a number an
+    // operator can read off one response.
+    pub catalog_cache_hits: u64,
+    pub catalog_rebuilds: u64,
+    pub catalog_evictions: u64,
+    /// Records whose recorded worktree is gone. Each one is an attach probe
+    /// this pass did NOT start.
+    pub tombstoned_authority: u64,
+    /// Terminal records held by the catalog, whether or not this response
+    /// returned them.
+    pub terminal_total: u64,
+    /// Terminal records actually returned in the bounded window.
+    pub terminal_returned: u64,
     /// Driver attach proofs started for non-terminal records.
     pub attach_probes_started: u64,
     /// Attach proofs abandoned at the shared inventory deadline.
@@ -7014,6 +7036,13 @@ pub struct RecoveredRun {
     /// the containing registered project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree: Option<PathBuf>,
+    /// orgasmic:TASK-FZB6T item 2 — the stable authority verdict for the
+    /// recorded worktree: `verified`, `tombstoned` (recorded but gone from
+    /// disk), `mismatched`, `unrecorded`, or `unidentified`. A separate axis
+    /// from `classification` because "the worktree is gone" is a permanent
+    /// property of the run, not a liveness guess that a later poll can revise.
+    #[serde(default)]
+    pub worktree_authority: String,
     pub classification: String,
     pub reason: String,
     /// Backend-owned, ordered, harness-aware recovery actions (dec_052). The
@@ -7027,6 +7056,10 @@ pub struct RecoveredRun {
     pub recovery_replacement_run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery_replacement_session_path: Option<PathBuf>,
+    /// When this run reached its terminal state. Ordering key for the bounded
+    /// recent-terminal window `GET /api/runs` serves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// A concrete recovery action the backend will take through `/recover`.
@@ -7088,8 +7121,14 @@ async fn get_live_runs(State(state): State<ApiState>) -> Json<Value> {
 /// belong on [`get_live_runs`]. The `live` bucket is retained here because the
 /// recovery view renders live and recoverable runs together, and it is the
 /// supervisor snapshot verbatim — never a second classification.
-async fn get_recovery_inventory(State(state): State<ApiState>) -> Json<Value> {
-    let recovery = recovery_status(&state).await;
+async fn get_recovery_inventory(
+    State(state): State<ApiState>,
+    Query(query): Query<RunInventoryQuery>,
+) -> Json<Value> {
+    let recovery = {
+        let _status_guard = state.recovery_status_lock.lock().await;
+        recovery_status_inner(&state, query.into()).await
+    };
     Json(json!({
         "live": recovery.live_runs,
         "interrupted": recovery.interrupted_runs,
@@ -7101,6 +7140,84 @@ async fn get_recovery_inventory(State(state): State<ApiState>) -> Json<Value> {
         // operator can see what enumeration cost without reading daemon logs.
         "inventory": recovery.inventory,
     }))
+}
+
+/// `GET /api/runs/history` — read-only accounting of what durable run history
+/// actually holds, by driver+harness and event class.
+///
+/// orgasmic:TASK-FZB6T item 4. Deliberately a separate route from the
+/// inventory: this one visits every byte of every session file (accounting for
+/// bytes means reading them), which is precisely the cost `GET /api/runs` must
+/// never pay. It runs only when an operator asks.
+///
+/// It is a dry run and there is no other mode in this build. Nothing is
+/// written, moved, truncated, or deleted; the response states the reclaimable
+/// total so the destructive pass — which requires its own explicit
+/// authorization — has an exact number to be checked against.
+async fn get_run_history(
+    State(state): State<ApiState>,
+    Query(query): Query<RunHistoryQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let board = state.index.snapshot().await.board;
+    let roots: Vec<PathBuf> = board
+        .iter()
+        .filter(|entry| {
+            query
+                .project
+                .as_deref()
+                .is_none_or(|project| project == entry.id)
+        })
+        .map(|entry| entry.path.clone())
+        .collect();
+    if roots.is_empty() {
+        if let Some(project) = query.project.as_deref() {
+            return Err(ApiError::not_found(format!("project {project}")));
+        }
+    }
+    let catalog = state.run_catalog.clone();
+    let started = std::time::Instant::now();
+    let report = tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current().block_on(async move {
+            let mut entries = Vec::new();
+            let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
+            for root in &roots {
+                let Ok(canonical) = root.canonicalize() else {
+                    continue;
+                };
+                if !seen.insert(canonical.clone()) {
+                    continue;
+                }
+                let project_id =
+                    read_existing_project_identity(&canonical.join(".orgasmic/project.org"))
+                        .ok()
+                        .map(|identity| identity.project_id);
+                catalog
+                    .refresh_dir(
+                        &project_sessions_dir(&canonical),
+                        project_id.as_deref(),
+                        &canonical,
+                        SessionScanBudget::DEFAULT,
+                    )
+                    .await;
+                entries.extend(catalog.entries_for_project(&canonical).await);
+            }
+            crate::run_catalog::inspect_history(&entries)
+        })
+    })
+    .await
+    .map_err(|error| ApiError::internal(format!("run history inspection failed: {error}")))?;
+
+    Ok(Json(json!({
+        "report": report,
+        "duration_ms": started.elapsed().as_millis() as u64,
+    })))
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RunHistoryQuery {
+    /// Restrict accounting to one registered project id.
+    #[serde(default)]
+    project: Option<String>,
 }
 
 async fn get_run(
@@ -8227,7 +8344,7 @@ async fn post_run_recover(
     let _claim_guard = claim_lock.lock().await;
     let status_guard = state.recovery_status_lock.lock().await;
 
-    let recovery = recovery_status_inner(&state).await;
+    let recovery = recovery_status_inner(&state, TerminalWindow::default()).await;
     let prior = recovery
         .interrupted_runs
         .iter()
@@ -9135,10 +9252,68 @@ async fn execute_run_recover_action(
 
 async fn recovery_status(state: &ApiState) -> RecoveryResponse {
     let _status_guard = state.recovery_status_lock.lock().await;
-    recovery_status_inner(state).await
+    recovery_status_inner(state, TerminalWindow::default()).await
 }
 
-async fn recovery_status_inner(state: &ApiState) -> RecoveryResponse {
+/// How much terminal history one inventory response carries.
+///
+/// orgasmic:TASK-FZB6T item 2 — actionable records (live, recoverable,
+/// ambiguous) are always served in full; bounding those would hide work.
+/// Terminal history only grows, is never re-decided, and is what makes a
+/// response size a function of a board's whole past. It is therefore a bounded,
+/// explicitly pageable window.
+#[derive(Debug, Clone, Copy)]
+struct TerminalWindow {
+    limit: usize,
+    offset: usize,
+}
+
+impl Default for TerminalWindow {
+    fn default() -> Self {
+        Self {
+            limit: crate::run_catalog::DEFAULT_TERMINAL_WINDOW,
+            offset: 0,
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct RunInventoryQuery {
+    /// Terminal records to return, newest first. Capped at
+    /// [`crate::run_catalog::MAX_TERMINAL_WINDOW`].
+    #[serde(default)]
+    terminal_limit: Option<usize>,
+    /// Terminal records to skip, for paging older history.
+    #[serde(default)]
+    terminal_offset: Option<usize>,
+    /// `all` returns every terminal record — the explicit query the body
+    /// reserves for older history.
+    #[serde(default)]
+    terminal: Option<String>,
+}
+
+impl From<RunInventoryQuery> for TerminalWindow {
+    fn from(query: RunInventoryQuery) -> Self {
+        let all = query
+            .terminal
+            .as_deref()
+            .is_some_and(|value| value.eq_ignore_ascii_case("all"));
+        let limit = if all {
+            usize::MAX
+        } else {
+            query
+                .terminal_limit
+                .unwrap_or(crate::run_catalog::DEFAULT_TERMINAL_WINDOW)
+                .min(crate::run_catalog::MAX_TERMINAL_WINDOW)
+        };
+        Self {
+            limit,
+            offset: query.terminal_offset.unwrap_or(0),
+        }
+    }
+}
+
+async fn recovery_status_inner(state: &ApiState, window: TerminalWindow) -> RecoveryResponse {
     let started = std::time::Instant::now();
     let live = state.supervisor.snapshot().await;
     let live_ids: BTreeSet<_> = live.runs.iter().map(|run| run.run_id.as_str()).collect();
@@ -9150,6 +9325,8 @@ async fn recovery_status_inner(state: &ApiState) -> RecoveryResponse {
         &state.boot.boot_id,
         &live.runs,
         &project_roots,
+        &state.run_catalog,
+        Some(&state.writer),
     )
     .await;
     let mut interrupted_runs = Vec::new();
@@ -9183,6 +9360,25 @@ async fn recovery_status_inner(state: &ApiState) -> RecoveryResponse {
             _ => ambiguous_runs.push(run),
         }
     }
+    // orgasmic:TASK-FZB6T item 2 — bound the terminal window here, after
+    // classification and before serialization. Newest first, so the default
+    // response answers "what just ended" and older history is reached by an
+    // explicit page rather than by making every poll carry the whole board.
+    // Nothing is reclassified to do this: the ordering key is the terminal time
+    // the catalog recorded once.
+    terminal_noop_runs.sort_by(|a, b| {
+        b.terminal_at
+            .cmp(&a.terminal_at)
+            .then(a.run_id.cmp(&b.run_id))
+    });
+    metrics.terminal_total = terminal_noop_runs.len() as u64;
+    let terminal_noop_runs: Vec<RecoveredRun> = terminal_noop_runs
+        .into_iter()
+        .skip(window.offset)
+        .take(window.limit)
+        .collect();
+    metrics.terminal_returned = terminal_noop_runs.len() as u64;
+
     metrics.interrupted = interrupted_runs.len() as u64;
     metrics.reattached = reattached_runs.len() as u64;
     metrics.failed_recoverable = failed_recoverable_runs.len() as u64;
@@ -9281,19 +9477,21 @@ type RunMetaFields = (
 /// registration marker) is in the scanner's retained set: it keeps every
 /// non-`driver_event` line and the four lifecycle driver event types.
 fn boot_reattach_candidate(
-    scan: &SessionLifecycleScan,
-    session_path: &FsPath,
+    entry: &crate::run_catalog::RunCatalogEntry,
 ) -> Option<BootReattachCandidate> {
-    // Older builds could append End-external then app-launch identities to the
-    // same second-granularity manager file. Recover the latest contiguous run
-    // segment instead of combining its metadata with the first run's identity.
-    let envelopes = latest_run_segment(&scan.envelopes);
+    let session_path = entry.session_path.as_path();
+    // The catalog already segmented this file: `lifecycle_envelopes` is the
+    // newest contiguous run segment by `run_id`, the same
+    // `latest_run_segment` recovery of a second-granularity manager file the
+    // pre-catalog reader performed on every read.
+    let envelopes = entry.lifecycle_envelopes.as_slice();
     let first = envelopes.first()?;
-    let last = envelopes.last().unwrap_or(first);
     // orgasmic:TASK-7QM8M — a truncated scan read a prefix and a tail with an
     // unread gap between them, and two rules keep that gap from inventing a
-    // candidate. Both are no-ops on a whole-file scan.
-    if scan.truncated {
+    // candidate. Both are no-ops on a whole-file scan. They live here, on the
+    // catalog entry, because the entry is now what reattach reads: a guard that
+    // only ran on a fresh scan would be silently skipped by every cache hit.
+    if entry.scan_truncated {
         // 1. The gap can hold this run's release AND a later run's acquire, so
         //    the newest RETAINED segment is not provably the newest segment on
         //    disk: pairing a prefix run's `Acquire`/`RunMeta` with the file's
@@ -9303,11 +9501,11 @@ fn boot_reattach_candidate(
         //    — which is the normal shape for a live TUI run — so require it to
         //    be this segment's run. When it is not, the live run's own metadata
         //    sits in the gap and no candidate is provable from this file.
-        if scan.final_line_run_id.as_deref() != Some(first.run_id.as_str()) {
+        if entry.final_line_run_id.as_deref() != Some(first.run_id.as_str()) {
             tracing::info!(
                 session_path = %session_path.display(),
                 segment_run_id = %first.run_id,
-                final_line_run_id = ?scan.final_line_run_id,
+                final_line_run_id = ?entry.final_line_run_id,
                 "boot reattach: truncated scan's newest retained segment does not \
                  own the end of the file; skipped rather than combined"
             );
@@ -9336,31 +9534,33 @@ fn boot_reattach_candidate(
             return None;
         }
     }
-    // Skip terminal runs (mirrors the recovery classifier).
+    // Skip terminal runs.
     //
     // orgasmic:TASK-7QM8M — only the file's genuine final envelope can prove a
-    // terminal release, the same rule `classify_session_dir` applies. When the
-    // scan dropped that line as transcript, the newest retained lifecycle line
-    // is not the end of the run, and treating it as terminal would refuse to
-    // reattach a run that is still writing.
-    let release = scan
-        .final_envelope_retained
-        .then(|| release_outcome(last))
-        .flatten();
-    let terminal = match release {
+    // terminal release; when the scan dropped that line as transcript, the
+    // newest retained lifecycle line is not the end of the run and treating it
+    // as terminal would refuse to reattach a run that is still writing. Both
+    // inputs are decided once, at index time.
+    //
+    // The rule is deliberately NOT `entry.terminal`: reattach and the inventory
+    // classifier differ on an `Interrupted` release, and always have. The
+    // classifier stops there and calls the run recoverable; reattach falls
+    // through to the terminal driver events, because a run whose driver already
+    // said `run_complete` has no live runtime to reattach to whatever its
+    // release line says. `run_catalog` keeps the two raw facts separate so this
+    // asymmetry stays visible instead of being silently normalized away.
+    let terminal = match entry.final_release_outcome {
         Some(ReleaseOutcome::Completed)
         | Some(ReleaseOutcome::Failed)
         | Some(ReleaseOutcome::Cancelled) => true,
-        Some(ReleaseOutcome::Interrupted) | None => {
-            session_driver_terminal_event(envelopes).is_some()
-        }
+        Some(ReleaseOutcome::Interrupted) | None => entry.driver_terminal_event.is_some(),
     };
     if terminal {
         return None;
     }
     // External registrations are daemon-local presence records with no
     // attachable runtime. Re-registration is their only recovery path.
-    if session_is_external_registration(envelopes) {
+    if entry.external_registration {
         return None;
     }
 
@@ -9460,17 +9660,6 @@ fn boot_reattach_candidate(
     })
 }
 
-fn latest_run_segment(envelopes: &[SessionEnvelope]) -> &[SessionEnvelope] {
-    let Some(latest_run_id) = envelopes.last().map(|envelope| envelope.run_id.as_str()) else {
-        return envelopes;
-    };
-    let start = envelopes
-        .iter()
-        .rposition(|envelope| envelope.run_id != latest_run_id)
-        .map_or(0, |index| index + 1);
-    &envelopes[start..]
-}
-
 fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Result<(), String> {
     let persisted_harness_args = candidate
         .driver_config
@@ -9515,55 +9704,82 @@ fn validate_boot_reattach_harness_args(candidate: &BootReattachCandidate) -> Res
 /// hundreds of megabytes that say nothing about whether it is reattachable.
 /// The lifecycle scanner reads a prefix and a tail window instead, the same
 /// substitution TASK-KWSTJ made on `GET /api/runs`.
-fn collect_boot_reattach_candidates(dirs: &[PathBuf]) -> Vec<BootReattachCandidate> {
+/// Build boot reattach candidates from the run catalog.
+///
+/// orgasmic:TASK-FZB6T — the scan itself was already bounded (TASK-7QM8M made
+/// this a prefix/tail window instead of a whole-file read, 14.00s → 0.145s on a
+/// 2.41 GiB board). What remained was that every boot re-derived the whole board
+/// from disk. The catalog's durable snapshot carries the previous boot's index,
+/// so a restart re-reads only the session files that were written since — which
+/// on a restart is the live runs and nothing else.
+///
+/// Blocking by nature; callers must keep it off the async runtime's threads.
+async fn collect_boot_reattach_candidates(
+    catalog: &crate::run_catalog::RunCatalog,
+    project_roots: &[PathBuf],
+) -> Vec<BootReattachCandidate> {
     let started = std::time::Instant::now();
-    let (mut session_files, mut session_file_bytes, mut bytes_inspected, mut truncated_scans) =
-        (0_u64, 0_u64, 0_u64, 0_u64);
+    let mut stats = crate::run_catalog::CatalogRefreshStats::default();
+    let mut snapshot_entries = 0_usize;
+    let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
     let mut candidates = Vec::new();
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
+
+    for root in project_roots {
+        let Ok(canonical_root) = root.canonicalize() else {
             continue;
         };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            // A session file is always a regular file. Anything else — a fifo,
-            // a socket, a device — would block `open()` forever, so refuse it
-            // by shape rather than discovering that by hanging.
-            if !entry
-                .file_type()
-                .map(|file_type| file_type.is_file())
-                .unwrap_or(false)
-            {
-                tracing::warn!(
-                    path = %path.display(),
-                    "skipping session path that is not a regular file"
-                );
-                continue;
-            }
-            let Ok(scan) = scan_session_lifecycle(&path, SessionScanBudget::DEFAULT) else {
-                continue;
-            };
-            session_files += 1;
-            session_file_bytes += scan.file_bytes;
-            bytes_inspected += scan.bytes_inspected;
-            if scan.truncated {
-                truncated_scans += 1;
-            }
-            if let Some(candidate) = boot_reattach_candidate(&scan, &path) {
+        let dir = project_sessions_dir(&canonical_root);
+        if !seen_dirs.insert(dir.clone()) {
+            continue;
+        }
+        // Derived state: an absent, corrupt, or foreign-version snapshot is
+        // discarded and the refresh below rebuilds the whole project. Boot must
+        // not be able to fail on a file that only ever saved work.
+        let load = catalog.load_snapshot(&canonical_root).await;
+        snapshot_entries += load.loaded_entries();
+        if !matches!(load, crate::run_catalog::SnapshotLoad::Loaded { .. }) {
+            tracing::info!(
+                project_root = %canonical_root.display(),
+                outcome = ?load,
+                "run catalog snapshot not usable; rebuilding from session files"
+            );
+        }
+        let project_id =
+            read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
+                .ok()
+                .map(|identity| identity.project_id);
+        let refreshed = catalog
+            .refresh_dir(
+                &dir,
+                project_id.as_deref(),
+                &canonical_root,
+                SessionScanBudget::DEFAULT,
+            )
+            .await;
+        stats.session_files += refreshed.session_files;
+        stats.session_file_bytes += refreshed.session_file_bytes;
+        stats.bytes_inspected += refreshed.bytes_inspected;
+        stats.cache_hits += refreshed.cache_hits;
+        stats.rebuilt += refreshed.rebuilt;
+        stats.truncated_scans += refreshed.truncated_scans;
+
+        for entry in catalog.entries_for_project(&canonical_root).await {
+            if let Some(candidate) = boot_reattach_candidate(&entry) {
                 candidates.push(candidate);
             }
         }
     }
-    // The point of the bounded read, stated where an operator can see it:
-    // `bytes_inspected` stays flat as `session_file_bytes` grows.
+    // The point of the catalog, stated where an operator can see it:
+    // `bytes_inspected` is what this boot actually had to read, and
+    // `catalog_cache_hits` is what it did not.
     tracing::info!(
-        session_files,
-        session_file_bytes,
-        bytes_inspected,
-        truncated_scans,
+        session_files = stats.session_files,
+        session_file_bytes = stats.session_file_bytes,
+        bytes_inspected = stats.bytes_inspected,
+        catalog_snapshot_entries = snapshot_entries,
+        catalog_cache_hits = stats.cache_hits,
+        catalog_rebuilds = stats.rebuilt,
+        truncated_scans = stats.truncated_scans,
         candidates = candidates.len(),
         duration_ms = started.elapsed().as_millis() as u64,
         "boot reattach scan complete"
@@ -9574,25 +9790,25 @@ fn collect_boot_reattach_candidates(dirs: &[PathBuf]) -> Vec<BootReattachCandida
 pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathBuf]) {
     let home = &state.home;
     let supervisor = &state.supervisor;
-    let mut seen_dirs: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
-    let dirs: Vec<PathBuf> = project_roots
-        .iter()
-        .map(|root| project_sessions_dir(root))
-        .filter(|dir| seen_dirs.insert(dir.clone()))
-        .collect();
     // Every read here can block indefinitely rather than fail: a path the
     // process lacks permission for, or any non-regular file, stalls inside
     // `open()` before a descriptor exists. Keep all of it on a blocking thread
     // so one such file costs this scan and nothing else — running it inline
     // wedged the whole runtime (TASK-KKGKM).
-    let mut candidates: Vec<BootReattachCandidate> =
-        match tokio::task::spawn_blocking(move || collect_boot_reattach_candidates(&dirs)).await {
-            Ok(candidates) => candidates,
-            Err(error) => {
-                tracing::warn!(error = %error, "boot reattach scan failed; skipping reattach");
-                return;
-            }
-        };
+    let catalog = state.run_catalog.clone();
+    let roots: Vec<PathBuf> = project_roots.to_vec();
+    let mut candidates: Vec<BootReattachCandidate> = match tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current()
+            .block_on(async move { collect_boot_reattach_candidates(&catalog, &roots).await })
+    })
+    .await
+    {
+        Ok(candidates) => candidates,
+        Err(error) => {
+            tracing::warn!(error = %error, "boot reattach scan failed; skipping reattach");
+            return;
+        }
+    };
     // Managers first (false sorts before true).
     candidates.sort_by_key(|c| !c.task_id.starts_with("manager.launch:"));
 
@@ -9810,12 +10026,27 @@ pub async fn reattach_live_runs_on_boot(state: &ApiState, project_roots: &[PathB
     }
 }
 
+/// Bring the run catalog up to date across the board and classify from it.
+///
+/// orgasmic:TASK-FZB6T — this used to open, scan, and re-derive every session
+/// file on every call. The bounded scan (TASK-KWSTJ / TASK-7QM8M) made each
+/// read cheap; the catalog makes the repeat reads disappear. A run whose
+/// session file has not been written since it was indexed is answered from the
+/// catalog for zero bytes, so a steady-state poll costs record count and
+/// nothing else.
+///
+/// The classification below is unchanged and deliberately so: its input is the
+/// catalog's retained lifecycle envelope set, which is what the pre-catalog
+/// code passed it. The catalog decides *when* a file is read, never what its
+/// lifecycle means.
 async fn classify_session_files(
     home: &Home,
     trusted_claude_binary: Option<&PinnedClaudeExecutable>,
     _current_boot_id: &str,
     live_runs: &[crate::supervisor::RunSummary],
     project_roots: &[PathBuf],
+    catalog: &crate::run_catalog::RunCatalog,
+    writer: Option<&WriterHandle>,
 ) -> (Vec<RecoveredRun>, InventoryStageMetrics) {
     let live_ids: std::collections::BTreeSet<_> =
         live_runs.iter().map(|run| run.run_id.as_str()).collect();
@@ -9839,12 +10070,58 @@ async fn classify_session_files(
             read_existing_project_identity(&canonical_root.join(".orgasmic/project.org"))
                 .ok()
                 .map(|identity| identity.project_id);
-        classify_session_dir(
+        let stats = catalog
+            .refresh_dir(
+                &dir,
+                project_id.as_deref(),
+                &canonical_root,
+                SessionScanBudget::DEFAULT,
+            )
+            .await;
+        metrics.session_files += stats.session_files;
+        metrics.session_file_bytes += stats.session_file_bytes;
+        metrics.bytes_inspected += stats.bytes_inspected;
+        metrics.truncated_scans += stats.truncated_scans;
+        metrics.unreadable_sessions += stats.unreadable_sessions;
+        metrics.catalog_cache_hits += stats.cache_hits;
+        metrics.catalog_rebuilds += stats.rebuilt;
+        metrics.catalog_evictions += stats.evicted;
+
+        // Persist the derived index so the next daemon boot starts from it
+        // rather than re-indexing the legacy board. Best-effort by design: the
+        // catalog is derived state, and a failed snapshot write costs a rebuild,
+        // never correctness.
+        // `writer` first, and in its own `if let`: a tuple pattern would
+        // evaluate `snapshot_bytes` unconditionally, and that call CLEARS the
+        // dirty flag. With no writer the flag would be consumed with nothing
+        // written, so the next caller that does have a writer would persist
+        // nothing.
+        if let Some(writer) = writer {
+            if let Some(bytes) = catalog.snapshot_bytes(&canonical_root).await {
+                let path = canonical_root.join(crate::run_catalog::CATALOG_REL_PATH);
+                if let Err(error) = writer
+                    .rewrite_file(
+                        crate::writer::FileRewrite {
+                            path: path.clone(),
+                            new_contents: bytes,
+                        },
+                        None,
+                    )
+                    .await
+                {
+                    tracing::debug!(
+                        path = %path.display(),
+                        error = %error,
+                        "run catalog snapshot write failed; the next inventory rebuilds it"
+                    );
+                }
+            }
+        }
+
+        classify_catalog_entries(
             home,
             trusted_claude_binary,
-            &dir,
-            project_id,
-            canonical_root,
+            &catalog.entries_for_project(&canonical_root).await,
             &live_ids,
             &attach_limit,
             &mut attach_probes,
@@ -9893,100 +10170,77 @@ async fn classify_session_files(
     (runs, metrics)
 }
 
-/// Classify every session JSONL in a single directory, appending to `runs`.
-/// Shared by the per-project boot scan; keys everything off the file path and
-/// parsed envelopes, so it is location-agnostic.
+/// Classify one project's catalog entries, appending to `runs`.
+///
+/// orgasmic:TASK-FZB6T — the body is the pre-catalog `classify_session_dir`
+/// with its `scan_session_lifecycle` call replaced by the catalog lookup that
+/// already performed it. Every rule about what an envelope set means is
+/// unchanged, which is what makes "same actionable classifications before and
+/// after migration" a property of the change rather than a hope.
 #[allow(clippy::too_many_arguments)]
-async fn classify_session_dir(
+async fn classify_catalog_entries(
     home: &Home,
     trusted_claude_binary: Option<&PinnedClaudeExecutable>,
-    dir: &FsPath,
-    project_id: Option<String>,
-    project_root: PathBuf,
+    entries: &[crate::run_catalog::RunCatalogEntry],
     live_ids: &std::collections::BTreeSet<&str>,
     attach_limit: &Arc<tokio::sync::Semaphore>,
     attach_probes: &mut Vec<PendingAttachProbe>,
     runs: &mut Vec<RecoveredRun>,
     metrics: &mut InventoryStageMetrics,
 ) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|ext| ext.to_str()) != Some("jsonl") {
+    use crate::run_catalog::TerminalRecord;
+
+    for entry in entries {
+        if entry.unreadable {
+            runs.push(RecoveredRun {
+                run_id: entry.run_id.clone(),
+                runtime_id: String::new(),
+                boot_id: String::new(),
+                session_path: entry.session_path.clone(),
+                project_id: entry.project_id.clone(),
+                project_root: entry.project_root.clone(),
+                worktree: None,
+                worktree_authority: "unrecorded".to_string(),
+                classification: "ambiguous".to_string(),
+                reason: "session JSONL could not be parsed".to_string(),
+                recovery_actions: Vec::new(),
+                recovery_replacement_run_id: None,
+                recovery_replacement_session_path: None,
+                terminal_at: None,
+            });
             continue;
         }
-        let Ok(path_meta) = std::fs::symlink_metadata(&path) else {
-            continue;
-        };
-        if !path_meta.is_file() || path_meta.file_type().is_symlink() {
-            continue;
-        }
-        // Lifecycle questions are answered from a bounded prefix/tail window.
-        // A single TUI run can persist hundreds of megabytes of `text_chunk`
-        // events, and enumeration must cost record count, not transcript size.
-        metrics.session_files += 1;
-        let scan = match scan_session_lifecycle(&path, SessionScanBudget::DEFAULT) {
-            Ok(scan) => scan,
-            Err(_) => {
-                metrics.unreadable_sessions += 1;
-                runs.push(RecoveredRun {
-                    run_id: path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    runtime_id: String::new(),
-                    boot_id: String::new(),
-                    session_path: path,
-                    project_id: project_id.clone(),
-                    project_root: Some(project_root.clone()),
-                    worktree: None,
-                    classification: "ambiguous".to_string(),
-                    reason: "session JSONL could not be parsed".to_string(),
-                    recovery_actions: Vec::new(),
-                    recovery_replacement_run_id: None,
-                    recovery_replacement_session_path: None,
-                });
-                continue;
-            }
-        };
-        metrics.session_file_bytes += scan.file_bytes;
-        metrics.bytes_inspected += scan.bytes_inspected;
-        if scan.truncated {
-            metrics.truncated_scans += 1;
-        }
-        let envelopes = latest_run_segment(&scan.envelopes);
+        let envelopes = entry.lifecycle_envelopes.as_slice();
         let Some(first) = envelopes.first() else {
             continue;
         };
-        let last = envelopes.last().unwrap_or(first);
-        // Only the file's genuine final envelope can prove a terminal
-        // release. When the scan dropped it as transcript, the newest
-        // retained lifecycle line is not the end of the run, so treating it
-        // as terminal would tombstone a run that is still writing.
-        let terminal_outcome = scan
-            .final_envelope_retained
-            .then(|| release_outcome(last))
-            .flatten();
-        let terminal = if let Some(outcome) = terminal_outcome {
-            match outcome {
-                ReleaseOutcome::Completed | ReleaseOutcome::Failed | ReleaseOutcome::Cancelled => {
-                    Some("session ended with terminal release".to_string())
-                }
-                ReleaseOutcome::Interrupted => None,
+
+        // Terminal truth, decided once at index time under the same rule the
+        // inventory always used: only the file's genuine final envelope can
+        // prove a release, so a scan that dropped it as transcript (the normal
+        // shape for a run that is still writing) may not tombstone the run.
+        let terminal_outcome = entry
+            .terminal
+            .as_ref()
+            .and_then(crate::run_catalog::TerminalRecord::outcome);
+        let terminal = match entry.terminal.as_ref() {
+            Some(TerminalRecord::Release { .. }) => {
+                Some("session ended with terminal release".to_string())
             }
-        } else if session_driver_terminal_event(envelopes).is_some() {
-            Some("session ended with terminal driver event".to_string())
-        } else if !live_ids.contains(first.run_id.as_str())
-            && session_is_external_registration(envelopes)
-        {
-            Some("external manager registration ended with daemon restart".to_string())
-        } else {
-            None
+            Some(TerminalRecord::DriverEvent { .. }) => {
+                Some("session ended with terminal driver event".to_string())
+            }
+            // A live external registration is a presence record for a run that
+            // is running right now, not a run that ended with a restart.
+            Some(TerminalRecord::ExternalRegistrationEnded)
+                if !live_ids.contains(first.run_id.as_str()) =>
+            {
+                Some("external manager registration ended with daemon restart".to_string())
+            }
+            _ => None,
         };
 
+        let authority_error = entry.worktree_authority.authority_error();
         let (mut classification, mut reason, mut recovery_actions) = if let Some(terminal_reason) =
             terminal
         {
@@ -10007,6 +10261,20 @@ async fn classify_session_dir(
             } else {
                 ("terminal_noop".to_string(), terminal_reason, Vec::new())
             }
+        } else if entry.worktree_authority.is_tombstoned() {
+            // orgasmic:TASK-FZB6T item 2 — the recorded worktree is gone, so no
+            // attach can ever succeed for this run under this identity. Before
+            // the catalog this fell through to a driver attach probe whose
+            // answer was then thrown away by the authority check below, on every
+            // single poll, forever. State it once and stop probing.
+            metrics.tombstoned_authority += 1;
+            (
+                "ambiguous".to_string(),
+                authority_error
+                    .unwrap_or("recorded worktree is gone")
+                    .to_string(),
+                Vec::new(),
+            )
         } else {
             match start_current_boot_attach_probe(home, envelopes, first, live_ids, attach_limit) {
                 AttachProbeStart::Ready(attach) => {
@@ -10042,29 +10310,6 @@ async fn classify_session_dir(
                 }
             }
         };
-        let run_meta = session_run_meta_project_worktree(envelopes);
-        let verified_worktree = run_meta.as_ref().and_then(|(embedded_project, worktree)| {
-            if embedded_project.as_deref() != project_id.as_deref() {
-                return None;
-            }
-            let worktree = worktree.as_ref()?.canonicalize().ok()?;
-            let identity =
-                read_existing_project_identity(&worktree.join(".orgasmic/project.org")).ok()?;
-            (Some(identity.project_id.as_str()) == project_id.as_deref()).then_some(worktree)
-        });
-        let authority_error = match (&project_id, &run_meta, &verified_worktree) {
-            (None, _, _) => Some("session is not contained by an identified registered project"),
-            (Some(_), None, _) => Some("session has no origin RunMeta project/worktree authority"),
-            (Some(containing), Some((embedded, _)), _)
-                if embedded.as_deref() != Some(containing.as_str()) =>
-            {
-                Some("RunMeta project does not match containing registered project")
-            }
-            (Some(_), Some(_), None) => {
-                Some("RunMeta worktree is missing, invalid, or belongs to another project")
-            }
-            _ => None,
-        };
         if classification != "terminal_noop" {
             if let Some(error) = authority_error {
                 classification = "ambiguous".to_string();
@@ -10076,15 +10321,20 @@ async fn classify_session_dir(
             run_id: first.run_id.clone(),
             runtime_id: first.runtime_id.clone(),
             boot_id: first.boot_id.clone(),
-            session_path: path,
-            project_id: project_id.clone(),
-            project_root: Some(project_root.clone()),
-            worktree: verified_worktree,
+            session_path: entry.session_path.clone(),
+            project_id: entry.project_id.clone(),
+            project_root: entry.project_root.clone(),
+            worktree: entry
+                .worktree_authority
+                .verified_worktree()
+                .map(std::path::Path::to_path_buf),
+            worktree_authority: entry.worktree_authority.label().to_string(),
             classification,
             reason,
             recovery_actions,
             recovery_replacement_run_id: None,
             recovery_replacement_session_path: None,
+            terminal_at: entry.terminal.as_ref().and_then(TerminalRecord::at),
         });
     }
 }
@@ -10325,24 +10575,6 @@ async fn finish_driver_attach(
             )
         }
     }
-}
-
-fn session_run_meta_project_worktree(
-    envelopes: &[SessionEnvelope],
-) -> Option<(Option<String>, Option<PathBuf>)> {
-    envelopes.iter().find_map(|envelope| {
-        if envelope.kind != SessionEventKind::Lifecycle {
-            return None;
-        }
-        match serde_json::from_value::<Lifecycle>(envelope.event.clone()).ok()? {
-            Lifecycle::RunMeta {
-                project_id,
-                worktree,
-                ..
-            } => Some((project_id, worktree)),
-            _ => None,
-        }
-    })
 }
 
 fn session_acquire_meta(envelopes: &[SessionEnvelope]) -> Option<SessionAcquireMeta> {
@@ -10856,18 +11088,6 @@ fn release_outcome(envelope: &orgasmic_core::SessionEnvelope) -> Option<ReleaseO
         Lifecycle::Release { outcome, .. } => Some(outcome),
         _ => None,
     }
-}
-
-fn session_is_external_registration(envelopes: &[SessionEnvelope]) -> bool {
-    envelopes.iter().any(|envelope| {
-        if envelope.kind != SessionEventKind::Lifecycle {
-            return false;
-        }
-        matches!(
-            serde_json::from_value::<Lifecycle>(envelope.event.clone()),
-            Ok(Lifecycle::RunMeta { transport, .. }) if transport.trim().eq_ignore_ascii_case("external")
-        )
-    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -17838,6 +18058,7 @@ pub(crate) mod tests {
             artifact_write_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_claim_locks: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             recovery_status_lock: Arc::new(tokio::sync::Mutex::new(())),
+            run_catalog: crate::run_catalog::RunCatalog::new(),
             trusted_claude_binary: pin_trusted_claude_binary(&home),
             trusted_exec_wrapper: None,
             release_tasks: ReleaseTaskTracker::new(),
@@ -19571,17 +19792,698 @@ pub(crate) mod tests {
     /// read, nothing dropped and nothing truncated. orgasmic:TASK-7QM8M — the
     /// function takes a [`SessionLifecycleScan`] now, and a fixture that is a
     /// list of envelopes is exactly the untruncated case.
-    fn whole_file_scan(envelopes: &[SessionEnvelope]) -> SessionLifecycleScan {
-        SessionLifecycleScan {
+    fn whole_file_scan(envelopes: &[SessionEnvelope]) -> orgasmic_core::SessionLifecycleScan {
+        orgasmic_core::SessionLifecycleScan {
             final_line_run_id: envelopes.last().map(|env| env.run_id.clone()),
             final_envelope_retained: !envelopes.is_empty(),
             envelopes: envelopes.to_vec(),
-            ..SessionLifecycleScan::default()
+            ..Default::default()
         }
     }
 
+    /// orgasmic:TASK-FZB6T — boot reattach now reads a catalog entry, so these
+    /// fixtures index the scan exactly the way the boot pass does and hand over
+    /// the entry. The scan-shaped fixtures stay: what they assert is what a
+    /// bounded read of a file on disk implies, and that is still the input.
+    fn boot_reattach_candidate_from_scan(
+        scan: &orgasmic_core::SessionLifecycleScan,
+        path: &FsPath,
+    ) -> Option<BootReattachCandidate> {
+        let fingerprint = std::fs::symlink_metadata(path)
+            .map(|meta| crate::run_catalog::SessionFileFingerprint::of(&meta))
+            .unwrap_or(crate::run_catalog::SessionFileFingerprint {
+                dev: 0,
+                ino: 0,
+                len: 0,
+                mtime_ns: 0,
+            });
+        let root = path.parent().unwrap_or(path);
+        let entry = crate::run_catalog::entry_from_scan(scan, path, None, root, fingerprint);
+        boot_reattach_candidate(&entry)
+    }
+
+    // ---------------------------------------------------------------------
+    // orgasmic:TASK-FZB6T — the run catalog's acceptance, on a
+    // production-shaped board.
+    // ---------------------------------------------------------------------
+
+    /// A registered project root with a sessions dir, no daemon involved.
+    fn catalog_board_project(root: &FsPath, project_id: &str) {
+        std::fs::create_dir_all(root.join(".orgasmic/tmp/sessions")).unwrap();
+        std::fs::write(
+            root.join(".orgasmic/project.org"),
+            format!(
+                "#+title: {project_id}\n#+orgasmic_version: 1\n\n* PROJECT {project_id}\n\
+                 :PROPERTIES:\n:ID:               {project_id}\n:END:\n"
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Write one production-shaped session file.
+    ///
+    /// `transcript_bytes` is the payload volume between the lifecycle head and
+    /// the file's end — the bytes the acceptance says enumeration must not be a
+    /// function of.
+    #[allow(clippy::too_many_arguments)]
+    fn catalog_board_session(
+        dir: &FsPath,
+        run_id: &str,
+        task_id: &str,
+        project_id: &str,
+        worktree: &FsPath,
+        transcript_bytes: usize,
+        release: Option<ReleaseOutcome>,
+    ) -> PathBuf {
+        let path = dir.join(format!("{run_id}.jsonl"));
+        let mut seq = 0_u64;
+        let mut out = String::new();
+        let mut push = |kind: SessionEventKind, event: serde_json::Value, out: &mut String| {
+            out.push_str(
+                &serde_json::to_string(&SessionEnvelope {
+                    seq,
+                    time: chrono::Utc::now(),
+                    run_id: run_id.to_string(),
+                    runtime_id: format!("rt-{run_id}"),
+                    boot_id: "boot-old".to_string(),
+                    kind,
+                    event,
+                })
+                .unwrap(),
+            );
+            out.push('\n');
+            seq += 1;
+        };
+        push(
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::Acquire {
+                task_id: task_id.into(),
+                kind: "worker".into(),
+                worker_id: "implementer-claude-rmux".into(),
+            })
+            .unwrap(),
+            &mut out,
+        );
+        push(
+            SessionEventKind::Lifecycle,
+            serde_json::to_value(Lifecycle::RunMeta {
+                transport: "rmux".into(),
+                harness: Some("claude".into()),
+                project_id: Some(project_id.into()),
+                worktree: Some(worktree.to_path_buf()),
+                last_path: None,
+                stdout_path: None,
+                dispatch_attempt_token: None,
+                role: Some("implementer".into()),
+                requires_worker_finalize: Some(false),
+                credential_mode: None,
+                driver_config: json!({}),
+            })
+            .unwrap(),
+            &mut out,
+        );
+        push(
+            SessionEventKind::DriverEvent,
+            json!({"type": "ready", "protocol_version": "tmux-tui/1"}),
+            &mut out,
+        );
+        let chunk = "x".repeat(4096);
+        let mut written = 0;
+        while written < transcript_bytes {
+            push(
+                SessionEventKind::DriverEvent,
+                json!({"type": "text_chunk", "stream": "stdout", "text": chunk}),
+                &mut out,
+            );
+            written += chunk.len();
+        }
+        if let Some(outcome) = release {
+            push(
+                SessionEventKind::Lifecycle,
+                serde_json::to_value(Lifecycle::Release {
+                    reason: "done".into(),
+                    outcome,
+                    finalized_by_worker: false,
+                })
+                .unwrap(),
+                &mut out,
+            );
+        }
+        std::fs::write(&path, out).unwrap();
+        path
+    }
+
+    /// The 197-file production-shaped history the acceptance names: mostly
+    /// completed workers, a handful of Failed tombstones, several live TUI runs
+    /// whose transcripts dwarf the scan budget, and one run whose worktree was
+    /// pruned out from under it.
+    ///
+    /// `transcript_scale` multiplies only the payload volume; the record count
+    /// and every classification-deciding line are identical at every scale.
+    /// That is what makes the pair of boards a control.
+    struct CatalogBoard {
+        _tmp: tempfile::TempDir,
+        root: PathBuf,
+        sessions: PathBuf,
+        pruned_worktree: PathBuf,
+    }
+
+    fn catalog_board(transcript_scale: usize) -> CatalogBoard {
+        const FILES: usize = 197;
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("proj");
+        catalog_board_project(&root, "proj");
+        let sessions = root.join(".orgasmic/tmp/sessions");
+        let pruned = tmp.path().join("worktree-pruned");
+        catalog_board_project(&pruned, "proj");
+
+        for index in 0..FILES {
+            // 0..3 live (no release, huge transcript), 3..8 failed, one pruned
+            // worktree, the rest completed.
+            let (release, transcript, worktree) = match index {
+                0..=2 => (None, 256 * 1024 * transcript_scale, root.clone()),
+                3..=7 => (
+                    Some(ReleaseOutcome::Failed),
+                    8 * 1024 * transcript_scale,
+                    root.clone(),
+                ),
+                8 => (None, 8 * 1024 * transcript_scale, pruned.clone()),
+                _ => (
+                    Some(ReleaseOutcome::Completed),
+                    8 * 1024 * transcript_scale,
+                    root.clone(),
+                ),
+            };
+            catalog_board_session(
+                &sessions,
+                &format!("run-{index:03}"),
+                &format!("TASK-B{index:04}"),
+                "proj",
+                &worktree,
+                transcript,
+                release,
+            );
+        }
+        // Canonicalized: the inventory and the boot pass both canonicalize
+        // project roots before keying the catalog, and on macOS a tempdir path
+        // is a symlink into /private. A fixture that kept the uncanonicalized
+        // path would silently compare two different catalogs.
+        CatalogBoard {
+            root: root.canonicalize().unwrap(),
+            sessions: sessions.canonicalize().unwrap(),
+            pruned_worktree: pruned.canonicalize().unwrap(),
+            _tmp: tmp,
+        }
+    }
+
+    fn catalog_home() -> (tempfile::TempDir, Home) {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path());
+        home.ensure().unwrap();
+        (tmp, home)
+    }
+
+    /// `(classification, run_id, worktree_authority)` for every record, sorted.
+    /// The comparable shape of one inventory pass.
+    fn classification_fingerprint(runs: &[RecoveredRun]) -> Vec<(String, String, String)> {
+        let mut out: Vec<(String, String, String)> = runs
+            .iter()
+            .map(|run| {
+                (
+                    run.classification.clone(),
+                    run.run_id.clone(),
+                    run.worktree_authority.clone(),
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// THE MIGRATION ACCEPTANCE: a 197-file production-shaped history yields
+    /// the same actionable classifications before and after the catalog is
+    /// populated, and the second pass costs no session bytes at all.
+    ///
+    /// "Before" is the cold pass — every file opened and scanned, which is
+    /// exactly what the pre-catalog inventory did on EVERY call. "After" is the
+    /// steady state the catalog introduces. If the catalog changed any verdict,
+    /// the two fingerprints differ.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_production_shaped_board_classifies_identically_before_and_after_the_catalog() {
+        let board = catalog_board(1);
+        // One run's worktree was pruned out from under it — the production
+        // shape this board is meant to carry.
+        std::fs::remove_dir_all(&board.pruned_worktree).unwrap();
+        let (_home_tmp, home) = catalog_home();
+        let catalog = crate::run_catalog::RunCatalog::new();
+        let roots = std::slice::from_ref(&board.root);
+
+        let (cold_runs, cold) =
+            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        assert_eq!(cold.session_files, 197);
+        assert_eq!(cold.catalog_rebuilds, 197);
+        assert_eq!(cold.catalog_cache_hits, 0);
+        assert!(cold.bytes_inspected > 0);
+
+        let (warm_runs, warm) =
+            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        assert_eq!(
+            warm.catalog_cache_hits, 197,
+            "every record of an unchanged board must be answered from the catalog"
+        );
+        assert_eq!(
+            warm.catalog_rebuilds, 0,
+            "an unchanged session file must not be re-derived from disk"
+        );
+        assert_eq!(
+            warm.bytes_inspected, 0,
+            "after the one-time index, enumeration must read no session bytes"
+        );
+
+        assert_eq!(
+            classification_fingerprint(&cold_runs),
+            classification_fingerprint(&warm_runs),
+            "the catalog decides WHEN a session file is read, never what its \
+             lifecycle means"
+        );
+
+        // And the classifications are the production-shaped ones, not a
+        // degenerate all-ambiguous board that would trivially match itself.
+        let count = |class: &str| {
+            cold_runs
+                .iter()
+                .filter(|run| run.classification == class)
+                .count()
+        };
+        assert_eq!(count("failed_recoverable"), 5);
+        assert_eq!(count("terminal_noop"), 188);
+        assert_eq!(
+            cold_runs
+                .iter()
+                .filter(|run| run.worktree_authority == "tombstoned")
+                .count(),
+            1,
+            "the pruned worktree is a stable tombstone"
+        );
+    }
+
+    /// THE COST ACCEPTANCE, pinned by consequence rather than wall time (the
+    /// TASK-7QM8M precedent): two boards with the SAME 197 records and a 16x
+    /// difference in transcript volume must cost the same to enumerate.
+    ///
+    /// A cost that tracked payload would show up as `bytes_inspected` scaling
+    /// with `session_file_bytes`. It does not: the cold pass reads bounded
+    /// windows, and the steady state reads nothing.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn inventory_cost_does_not_follow_transcript_bytes() {
+        let (_home_tmp, home) = catalog_home();
+
+        let mut measurements = Vec::new();
+        for scale in [1_usize, 16] {
+            let board = catalog_board(scale);
+            let catalog = crate::run_catalog::RunCatalog::new();
+            let roots = std::slice::from_ref(&board.root);
+            let (_, cold) =
+                classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+            let (_, warm) =
+                classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+            measurements.push((cold, warm));
+        }
+        let (small_cold, small_warm) = &measurements[0];
+        let (big_cold, big_warm) = &measurements[1];
+
+        assert_eq!(small_cold.session_files, big_cold.session_files);
+        assert!(
+            big_cold.session_file_bytes > small_cold.session_file_bytes * 8,
+            "the control must actually differ in payload: {} vs {}",
+            small_cold.session_file_bytes,
+            big_cold.session_file_bytes
+        );
+        // The one-time index is bounded by RECORD COUNT: at any payload size it
+        // reads at most one prefix+tail window per session file, never the file.
+        // A cost that followed transcript bytes has no such ceiling — that is
+        // the whole difference, and it is a hard number rather than a timing.
+        let ceiling = |stats: &InventoryStageMetrics| {
+            stats.session_files
+                * (SessionScanBudget::DEFAULT.prefix_bytes + SessionScanBudget::DEFAULT.tail_bytes)
+        };
+        for (label, stats) in [("1x", small_cold), ("16x", big_cold)] {
+            assert!(
+                stats.bytes_inspected <= ceiling(stats),
+                "{label}: the legacy index read {} bytes, past its {} ceiling for \
+                 {} records",
+                stats.bytes_inspected,
+                ceiling(stats),
+                stats.session_files
+            );
+        }
+        assert!(
+            big_cold.bytes_inspected < big_cold.session_file_bytes,
+            "the index must never cost the board's payload: {} inspected of {} on disk",
+            big_cold.bytes_inspected,
+            big_cold.session_file_bytes
+        );
+
+        // And AFTER the one-time index — the acceptance's actual subject —
+        // enumeration reads nothing at all, at either payload size.
+        for (label, stats) in [("1x", small_warm), ("16x", big_warm)] {
+            assert_eq!(
+                stats.bytes_inspected, 0,
+                "{label}: enumeration after the index still read session bytes, so \
+                 its cost is still a function of what those files contain"
+            );
+        }
+        assert_eq!(
+            small_warm.catalog_cache_hits, big_warm.catalog_cache_hits,
+            "enumeration cost must be the same at both payload sizes"
+        );
+        assert_eq!(small_warm.catalog_cache_hits, 197);
+    }
+
+    /// A pruned worktree must not be an eternal attach candidate.
+    ///
+    /// Before the catalog, a run whose recorded worktree was gone still had a
+    /// driver attach probe spawned for it on every single inventory pass — the
+    /// answer was then discarded by the authority check that ran afterwards.
+    /// The verdict is stable, so it is stated once and the probe is skipped.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_pruned_worktree_stops_being_probed() {
+        let board = catalog_board(1);
+        let (_home_tmp, home) = catalog_home();
+        let catalog = crate::run_catalog::RunCatalog::new();
+        let roots = std::slice::from_ref(&board.root);
+
+        // While the worktree is present, run-008 is a live non-terminal record
+        // like any other and IS probed.
+        let (runs, before) =
+            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        assert_eq!(before.tombstoned_authority, 0);
+        assert!(runs
+            .iter()
+            .any(|run| run.run_id == "run-008" && run.worktree_authority == "verified"));
+
+        std::fs::remove_dir_all(&board.pruned_worktree).unwrap();
+        let (runs, after) =
+            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+        assert_eq!(
+            after.tombstoned_authority, 1,
+            "the pruned worktree must be recognized once"
+        );
+        let tombstoned = runs
+            .iter()
+            .find(|run| run.run_id == "run-008")
+            .expect("the run survives as a record");
+        assert_eq!(tombstoned.worktree_authority, "tombstoned");
+        assert!(
+            tombstoned.recovery_actions.is_empty(),
+            "a run whose worktree is gone offers no recovery under that identity"
+        );
+        assert!(
+            after.attach_probes_started < before.attach_probes_started
+                || before.attach_probes_started == 0,
+            "the tombstoned record must stop consuming an attach probe"
+        );
+    }
+
+    /// Boot reconciliation after the one-time index reads nothing.
+    ///
+    /// A restart loads the durable snapshot the previous daemon wrote and
+    /// re-reads only the session files that changed since — on a board whose
+    /// runs have ended, none of them. Candidate selection is unchanged.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn boot_reconciliation_after_the_index_reads_no_session_bytes() {
+        let board = catalog_board(1);
+        let roots = std::slice::from_ref(&board.root);
+
+        // First boot: cold. This is what every boot cost before the catalog.
+        let first = crate::run_catalog::RunCatalog::new();
+        let cold_candidates = collect_boot_reattach_candidates(&first, roots).await;
+        let cold_stats = first
+            .refresh_dir(
+                &board.sessions,
+                Some("proj"),
+                &board.root,
+                SessionScanBudget::DEFAULT,
+            )
+            .await;
+        assert_eq!(
+            cold_stats.cache_hits, 197,
+            "the first boot indexed the board"
+        );
+        let snapshot = first
+            .snapshot_bytes(&board.root)
+            .await
+            .expect("the first boot has something to persist");
+        std::fs::write(
+            board.root.join(crate::run_catalog::CATALOG_REL_PATH),
+            snapshot,
+        )
+        .unwrap();
+
+        // Second boot: the snapshot is the index.
+        let second = crate::run_catalog::RunCatalog::new();
+        let warm_candidates = collect_boot_reattach_candidates(&second, roots).await;
+        let warm_stats = second
+            .refresh_dir(
+                &board.sessions,
+                Some("proj"),
+                &board.root,
+                SessionScanBudget::DEFAULT,
+            )
+            .await;
+        assert_eq!(
+            warm_stats.rebuilt, 0,
+            "a restart re-reads only session files written since the last index"
+        );
+        assert_eq!(warm_stats.bytes_inspected, 0);
+
+        let ids = |candidates: &[BootReattachCandidate]| {
+            let mut ids: Vec<String> = candidates.iter().map(|c| c.run_id.clone()).collect();
+            ids.sort();
+            ids
+        };
+        assert_eq!(ids(&cold_candidates), ids(&warm_candidates));
+        assert!(
+            !cold_candidates.is_empty(),
+            "the board has live runs; a fixture that reattaches nothing proves nothing"
+        );
+    }
+
+    /// A corrupt or foreign-version snapshot must not be able to poison
+    /// classification: it is discarded and the board is re-indexed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_corrupt_catalog_snapshot_cannot_poison_classification() {
+        let board = catalog_board(1);
+        let (_home_tmp, home) = catalog_home();
+        let roots = std::slice::from_ref(&board.root);
+
+        let sound = crate::run_catalog::RunCatalog::new();
+        let (expected, _) =
+            classify_session_files(&home, None, "boot-1", &[], roots, &sound, None).await;
+        let snapshot_path = board.root.join(crate::run_catalog::CATALOG_REL_PATH);
+        std::fs::write(
+            &snapshot_path,
+            sound.snapshot_bytes(&board.root).await.unwrap(),
+        )
+        .unwrap();
+
+        // Three ways a derived index goes wrong on disk. Each must produce the
+        // same classifications as a board with no snapshot at all.
+        let good = std::fs::read_to_string(&snapshot_path).unwrap();
+        let corruptions: Vec<(&str, String)> = vec![
+            ("truncated mid-object", good[..good.len() / 2].to_string()),
+            ("not json", "}{ not a catalog".to_string()),
+            (
+                "written by a daemon whose catalog version this build cannot vouch for",
+                good.replace("\"catalog_version\": 1", "\"catalog_version\": 99"),
+            ),
+        ];
+        for (name, contents) in corruptions {
+            std::fs::write(&snapshot_path, &contents).unwrap();
+            let catalog = crate::run_catalog::RunCatalog::new();
+            let load = catalog.load_snapshot(&board.root).await;
+            assert!(
+                !matches!(load, crate::run_catalog::SnapshotLoad::Loaded { .. }),
+                "{name}: a catalog this daemon cannot vouch for must not load: {load:?}"
+            );
+            let (actual, stats) =
+                classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+            assert_eq!(
+                stats.catalog_rebuilds, 197,
+                "{name}: the board is re-indexed"
+            );
+            assert_eq!(
+                classification_fingerprint(&actual),
+                classification_fingerprint(&expected),
+                "{name}: a discarded catalog must classify exactly as no catalog"
+            );
+        }
+    }
+
+    /// The terminal window is bounded by default and pageable on request; the
+    /// actionable buckets never are.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_terminal_window_is_bounded_and_pageable() {
+        let board = catalog_board(1);
+        let (_home_tmp, home) = catalog_home();
+        let catalog = crate::run_catalog::RunCatalog::new();
+        let roots = std::slice::from_ref(&board.root);
+        let (runs, _) =
+            classify_session_files(&home, None, "boot-1", &[], roots, &catalog, None).await;
+
+        let mut terminal: Vec<RecoveredRun> = runs
+            .into_iter()
+            .filter(|run| run.classification == "terminal_noop")
+            .collect();
+        assert!(terminal.len() > crate::run_catalog::DEFAULT_TERMINAL_WINDOW);
+        terminal.sort_by(|a, b| {
+            b.terminal_at
+                .cmp(&a.terminal_at)
+                .then(a.run_id.cmp(&b.run_id))
+        });
+
+        let page = |window: TerminalWindow| -> Vec<String> {
+            terminal
+                .iter()
+                .skip(window.offset)
+                .take(window.limit)
+                .map(|run| run.run_id.clone())
+                .collect()
+        };
+        let default_page = page(TerminalWindow::default());
+        assert_eq!(
+            default_page.len(),
+            crate::run_catalog::DEFAULT_TERMINAL_WINDOW
+        );
+
+        // Paging reaches older history without reclassifying anything.
+        let second_page = page(TerminalWindow::from(RunInventoryQuery {
+            terminal_limit: Some(crate::run_catalog::DEFAULT_TERMINAL_WINDOW),
+            terminal_offset: Some(crate::run_catalog::DEFAULT_TERMINAL_WINDOW),
+            terminal: None,
+        }));
+        assert_eq!(
+            second_page.len(),
+            crate::run_catalog::DEFAULT_TERMINAL_WINDOW
+        );
+        assert!(
+            second_page.iter().all(|id| !default_page.contains(id)),
+            "pages must not overlap"
+        );
+
+        // `terminal=all` is the explicit query for the whole history.
+        let all = page(TerminalWindow::from(RunInventoryQuery {
+            terminal_limit: None,
+            terminal_offset: None,
+            terminal: Some("all".to_string()),
+        }));
+        assert_eq!(all.len(), terminal.len());
+
+        // And the requested limit is capped, so a client cannot ask for an
+        // unbounded response by naming a huge number.
+        let capped = TerminalWindow::from(RunInventoryQuery {
+            terminal_limit: Some(usize::MAX),
+            terminal_offset: None,
+            terminal: None,
+        });
+        assert_eq!(capped.limit, crate::run_catalog::MAX_TERMINAL_WINDOW);
+    }
+
+    /// `run history inspect`'s dry run accounts for every byte and changes
+    /// nothing on a production-shaped board.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn run_history_inspect_accounts_exactly_and_changes_nothing() {
+        let board = catalog_board(1);
+        let catalog = crate::run_catalog::RunCatalog::new();
+        catalog
+            .refresh_dir(
+                &board.sessions,
+                Some("proj"),
+                &board.root,
+                SessionScanBudget::DEFAULT,
+            )
+            .await;
+
+        let before: std::collections::BTreeMap<PathBuf, (u64, Vec<u8>)> =
+            std::fs::read_dir(&board.sessions)
+                .unwrap()
+                .flatten()
+                .map(|entry| {
+                    let path = entry.path();
+                    let bytes = std::fs::read(&path).unwrap();
+                    (path, (bytes.len() as u64, bytes))
+                })
+                .collect();
+        let on_disk: u64 = before.values().map(|(len, _)| len).sum();
+
+        let report = crate::run_catalog::inspect_history(&catalog.entries().await);
+        assert!(report.dry_run);
+        assert_eq!(report.session_files, 197);
+        assert_eq!(report.unreadable_files, 0);
+        assert_eq!(
+            report.bytes_accounted, on_disk,
+            "every byte on disk must land in exactly one event class"
+        );
+        assert!(report.reclaimable_bytes > 0);
+        assert!(
+            report.reclaimable_bytes < report.bytes_accounted,
+            "authority bytes are never reclaimable"
+        );
+        assert_eq!(
+            report.reclaimable_by_driver.keys().collect::<Vec<_>>(),
+            vec!["rmux/claude"],
+            "accounting is reported by driver+harness"
+        );
+        assert!(report
+            .buckets
+            .iter()
+            .any(|bucket| bucket.event_class == "lifecycle" && !bucket.reclaimable));
+        assert!(report
+            .retention
+            .iter()
+            .any(|tier| tier.tier == "harness_native_history" && tier.authority == "vendor-owned"));
+
+        let after: std::collections::BTreeMap<PathBuf, (u64, Vec<u8>)> =
+            std::fs::read_dir(&board.sessions)
+                .unwrap()
+                .flatten()
+                .map(|entry| {
+                    let path = entry.path();
+                    let bytes = std::fs::read(&path).unwrap();
+                    (path, (bytes.len() as u64, bytes))
+                })
+                .collect();
+        assert_eq!(before, after, "the dry run must change nothing");
+    }
+
+    /// orgasmic:TASK-FZB6T — the boot pass is catalog-backed and project-rooted
+    /// now. These fixtures lay session files into a bare directory, so the shim
+    /// drives one FRESH catalog over that directory: no snapshot, every file
+    /// read, which is exactly the cold-start case they assert about.
+    fn collect_boot_reattach_candidates_for_dirs(dirs: &[PathBuf]) -> Vec<BootReattachCandidate> {
+        let catalog = crate::run_catalog::RunCatalog::new();
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime")
+            .block_on(async {
+                let mut out = Vec::new();
+                for dir in dirs {
+                    catalog
+                        .refresh_dir(dir, None, dir, SessionScanBudget::DEFAULT)
+                        .await;
+                    for entry in catalog.entries_for_project(dir).await {
+                        if let Some(candidate) = boot_reattach_candidate(&entry) {
+                            out.push(candidate);
+                        }
+                    }
+                }
+                out
+            })
+    }
+
     /// The bounded scan the boot pass really performs over a file on disk.
-    fn boot_scan(path: &FsPath) -> SessionLifecycleScan {
+    fn boot_scan(path: &FsPath) -> orgasmic_core::SessionLifecycleScan {
         scan_session_lifecycle(path, SessionScanBudget::DEFAULT).expect("scan session file")
     }
 
@@ -19634,9 +20536,11 @@ pub(crate) mod tests {
         let path = PathBuf::from("/tmp/run-reattach.jsonl");
 
         // Acquire + RunMeta, non-terminal → a full candidate.
-        let candidate =
-            boot_reattach_candidate(&whole_file_scan(&[acquire.clone(), meta.clone()]), &path)
-                .expect("candidate");
+        let candidate = boot_reattach_candidate_from_scan(
+            &whole_file_scan(&[acquire.clone(), meta.clone()]),
+            &path,
+        )
+        .expect("candidate");
         assert_eq!(candidate.run_id, "run-reattach");
         assert_eq!(candidate.task_id, "manager.launch:orgasmic");
         assert_eq!(candidate.transport, "rmux");
@@ -19664,7 +20568,7 @@ pub(crate) mod tests {
             })
             .unwrap(),
         );
-        let invalid_argv = boot_reattach_candidate(
+        let invalid_argv = boot_reattach_candidate_from_scan(
             &whole_file_scan(&[acquire.clone(), invalid_argv_meta]),
             &path,
         )
@@ -19675,13 +20579,13 @@ pub(crate) mod tests {
         );
 
         // Terminal release → not a candidate.
-        assert!(boot_reattach_candidate(
+        assert!(boot_reattach_candidate_from_scan(
             &whole_file_scan(&[acquire.clone(), meta.clone(), release]),
             &path
         )
         .is_none());
         // Missing RunMeta (pre-upgrade session) → not a candidate.
-        assert!(boot_reattach_candidate(&whole_file_scan(&[acquire]), &path).is_none());
+        assert!(boot_reattach_candidate_from_scan(&whole_file_scan(&[acquire]), &path).is_none());
     }
 
     /// TASK-QRTT8: the `RunMeta` pattern must BIND `credential_mode`, never
@@ -19737,15 +20641,17 @@ pub(crate) mod tests {
                 driver_config: json!({"system_wide": true}),
             })
             .unwrap());
-            let candidate =
-                boot_reattach_candidate(&whole_file_scan(&[acquire.clone(), meta]), &path)
-                    .unwrap_or_else(|| {
-                        panic!(
-                        "a live run whose harness resolved credential_mode={credential_mode:?} \
+            let candidate = boot_reattach_candidate_from_scan(
+                &whole_file_scan(&[acquire.clone(), meta]),
+                &path,
+            )
+            .unwrap_or_else(|| {
+                panic!(
+                    "a live run whose harness resolved credential_mode={credential_mode:?} \
                          must be a boot-reattach candidate; a refutable pattern on this field \
                          drops the whole run and it is never rehydrated after a daemon restart"
-                    )
-                    });
+                )
+            });
             // The reattach material survives intact, not just the `Some`.
             assert_eq!(candidate.run_id, "run-qrtt8");
             assert_eq!(candidate.task_id, "TASK-QRTT8");
@@ -19820,7 +20726,7 @@ pub(crate) mod tests {
             .unwrap();
         drop(writer);
 
-        let candidate = boot_reattach_candidate(&boot_scan(&session_path), &session_path)
+        let candidate = boot_reattach_candidate_from_scan(&boot_scan(&session_path), &session_path)
             .expect("a credential-resolving stdio run is now a candidate");
         assert_eq!(candidate.transport, "acp-stdio");
 
@@ -19956,8 +20862,10 @@ pub(crate) mod tests {
             false,
         );
 
-        assert!(boot_reattach_candidate(&boot_scan(&external_path), &external_path).is_none());
-        let app = boot_reattach_candidate(&boot_scan(&app_path), &app_path)
+        assert!(
+            boot_reattach_candidate_from_scan(&boot_scan(&external_path), &external_path).is_none()
+        );
+        let app = boot_reattach_candidate_from_scan(&boot_scan(&app_path), &app_path)
             .expect("app manager remains a clean recovery candidate");
         assert_eq!(app.run_id, "run-app");
         assert_eq!(app.runtime_id, "rt-app");
@@ -19988,9 +20896,11 @@ pub(crate) mod tests {
             "tmux",
             false,
         );
-        let recovered =
-            boot_reattach_candidate(&boot_scan(&legacy_collision_path), &legacy_collision_path)
-                .expect("legacy collision recovers the app segment");
+        let recovered = boot_reattach_candidate_from_scan(
+            &boot_scan(&legacy_collision_path),
+            &legacy_collision_path,
+        )
+        .expect("legacy collision recovers the app segment");
         assert_eq!(recovered.run_id, "run-legacy-app");
         assert_eq!(recovered.runtime_id, "rt-legacy-app");
         assert_eq!(recovered.transport, "tmux");
@@ -20156,12 +21066,12 @@ pub(crate) mod tests {
         // answers with the second run. That is the ground truth the bounded scan
         // must not contradict.
         let whole_file = read_session_file(&path).expect("read whole file");
-        let unbounded = boot_reattach_candidate(&whole_file_scan(&whole_file), &path)
+        let unbounded = boot_reattach_candidate_from_scan(&whole_file_scan(&whole_file), &path)
             .expect("the whole-file read still sees the live second run");
         assert_eq!(unbounded.run_id, "run-second");
 
         assert_ne!(
-            boot_reattach_candidate(&scan, &path)
+            boot_reattach_candidate_from_scan(&scan, &path)
                 .map(|candidate| candidate.run_id)
                 .as_deref(),
             Some("run-first"),
@@ -20226,7 +21136,7 @@ pub(crate) mod tests {
             ),
         ];
         let path = PathBuf::from("/tmp/manager-proj-collided.jsonl");
-        let scan = SessionLifecycleScan {
+        let scan = orgasmic_core::SessionLifecycleScan {
             envelopes,
             file_bytes: 4 * 1024 * 1024,
             bytes_inspected: 192 * 1024,
@@ -20236,7 +21146,7 @@ pub(crate) mod tests {
             skipped_transcript_lines: 900,
         };
         assert!(
-            boot_reattach_candidate(&scan, &path).is_none(),
+            boot_reattach_candidate_from_scan(&scan, &path).is_none(),
             "one run id spanning two runtimes across an unread gap is two runs, \
              not one: reattaching rt-first's metadata against rt-second's end \
              is the silent misattribution the bounded read must not introduce"
@@ -20292,7 +21202,7 @@ pub(crate) mod tests {
             scan.file_bytes
         );
 
-        let candidates = collect_boot_reattach_candidates(&[dir]);
+        let candidates = collect_boot_reattach_candidates_for_dirs(&[dir]);
         let candidate = candidates
             .iter()
             .find(|candidate| candidate.run_id == "run-live-app")
@@ -20375,7 +21285,7 @@ pub(crate) mod tests {
             scan.file_bytes
         );
 
-        let candidates = collect_boot_reattach_candidates(&[dir]);
+        let candidates = collect_boot_reattach_candidates_for_dirs(&[dir]);
         assert_eq!(
             candidates
                 .iter()
@@ -20494,7 +21404,7 @@ pub(crate) mod tests {
             let Ok(envelopes) = read_session_file(path) else {
                 continue;
             };
-            if boot_reattach_candidate(&whole_file_scan(&envelopes), path).is_some() {
+            if boot_reattach_candidate_from_scan(&whole_file_scan(&envelopes), path).is_some() {
                 before_candidates += 1;
             }
         }
@@ -20502,7 +21412,8 @@ pub(crate) mod tests {
 
         // AFTER: the production function, bounded per file.
         let started = std::time::Instant::now();
-        let after_candidates = collect_boot_reattach_candidates(std::slice::from_ref(&dir)).len();
+        let after_candidates =
+            collect_boot_reattach_candidates_for_dirs(std::slice::from_ref(&dir)).len();
         let after = started.elapsed();
         let inspected: u64 = paths
             .iter()
@@ -21630,7 +22541,7 @@ pub(crate) mod tests {
         // this the restart tests would only prove that a hand-written session is
         // recoverable, and a launch that persisted the marker somewhere boot
         // recovery does not look would still pass everything.
-        let candidate = boot_reattach_candidate(&boot_scan(&session_path), &session_path)
+        let candidate = boot_reattach_candidate_from_scan(&boot_scan(&session_path), &session_path)
             .expect("a live stage launch is a boot-reattach candidate");
         assert_eq!(
             candidate.stage.as_deref(),
@@ -21690,7 +22601,7 @@ pub(crate) mod tests {
         );
         let external_envelopes = read_session_file(&session_path).unwrap();
         assert!(
-            boot_reattach_candidate(&boot_scan(&session_path), &session_path).is_none(),
+            boot_reattach_candidate_from_scan(&boot_scan(&session_path), &session_path).is_none(),
             "external residue must not enter the no-driver reattach/log path"
         );
         let (recovered, _inventory) = classify_session_files(
@@ -21699,6 +22610,8 @@ pub(crate) mod tests {
             &post_restart_state.boot.boot_id,
             &[],
             std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
         )
         .await;
         let external = recovered
@@ -21867,6 +22780,8 @@ pub(crate) mod tests {
             "boot-after-restart",
             &[],
             std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
         )
         .await;
         let run = recovered
@@ -26240,6 +27155,8 @@ pub(crate) mod tests {
             "boot-test",
             &[],
             std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
         )
         .await;
 
@@ -26531,6 +27448,8 @@ pub(crate) mod tests {
             "boot-test",
             &[],
             std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
         )
         .await;
 
@@ -26976,6 +27895,8 @@ pub(crate) mod tests {
             "boot-test",
             &[],
             std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
         )
         .await;
         let run = recovered
@@ -28038,6 +28959,8 @@ pub(crate) mod tests {
             "boot-test",
             &[],
             std::slice::from_ref(&project_root),
+            &crate::run_catalog::RunCatalog::new(),
+            None,
         ));
         let run = recovered
             .iter()

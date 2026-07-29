@@ -1,0 +1,18 @@
+diff --git a/crates/orgasmic-core/src/session.rs b/crates/orgasmic-core/src/session.rs
+index 75938b5..281033c 100644
+--- a/crates/orgasmic-core/src/session.rs
++++ b/crates/orgasmic-core/src/session.rs
+@@ -180,12 +180,7 @@ impl SessionWriter {
+     /// and note envelopes are supervisor-authored authority and are written
+     /// verbatim.
+     pub fn append(&mut self, kind: SessionEventKind, event: Value) -> Result<u64, SessionError> {
+-        let event = match kind {
+-            SessionEventKind::DriverEvent => {
+-                bound_driver_event_payload(event, DRIVER_EVENT_PAYLOAD_CAP_BYTES).value
+-            }
+-            _ => event,
+-        };
++        // INJECTED (TASK-FZB6T): driver payloads are persisted verbatim.
+         let envelope = SessionEnvelope {
+             seq: self.seq,
+             time: Utc::now(),

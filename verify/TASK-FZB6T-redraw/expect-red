@@ -1,0 +1,19 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# The injection removes the payload cap from `SessionWriter::append`: driver
+# events are persisted verbatim, which is the storage shape that produced the
+# 2.239 GiB of legacy history this task exists to stop repeating.
+exit: 101
+
+# THE REDRAW LOCK. A 4.6 MB rendered repaint handed to the writer as a
+# `text_chunk` grows the session file by 5.8 MB. The whole point of the cap is
+# that the writer is a choke point no driver can route around: what reaches it
+# is bounded whether or not the driver believed it was sending payload.
+contains: a redraw chunk persisted to JSONL
+
+# THE ACP HALF. Three multi-megabyte tool-result / assistant payloads land in
+# the file verbatim — 14.4 MB for five events.
+contains: three multi-megabyte payloads must not reach the file
+
+# Both, and only these two.
+contains: test result: FAILED. 0 passed; 2 failed

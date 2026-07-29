@@ -1,0 +1,15 @@
+# One line. Run from the repo root by
+# `orgasmic verify TASK-FZB6T --artifact verify/TASK-FZB6T-corruption`.
+#
+# The run catalog is DERIVED state and never authority, and the whole safety
+# argument for shipping a durable snapshot rests on that: every way the file can
+# be wrong has the same answer, rebuild from the session JSONL. Two tests:
+#
+# 1. a corrupt or foreign-version snapshot must not poison classification. Three
+#    shapes — truncated mid-object (what a kill during the write leaves), not
+#    JSON at all, and a version this build cannot vouch for — each must be
+#    refused, and the re-indexed board must classify EXACTLY as a board with no
+#    snapshot at all;
+# 2. the rollback direction, both ways: an older daemon must not read a newer
+#    catalog and a newer one must not trust an older shape. Refuse and rebuild.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib -- a_corrupt_catalog_snapshot_cannot_poison_classification a_foreign_version_snapshot_is_refused_in_both_directions

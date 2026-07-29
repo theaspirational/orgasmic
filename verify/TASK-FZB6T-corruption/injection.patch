@@ -1,0 +1,22 @@
+diff --git a/crates/orgasmic-daemon/src/run_catalog.rs b/crates/orgasmic-daemon/src/run_catalog.rs
+index fb62486..03bcfb5 100644
+--- a/crates/orgasmic-daemon/src/run_catalog.rs
++++ b/crates/orgasmic-daemon/src/run_catalog.rs
+@@ -468,16 +468,7 @@ impl RunCatalog {
+                 }
+             }
+         };
+-        let found = probe
+-            .get("catalog_version")
+-            .and_then(Value::as_u64)
+-            .unwrap_or(0) as u32;
+-        if found != CATALOG_VERSION {
+-            return SnapshotLoad::VersionMismatch {
+-                found,
+-                expected: CATALOG_VERSION,
+-            };
+-        }
++        // INJECTED (TASK-FZB6T): any catalog on disk is trusted.
+         let snapshot: CatalogSnapshot = match serde_json::from_value(probe) {
+             Ok(snapshot) => snapshot,
+             Err(error) => {
