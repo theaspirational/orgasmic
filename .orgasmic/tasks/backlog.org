@@ -527,6 +527,8 @@ process tree still leak it exactly as before.
 
 SIGHTING [2026-07-29, TASK-TZKAC harness round 8]: after ~50 minutes of 4x64-thread daemon-suite load, the machine held 31 leaked /bin/bash driver-shim children accumulating zero CPU, and the round wedged at 552-560 of 566 tests per copy with no further output (killed by hand). Distinct from the tmux sentinel gate; makes long loaded rounds unreliable as evidence. Same class as this task's premise: fixtures leak process trees the session-level guard does not reap.
 
+SIGHTING [2026-07-29 ~07:40 local]: orphan session orgasmic-rmux-run-20260729T030752-0e4f153badef4e93b93350da8b8ce35e on the LIVE rmux default server — no dispatch record, not in /runs/live, created 06:07 local during a worker's test window. A test created a real orgasmic-rmux-run-* session on the default endpoint and never reaped it. Manager reaped by exact name after confirming non-liveness. Same class as this task's premise, now on the live server rather than an owned one — whichever test binary did this needs the owned-endpoint treatment (the KPMFK/QRTT8 rmux stage tests are the recent suspects; their sessions are supposed to ride LiveSessionGuard).
+
 ** Measured
 
 Three orphaned `cursor-worker-sibling` fixture trees, all reparented to PPID 1,
