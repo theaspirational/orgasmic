@@ -663,6 +663,8 @@ Acceptance:
 - `orgasmic run list` .live and the release path never disagree about whether a
   run exists
 
+SCOPE RETARGETED [2026-07-29, after TASK-HAREX merged]: HAREX diagnosed and fixed the producer of this task's first symptom. The 404-from-release while live-in-snapshot disagreement has exactly one producer — a release that started (explicit_release_in_progress set) and could not finish because the event drain awaited an unbounded recv() held open by a stray driver-internal sender. HAREX's DrainGate bounds the drain once a release is requested (RELEASE_DRAIN_BUDGET, derived, 20s), so that window is now at most one budget and self-clearing. WHAT REMAINS THIS TASK'S SCOPE: (1) the missing *abandon* judgment in `orgasmic run recover` (the rescue-policy convention lists four manager judgments; abandon has no verb); (2) the update-fence consequence and its documentation (a phantom live run blocking `orgasmic update` with no documented way out — partially eased by TASK-6HJYT's liveness split if that lands); (3) if desired, a regression proving the 404/live disagreement stays impossible (HAREX's tests cover the drain; a direct two-views-agree test would pin the property itself).
+
 * BACKLOG TASK-VZMZE Heartbeats reset the stall timer, so a wedged run that never starts a turn is immortal for four hours    :daemon:supervisor:dispatch:reliability:
 :PROPERTIES:
 :ID: TASK-VZMZE
@@ -2142,3 +2144,11 @@ after.
 - verify/TASK-K4G1D and verify/TASK-JGHNC both PASS after the move (re-authored
   if needed, with the re-measurement shown).
 - Injection per TCTTD standard for the new wiring surface.
+
+* BACKLOG TASK-T09M7 Driver-side audit: a driver's producer handle must own every event sender it created (stray-sender invariant)
+:PROPERTIES:
+:ID: TASK-T09M7
+:PRIORITY: P3
+:END:
+
+From TASK-HAREX (2026-07-29): the 82-minute phantom run was caused by a stray event-sender clone in a driver-internal task the supervisor does not own — the drain's recv() never returned None. HAREX bounded the CONSEQUENCE (DrainGate on requested release); nothing yet asserts the invariant that a driver's producer handle owns every sender it created, so the next stray sender still costs a full RELEASE_DRAIN_BUDGET per release and drops post-budget events. Add a per-mode DriverSession invariant test turning this liveness bug into a test-time failure. acp_stdio and rmux are the two to read first (the persistent-socket rmux design holds shared state the tmux CLI design cannot — the 0RCRY task body's structural-asymmetry note). Injection per TCTTD standard: natural red = a mode with a deliberately-planted stray sender passing the invariant test pre-fix.
