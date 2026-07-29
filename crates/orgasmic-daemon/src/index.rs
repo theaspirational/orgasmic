@@ -363,6 +363,24 @@ impl IndexSnapshot {
             .and_then(|p| p.tasks.iter().find(|t| t.id == task_id))
     }
 
+    // orgasmic:task_MRJRK
+    /// Registered ids this snapshot cannot answer for: on the board, absent
+    /// from `projects`.
+    ///
+    /// The two maps are written by different paths — `load_board` fills the
+    /// board, `load_project` fills `projects` — and nothing reconciles them,
+    /// so they can disagree indefinitely. Every id-addressed route resolves
+    /// through `projects`, which is what turns the disagreement into a 404
+    /// that reads as "no such project" while `orgasmic project list` (board
+    /// file, on disk) keeps listing it.
+    pub fn unindexed_board_projects(&self) -> Vec<String> {
+        self.board
+            .iter()
+            .filter(|entry| !self.projects.contains_key(&entry.id))
+            .map(|entry| entry.id.clone())
+            .collect()
+    }
+
     pub fn first_historical_tx_parse_error(&self) -> Option<&ParseError> {
         self.parse_errors
             .iter()
@@ -514,6 +532,25 @@ impl Index {
             }
         }
         rebuild_all_activity_indexes(&mut snap);
+        // orgasmic:task_MRJRK — a pass that publishes fewer projects than the
+        // board registers says so, once, at the point it happens. Nothing
+        // retries the missing ones: the two give-up branches above forget
+        // rather than reschedule, and no other path ever removes a key from
+        // `projects`. Deliberately not a self-heal — an automatic re-scan
+        // here would erase the evidence of a gap whose cause is still open,
+        // and the operator would keep hitting it without ever seeing it.
+        let unindexed = snap.unindexed_board_projects();
+        if !unindexed.is_empty() {
+            warn!(
+                projects = ?unindexed,
+                registered = snap.board.len(),
+                loaded = snap.projects.len(),
+                "index rebuild published fewer projects than the board registers; \
+                 these ids 404 on every id-addressed route until the next \
+                 successful `orgasmic reindex` (reported by GET /daemon/status \
+                 as unindexed_projects)"
+            );
+        }
         *self.inner.write().await = snap;
         if self.repo_url_refresh_enabled.load(Ordering::Acquire) {
             self.spawn_repo_url_refreshes();
@@ -2302,6 +2339,15 @@ mod tests {
         assert!(
             !snapshot.projects.contains_key("blocked-project"),
             "timed-out project should be omitted from the pass"
+        );
+        // orgasmic:task_MRJRK — omitting it is the deliberate bound; leaving
+        // it unreported is not. This is the one code path that can drop a
+        // registered project from the snapshot, and nothing retries it, so
+        // the pass has to hand the condition to `/daemon/status`.
+        assert_eq!(
+            snapshot.unindexed_board_projects(),
+            vec!["blocked-project".to_string()],
+            "a project the pass gave up on must be reported, not just dropped"
         );
 
         // Release the abandoned blocking-pool scan before the tempdir is

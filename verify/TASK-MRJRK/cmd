@@ -1,0 +1,11 @@
+# One line. Run from the repo root by `orgasmic verify TASK-MRJRK`.
+#
+# Both halves of the defect, against a snapshot whose board carries a project
+# its `projects` map does not — the state constructed directly, because what
+# produced it on the operator's daemon is still open and the diagnosis was
+# never allowed to wait on that.
+#
+# The filter catches exactly the two tests that answer the two operator
+# questions: what does the 404 say, and can the condition be seen without
+# provoking a 404 at all.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib index_snapshot

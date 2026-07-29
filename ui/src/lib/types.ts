@@ -296,6 +296,9 @@ export type DaemonStatus = {
   local_only?: boolean;
   ui_asset_hash?: string;
   projects: number;
+  registered_projects?: number;
+  /** Board-registered ids the index snapshot is missing (TASK-MRJRK). */
+  unindexed_projects?: string[];
   parse_errors: number;
   tx_count: number;
   rebuilt_at?: string | null;

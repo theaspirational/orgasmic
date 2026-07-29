@@ -1,0 +1,24 @@
+# Pinned from the red run authored against the defect, 2026-07-29, before
+# `select_project` reached the differentiating error and before the status
+# response carried the condition at all.
+exit: 101
+
+# The whole complaint, verbatim from the live 2026-07-25 incident: a project
+# the board registers, answered with a bare `project orgasmic` that is
+# indistinguishable from an id nobody ever registered. `orgasmic project list`
+# reads the board file on disk, so it kept showing the project throughout —
+# which is why this message sent the reader to check the one thing that was
+# fine.
+contains: a registered id must not be reported as unregistered: project orgasmic
+
+# The visibility half. `projects` alone cannot express the condition: it
+# counted 0 while the board carried 1, and nothing in the response said so, so
+# the only way to learn the index was short was to hit an unrelated 404. Pins
+# the direction too — a response that reports the loaded count under BOTH
+# names still fails this.
+contains: status must report what the board carries, not only what loaded
+
+# Both, not one: a fix that names the index in the 404 but leaves the daemon
+# silent about the state is half the task, and this line is what makes that
+# visible in the replay.
+contains: test result: FAILED. 0 passed; 2 failed
