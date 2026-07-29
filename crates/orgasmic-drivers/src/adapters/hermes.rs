@@ -82,7 +82,16 @@ struct HermesConfig {
     provider: Option<String>,
     #[serde(default)]
     model: Option<String>,
-    #[serde(default, alias = "effort")]
+    /// Reasoning effort, forwarded as the ACP `/reasoning <level>` command.
+    ///
+    /// Deliberately NOT `alias = "effort"`, the same way `ClaudeAcpConfig` is
+    /// not. The daemon used to write the value under both `effort` and
+    /// `reasoning_effort`, so with the alias serde saw one field twice and
+    /// every hermes dispatch that set an effort died on `duplicate field
+    /// reasoning_effort`. TASK-4YC8E dropped the alias here and the second key
+    /// at the writer; the registry-wide test in `lib.rs` holds both ends.
+    // orgasmic:TASK-4YC8E
+    #[serde(default)]
     reasoning_effort: Option<String>,
     #[serde(default)]
     speed: Option<RuntimeSpeed>,

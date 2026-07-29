@@ -6445,7 +6445,7 @@ async fn dispatch_cli_wire_whitespace_only_model_effort_preserved() {
         Some("   ")
     );
     assert_eq!(
-        session_driver_config_field(&project_root, &run_id, "effort").as_deref(),
+        session_driver_config_field(&project_root, &run_id, "reasoning_effort").as_deref(),
         Some("\t")
     );
 

@@ -1,0 +1,20 @@
+# One line. Run from the repo root by `orgasmic verify TASK-4YC8E`.
+#
+# Two named tests, one per half of the defect, and nothing else:
+#
+#   every_supported_pair_accepts_the_daemons_dual_key_effort_config
+#     (orgasmic-drivers lib) — replays the exact driver config `api.rs` composes
+#     for a dispatch, effort under both key names, through the production
+#     validation path `driver_for_mode_harness(mode, harness).validate(..)`, for
+#     every supported pair. Deserialization only: no harness, no provider, no
+#     process, no spend. A real hermes dispatch would reach a real provider,
+#     which is why the confirmation is hermetic.
+#
+#   driver_validate_400_carries_the_drivers_own_message
+#     (orgasmic-daemon lib) — the 400 that rejection produces must name the
+#     adapter and carry the driver's own message.
+#
+# `--no-fail-fast` so both halves report; without it cargo stops at the first
+# failing binary and the drivers half never runs. `--skip` on the billed drivers
+# test is required by `orgasmic verify` for anything touching that suite.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test --no-fail-fast -p orgasmic-drivers -p orgasmic-daemon --lib -- every_supported_pair_accepts_the_daemons_dual_key_effort_config driver_validate_400_carries_the_drivers_own_message --skip legacy_drivers_and_explicit_pairs_emit_equivalent_start_events

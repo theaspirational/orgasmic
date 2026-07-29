@@ -1704,9 +1704,19 @@ fn supervisor_recover_error(error: crate::supervisor::SupervisorError) -> ApiErr
     }
 }
 
-fn driver_validate_error(driver: &str, error: impl std::fmt::Display) -> ApiError {
-    tracing::warn!(driver = driver, error = %error, "driver validation failed");
-    ApiError::bad_request("driver configuration is invalid")
+/// The 400 a caller gets when `validate` rejects the composed driver config.
+///
+/// The driver's own message is the whole diagnosis — serde names the offending
+/// field, the adapters name the missing credential — so it is carried through
+/// to the caller instead of being dropped into a log line nobody is tailing.
+/// `driver configuration is invalid` on its own cost TASK-4YC8E a grep through
+/// this file to learn which field of which adapter had failed.
+// orgasmic:TASK-4YC8E
+fn driver_validate_error(driver: &str, harness: &str, error: impl std::fmt::Display) -> ApiError {
+    tracing::warn!(driver = driver, harness = harness, error = %error, "driver validation failed");
+    ApiError::bad_request(format!(
+        "driver configuration is invalid for {driver}/{harness}: {error}"
+    ))
 }
 
 fn org_input_parse_error(path: &FsPath, error: impl std::fmt::Display) -> ApiError {
@@ -2773,8 +2783,14 @@ async fn post_manager_launch(
         // harness argv, so the choice stays pinned to this session instead of
         // rewriting the operator's saved harness default (an in-session
         // `/model` does the latter).
+        // One value, one key. This used to be written under `effort` as well,
+        // and one value under two names is what turned an ordinary
+        // `#[serde(alias = "effort")]` in an adapter into a dispatch-killing
+        // `duplicate field` (TASK-4YC8E). Every reader of this key takes
+        // `reasoning_effort`: the adapters read only that name, and the tmux
+        // and rmux mode configs fall back to it.
+        // orgasmic:TASK-4YC8E
         "model": req.model,
-        "effort": req.effort,
         "reasoning_effort": req.effort,
         "harness_args": req.harness_args,
         // Threaded through to the rmux driver so the session is detached from
@@ -3294,7 +3310,7 @@ async fn post_stage(
     );
     driver
         .validate(&driver_config)
-        .map_err(|e| driver_validate_error(&worker.driver, e))?;
+        .map_err(|e| driver_validate_error(&worker.driver, &worker.harness, e))?;
 
     let now = Utc::now();
     let session_path = project_sessions_dir(&project.root).join(format!(
@@ -3944,8 +3960,9 @@ fn stage_driver_config_with_overrides(
     };
     let provider = overrides.provider;
     let model = overrides.model;
-    let effort = overrides.effort;
-    let reasoning_effort = effort.clone();
+    // One value, one key — see the manager-launch config above. TASK-4YC8E.
+    // orgasmic:TASK-4YC8E
+    let reasoning_effort = overrides.effort;
     let credential_mode = overrides.credential_mode;
     let resolved_sandbox = SandboxAllowlist::resolve(
         task_sandbox_permissions,
@@ -3957,7 +3974,6 @@ fn stage_driver_config_with_overrides(
         "endpoint": endpoint,
         "provider": provider,
         "model": model,
-        "effort": effort,
         "reasoning_effort": reasoning_effort,
         "credential_mode": credential_mode,
         "harness_args": worker.harness_args,
@@ -4339,7 +4355,7 @@ async fn spawn_worker_run(
     );
     if let Err(error) = driver.validate(&driver_config) {
         return Err(SpawnWorkerFailure {
-            error: driver_validate_error(&worker.driver, &error),
+            error: driver_validate_error(&worker.driver, &worker.harness, &error),
         });
     }
 
@@ -21580,9 +21596,34 @@ pub(crate) mod tests {
             None,
         );
         assert_eq!(cfg.0["model"], "  Composer-2.5-FAST  ");
-        assert_eq!(cfg.0["effort"], " XHIGH ");
         assert_eq!(cfg.0["reasoning_effort"], " XHIGH ");
+        // The effort travels under exactly one name. A second copy under
+        // `effort` is what made an adapter alias fatal (TASK-4YC8E).
+        assert!(cfg.0.get("effort").is_none());
         assert!(cfg.0.get("provider").is_none() || cfg.0["provider"].is_null());
+    }
+
+    /// A rejected driver config must say what was wrong with it. The driver
+    /// already knows — serde names the duplicated or mistyped field, the
+    /// adapters name the missing credential — and a 400 reading only "driver
+    /// configuration is invalid" throws that away and sends the operator to
+    /// grep this file instead (TASK-4YC8E).
+    #[test]
+    fn driver_validate_400_carries_the_drivers_own_message() {
+        let err = driver_validate_error(
+            "acp-stdio",
+            "hermes",
+            orgasmic_drivers::DriverError::InvalidConfig(
+                "duplicate field `reasoning_effort`".into(),
+            ),
+        );
+        assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        assert!(err.message.contains("acp-stdio/hermes"), "{}", err.message);
+        assert!(
+            err.message.contains("duplicate field `reasoning_effort`"),
+            "{}",
+            err.message
+        );
     }
 
     #[test]
@@ -21857,8 +21898,8 @@ pub(crate) mod tests {
 
         assert_eq!(cfg.0["provider"], "openai");
         assert_eq!(cfg.0["model"], "gpt-5.5");
-        assert_eq!(cfg.0["effort"], "xhigh");
         assert_eq!(cfg.0["reasoning_effort"], "xhigh");
+        assert!(cfg.0.get("effort").is_none());
         assert_eq!(cfg.0["prompt_bundle_text"], "brief");
     }
 
