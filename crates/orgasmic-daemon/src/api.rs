@@ -1624,6 +1624,28 @@ fn supervisor_release_error(run_id: &str, error: impl std::fmt::Display) -> ApiE
     ApiError::internal("failed to release run")
 }
 
+/// The answer every release surface owes a run that is live with a release
+/// already running for it (`SupervisorError::ReleaseInProgress`).
+///
+/// orgasmic:TASK-RB1ZN — one renderer, because the disagreement this task was
+/// filed for was two surfaces answering differently about the same record. It is
+/// a 409, not a 404: the run IS live — `GET /runs/live` reports it and this text
+/// agrees with that — and the only honest advice is the bound, so it names
+/// TASK-HAREX's drain budget rather than leaving the caller to guess whether
+/// retrying is pointless.
+fn release_in_progress_conflict(run_id: &str) -> ApiError {
+    ApiError::conflict_json(json!({
+        "error": "release already in progress",
+        "run_id": run_id,
+        "detail": format!(
+            "run {run_id} is live and a release is already running for it, so this \
+             call has nothing to add. TASK-HAREX bounds that drain at {}s; retry \
+             after it.",
+            RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
+        ),
+    }))
+}
+
 fn supervisor_control_error(context: &str, error: crate::supervisor::SupervisorError) -> ApiError {
     use crate::supervisor::SupervisorError;
     match error {
@@ -7556,6 +7578,15 @@ async fn release_run_and_record_tx(
         // orgasmic:TASK-ARZGD — operator cancel waits for artifactor writer/
         // regenerate ack, then records Cancelled.
         Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_)) => {}
+        // orgasmic:TASK-RB1ZN — the incident's first symptom, closed at its
+        // source. This route answered `404 active run <id>` for a run that was
+        // present in `runs` and mid-release, i.e. for a run `GET /runs/live`
+        // was reporting at that same moment. The supervisor now separates the
+        // two states, so 404 keeps its plain meaning here and the live-but-busy
+        // one gets the 409 that names how long it can last.
+        Err(crate::supervisor::SupervisorError::ReleaseInProgress(_)) => {
+            return Err(release_in_progress_conflict(&id));
+        }
         Err(crate::supervisor::SupervisorError::RunNotFound(_)) => {
             return Err(ApiError::not_found(format!("active run {id}")));
         }
@@ -8160,34 +8191,19 @@ async fn abandon_live_run(
         // record until it returns; the cancel is recorded now and the release
         // follows it. Same reading `post_run_release` gives this error.
         Err(crate::supervisor::SupervisorError::DeferredWhileInFlight(_)) => {}
+        // orgasmic:TASK-RB1ZN — VSWZT answered both of these by re-reading the
+        // supervisor snapshot after a `RunNotFound`, because `release_one` gave
+        // both states the same error. That re-read describes a later instant
+        // than the decision it is interpreting: the record can be removed
+        // between the refusal and the snapshot, so a call refused because the
+        // run was live and wedged can still be told the run is not live. It
+        // lands on a defensible answer only because record removal is one-way —
+        // an invariant it never states. The supervisor decides it under the same
+        // lock as the action now, and this surface renders the two answers.
+        Err(crate::supervisor::SupervisorError::ReleaseInProgress(_)) => {
+            return Err(release_in_progress_conflict(id));
+        }
         Err(crate::supervisor::SupervisorError::RunNotFound(_)) => {
-            // `release_one` answers `RunNotFound` for two opposite states: the
-            // record is gone from `runs`, and the record is present with a
-            // release already running (supervisor.rs, the
-            // `explicit_release_in_progress || early_exit_release_taken` guard).
-            // Collapsing both into 404 is precisely the disagreement this task
-            // was filed for — `GET /runs/live` reporting a run the release
-            // surface claims does not exist. Re-read liveness and answer the
-            // question the caller actually asked.
-            if state
-                .supervisor
-                .snapshot()
-                .await
-                .runs
-                .iter()
-                .any(|run| run.run_id == id)
-            {
-                return Err(ApiError::conflict_json(json!({
-                    "error": "release already in progress",
-                    "run_id": id,
-                    "detail": format!(
-                        "run {id} is live and a release is already running for it, \
-                         so abandon has nothing to add. TASK-HAREX bounds that \
-                         drain at {}s; retry after it.",
-                        RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
-                    ),
-                })));
-            }
             return Err(ApiError::not_found(abandon_not_live_message(id)));
         }
         Err(other) => return Err(supervisor_recover_error(other)),
@@ -15208,9 +15224,14 @@ async fn release_artifactor_run_after_submit(state: &ApiState, run_id: &str) {
         )
         .await
     {
+        // orgasmic:TASK-RB1ZN — `ReleaseInProgress` reads exactly like the
+        // `RunNotFound` this arm already swallowed: some other authority owns
+        // this run's release. Listing it keeps the pre-split behaviour instead
+        // of turning that case into a new warning.
         if matches!(
             e,
             crate::supervisor::SupervisorError::RunNotFound(_)
+                | crate::supervisor::SupervisorError::ReleaseInProgress(_)
                 | crate::supervisor::SupervisorError::DeferredWhileInFlight(_)
         ) {
             return;
@@ -20857,9 +20878,27 @@ pub(crate) mod tests {
         // The production budget is 20s. Compress it the way TASK-HAREX's own
         // replay does — the same seam `ShutdownBudgets::release_drain` uses —
         // so this drives the real bounded path instead of a parallel one.
-        state
-            .supervisor
-            .set_release_drain_budget(Duration::from_millis(300));
+        acquire_a_run_nothing_will_ever_end_with_budget(
+            state,
+            project_root,
+            task_id,
+            Duration::from_millis(300),
+        )
+        .await
+    }
+
+    /// Same run, with the drain budget the caller needs.
+    ///
+    /// orgasmic:TASK-RB1ZN — the budget is read at `acquire` and captured by
+    /// that run's `DrainGate`, so a test that needs to make assertions *inside*
+    /// the wedge has to choose it here rather than after the fact.
+    async fn acquire_a_run_nothing_will_ever_end_with_budget(
+        state: &ApiState,
+        project_root: &FsPath,
+        task_id: &str,
+        drain_budget: Duration,
+    ) -> (String, PathBuf) {
+        state.supervisor.set_release_drain_budget(drain_budget);
         let driver = ApiHoldingDriver {
             gate: std::sync::Arc::new(tokio::sync::Notify::new()),
         };
@@ -21009,6 +21048,174 @@ pub(crate) mod tests {
             "the refusal must say the run is not live and why that ends it: {}",
             error.message
         );
+    }
+
+    /// orgasmic:TASK-RB1ZN — the incident's first symptom, on the wire, at both
+    /// release surfaces.
+    ///
+    /// A worker finalize is wedged in TASK-HAREX's bounded drain: the record is
+    /// still in `runs`, so `GET /runs/live` reports the run and `orgasmic
+    /// update` refuses on it. Everything an operator can reach for at that
+    /// moment — `POST /runs/:id/release` and `run recover --action abandon` —
+    /// used to answer 404 for a run both of them could see. That is the
+    /// disagreement: a 404 says "over, nothing to do", which is the one thing
+    /// that was not true.
+    ///
+    /// Post-split both surfaces answer 409 and name the bound. VSWZT reasoned
+    /// its way to this branch on the abandon side but could not cheaply build
+    /// the wedged state; this drives it, and adds the release route VSWZT did
+    /// not touch. The last two assertions are the other half of the split: once
+    /// the drain's budget expires and the record is gone, the same call goes
+    /// back to 404 — the CLI's already-released rescue branch (TASK-DWJVH item
+    /// B) keys on that and must keep working.
+    #[tokio::test]
+    async fn a_run_wedged_mid_release_is_a_conflict_at_both_release_surfaces() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = Home::at(tmp.path().join("home"));
+        home.ensure().unwrap();
+        let project_root = tmp.path().join("proj");
+        seed_project(&home, &project_root, "proj");
+        let state = direct_stage_test_state(home).await;
+        // Wide enough to make assertions inside, small enough that the test
+        // costs one wedge; the window itself is crossed in microseconds.
+        let (run_id, session_path) = acquire_a_run_nothing_will_ever_end_with_budget(
+            &state,
+            &project_root,
+            "TASK-RB1ZN-WIRE",
+            Duration::from_millis(1_500),
+        )
+        .await;
+
+        let wedged = tokio::spawn({
+            let supervisor = state.supervisor.clone();
+            let run_id = run_id.clone();
+            async move {
+                supervisor
+                    .release_with_finalization(
+                        &run_id,
+                        "worker finalize for TASK-RB1ZN-WIRE",
+                        ReleaseOutcome::Completed,
+                        true,
+                        None,
+                    )
+                    .await
+            }
+        });
+        // The finalize-admission marker (TASK-QSSQH) is appended under the same
+        // lock that sets the guard flag, so its arrival is proof the record is
+        // present AND already being released — no sleep, and no second call
+        // racing the first for admission.
+        assert!(
+            wait_session_reason(
+                &session_path,
+                crate::supervisor::WORKER_FINALIZE_ADMITTED_NOTE
+            )
+            .await,
+            "the wedging release must reach finalize admission: {}",
+            std::fs::read_to_string(&session_path).unwrap_or_default()
+        );
+
+        let release_error = post_run_release(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(RunReleaseRequest {
+                reason: Some("manager cancel while the finalize is wedged".into()),
+                request_id: None,
+                finalized_by_worker: false,
+                caller_identity: None,
+                terminal_tx: None,
+            }),
+        )
+        .await
+        .expect_err("a second release cannot succeed while the first holds admission");
+        assert_eq!(
+            release_error.status,
+            StatusCode::CONFLICT,
+            "the release route answered {} for a run it can see is live: {}",
+            release_error.status,
+            release_error.message
+        );
+
+        let abandon_error = post_run_recover(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(RunRecoverRequest {
+                action: Some(RECOVERY_ACTION_ABANDON.into()),
+                project: Some("proj".into()),
+                request_id: None,
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("abandon has nothing to add to a release already running");
+        assert_eq!(abandon_error.status, StatusCode::CONFLICT);
+
+        // One renderer, so the two surfaces cannot disagree about the same
+        // record, and the text names the bound rather than leaving the caller
+        // to guess whether retrying is pointless.
+        for error in [&release_error, &abandon_error] {
+            let body = error.body.clone().expect("the conflict carries a body");
+            assert_eq!(body["error"], "release already in progress");
+            assert_eq!(body["run_id"], run_id);
+            let detail = body["detail"].as_str().unwrap_or_default().to_string();
+            assert!(
+                detail.contains("is live and a release is already running")
+                    && detail.contains(&format!(
+                        "{}s",
+                        RELEASE_FINALIZATION_DRAIN_TIMEOUT.as_secs()
+                    )),
+                "the conflict must name the HAREX drain budget: {detail}"
+            );
+        }
+
+        assert!(
+            live_run_ids(&state).await.contains(&run_id),
+            "the two views must agree: both surfaces just called this run live, \
+             so the snapshot the update fence reads must still report it"
+        );
+
+        wedged
+            .await
+            .expect("the wedged release task")
+            .expect("the wedged release still completes within its drain budget");
+        assert!(live_run_ids(&state).await.is_empty());
+
+        // Genuinely gone now: 404 at both surfaces, with the answers that
+        // distinguish "this run is over" from "never heard of it".
+        let release_error = post_run_release(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(RunReleaseRequest {
+                reason: Some("manager cancel after the wedge cleared".into()),
+                request_id: None,
+                finalized_by_worker: false,
+                caller_identity: None,
+                terminal_tx: None,
+            }),
+        )
+        .await
+        .expect_err("the record is gone");
+        assert_eq!(release_error.status, StatusCode::NOT_FOUND);
+        assert!(release_error.message.contains("active run"));
+
+        let abandon_error = post_run_recover(
+            State(state.clone()),
+            Path(run_id.clone()),
+            Json(RunRecoverRequest {
+                action: Some(RECOVERY_ACTION_ABANDON.into()),
+                project: Some("proj".into()),
+                request_id: None,
+                force_inert: None,
+                mode: None,
+                harness: None,
+            }),
+        )
+        .await
+        .expect_err("the record is gone");
+        assert_eq!(abandon_error.status, StatusCode::NOT_FOUND);
+        assert!(abandon_error.message.contains("is not live"));
     }
 
     /// Shape 2 of 3: the pending-plan `reattach_existing` crash replay — the

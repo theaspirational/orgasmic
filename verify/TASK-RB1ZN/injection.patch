@@ -1,0 +1,24 @@
+diff --git a/crates/orgasmic-daemon/src/supervisor.rs b/crates/orgasmic-daemon/src/supervisor.rs
+index f67c300..0f5287b 100644
+--- a/crates/orgasmic-daemon/src/supervisor.rs
++++ b/crates/orgasmic-daemon/src/supervisor.rs
+@@ -2941,13 +2941,13 @@ impl Supervisor {
+                 .runs
+                 .get_mut(run_id)
+                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+-            // orgasmic:TASK-RB1ZN — the record is HERE, and someone else is
+-            // already releasing it. That is not "not found", and the liveness
+-            // read that says so happens under this same lock guard as the
+-            // action it refuses (the TASK-1T3FZ close-guard shape), so no
+-            // caller has to re-read a snapshot afterwards and race the removal.
++            // TASK-RB1ZN injection: the collapse. One error for two opposite
++            // states — the record is absent, and the record is present with a
++            // release already running. Every surface downstream can only
++            // render what it is told, so both answer 404 for a run they can
++            // also see in `/runs/live`.
+             if rec.explicit_release_in_progress || rec.early_exit_release_taken {
+-                return Err(SupervisorError::ReleaseInProgress(run_id.into()));
++                return Err(SupervisorError::RunNotFound(run_id.into()));
+             }
+             // orgasmic:task_3TEDA — stop control and drain while the record
+             // remains in the map; freeze classification only after quiescence.

@@ -284,6 +284,19 @@ pub enum SupervisorError {
     },
     #[error("run not found: {0}")]
     RunNotFound(String),
+    /// The record IS present and some other authority is already releasing it
+    /// (`explicit_release_in_progress` / `early_exit_release_taken`).
+    ///
+    /// orgasmic:TASK-RB1ZN — the opposite state from
+    /// [`SupervisorError::RunNotFound`], which used to answer for both. A caller
+    /// that cannot tell them apart cannot tell "this run is over" from "this run
+    /// is live and busy dying": the first is a 404 and the second is a 409 whose
+    /// only honest advice is to retry after the drain budget
+    /// ([`RELEASE_DRAIN_BUDGET`]) bounds it. Collapsing them is what let
+    /// `POST /runs/:id/release` answer 404 for a run `GET /runs/live` was still
+    /// reporting — the 2026-07-26 incident's first symptom.
+    #[error("release already in progress: {0}")]
+    ReleaseInProgress(String),
     #[error(
         "runtime ownership mismatch: field={field} expected={expected} got={got} run_id={run_id}"
     )]
@@ -2847,7 +2860,16 @@ impl Supervisor {
                     .release_one(&bs_run_id, &cascade_reason, outcome, false, None)
                     .await
                 {
-                    if !matches!(e, SupervisorError::RunNotFound(_)) {
+                    // orgasmic:TASK-RB1ZN — `ReleaseInProgress` joins
+                    // `RunNotFound` here rather than becoming new warn noise:
+                    // before the split, a babysitter someone else was already
+                    // releasing answered `RunNotFound` and was swallowed on
+                    // exactly this line. Both still mean the same thing to a
+                    // cascade — this babysitter is already someone's business.
+                    if !matches!(
+                        e,
+                        SupervisorError::RunNotFound(_) | SupervisorError::ReleaseInProgress(_)
+                    ) {
                         warn!(
                             error = %e,
                             run_id,
@@ -2861,6 +2883,16 @@ impl Supervisor {
         Ok(())
     }
 
+    /// Release exactly one run record.
+    ///
+    /// orgasmic:TASK-RB1ZN — two refusals, never one. `RunNotFound` means the
+    /// map does not hold `run_id`: whatever it named is over and carries its own
+    /// release tombstone. [`SupervisorError::ReleaseInProgress`] means the map
+    /// DOES hold it and another authority already took the release: the run is
+    /// live, the caller has nothing to add, and the wait is bounded by
+    /// [`RELEASE_DRAIN_BUDGET`]. Both decisions are made under the one lock
+    /// guard below, so a caller never has to re-read liveness to interpret the
+    /// answer it was given.
     async fn release_one(
         &self,
         run_id: &str,
@@ -2909,8 +2941,13 @@ impl Supervisor {
                 .runs
                 .get_mut(run_id)
                 .ok_or_else(|| SupervisorError::RunNotFound(run_id.into()))?;
+            // orgasmic:TASK-RB1ZN — the record is HERE, and someone else is
+            // already releasing it. That is not "not found", and the liveness
+            // read that says so happens under this same lock guard as the
+            // action it refuses (the TASK-1T3FZ close-guard shape), so no
+            // caller has to re-read a snapshot afterwards and race the removal.
             if rec.explicit_release_in_progress || rec.early_exit_release_taken {
-                return Err(SupervisorError::RunNotFound(run_id.into()));
+                return Err(SupervisorError::ReleaseInProgress(run_id.into()));
             }
             // orgasmic:task_3TEDA — stop control and drain while the record
             // remains in the map; freeze classification only after quiescence.
@@ -3298,7 +3335,12 @@ impl Supervisor {
                 // false Failed timeout tombstone (TASK-ARZGD).
                 return;
             }
-            if !matches!(e, SupervisorError::RunNotFound(_)) {
+            // orgasmic:TASK-RB1ZN — same reading as before the split: a run
+            // another authority is already releasing is not a failed sweep.
+            if !matches!(
+                e,
+                SupervisorError::RunNotFound(_) | SupervisorError::ReleaseInProgress(_)
+            ) {
                 warn!(
                     error = %e,
                     run_id = %revalidated.run_id,
@@ -12045,6 +12087,109 @@ mod tests {
             "completed",
         );
         assert_eq!(release_finalize_flags(&session_path), vec![true]);
+    }
+
+    /// Wait for the finalize-admission marker (TASK-QSSQH) to reach `path`.
+    ///
+    /// orgasmic:TASK-RB1ZN — the wedge detector, and deliberately not a sleep.
+    /// `release_one` appends this marker immediately after it sets
+    /// `explicit_release_in_progress`, under the lock, and before the teardown
+    /// that follows, so its arrival is proof that the record is present AND
+    /// already being released — the exact state the split is about. Polling with
+    /// a second release call instead would race the first for admission and
+    /// could win it.
+    async fn wait_for_finalize_admission(path: &Path) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if admission_marker_count(path) > 0 {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "finalize admission marker never landed in {}",
+                path.display()
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// orgasmic:TASK-RB1ZN — the collapse, on the wedge that produces it.
+    ///
+    /// One run, two refusals that used to be the same error. While the release
+    /// is wedged in TASK-HAREX's bounded drain the record is still in `runs`, so
+    /// `/runs/live` reports it; a second release then has to say "live, and
+    /// already being released" (409 at both surfaces) rather than "not found"
+    /// (404), which is what made the 2026-07-26 incident unreadable from its own
+    /// error text. After the drain's budget expires and the record is gone, the
+    /// same call must go back to the plain `RunNotFound` the CLI's
+    /// already-released rescue branch keys on — both halves asserted here,
+    /// against one run, in order.
+    ///
+    /// `StraySenderDriver` is what makes the wedge real rather than simulated:
+    /// its parked sender clone means `events.recv()` never yields `None`, so the
+    /// release sits in the drain for the whole budget. Compressed the way
+    /// HAREX's own replays compress it — 1.5s of wedge against a window the
+    /// assertions cross in microseconds, and the test costs one wedge.
+    #[tokio::test]
+    async fn a_run_wedged_mid_release_says_so_instead_of_run_not_found() {
+        let (sup, dir, _w) = make_supervisor();
+        sup.set_release_drain_budget(Duration::from_millis(1_500));
+        // The producer this driver hands over parks forever, so the join ahead
+        // of the drain otherwise spends a full production release timeout.
+        sup.set_driver_release_timeout(Duration::from_millis(150));
+        let driver = StraySenderDriver::new(false);
+        let req = dispatch_impl_req("TASK-RB1ZN-WEDGE", dir.path());
+        let session_path = req.session_path.clone();
+        let resp = sup.acquire(&driver, req).await.unwrap();
+        wait_for_event_count(&sup, &resp.run_id, 1).await;
+
+        let wedged = tokio::spawn({
+            let sup = sup.clone();
+            let run_id = resp.run_id.clone();
+            async move {
+                sup.release_with_finalization(
+                    &run_id,
+                    "worker finalize for TASK-RB1ZN-WEDGE",
+                    ReleaseOutcome::Completed,
+                    true,
+                    None,
+                )
+                .await
+            }
+        });
+        wait_for_finalize_admission(&session_path).await;
+
+        let err = sup
+            .release(&resp.run_id, "manager cancel", ReleaseOutcome::Cancelled)
+            .await
+            .expect_err("a second release cannot succeed while the first holds admission");
+        assert!(
+            matches!(err, SupervisorError::ReleaseInProgress(ref id) if *id == resp.run_id),
+            "a record that is present with a release running is the opposite of \
+             absent, got {err:?}"
+        );
+        assert!(
+            run_is_live(&sup, &resp.run_id).await,
+            "the two views must agree: the refusal above says this run is live, so \
+             the snapshot every liveness surface reads must still report it"
+        );
+
+        wedged
+            .await
+            .expect("the wedged release task")
+            .expect("the wedged release still completes within its drain budget");
+
+        assert!(!run_is_live(&sup, &resp.run_id).await);
+        let err = sup
+            .release(&resp.run_id, "manager cancel", ReleaseOutcome::Cancelled)
+            .await
+            .expect_err("the record is gone");
+        assert!(
+            matches!(err, SupervisorError::RunNotFound(ref id) if *id == resp.run_id),
+            "a genuinely absent record must keep the plain RunNotFound the CLI's \
+             already-released branch keys on, got {err:?}"
+        );
+        assert_eq!(release_count(&session_path), 1);
     }
 
     /// orgasmic:TASK-HAREX — the false positive this bound must not have.
