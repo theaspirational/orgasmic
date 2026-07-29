@@ -1,0 +1,19 @@
+# Pinned from the real red run of 2026-07-29 (fixture group 66869; the pids
+# themselves vary per run and are deliberately not pinned).
+#
+# The injection removes only the reap call from `OwnedProcessGroup::reap` —
+# registration, the group id, the `Drop` impl and the direct-child `kill`/`wait`
+# in `FixtureProcess::drop` all stay. That is the point: killing the FOREGROUND
+# pid is what the tree already did before this task, and the red below is what
+# it costs. The fixture shell dies; its backgrounded children do not.
+exit: 101
+
+contains: test test_fixtures::tests::panicking_body_still_reaps_the_whole_fixture_process_group ... FAILED
+contains: survived the panicking body; still alive:
+
+# The two orphan classes TASK-BCYMM measured on the machine, named by the probe
+# rather than counted. `worker-server` is the `(exec -a worker-server ...)`
+# subshell; `/bin/sleep 3600` is the fixture's own foreground sleep, reparented
+# to init and still there 40 minutes later in the original sighting.
+contains: worker-server 300
+contains: /bin/sleep 3600

@@ -595,6 +595,7 @@ pub mod test_tooling {
         LiveSessionGuard {
             lock,
             owned: Mutex::new(Vec::new()),
+            owned_groups: Mutex::new(Vec::new()),
         }
     }
 
@@ -610,6 +611,10 @@ pub mod test_tooling {
         /// `mut`: registration is a fact about the test, not a mutation the
         /// ~85 existing call sites should have to declare.
         owned: Mutex<Vec<OwnedSession>>,
+        // orgasmic:task_BCYMM
+        /// Process groups spawned by the holding test, reaped with the
+        /// sessions and before the flock releases.
+        owned_groups: Mutex<Vec<u32>>,
     }
 
     impl LiveSessionGuard {
@@ -653,6 +658,23 @@ pub mod test_tooling {
             })
         }
 
+        // orgasmic:task_BCYMM
+        /// Reap this whole process group when the guard drops — the process
+        /// half of [`Self::owns`], for a test that holds the flock *and*
+        /// spawns a fixture tree.
+        ///
+        /// `pgid` must be a group this test created (spawn with
+        /// `process_group(0)`, so the child's pid is its group id). A test that
+        /// does not otherwise need the flock should use the standalone
+        /// [`owned_process_group`] instead of taking the lock for this.
+        pub fn owns_process_group(&self, pgid: u32) -> &Self {
+            self.owned_groups
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(pgid);
+            self
+        }
+
         fn push(&self, entry: OwnedSession) -> &Self {
             self.owned
                 .lock()
@@ -665,17 +687,139 @@ pub mod test_tooling {
     impl Drop for LiveSessionGuard {
         fn drop(&mut self) {
             // Reap before unlocking: the next test binary blocked on the flock
-            // must not inherit this test's session.
+            // must not inherit this test's session — or its process tree.
             let owned = std::mem::take(
                 &mut *self
                     .owned
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner),
             );
+            let groups = std::mem::take(
+                &mut *self
+                    .owned_groups
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            );
+            for pgid in groups {
+                reap_process_group_blocking(pgid);
+            }
             reap_owned_sessions(owned);
             let _ = fs2::FileExt::unlock(&self.lock);
         }
     }
+
+    // orgasmic:task_BCYMM
+    /// Grace between the group TERM and the group KILL.
+    ///
+    /// Much shorter than the production `GROUP_REAP_GRACE` (2s) because the
+    /// members are test fixtures — shells and `sleep`s with no flush-on-exit
+    /// work to do — and this cost is paid on every fixture teardown in the
+    /// suite. The unconditional KILL below makes the window a courtesy, not a
+    /// correctness bound.
+    const PROCESS_GROUP_REAP_GRACE: Duration = Duration::from_millis(250);
+
+    // orgasmic:task_BCYMM
+    /// RAII drop-guard that reaps one spawned process GROUP.
+    ///
+    /// The process sibling of [`LiveSessionGuard`], and it exists separately
+    /// because most fixture-spawning tests are not live-mux tests: making them
+    /// take the workspace-wide flock just to get a reap would serialize them
+    /// against every live test in every crate.
+    ///
+    /// Reaping the *group* rather than the pid is the whole point. Fixture
+    /// arms background their children (`/bin/sleep 300 &`), so signalling only
+    /// the foreground process orphans those children to init, where they
+    /// outlive the test binary — the exact signature TASK-BCYMM measured.
+    #[must_use = "the group is reaped when this guard drops; binding it to `_` reaps immediately"]
+    pub struct OwnedProcessGroup {
+        pgid: Option<u32>,
+    }
+
+    // orgasmic:task_BCYMM
+    /// Reap process group `pgid` when the returned guard drops.
+    ///
+    /// Register the group as soon as the child is spawned — before the first
+    /// assertion that can panic — exactly as [`LiveSessionGuard::owns`] wants
+    /// its run id.
+    #[must_use = "the group is reaped when this guard drops; binding it to `_` reaps immediately"]
+    pub fn owned_process_group(pgid: u32) -> OwnedProcessGroup {
+        OwnedProcessGroup { pgid: Some(pgid) }
+    }
+
+    impl OwnedProcessGroup {
+        /// The group this guard will reap, or `None` once it has been reaped.
+        #[must_use]
+        pub fn pgid(&self) -> Option<u32> {
+            self.pgid
+        }
+
+        /// Reap now and disarm, so a caller that must observe the post-reap
+        /// state (or reap in a specific order relative to its own `wait`) can
+        /// do so without waiting for `Drop`. Idempotent.
+        pub fn reap(&mut self) {
+            if let Some(pgid) = self.pgid.take() {
+                reap_process_group_blocking(pgid);
+            }
+        }
+    }
+
+    impl Drop for OwnedProcessGroup {
+        fn drop(&mut self) {
+            self.reap();
+        }
+    }
+
+    // orgasmic:task_BCYMM
+    /// TERM the whole group, give it a short grace, then KILL whatever is left.
+    ///
+    /// The same idiom production release already uses
+    /// (`subprocess_stream_json::reap_process_group`, TASK-104.3 / TASK-J1XCB /
+    /// TASK-HAREX); this is its blocking `Drop`-callable twin, because `Drop`
+    /// cannot `.await` (see [`reap_owned_sessions`] for why neither async
+    /// escape works here).
+    ///
+    /// `pgid <= 1` is refused rather than signalled: `kill(-1, …)` is a
+    /// broadcast to every process this user may signal, and `kill(0, …)`
+    /// targets *our own* group — the test binary. A test that recorded a bad
+    /// pgid must leak, not take the machine down with it.
+    #[cfg(unix)]
+    fn reap_process_group_blocking(pgid: u32) {
+        const SIGTERM: i32 = 15;
+        const SIGKILL: i32 = 9;
+
+        let Ok(pgid) = i32::try_from(pgid) else {
+            return;
+        };
+        if pgid <= 1 {
+            emit_visible_notice(&format!(
+                "owned-process-group guard: refusing to signal group {pgid}; \
+                 a fixture process tree may have leaked"
+            ));
+            return;
+        }
+
+        unsafe {
+            libc::kill(-pgid, SIGTERM);
+        }
+        let deadline = std::time::Instant::now() + PROCESS_GROUP_REAP_GRACE;
+        while std::time::Instant::now() < deadline {
+            // `kill(-pgid, 0)` succeeds while any member — including a
+            // not-yet-waited zombie leader — still exists. Callers that own the
+            // leader's `Child` wait it themselves; here an early exit is a
+            // bonus, and the unconditional KILL below is the guarantee.
+            if unsafe { libc::kill(-pgid, 0) } != 0 {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        unsafe {
+            libc::kill(-pgid, SIGKILL);
+        }
+    }
+
+    /// Non-unix fallback: no process groups to reap.
+    #[cfg(not(unix))]
+    fn reap_process_group_blocking(_pgid: u32) {}
 
     /// `Drop` cannot `.await`, and both async escapes are wrong here:
     ///

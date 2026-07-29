@@ -11566,16 +11566,18 @@ mod tests {
         // backgrounded `sleep` children it spawns neither inherit the test
         // runner's stdout/stderr (which would hold a piped `cargo test | tail`
         // open past test completion) nor survive cleanup as orphans reparented
-        // to init. We kill the entire group below, not just the foreground pid.
-        use std::os::unix::process::CommandExt as _;
-        let mut wrapper = Command::new(crate::test_fixtures::shared_test_executable())
-            .args(["cursor-worker-sibling", ready.to_str().unwrap()])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .expect("spawn fake cursor-agent");
+        // to init. The handle owns the whole group and reaps it on `Drop`
+        // (orgasmic:task_BCYMM), so the `ready` deadline assertion below —
+        // which is the one that fails under load (TASK-STWVB) — no longer
+        // skips cleanup on its way out.
+        let wrapper = crate::test_fixtures::spawn_in_own_process_group(
+            Command::new(crate::test_fixtures::shared_test_executable())
+                .args(["cursor-worker-sibling", ready.to_str().unwrap()])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "fake cursor-agent",
+        );
         let wrapper_pid = wrapper.id();
         let ready_deadline = Instant::now() + Duration::from_secs(30);
         while !ready.exists() {
@@ -11601,13 +11603,9 @@ mod tests {
             "expected worker-server child, got {command:?}"
         );
 
-        // Reap the whole process group (wrapper + its backgrounded sleeps).
-        // The wrapper's pid is the group leader because of `process_group(0)`.
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{wrapper_pid}")])
-            .status();
-        let _ = wrapper.kill();
-        let _ = wrapper.wait();
+        // The wrapper and its backgrounded sleeps are reaped as a group when
+        // `wrapper` drops, on this path and on every panic path above it.
+        drop(wrapper);
     }
 
     #[cfg(unix)]
@@ -11615,16 +11613,17 @@ mod tests {
     fn direct_child_pid_finds_wrapper_child_process() {
         // Null stdio + own process group so the backgrounded `sleep 300` cannot
         // inherit a piped `cargo test | tail` stdout (which would block on EOF)
-        // and is reaped with the group rather than orphaned to init.
-        use std::os::unix::process::CommandExt as _;
-        let mut wrapper = Command::new("sh")
-            .args(["-c", "sleep 300 & cat"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
-            .spawn()
-            .expect("spawn wrapper");
+        // and is reaped with the group rather than orphaned to init. The handle
+        // reaps that group on `Drop` (orgasmic:task_BCYMM), including on the
+        // `wrapper never forked a direct child` deadline panic below.
+        let wrapper = crate::test_fixtures::spawn_in_own_process_group(
+            Command::new("sh")
+                .args(["-c", "sleep 300 & cat"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "wrapper",
+        );
         let wrapper_pid = wrapper.id();
         // Wait for `sh` to actually fork `sleep 300` instead of assuming it has.
         // The shared state here is host scheduling: a fixed sleep asserts that
@@ -11653,13 +11652,9 @@ mod tests {
             command.contains("sleep 300"),
             "expected inner worker command, got {command:?}"
         );
-        // Reap the whole process group (the `cat` wrapper + its backgrounded
-        // `sleep 300`); the wrapper pid is the group leader.
-        let _ = Command::new("kill")
-            .args(["-TERM", &format!("-{wrapper_pid}")])
-            .status();
-        let _ = wrapper.kill();
-        let _ = wrapper.wait();
+        // The `cat` wrapper and its backgrounded `sleep 300` are reaped as a
+        // group when `wrapper` drops, here and on every panic path above.
+        drop(wrapper);
     }
 
     #[tokio::test]

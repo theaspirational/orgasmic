@@ -1,0 +1,12 @@
+# One line. Run from the repo root by `orgasmic verify TASK-BCYMM`.
+# `env -u ...` because a dispatch leaks its run id and home into subprocesses.
+#
+# One target, ~6s, no tmux, no network, no rmux daemon: the fixture module's
+# own test, which spawns the `cursor-worker-sibling` arm (the arm TASK-BCYMM
+# measured leaking), panics between the spawn and the cleanup, and then reads
+# the process table for survivors in the fixture's process group.
+#
+# It is the whole claim in one command. GREEN says the guard reaps the tree on
+# the unwind path; RED lists the exact processes that outlived the test, which
+# is the leak the task was filed for.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib test_fixtures::tests::panicking_body_still_reaps_the_whole_fixture_process_group
