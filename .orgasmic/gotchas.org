@@ -611,3 +611,34 @@ channel, dispatch long-thinking workers with
 =--governance-json '{"stall_timeout_secs":3600}'= (max_run_duration still
 bounds the run). A live worker about to be hit can be nudged with
 =rmux resize-window= (forces a TUI repaint → pane bytes → fresh window).
+
+** =$RMUX= outranks =RMUX_TMPDIR=, so a socket-root pin alone cannot steer rmux inside a worker
+Measured 2026-07-29 (TASK-SZJ2B), from inside a worker pane, deterministic:
+
+: $ RMUX_TMPDIR=/tmp/private rmux new-session -d -s probe -- sleep 60
+: $ rmux list-sessions                    # the DEFAULT server
+: ... probe                               # <- landed on the LIVE server
+: $ env -u RMUX -u TMUX RMUX_TMPDIR=/tmp/private rmux new-session -d -s probe
+: $ find /tmp/private
+: /tmp/private/rmux-501/default           # <- landed on the private server
+
+=rmux-ipc='s =resolve_endpoint= reads =-S=, then =-L=, then =$RMUX=, then the
+RMUX-owned =$TMUX=, and only then falls through to =RMUX_TMPDIR=. A worker
+runs inside an rmux pane, so =$RMUX= is set and names the server hosting live
+dispatch panes. Note this is the CLI's resolution: the *SDK* resolves
+=RMUX_SDK_ENDPOINT= and then =rmux-ipc='s default, which reads =RMUX_TMPDIR=
+and never =$RMUX=. So pinning =RMUX_TMPDIR= alone SPLITS a run — SDK sessions
+on the private server, every spawned =rmux= call on the live one — which is
+worse than either end of it. Isolate with all five keys together
+(=RMUX_TMPDIR= set; =RMUX=, =RMUX_PANE=, =TMUX=, =TMUX_PANE= removed); that is
+what =rmux::test_tooling::own_rmux_server_for_tests= does. Durable invariant.
+Corollary for =StallableRmuxEndpoint=, which pins =RMUX_TMPDIR= only: its SDK
+half is isolated, its driver-spawned CLI half is not.
+
+** An rmux socket root under =$TMPDIR= is long enough to fail with =File name too long=
+Measured 2026-07-29 (TASK-SZJ2B): a unix socket path is capped near 104 bytes,
+macOS =$TMPDIR= is a ~50-character =/var/folders/…/T/= path, and
+=<tmpdir>/rmux-<uid>/default= under a =tempfile::TempDir= inside it overruns —
+=i/o error: File name too long (os error 63)=, from every rmux call, with
+nothing naming the length as the cause. Private rmux roots for tests go under
+=/tmp= (also rmux's own fallback socket root).

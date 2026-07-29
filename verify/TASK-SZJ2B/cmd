@@ -1,0 +1,11 @@
+# One line. Run from the repo root by `orgasmic verify TASK-SZJ2B`.
+#
+# Deliberately the one test in this family that contacts no rmux server at all.
+# Under the injection the artifact-generation tests are unpinned again, so any
+# probe that RAN one of them would create a production-named
+# orgasmic-rmux-run-* session on whichever server the environment selects: the
+# operator's own on a developer box, and inside an orgasmic worker the rmux
+# server hosting live dispatch panes — which is the very thing this task exists
+# to stop. A proof that has to damage what it proves is unsafe to replay; this
+# one is a pure source-discipline assertion (the TASK-0RCRY shape).
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --lib every_artifact_generation_test_claims_the_owned_rmux_endpoint

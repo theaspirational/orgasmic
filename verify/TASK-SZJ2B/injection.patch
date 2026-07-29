@@ -1,0 +1,16 @@
+diff --git a/crates/orgasmic-daemon/src/api.rs b/crates/orgasmic-daemon/src/api.rs
+--- a/crates/orgasmic-daemon/src/api.rs
++++ b/crates/orgasmic-daemon/src/api.rs
+@@ -30224,7 +30224,11 @@
+     #[tokio::test]
+     async fn post_artifact_generate_creates_regenerating_record_and_launches_run() {
+         let live_guard = live_session_guard();
+-        let _rmux = claim_owned_rmux_endpoint(&live_guard).await;
++        // TASK-SZJ2B injection: the pre-fix state. Nothing pins the rmux
++        // endpoint, so the real Supervisor::acquire below creates its
++        // production-named orgasmic-rmux-run-* session on whichever server
++        // the environment selects -- inside an orgasmic worker, the server
++        // hosting live dispatch panes.
+         let tmp = tempfile::tempdir().unwrap();
+         let home = Home::at(tmp.path().join("home"));
+         home.ensure().unwrap();

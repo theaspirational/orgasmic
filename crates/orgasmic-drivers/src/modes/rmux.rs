@@ -554,6 +554,12 @@ pub mod test_tooling {
             endpoint: rmux_sdk::RmuxEndpoint,
             name: String,
         },
+        // orgasmic:task_SZJ2B
+        /// Every session named `orgasmic-rmux-*` on a server this test PROCESS
+        /// owns. Only [`LiveSessionGuard::owns_runs_on`] can build one, and it
+        /// takes an [`OwnedRmuxServer`] — see there for why a prefix reap is
+        /// safe at that endpoint and nowhere else.
+        OwnedServerRuns { endpoint: rmux_sdk::RmuxEndpoint },
     }
 
     /// Serialize real-tmux/rmux tests across ALL test binaries, and reap the
@@ -642,6 +648,31 @@ pub mod test_tooling {
             self.push(OwnedSession::Named {
                 endpoint: rmux_sdk::RmuxEndpoint::Default,
                 name: name.into(),
+            })
+        }
+
+        // orgasmic:task_SZJ2B
+        /// Reap every `orgasmic-rmux-*` session on a server this test process
+        /// owns ([`own_rmux_server_for_tests`]) when this guard drops.
+        ///
+        /// What this buys over [`Self::owns`] is *when* it can be registered.
+        /// `owns` needs a run id, and the run id only exists once the awaited
+        /// call that already created the session has returned — so a handler
+        /// `Err` (the `.expect` panics with the id unknown to the guard) or a
+        /// cancelled future leaks the session that call made. This needs
+        /// nothing the test does not already have, so it goes in *before* the
+        /// call and the window closes.
+        ///
+        /// A name-prefix reap is safe here and only here, and the argument is
+        /// the proof: an [`OwnedRmuxServer`] is obtainable only from
+        /// [`own_rmux_server_for_tests`], which starts the server, so nothing
+        /// another process created can be living on it. The standing warning on
+        /// `reap_owned_sessions_blocking` — a real dispatch's session can be
+        /// live on the same endpoint — is about the DEFAULT endpoint, which
+        /// this method has no way to name.
+        pub fn owns_runs_on(&self, server: &OwnedRmuxServer) -> &Self {
+            self.push(OwnedSession::OwnedServerRuns {
+                endpoint: server.endpoint(),
             })
         }
 
@@ -873,9 +904,20 @@ pub mod test_tooling {
         }
     }
 
+    // orgasmic:task_SZJ2B
+    /// Prefix every session the rmux driver creates carries
+    /// (`rmux_session_name`). The keepalive of an [`OwnedRmuxServer`] must not
+    /// match it.
+    const OWNED_RUN_SESSION_PREFIX: &str = "orgasmic-rmux-";
+
     /// Names of every session live on the default rmux endpoint, or an empty
     /// list if rmux is absent or has no daemon. For tests that must prove the
     /// production path reaped a session whose run id they never observed.
+    ///
+    /// "Default" means whatever this process's environment resolves — which is
+    /// the process-owned private server once [`own_rmux_server_for_tests`] has
+    /// pinned it. For the shared server that hosts live dispatch panes, see
+    /// [`shared_rmux_session_names`].
     #[must_use]
     pub fn rmux_session_names() -> Vec<String> {
         let probe = super::probe_rmux_binary();
@@ -883,6 +925,326 @@ pub mod test_tooling {
             return Vec::new();
         };
         list_sessions_blocking(&rmux_bin, &rmux_sdk::RmuxEndpoint::Default).unwrap_or_default()
+    }
+
+    // orgasmic:task_SZJ2B
+    /// Names of every session live on the SHARED rmux server — the one that
+    /// hosts live dispatch panes — no matter how this process's own endpoint
+    /// is pinned.
+    ///
+    /// STRICTLY READ-ONLY, and it must stay that way. This exists so a test can
+    /// *bracket* its own run and prove nothing of its making appeared over
+    /// there; the sessions it returns belong to real dispatched workers. Never
+    /// pass a name from this list to a kill.
+    ///
+    /// The child inherits none of the endpoint selectors so it resolves the
+    /// platform default: [`own_rmux_server_for_tests`] pins `RMUX_TMPDIR` for
+    /// this process, and inside an orgasmic worker `$RMUX`/`$TMUX` name the
+    /// live server, so leaving either in place would answer a different
+    /// question than the one asked.
+    #[must_use]
+    pub fn shared_rmux_session_names() -> Vec<String> {
+        let probe = super::probe_rmux_binary();
+        let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
+            return Vec::new();
+        };
+        let output = Command::new(rmux_bin)
+            .args(["list-sessions", "-F", "#{session_name}"])
+            .env_remove("RMUX_TMPDIR")
+            .env_remove("TMUX_TMPDIR")
+            .env_remove("RMUX")
+            .env_remove("TMUX")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output();
+        let Ok(output) = output else {
+            return Vec::new();
+        };
+        if !output.status.success() {
+            return Vec::new();
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    // orgasmic:task_SZJ2B
+    /// An rmux server this test process started, owns, and can safely create
+    /// production-named sessions on.
+    ///
+    /// The rmux twin of `tmux::own_tmux_server_for_tests` (TASK-0RCRY), and it
+    /// exists for the same reason one layer over: a test that drives a real
+    /// `Supervisor::acquire` on the rmux driver creates a session named exactly
+    /// like a dispatched worker's, and without a pin that session lands on
+    /// whichever server the environment selects — inside an orgasmic worker,
+    /// the server hosting live dispatch panes.
+    ///
+    /// `-L` is not the lever here. The driver reaches rmux through the SDK,
+    /// which has no socket-label knob; what steers *both* the in-process SDK
+    /// and every `rmux` the driver spawns is the socket root. See
+    /// [`rmux_endpoint_pin_for`] for the environment that pins it and for the
+    /// measurement behind each entry.
+    #[cfg(unix)]
+    pub struct OwnedRmuxServer {
+        root: std::path::PathBuf,
+        endpoint_path: std::path::PathBuf,
+    }
+
+    // orgasmic:task_SZJ2B
+    /// Name of the session that holds the owned server open.
+    ///
+    /// Deliberately NOT `orgasmic-rmux-*`: [`LiveSessionGuard::owns_runs_on`]
+    /// reaps that prefix on this server, and a keepalive it could reap would
+    /// hand back the very "server drains to zero sessions and tears itself
+    /// down mid-run" race the keepalive exists to close.
+    #[cfg(unix)]
+    const OWNED_SERVER_KEEPALIVE: &str = "orgasmic-test-keepalive";
+
+    /// Upper bound on how long the keepalive holds the owned server open, so a
+    /// recycled pid cannot inherit an immortal daemon. Six hours, the same cap
+    /// `own_tmux_server_for_tests` uses.
+    #[cfg(unix)]
+    const OWNED_SERVER_KEEPALIVE_SECONDS: u32 = 21600;
+
+    #[cfg(unix)]
+    static OWNED_RMUX_SERVER: std::sync::OnceLock<OwnedRmuxServer> = std::sync::OnceLock::new();
+
+    // orgasmic:task_SZJ2B
+    /// Pin this process — and every `rmux` it spawns — to an rmux server it
+    /// owns, and hold that server open for as long as the process lives.
+    ///
+    /// Idempotent and safe to call from every rmux-gated test: the first caller
+    /// starts the server and every later caller gets the same handle. The
+    /// environment pin is re-applied on *every* call rather than only on the
+    /// first, because tests in this workspace do mutate process-global
+    /// environment, and a run that silently lost `RMUX_TMPDIR` mid-flight would
+    /// fall back to the shared server — the exact failure this exists to
+    /// prevent, in its hardest-to-see form.
+    ///
+    /// Reaping needs no atexit hook, exactly as on the tmux side: each test
+    /// still reaps its own sessions through [`LiveSessionGuard`], and the
+    /// keepalive pane runs a shell loop that exits once this process is gone,
+    /// which removes the server's last session and lets rmux tear the daemon
+    /// down and unlink the socket by itself.
+    #[cfg(unix)]
+    pub fn own_rmux_server_for_tests() -> &'static OwnedRmuxServer {
+        let server = OWNED_RMUX_SERVER.get_or_init(OwnedRmuxServer::start);
+        server.pin_process_environment();
+        server
+    }
+
+    #[cfg(unix)]
+    impl OwnedRmuxServer {
+        /// The endpoint this server listens on, as an explicit socket path.
+        ///
+        /// Explicit and not [`rmux_sdk::RmuxEndpoint::Default`] on purpose: a
+        /// reap addressed at "default" is only correct while the environment
+        /// pin holds, and the one thing a reap must never do is follow a lost
+        /// pin to the shared server.
+        #[must_use]
+        pub fn endpoint(&self) -> rmux_sdk::RmuxEndpoint {
+            rmux_sdk::RmuxEndpoint::UnixSocket(self.endpoint_path.clone())
+        }
+
+        /// The socket this process's rmux calls must resolve to.
+        #[must_use]
+        pub fn endpoint_path(&self) -> &std::path::Path {
+            &self.endpoint_path
+        }
+
+        /// Session names live on this server, keepalive included.
+        #[must_use]
+        pub fn session_names(&self) -> Vec<String> {
+            let probe = super::probe_rmux_binary();
+            let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
+                return Vec::new();
+            };
+            list_sessions_blocking(&rmux_bin, &self.endpoint()).unwrap_or_default()
+        }
+
+        fn start() -> Self {
+            let pid = std::process::id();
+            let root = owned_rmux_socket_root(pid);
+            // A previous run at this pid left its (dead) socket behind; a
+            // recycled pid must not inherit it.
+            sweep_stale_owned_rmux_roots(pid);
+            let root = prepare_owned_rmux_root(&root).unwrap_or(root);
+            let endpoint_path = owned_rmux_endpoint_path(&root);
+            let server = Self {
+                root,
+                endpoint_path,
+            };
+            // Pin before the keepalive so a `-S`-addressed daemon and an
+            // SDK-resolved one are the same daemon from the first call.
+            server.pin_process_environment();
+            server.start_keepalive(pid);
+            server
+        }
+
+        /// Apply [`rmux_endpoint_pin_for`] to this process. Idempotent.
+        fn pin_process_environment(&self) {
+            for (key, value) in rmux_endpoint_pin_for(Some(&self.root)) {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+
+        /// Best effort: a host without rmux has no server to hold open, and the
+        /// driver degrades to inert there anyway. The pin above is what keeps
+        /// that host safe, and it does not depend on this succeeding.
+        fn start_keepalive(&self, pid: u32) {
+            let probe = super::probe_rmux_binary();
+            let Some(rmux_bin) = probe.path.filter(|_| probe.found) else {
+                return;
+            };
+            let keepalive = format!(
+                "i=0; while [ $i -lt {OWNED_SERVER_KEEPALIVE_SECONDS} ] \
+                 && kill -0 {pid} 2>/dev/null; do sleep 1; i=$((i+1)); done"
+            );
+            // Addressed with an explicit `-S` rather than through the pin: this
+            // is the call that proves the pinned path and the daemon's actual
+            // socket are the same file.
+            let _ = Command::new(&rmux_bin)
+                .args([
+                    OsString::from("-S"),
+                    self.endpoint_path.clone().into_os_string(),
+                    OsString::from("new-session"),
+                    OsString::from("-d"),
+                    OsString::from("-s"),
+                    OsString::from(OWNED_SERVER_KEEPALIVE),
+                    OsString::from("--"),
+                    OsString::from("/bin/sh"),
+                    OsString::from("-c"),
+                    OsString::from(keepalive),
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    }
+
+    // orgasmic:task_SZJ2B
+    /// Every environment change that steers rmux endpoint resolution at `root`,
+    /// as `(key, value)` pairs where `None` means "remove". `None` for `root`
+    /// is "whichever server the environment selects" — the unpinned state.
+    ///
+    /// Split from the code that applies it so "a pinned root really steers
+    /// rmux" is provable without mutating process-global environment while
+    /// other tests are spawning real rmux clients (the TASK-0RCRY shape).
+    ///
+    /// The removals are not belt-and-braces. Inside an orgasmic worker the
+    /// process runs in an rmux pane, so `$RMUX` (and the RMUX-owned `$TMUX`)
+    /// name the LIVE dispatch server, and rmux's endpoint resolution reads both
+    /// BEFORE falling through to `RMUX_TMPDIR`. Measured 2026-07-29 under
+    /// TASK-SZJ2B, from inside a worker pane:
+    ///
+    /// ```text
+    /// $ RMUX_TMPDIR=<private> rmux new-session -d -s probe -- sleep 60
+    /// $ rmux list-sessions          # the DEFAULT server
+    /// ... probe                     # <- landed on the live server
+    /// $ env -u RMUX -u TMUX RMUX_TMPDIR=<private> rmux new-session -d -s probe
+    /// $ find <private>
+    /// <private>/rmux-501/default    # <- landed on the private server
+    /// ```
+    ///
+    /// The SDK half resolves differently again: it consults `RMUX_SDK_ENDPOINT`
+    /// and then `rmux-ipc`'s default, which reads `RMUX_TMPDIR` and never
+    /// `$RMUX`. So a pin of `RMUX_TMPDIR` alone splits the two halves — SDK
+    /// sessions private, spawned `rmux` calls on the live server — which is
+    /// worse than either end of it. All five keys move together or none do.
+    #[cfg(unix)]
+    pub(super) fn rmux_endpoint_pin_for(
+        root: Option<&std::path::Path>,
+    ) -> Vec<(&'static str, Option<OsString>)> {
+        let Some(root) = root else {
+            return Vec::new();
+        };
+        vec![
+            (RMUX_TMPDIR_ENV, Some(root.as_os_str().to_owned())),
+            ("RMUX", None),
+            ("RMUX_PANE", None),
+            ("TMUX", None),
+            ("TMUX_PANE", None),
+        ]
+    }
+
+    // orgasmic:task_SZJ2B
+    /// Socket root for this process's owned rmux server.
+    ///
+    /// Under `/tmp` and not `std::env::temp_dir()`: a unix socket path is
+    /// capped near 104 bytes, macOS `$TMPDIR` is a ~50-character
+    /// `/var/folders/...` path, and the resulting socket is long enough to fail
+    /// with `File name too long (os error 63)` — measured under TASK-SZJ2B.
+    /// `/tmp` is also rmux's own fallback socket root, so this stays inside the
+    /// layout rmux already expects.
+    #[cfg(unix)]
+    fn owned_rmux_socket_root(pid: u32) -> std::path::PathBuf {
+        std::path::PathBuf::from(format!("/tmp/orgasmic-rmux-test-{pid}"))
+    }
+
+    // orgasmic:task_SZJ2B
+    /// Where rmux resolves the default socket under `root` — the same layout
+    /// `rmux-ipc` computes from `RMUX_TMPDIR`, so the `-S` the keepalive passes
+    /// and the endpoint the SDK discovers are one file.
+    #[cfg(unix)]
+    pub(super) fn owned_rmux_endpoint_path(root: &std::path::Path) -> std::path::PathBuf {
+        root.join(format!("rmux-{}", unsafe { libc::getuid() }))
+            .join("default")
+    }
+
+    /// Create the root owner-only and canonicalize it: `rmux-ipc` canonicalizes
+    /// the socket root, so on macOS a `/tmp/...` root surfaces as
+    /// `/private/tmp/...` in the resolved endpoint. Canonicalize up front or
+    /// every endpoint-exact comparison compares two spellings of one socket.
+    #[cfg(unix)]
+    fn prepare_owned_rmux_root(root: &std::path::Path) -> Option<std::path::PathBuf> {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::create_dir_all(root).ok()?;
+        std::fs::set_permissions(root, std::fs::Permissions::from_mode(0o700)).ok()?;
+        let root = std::fs::canonicalize(root).ok()?;
+        let socket_dir = owned_rmux_endpoint_path(&root).parent()?.to_path_buf();
+        std::fs::create_dir_all(&socket_dir).ok()?;
+        std::fs::set_permissions(&socket_dir, std::fs::Permissions::from_mode(0o700)).ok()?;
+        Some(root)
+    }
+
+    // orgasmic:task_SZJ2B
+    /// Remove owned-server roots left by test processes that are gone.
+    ///
+    /// Not tidiness: the root is keyed by pid, pids are recycled, and a stale
+    /// socket at the path a new run is about to use is a daemon-startup hazard.
+    /// `pid` itself is never swept — the caller is about to use it.
+    #[cfg(unix)]
+    fn sweep_stale_owned_rmux_roots(pid: u32) {
+        const PREFIX: &str = "orgasmic-rmux-test-";
+        let Ok(entries) = std::fs::read_dir("/tmp") else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(other) = name
+                .strip_prefix(PREFIX)
+                .and_then(|s| s.parse::<u32>().ok())
+            else {
+                continue;
+            };
+            if other == pid {
+                continue;
+            }
+            let alive =
+                i32::try_from(other).is_ok_and(|other| unsafe { libc::kill(other, 0) } == 0);
+            if !alive {
+                let _ = std::fs::remove_dir_all(entry.path());
+            }
+        }
     }
 
     fn reap_owned_sessions_blocking(rmux_bin: &str, owned: &[OwnedSession]) -> Result<(), String> {
@@ -904,6 +1266,24 @@ pub mod test_tooling {
                         // nothing this guard owns is still alive. Never widen
                         // this to "kill anything that looks like ours" — a real
                         // dispatch's session can be live on the same endpoint.
+                        Err(_) => continue,
+                    }
+                }
+                // orgasmic:task_SZJ2B
+                // The one place the paragraph above does not apply: this
+                // endpoint is a server the test PROCESS started, so every
+                // `orgasmic-rmux-*` session on it is this run's. The keepalive
+                // (`orgasmic-test-keepalive`) deliberately does not match the
+                // prefix, so the server survives its own reap.
+                OwnedSession::OwnedServerRuns { endpoint } => {
+                    match list_sessions_blocking(rmux_bin, endpoint) {
+                        Ok(names) => (
+                            endpoint,
+                            names
+                                .into_iter()
+                                .filter(|name| name.starts_with(OWNED_RUN_SESSION_PREFIX))
+                                .collect::<Vec<_>>(),
+                        ),
                         Err(_) => continue,
                     }
                 }
@@ -3611,6 +3991,45 @@ mod tests {
                 OsString::from("-t"),
                 OsString::from("planned_name_with-separators"),
             ]
+        );
+    }
+
+    // orgasmic:task_SZJ2B
+    #[cfg(unix)]
+    #[test]
+    fn owned_rmux_root_pins_every_selector_that_can_reach_the_shared_server() {
+        use super::test_tooling::{owned_rmux_endpoint_path, rmux_endpoint_pin_for};
+
+        let root = std::path::Path::new("/tmp/orgasmic-rmux-test-42");
+        let pin = rmux_endpoint_pin_for(Some(root));
+
+        assert_eq!(
+            pin.iter()
+                .find(|(key, _)| *key == "RMUX_TMPDIR")
+                .and_then(|(_, value)| value.clone()),
+            Some(OsString::from(root)),
+            "a pinned socket root must reach rmux endpoint resolution as RMUX_TMPDIR=<root>"
+        );
+        // Inside a worker these two name the LIVE dispatch server and are read
+        // BEFORE RMUX_TMPDIR, so leaving either in place leaves the pin inert
+        // for every `rmux` the driver spawns.
+        for inherited in ["RMUX", "TMUX"] {
+            assert_eq!(
+                pin.iter().find(|(key, _)| *key == inherited),
+                Some(&(inherited, None)),
+                "a pinned run must clear ${inherited}; it outranks RMUX_TMPDIR"
+            );
+        }
+        assert!(
+            rmux_endpoint_pin_for(None).is_empty(),
+            "no root means no pin: the unpinned state must not be spelled as a partial pin"
+        );
+
+        assert_eq!(
+            owned_rmux_endpoint_path(root),
+            root.join(format!("rmux-{}", unsafe { libc::getuid() }))
+                .join("default"),
+            "the owned endpoint must sit where rmux-ipc resolves the default socket under a root"
         );
     }
 

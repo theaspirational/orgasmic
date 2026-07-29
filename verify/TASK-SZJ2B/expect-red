@@ -1,0 +1,31 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied.
+#
+# WHY THIS RED AND NOT THE LEAKED SESSION ITSELF
+#
+# The defect's runtime symptom is a production-named `orgasmic-rmux-run-*`
+# session left on the SHARED rmux server — the one hosting live dispatch panes.
+# The manager reaped exactly such an orphan on 2026-07-29 (TASK-BCYMM §5), and
+# three real dispatch sessions were live on that server throughout the work that
+# fixed this. Reproducing the symptom means creating one more, on that server,
+# on purpose, on every replay. A proof must not damage what it proves.
+#
+# So this artifact pins the cause one layer up: the family's isolation
+# discipline, asserted by reading the source. It is deterministic, it contacts
+# no rmux daemon, and it names the offending test.
+#
+# The behavioural half lives in the suite as
+# `artifact_generation_lands_no_session_on_the_shared_rmux_server`, which drives
+# a real generate and brackets it with read-only listings of the shared server.
+# It is deliberately NOT in `cmd`: under the injection it is one of the tests
+# that would land a session over there.
+
+exit: 101
+
+# The cause, named exactly, with the test that lost its isolation.
+contains: post_artifact_generate_creates_regenerating_record_and_launches_run drives a real rmux run without first claiming the process-owned endpoint
+contains: orgasmic-rmux-run-* session on the SHARED rmux server
+
+# One test, and it is this one. If a future edit makes the whole binary
+# collapse, that is a different failure and this proof has not reproduced the
+# defect it claims to.
+contains: test result: FAILED. 0 passed; 1 failed
