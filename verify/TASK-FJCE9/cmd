@@ -1,0 +1,10 @@
+# One line. Run from the repo root by `orgasmic verify TASK-FJCE9`.
+#
+# Deliberately ONE test, and deliberately the one that contacts no server.
+#
+# A behavioural replay of this defect IS this defect. Under the injection the
+# file's `kill-session` goes back to an unpinned tmux, and unpinned inside an
+# orgasmic worker means /private/tmp/rmux-501/default — the rmux server hosting
+# live worker panes. A proof must not damage the thing it proves, so the replay
+# asserts on the argv the file builds and spawns nothing.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --test recovery_fault_restart every_tmux_invocation_is_pinned_to_an_owned_server

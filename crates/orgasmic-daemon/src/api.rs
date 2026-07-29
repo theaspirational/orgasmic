@@ -22338,6 +22338,47 @@ pub(crate) mod tests {
         assert!(tmux_mode_availability_for(None).is_err());
     }
 
+    // orgasmic:TASK-FJCE9
+    /// The rule above is copied once, into `orgasmic_drivers::modes::tmux`, and
+    /// this is the copy's drift guard.
+    ///
+    /// Why a copy exists at all: this one is `pub(crate)` inside a
+    /// `#[cfg(test)]` module, and an integration-test crate
+    /// (`tests/recovery_fault_restart.rs`, which drives real tmux and killed
+    /// sessions on whatever server `PATH` selected — TASK-FJCE9) cannot import
+    /// either. TASK-VJ633 owns collapsing the two into one canonical home in
+    /// `orgasmic_drivers`; until then this test is what makes "two copies"
+    /// safe. It lives here, beside the canonical rule, so editing that rule
+    /// without editing the copy fails in the file being edited.
+    #[test]
+    fn daemon_and_driver_tmux_strictness_agree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rmux = tmp.path().join("rmux");
+        std::fs::write(&rmux, "").unwrap();
+        let shim = tmp.path().join("shim-dir/tmux");
+        std::fs::create_dir_all(shim.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&rmux, &shim).unwrap();
+        let real = tmp.path().join("real-dir/tmux");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "").unwrap();
+        let absent = tmp.path().join("nowhere/tmux");
+
+        for resolved in [
+            None,
+            Some(shim.as_path()),
+            Some(real.as_path()),
+            Some(absent.as_path()),
+        ] {
+            assert_eq!(
+                tmux_mode_availability_for(resolved).is_ok(),
+                orgasmic_drivers::modes::tmux::tmux_mode_availability_for(resolved).is_ok(),
+                "the daemon's tmux strictness rule and its orgasmic_drivers copy \
+                 disagree about {resolved:?}; TASK-VJ633 collapses them, until then \
+                 both must be edited together"
+            );
+        }
+    }
+
     /// Resolve a binary the way the drivers do — through PATH — and report
     /// where it landed rather than just whether it exists.
     fn which_binary(binary: &str) -> Option<PathBuf> {

@@ -14,6 +14,9 @@ use orgasmic_daemon::{Daemon, DaemonOptions};
 use orgasmic_drivers::modes::rmux::test_tooling::{
     assert_required_test_tooling, skip_test_if_missing, ToolRequirement,
 };
+use orgasmic_drivers::modes::tmux::{
+    own_tmux_server_for_tests, real_tmux_on_path, tmux_command, TMUX_SOCKET_ENV,
+};
 use serde_json::{json, Value};
 
 const PROJECT_ID: &str = "orgasmic";
@@ -174,13 +177,36 @@ fn token(home: &Home) -> String {
         .to_string()
 }
 
+// orgasmic:TASK-FJCE9
+/// Is a *real* tmux usable here, and — once the answer is yes — the server this
+/// process owns claimed?
+///
+/// Both halves are load-bearing, and this file learned each the hard way:
+///
+/// 1. *Strictness.* The former gate was `tmux -V`, and inside an orgasmic
+///    worker rmux prepends a shim directory in which `tmux` is a symlink to
+///    `rmux`; the shim answers `-V` and prints `tmux 3.4`. So this file's tmux
+///    test ran in every worker suite, reported tmux, and executed rmux. The
+///    rule is TASK-K4G1D's, reached here through `orgasmic_drivers` because an
+///    integration-test crate cannot import the daemon's `#[cfg(test)]` copy;
+///    `api::tests::daemon_and_driver_tmux_strictness_agree` keeps the two from
+///    drifting and TASK-VJ633 collapses them.
+/// 2. *Isolation* (TASK-0RCRY). Claimed here, before any session exists,
+///    because this is the one gate every tmux-touching path below passes
+///    through. Deliberately after the strictness check: claiming starts a
+///    keepalive session, and claiming through the shim would start it on the
+///    rmux server — the thing being prevented.
+///
+/// The claim also covers the *child daemons*, which are what actually create
+/// the panes: [`spawn_daemon_child`] hands them the owned socket explicitly,
+/// and they inherit this process's `PATH`, so the binary that passed the
+/// strictness check above is the binary they resolve.
 fn tmux_available() -> bool {
-    Command::new("tmux")
-        .arg("-V")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    if !real_tmux_on_path() {
+        return false;
+    }
+    own_tmux_server_for_tests();
+    true
 }
 
 #[test]
@@ -188,9 +214,40 @@ fn required_test_tooling_is_present() {
     assert_required_test_tooling(&[ToolRequirement::new("tmux", 1, tmux_available())]);
 }
 
+// orgasmic:TASK-FJCE9
+/// Every tmux invocation in this file is built here.
+///
+/// One choke point, for the same reason `tmux_command` is one in the driver:
+/// the `-L` selection is what keeps `kill-session` below off a server this test
+/// did not create. Unpinned, it reached whatever server the environment
+/// selected — inside a worker, `/private/tmp/rmux-501/default`, the rmux server
+/// hosting live worker panes, which this file then ran `kill-session` against.
+fn tmux(args: &[&str]) -> Command {
+    let mut command = tmux_command();
+    command.args(args);
+    command
+}
+
+fn tmux_has_session_command(name: &str) -> Command {
+    tmux(&["has-session", "-t", name])
+}
+
+fn tmux_pane_identity_command(name: &str) -> Command {
+    tmux(&[
+        "display-message",
+        "-p",
+        "-t",
+        name,
+        "#{session_id}:#{pane_id}:#{pane_pid}",
+    ])
+}
+
+fn tmux_kill_session_command(name: &str) -> Command {
+    tmux(&["kill-session", "-t", name])
+}
+
 fn tmux_has_session(name: &str) -> bool {
-    Command::new("tmux")
-        .args(["has-session", "-t", name])
+    tmux_has_session_command(name)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -198,26 +255,57 @@ fn tmux_has_session(name: &str) -> bool {
 }
 
 fn tmux_pane_identity(name: &str) -> String {
-    let output = Command::new("tmux")
-        .args([
-            "display-message",
-            "-p",
-            "-t",
-            name,
-            "#{session_id}:#{pane_id}:#{pane_pid}",
-        ])
-        .output()
-        .unwrap();
+    let output = tmux_pane_identity_command(name).output().unwrap();
     assert!(output.status.success(), "planned pane {name} must be live");
     String::from_utf8(output.stdout).unwrap().trim().to_string()
 }
 
 fn kill_tmux(name: &str) {
-    let _ = Command::new("tmux")
-        .args(["kill-session", "-t", name])
+    let _ = tmux_kill_session_command(name)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
+}
+
+// orgasmic:TASK-FJCE9
+/// No invocation this file builds can reach a server it did not create.
+///
+/// Argv only: the assertion is on the command line, so it contacts no server
+/// and cannot damage the thing it proves. That matters more here than in most
+/// proofs — a behavioural replay of the defect *is* the defect, and the last
+/// argv in the list is `kill-session`.
+#[test]
+fn every_tmux_invocation_is_pinned_to_an_owned_server() {
+    // Publish a socket the way an operator would, without claiming one: a claim
+    // starts a keepalive session, and this test must start nothing. If the
+    // gated test already claimed, its label wins (the driver prefers the
+    // in-process record) and the assertion below holds on that one instead.
+    if std::env::var_os(TMUX_SOCKET_ENV).is_none() {
+        std::env::set_var(TMUX_SOCKET_ENV, "orgasmic-test-fjce9-argv-proof");
+    }
+
+    for command in [
+        tmux_has_session_command("orgasmic-run-proof"),
+        tmux_pane_identity_command("orgasmic-run-proof"),
+        tmux_kill_session_command("orgasmic-run-proof"),
+    ] {
+        let argv: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let rendered = format!("tmux {}", argv.join(" "));
+        assert_eq!(
+            argv.first().map(String::as_str),
+            Some("-L"),
+            "unpinned tmux invocation `{rendered}`: without -L it reaches the server the \
+             environment selects — the operator's own on a dev box, and inside an orgasmic \
+             worker the rmux server hosting live worker panes"
+        );
+        assert!(
+            argv.get(1).is_some_and(|socket| !socket.is_empty()),
+            "`{rendered}` carries -L with no server label"
+        );
+    }
 }
 
 struct TmuxGuard(String);
@@ -276,6 +364,13 @@ fn spawn_daemon_child(
         .env("ORGASMIC_RECOVERY_CHILD_HOME", &home.root)
         .env("ORGASMIC_RECOVERY_CHILD_ADDR", &addr_path)
         .env("ORGASMIC_RECOVERY_EXEC_WRAPPER", home.bin_orgasmic())
+        // orgasmic:TASK-FJCE9
+        // The child daemon is what creates the pane, so the owned server has to
+        // reach it too. Passed explicitly rather than left to inheritance: the
+        // claim also exports this variable, but a spawn that depends on when
+        // some other test happened to claim is exactly the kind of ordering the
+        // default shared server already punished this file for.
+        .env(TMUX_SOCKET_ENV, own_tmux_server_for_tests())
         .env(
             "PATH",
             format!(

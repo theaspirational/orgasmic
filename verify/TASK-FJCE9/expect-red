@@ -1,0 +1,36 @@
+# Pinned from the real red run of 2026-07-29 with the injection applied, in an
+# orgasmic worker (`tmux` on PATH = the rmux shim, `TMUX` = the rmux socket).
+#
+# WHY THIS RED AND NOT A REPLAY OF THE HARM
+#
+# The defect was a GREEN one, twice over. This file gated on `tmux -V`, which
+# the rmux shim answers with `tmux 3.4`, so its live-tmux test ran in every
+# worker suite; and every call site was a bare `Command::new("tmux")`, which
+# with no `-L` and `TMUX=/private/tmp/rmux-501/default,...` aims at the rmux
+# server hosting live dispatched worker panes. Measured 2026-07-29 from this
+# worktree, read-only: `tmux -V` -> `tmux 3.4` (the real binary is 3.6a) and
+# `tmux list-sessions` -> the three `orgasmic-rmux-run-*` panes of the workers
+# running at that moment, one of them this dispatch's own. Nothing was red.
+# The file's own `kill-session` was one session-name collision away from
+# killing one of those panes.
+#
+# So the signature cannot be a behavioural failure — and a behavioural replay
+# of THIS defect IS the defect: it would aim `kill-session` at the live server
+# to prove that aiming `kill-session` at the live server is wrong. The proof is
+# therefore an argv assertion, the K4G1D/0RCRY template: it inspects the
+# command line the file builds, spawns nothing, contacts no server, and fails
+# identically on any host.
+#
+# The injection restores ONE call site to its pre-fix form, and deliberately
+# the dangerous one: `kill-session`.
+
+exit: 101
+
+# The invocation, named exactly, with the verb that made this a P1.
+contains: unpinned tmux invocation `tmux kill-session -t orgasmic-run-proof`
+contains: right: Some("-L")
+contains: every_tmux_invocation_is_pinned_to_an_owned_server
+
+# One test, and it is this one. A binary that collapses wholesale is a
+# different failure and has not reproduced the defect this artifact claims.
+contains: test result: FAILED. 0 passed; 1 failed
