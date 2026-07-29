@@ -237,54 +237,6 @@ Minimum acceptable outcome if selection turns out to be impossible: stop echoing
 a provider and model the run is not using, so the session records what actually
 happened rather than what was requested.
 
-* BACKLOG TASK-5T575 dispatch_endpoint asserts worker names the daemon stopped minting    :testing:daemon:dispatch:
-:PROPERTIES:
-:ID: TASK-5T575
-:PRIORITY: P1
-:END:
-
-Three tests in `crates/orgasmic-daemon/tests/dispatch_endpoint.rs` failed on
-every run of the suite, on HEAD, unrelated to any change under test:
-
-- dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
-- dispatch_with_task_worker_property_still_spawns_via_explicit_path
-- dispatch_override_off_list_model_passes_through_with_warn
-
-Two asserted `implementer-codex-appserver` / `pinned-implementer` and got
-`implementer-codex-acp-ws`; the third timed out waiting for a run.created
-carrying a name that is never written.
-
-Root cause, two halves that hid each other:
-
-1. `seed_worker` wrote worker templates to `$ORGASMIC_HOME/user/workers/`.
-   Templates were retired — `lib.rs:454` logs "legacy user/workers directory
-   ignored" at boot and reads nothing. 33 call sites were seeding a directory
-   with no reader.
-2. The tests sent `"worker_id"` in the dispatch body. `DispatchRequest`
-   (api.rs:3787) has no such field and does not deny unknown fields, so serde
-   dropped it silently. The daemon derives the label from the address alone,
-   via `addressing::compatibility_worker_id(kind, mode, harness)`.
-
-So the tests asked for a worker by a name with no reader, over a field with no
-receiver, and asserted a result nothing produces. Each half looks deliberate on
-its own; together they are inert.
-
-Cost: the suite has been red on this crate on every full run, so it could not
-answer "did my change break something?" — TASK-TJKFC's evidence had to carry
-"dispatch_endpoint has 3 failures, identical on HEAD" as a manual caveat, and
-every future change to this crate would have repeated that stash-and-compare.
-
-Fix: delete `seed_worker`/`seed_worker_kind` and all 33 call sites; correct
-the label literals to the ids the daemon actually mints; stop sending the
-dropped `worker_id` field; assert on the pinned-worker test that a task's
-stale `:WORKER:` property does NOT override the dispatch address (the real
-current contract, and a stronger claim than the one it replaced); add
-`asserted_worker_labels_match_the_daemons_naming_rule`, which pins all four
-labels to `compatibility_worker_id` so the rule cannot drift silently again.
-
-Related but distinct: TASK-STWVB (four daemon --lib tests that fail only under
-full-suite parallelism). This one fails deterministically, alone or not.
-
 * BACKLOG TASK-Y9BY6 live_rmux_exit_139_emits_a_fatal_terminal_event times out on every run    :testing:drivers:flake:
 :PROPERTIES:
 :ID: TASK-Y9BY6
@@ -341,46 +293,6 @@ suite has environment-coupled tests whose result depends on what else is running
 on the machine, which is the same reason the daemon suite could not answer "did
 my change break something?". Reproduce by running the suite WHILE a second
 daemon or an rmux server is live, not by running it alone.
-
-* BACKLOG TASK-4YC8E hermes reasoning_effort alias collides with the daemon's dual-key driver_config    :drivers:bug:
-:PROPERTIES:
-:ID: TASK-4YC8E
-:PRIORITY: P1
-:END:
-
-`adapters/hermes.rs` declares
-
-    #[serde(default, alias = "effort")]
-    reasoning_effort: Option<String>
-
-while the daemon writes the value under BOTH keys at once (`api.rs`:
-`"effort": effort` and `"reasoning_effort": reasoning_effort`, lines 3573-3574;
-also 2329-2330). Serde then sees one field populated twice and fails
-deserialization, so `validate_config` returns `InvalidConfig` and the dispatch
-dies with
-
-    400 Bad Request: {"error":"driver configuration is invalid"}
-
-Measured on claude 2026-07-26: adding that exact alias to `ClaudeAcpConfig`
-reproduced this immediately, and removing it fixed it. Hermes carries the alias
-today, so a hermes dispatch that sets an effort should fail the same way.
-
-NOT VERIFIED for hermes itself — inferred from identical code and a reproduced
-failure in a sibling adapter, not from a hermes dispatch. Confirm before fixing:
-run a hermes acp-stdio dispatch with `--effort high` and check for the 400.
-
-If confirmed the fix is one line — drop `alias = "effort"`, since the daemon
-already writes `reasoning_effort`. Check codex too; it also carries
-`reasoning_effort` and needs the same read.
-
-Worth fixing beyond the crash: the error text names neither the field nor the
-adapter. `InvalidConfig(e.to_string())` has serde's message in hand and drops it
-on the floor at the API boundary. Surfacing it would have made this a ten-second
-diagnosis instead of a grep through api.rs.
-
-The dual-key write is itself questionable — one value under two names is what
-made an ordinary alias a landmine. Consider emitting only `reasoning_effort`
-once every adapter reads that key.
 
 * BACKLOG TASK-099T6 driver_modes equivalence test spawns real claude twice on one session id and now collides    :drivers:test:claude:bug:
 :PROPERTIES:

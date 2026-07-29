@@ -16107,3 +16107,51 @@ Decide whether it deserves the same verified-unload treatment.
 - Do not change `ShutdownBudgets`, `service_stop_timeout`, `stop_timeout` or
   `start_timeout`. This task consumes all four.
 
+* DONE TASK-5T575 dispatch_endpoint asserts worker names the daemon stopped minting :testing:daemon:dispatch:
+:PROPERTIES:
+:ID: TASK-5T575
+:PRIORITY: P1
+:END:
+
+Three tests in `crates/orgasmic-daemon/tests/dispatch_endpoint.rs` failed on
+every run of the suite, on HEAD, unrelated to any change under test:
+
+- dispatch_endpoint_routes_codex_through_supervisor_and_emits_run_created
+- dispatch_with_task_worker_property_still_spawns_via_explicit_path
+- dispatch_override_off_list_model_passes_through_with_warn
+
+Two asserted `implementer-codex-appserver` / `pinned-implementer` and got
+`implementer-codex-acp-ws`; the third timed out waiting for a run.created
+carrying a name that is never written.
+
+Root cause, two halves that hid each other:
+
+1. `seed_worker` wrote worker templates to `$ORGASMIC_HOME/user/workers/`.
+   Templates were retired — `lib.rs:454` logs "legacy user/workers directory
+   ignored" at boot and reads nothing. 33 call sites were seeding a directory
+   with no reader.
+2. The tests sent `"worker_id"` in the dispatch body. `DispatchRequest`
+   (api.rs:3787) has no such field and does not deny unknown fields, so serde
+   dropped it silently. The daemon derives the label from the address alone,
+   via `addressing::compatibility_worker_id(kind, mode, harness)`.
+
+So the tests asked for a worker by a name with no reader, over a field with no
+receiver, and asserted a result nothing produces. Each half looks deliberate on
+its own; together they are inert.
+
+Cost: the suite has been red on this crate on every full run, so it could not
+answer "did my change break something?" — TASK-TJKFC's evidence had to carry
+"dispatch_endpoint has 3 failures, identical on HEAD" as a manual caveat, and
+every future change to this crate would have repeated that stash-and-compare.
+
+Fix: delete `seed_worker`/`seed_worker_kind` and all 33 call sites; correct
+the label literals to the ids the daemon actually mints; stop sending the
+dropped `worker_id` field; assert on the pinned-worker test that a task's
+stale `:WORKER:` property does NOT override the dispatch address (the real
+current contract, and a stronger claim than the one it replaced); add
+`asserted_worker_labels_match_the_daemons_naming_rule`, which pins all four
+labels to `compatibility_worker_id` so the rule cannot drift silently again.
+
+Related but distinct: TASK-STWVB (four daemon --lib tests that fail only under
+full-suite parallelism). This one fails deterministically, alone or not.
+
