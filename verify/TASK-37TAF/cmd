@@ -1,0 +1,7 @@
+# One line. Run from the repo root by `orgasmic verify TASK-37TAF`.
+#
+# The API layer is the whole production path for this defect: the payload the
+# old CLI sends is the defect, and no real harness is needed to send it. The
+# test dispatches a real acp-stdio run against the fake codex the rest of this
+# suite uses, then posts the pre-TASK-WGXKD release payload verbatim.
+env -u ORGASMIC_RUN_ID -u ORGASMIC_HOME cargo test -p orgasmic-daemon --test dispatch_endpoint dispatch_endpoint_old_cli_release_without_terminal_tx_is_refused

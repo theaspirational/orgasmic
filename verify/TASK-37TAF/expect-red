@@ -1,0 +1,24 @@
+# Pinned from the red run authored against the defect, 2026-07-29
+# (scratchpad red-2.log, run-20260729T043823-3355ba1b82a64c2e84f9ede1fb90c72c).
+#
+# The injection removes the payload guard in `post_run_release` and nothing
+# else, which is exactly the pre-fix daemon: `terminal_tx` is optional, so a
+# `finalized_by_worker` release carrying none is performed.
+exit: 101
+
+# The LOSS, not a status code: the daemon answered 200 and the lease is gone,
+# so the run is released with no terminal tx and — because the completion
+# watcher reads `finalized_by_worker` as "already reported" — no orphan flag
+# either. `status 200 OK` is pinned deliberately: it is the daemon calling the
+# lossy release a success.
+contains: an old-CLI finalize with no terminal_tx must leave the lease HELD
+contains: is gone from /runs/live (status 200 OK
+
+# The pre-release liveness guard must NOT be what fell. If the run were never
+# live, the failure would read "was not live before the finalize" instead and
+# this signature would not match — which is the point of having both.
+contains: dispatch_endpoint_old_cli_release_without_terminal_tx_is_refused
+
+# Exactly one test falls. In particular the artifact-preservation test next to
+# it stays green: it sends a terminal_tx, so the guard never sees it.
+contains: test result: FAILED. 0 passed; 1 failed

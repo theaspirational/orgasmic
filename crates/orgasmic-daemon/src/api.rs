@@ -7443,6 +7443,51 @@ async fn post_run_release(
         .cloned()
         .ok_or_else(|| ApiError::not_found(format!("active run {id}")))?;
     let task_id = run.task_id.clone();
+    // orgasmic:TASK-37TAF — the OTHER version-skew direction, fail-closed on
+    // this side because only this side can see it.
+    //
+    // TASK-WGXKD.1 made new-CLI/old-daemon safe with a pre-flight capability
+    // probe (`require_daemon_writes_terminal_tx`). Old-CLI/new-daemon had no
+    // guard at all: `terminal_tx` is optional, so a pre-WGXKD `dispatch
+    // finalize` — which declares `finalized_by_worker` and then intends to
+    // `POST /tx` on its own turn — released the run and got a 200 with
+    // `terminal_tx_id: null`. It never gets that turn: this release tears down
+    // the driver, the driver reaps the harness's setsid process group, and the
+    // finalize CLI is a member of it (on acp-stdio a direct `kill(-pgid, …)`,
+    // lost 3/3 when measured). What survives is a released run with a
+    // `Completed` tombstone, no terminal tx, and NO orphan flag — the dispatch
+    // completion watcher reads `finalized_by_worker` as "already reported by
+    // the worker" and skips its fallback (see
+    // `spawn_dispatch_completion_watcher`). Invisible to both the success path
+    // and the rescue path.
+    //
+    // So refuse before releasing anything, and take the same trade the CLI-side
+    // handshake takes: the lease stays HELD, which `dispatch-status` shows and
+    // the orphan/stall paths can rescue. Reconstructing the tx server-side
+    // instead was rejected — the daemon cannot know the two things that decide
+    // what to write (`--status done|blocked`, which selects
+    // `<kind>.reported` vs `manager.dispatch_aborted`, and the worker's commit
+    // sha); the release reason is byte-identical in both cases, so any
+    // reconstruction would be a manufactured success claim.
+    //
+    // Narrow by construction: `finalized_by_worker` on THIS route is only ever
+    // set by `dispatch finalize`. `dispatch-close` sends `false`, and the
+    // `artifact_submitted` / `manager_released` declarations never come through
+    // here — they call `supervisor.release_with_finalization` directly.
+    if req.finalized_by_worker && req.terminal_tx.is_none() {
+        return Err(ApiError::bad_request(format!(
+            "refusing to release run {id} ({task_id}): this finalize declared \
+             `finalized_by_worker` but sent no `terminal_tx`, so it comes from an \
+             `orgasmic dispatch finalize` older than this daemon and still expects \
+             to write the terminal tx itself after this call returns. It cannot: \
+             releasing reaps the harness process group that finalize runs in, so \
+             the run would end released and permanently unreported, with no orphan \
+             flag. The lease is still held and this finalize is safe to re-run: \
+             upgrade the CLI that ran it (`orgasmic update`, or rebuild the source \
+             checkout it ran from) so it hands its terminal tx to the release, \
+             then run the same `orgasmic dispatch finalize` command again."
+        )));
+    }
     // orgasmic:TASK-WGXKD — run the release, and the terminal tx that must
     // follow it, on a detached task. Hyper drops this handler's future the
     // moment the caller's connection closes (measured, not assumed: without the
